@@ -68,6 +68,13 @@ namespace Kans
         physics(static_cast<JointComponent*>(nullptr));
         m_Registry.on_destroy<JointComponent>().connect<&Scene::OnPhysicsJointRemoved>(this);
         physics(static_cast<GlobalWindComponent*>(nullptr));
+        m_Registry.on_destroy<SpringBoneComponent>().connect<&Scene::OnSpringBoneRemoved>(this);
+        m_Registry.on_update<SpringBoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_construct<SpringBoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_destroy<SpringBoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_update<SpringBoneColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_construct<SpringBoneColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_destroy<SpringBoneColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_update<TransformComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
         m_Registry.on_update<RelationshipComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
 
@@ -380,10 +387,12 @@ namespace Kans
     void Scene::OnUpdate(TimeStep ts)
     {
 
+        RestoreSpringBoneTransforms();
         UpdatePrefabs();
-        UpdateAnimations(double(ts));
-        UpdateTimelines(double(ts));
+        UpdateAnimations(m_PhysicsPaused && !m_PhysicsSingleStep ? 0 : double(ts));
+        UpdateTimelines(m_PhysicsPaused && !m_PhysicsSingleStep ? 0 : double(ts));
         UpdatePhysics(double(ts));
+        UpdateSpringBones(double(ts));
 
         // update ScripteableEntity
         {
@@ -751,6 +760,8 @@ namespace Kans
         CopyComponent<MeshColliderComponent>(source, copy);
         CopyComponent<CharacterControllerComponent>(source, copy);
         CopyComponent<JointComponent>(source, copy);
+        CopyComponent<SpringBoneComponent>(source, copy);
+        CopyComponent<SpringBoneColliderComponent>(source, copy);
         CopyComponent<GlobalWindComponent>(source, copy);
 
         CopyComponent<AudioSourceComponent>(source, copy);
@@ -849,6 +860,20 @@ namespace Kans
                         for (auto* id : {&change.Joint->BodyA, &change.Joint->BodyB})
                             if (auto found = remap.find(*id); found != remap.end())
                                 *id = found->second;
+        const auto springRemap = [&](uint64_t id) {
+            const auto found = remap.find(UUID(id));
+            return found == remap.end() ? id : uint64_t(found->second);
+        };
+        for (const auto& [source, target] : remap)
+        {
+            auto e = GetEntityByUUID(target);
+            if (e.HasComponent<SpringBoneComponent>())
+                e.PatchComponent<SpringBoneComponent>([&](auto& c) { c.RemapEntities(springRemap); });
+            if (e.HasComponent<PrefabInstanceComponent>())
+                for (auto& [key, change] : e.GetComponent<PrefabInstanceComponent>().Overrides)
+                    if (change.SpringBone)
+                        change.SpringBone->RemapEntities(springRemap);
+        }
         return copy;
     }
 
@@ -865,6 +890,8 @@ namespace Kans
     {
         if (m_PhysicsWorld)
             return;
+        RestoreSpringBoneTransforms();
+        ResetSecondaryMotion();
         m_RuntimeOptions = options;
         UpdatePrefabs();
         m_PhysicsAccumulator = 0;
@@ -873,6 +900,9 @@ namespace Kans
         StartAudio();
         if (m_RuntimeOptions.RunScripts && ScriptEngine::IsInitialized())
             ScriptEngine::OnRuntimeStart(this);
+        const bool springBones = !m_Registry.view<SpringBoneComponent>().empty();
+        if (springBones)
+            UpdateAnimations(0);
         std::vector<UUID> timelines;
         for (auto h : m_Registry.view<TimelinePlayerComponent>())
             timelines.push_back(m_Registry.get<IDComponent>(h).ID);
@@ -883,6 +913,8 @@ namespace Kans
                 auto player = e.GetComponent<TimelinePlayerComponent>().Player;
                 player->Play();
             }
+        if (springBones)
+            UpdateSpringBones(0);
     }
 
     void Scene::DestroyNativeScriptInstances()
@@ -899,6 +931,8 @@ namespace Kans
 
     void Scene::OnRuntimeStop()
     {
+        RestoreSpringBoneTransforms();
+        ResetSecondaryMotion();
         m_RuntimeOptions = {};
         m_PhysicsWorld.reset();
         m_PhysicsAccumulator = 0;
@@ -914,6 +948,12 @@ namespace Kans
         DestroyNativeScriptInstances();
         if (ScriptEngine::GetSceneContext() == this)
             ScriptEngine::OnRuntimeEnd();
+        if (!m_Registry.view<SpringBoneComponent>().empty())
+        {
+            const bool preview = m_SpringBonePreview;
+            SetSpringBonePreviewEnabled(false);
+            m_SpringBonePreview = preview;
+        }
     }
 
     Kans::Entity Scene::GetCameraEntity()
@@ -954,6 +994,12 @@ namespace Kans
     {}
     template<>
     void Scene::OnComponentAdd<CharacterControllerComponent>(Entity, CharacterControllerComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<SpringBoneComponent>(Entity, SpringBoneComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<SpringBoneColliderComponent>(Entity, SpringBoneColliderComponent&)
     {}
     template<>
     void Scene::OnComponentAdd<JointComponent>(Entity, JointComponent&)

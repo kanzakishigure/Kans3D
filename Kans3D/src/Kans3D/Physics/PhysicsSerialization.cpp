@@ -346,6 +346,131 @@ namespace Kans::PhysicsYaml
         {
             PhysicsFields::JointComponentFields(c, [&](const char* k, auto& v, int) { f(k, v); });
         }
+        template<class T, class F>
+        void FieldsSpringBoneChain(T& c, F f)
+        {
+            f("RootBone", c.RootBone);
+            f("EndBone", c.EndBone);
+            f("ExcludedBones", c.ExcludedBones);
+            f("EndExtension", c.EndExtension);
+            f("Stiffness", c.Stiffness);
+            f("Drag", c.Drag);
+            f("GravityPower", c.GravityPower);
+            f("GravityDirection", c.GravityDirection);
+            f("HitRadius", c.HitRadius);
+            f("RotationAxis", c.RotationAxis);
+            f("AngleLimit", c.AngleLimit);
+            f("StiffnessCurve", c.StiffnessCurve);
+            f("DragCurve", c.DragCurve);
+            f("GravityPowerCurve", c.GravityPowerCurve);
+            f("GravityDirectionCurve", c.GravityDirectionCurve);
+            f("HitRadiusCurve", c.HitRadiusCurve);
+            f("RotationAxisCurve", c.RotationAxisCurve);
+            f("AngleLimitCurve", c.AngleLimitCurve);
+            f("StiffnessMultiplier", c.StiffnessMultiplier);
+            f("DragMultiplier", c.DragMultiplier);
+            f("GravityMultiplier", c.GravityMultiplier);
+        }
+        template<class F>
+        void Fields(SpringBoneChain& c, F f)
+        {
+            FieldsSpringBoneChain(c, f);
+        }
+        template<class F>
+        void Fields(const SpringBoneChain& c, F f)
+        {
+            FieldsSpringBoneChain(c, f);
+        }
+        template<class T, class F>
+        void FieldsSpringBoneComponent(T& c, F f)
+        {
+            f("Chains", c.Chains);
+            f("Center", c.Center);
+            f("InertiaScale", c.InertiaScale);
+            f("WindScale", c.WindScale);
+            f("ColliderGroups", c.ColliderGroups);
+            f("SubstepRate", c.SubstepRate);
+            f("MaxSubsteps", c.MaxSubsteps);
+            f("TeleportDistance", c.TeleportDistance);
+            f("TeleportRotation", c.TeleportRotation);
+            f("Enabled", c.Enabled);
+        }
+        template<class F>
+        void Fields(SpringBoneComponent& c, F f)
+        {
+            FieldsSpringBoneComponent(c, f);
+        }
+        template<class F>
+        void Fields(const SpringBoneComponent& c, F f)
+        {
+            FieldsSpringBoneComponent(c, f);
+        }
+        template<class T, class F>
+        void FieldsSpringBoneColliderComponent(T& c, F f)
+        {
+            f("Shape", c.Shape);
+            f("Inside", c.Inside);
+        }
+        template<class F>
+        void Fields(SpringBoneColliderComponent& c, F f)
+        {
+            FieldsSpringBoneColliderComponent(c, f);
+        }
+        template<class F>
+        void Fields(const SpringBoneColliderComponent& c, F f)
+        {
+            FieldsSpringBoneColliderComponent(c, f);
+        }
+        template<class T, class F>
+        void FieldsPhysicsPlane(T& c, F f)
+        {
+            f("Normal", c.Normal);
+            f("Offset", c.Offset);
+        }
+        template<class F>
+        void Fields(Physics::Plane& c, F f)
+        {
+            FieldsPhysicsPlane(c, f);
+        }
+        template<class F>
+        void Fields(const Physics::Plane& c, F f)
+        {
+            FieldsPhysicsPlane(c, f);
+        }
+        template<class T, class F>
+        void FieldsTimelineCurve(T& c, F f)
+        {
+            f("Keys", c.Keys);
+        }
+        template<class F>
+        void Fields(TimelineCurve& c, F f)
+        {
+            FieldsTimelineCurve(c, f);
+        }
+        template<class F>
+        void Fields(const TimelineCurve& c, F f)
+        {
+            FieldsTimelineCurve(c, f);
+        }
+        template<class T, class F>
+        void FieldsTimelineKey(T& c, F f)
+        {
+            f("Time", c.Time);
+            f("Value", c.Value);
+            f("InTangent", c.InTangent);
+            f("OutTangent", c.OutTangent);
+            f("Interpolation", c.Interpolation);
+        }
+        template<class F>
+        void Fields(TimelineKey& c, F f)
+        {
+            FieldsTimelineKey(c, f);
+        }
+        template<class F>
+        void Fields(const TimelineKey& c, F f)
+        {
+            FieldsTimelineKey(c, f);
+        }
         template<class T>
         YAML::Node Write(const T&);
         template<class T>
@@ -402,7 +527,12 @@ namespace Kans::PhysicsYaml
         YAML::Node Write(const T& value)
         {
             YAML::Node n;
-            if constexpr (std::is_enum_v<T>)
+            if constexpr (std::is_same_v<T, Physics::MotionColliderShape>)
+            {
+                n["Type"] = uint32_t(value.index());
+                n["Data"] = std::visit([](const auto& shape) { return Write(shape); }, value);
+            }
+            else if constexpr (std::is_enum_v<T>)
                 n = uint32_t(value);
             else if constexpr (std::is_arithmetic_v<T> || std::is_same_v<T, std::string>)
             {
@@ -414,10 +544,10 @@ namespace Kans::PhysicsYaml
                 n = value.ToString();
             else if constexpr (std::is_same_v<T, UUID>)
                 n = uint64_t(value);
-            else if constexpr (std::is_same_v<T, glm::vec3>)
+            else if constexpr ((std::is_same_v<T, glm::vec3> || std::is_same_v<T, glm::vec4>))
             {
                 n = YAML::Node(YAML::NodeType::Sequence);
-                for (int i = 0; i < 3; ++i)
+                for (int i = 0; i < (std::is_same_v<T, glm::vec3> ? 3 : 4); ++i)
                     n.push_back(Write(value[i]));
             }
             else if constexpr (std::is_same_v<T, glm::quat>)
@@ -436,10 +566,36 @@ namespace Kans::PhysicsYaml
         template<class T>
         void Read(const YAML::Node& n, T& value)
         {
-            if constexpr (std::is_enum_v<T>)
+            if constexpr (std::is_same_v<T, Physics::MotionColliderShape>)
+            {
+                Require(n.IsMap() && n.size() == 2 && n["Type"] && n["Data"], "Invalid motion collider shape");
+                const auto type = n["Type"].as<uint32_t>();
+                Require(type <= 2, "Invalid motion collider type");
+                if (type == 0)
+                {
+                    Physics::Sphere s;
+                    Read(n["Data"], s);
+                    value = s;
+                }
+                if (type == 1)
+                {
+                    Physics::Capsule s;
+                    Read(n["Data"], s);
+                    value = s;
+                }
+                if (type == 2)
+                {
+                    Physics::Plane s;
+                    Read(n["Data"], s);
+                    value = s;
+                }
+            }
+            else if constexpr (std::is_enum_v<T>)
             {
                 auto     v   = n.as<uint32_t>();
                 uint32_t max = 2;
+                if constexpr (std::is_same_v<T, SpringRotationAxis>)
+                    max = 3;
                 if constexpr (std::is_same_v<T, PhysicsCombineMode>)
                     max = 3;
                 if constexpr (std::is_same_v<T, PhysicsInterpolation>)
@@ -470,7 +626,8 @@ namespace Kans::PhysicsYaml
             }
             else if constexpr (std::is_same_v<T, UUID>)
                 value = n.as<uint64_t>();
-            else if constexpr (std::is_same_v<T, glm::vec3> || std::is_same_v<T, glm::quat>)
+            else if constexpr (std::is_same_v<T, glm::vec3> || std::is_same_v<T, glm::vec4> ||
+                               std::is_same_v<T, glm::quat>)
             {
                 const size_t count = std::is_same_v<T, glm::vec3> ? 3 : 4;
                 Require(n.IsSequence() && n.size() == count, "Invalid physics vector");
@@ -568,6 +725,56 @@ namespace Kans::PhysicsYaml
                 for (auto v : *values)
                     Require(v >= 0, "Negative D6 drive value");
         }
+        void ValidateCurve(const TimelineCurve& c)
+        {
+            double last = -1;
+            for (const auto& key : c.Keys)
+            {
+                Require(key.Time >= 0 && key.Time <= 1 && key.Time > last && uint32_t(key.Interpolation) <= 2,
+                        "Invalid spring curve coordinate");
+                last = key.Time;
+            }
+        }
+        void Validate(const SpringBoneComponent& c)
+        {
+            Require(c.InertiaScale >= 0 && c.InertiaScale <= 1 && c.SubstepRate >= 1 && c.SubstepRate <= 1000 &&
+                        c.MaxSubsteps > 0 && c.MaxSubsteps <= 1024 && c.TeleportDistance >= 0 &&
+                        c.TeleportRotation >= 0 && c.TeleportRotation <= 180,
+                    "Invalid spring settings");
+            for (const auto& chain : c.Chains)
+            {
+                Require(chain.EndExtension >= 0 && chain.Stiffness >= 0 && chain.Drag >= 0 && chain.Drag <= 1 &&
+                            chain.GravityPower >= 0 && chain.HitRadius >= 0 && uint32_t(chain.RotationAxis) <= 3 &&
+                            chain.AngleLimit >= 0 && chain.AngleLimit <= 180 && chain.StiffnessMultiplier >= 0 &&
+                            chain.DragMultiplier >= 0 && chain.GravityMultiplier >= 0,
+                        "Invalid spring chain");
+                for (auto curve : {&chain.StiffnessCurve,
+                                   &chain.DragCurve,
+                                   &chain.GravityPowerCurve,
+                                   &chain.GravityDirectionCurve,
+                                   &chain.HitRadiusCurve,
+                                   &chain.RotationAxisCurve,
+                                   &chain.AngleLimitCurve})
+                    ValidateCurve(*curve);
+            }
+        }
+        void Validate(const SpringBoneColliderComponent& c)
+        {
+            std::visit(
+                [&](const auto& s) {
+                    using T = std::decay_t<decltype(s)>;
+                    Require(glm::dot(s.Offset.Rotation, s.Offset.Rotation) > 1e-12f && s.Offset.Scale.x > 0 &&
+                                s.Offset.Scale.y > 0 && s.Offset.Scale.z > 0,
+                            "Invalid motion collider offset");
+                    if constexpr (std::is_same_v<T, Physics::Plane>)
+                        Require(glm::dot(s.Normal, s.Normal) > 1e-12f, "Invalid plane normal");
+                    else
+                        Require(s.Radius > 0, "Invalid motion collider radius");
+                    if constexpr (std::is_same_v<T, Physics::Capsule>)
+                        Require(s.HalfHeight >= 0 && uint32_t(s.Direction) <= 2, "Invalid motion capsule");
+                },
+                c.Shape);
+        }
         void Validate(const PhysicsSettings& c)
         {
             auto copy = c;
@@ -575,6 +782,30 @@ namespace Kans::PhysicsYaml
             Validate(c.DefaultMaterial);
         }
     } // namespace
+    YAML::Node Encode(const SpringBoneComponent& c)
+    {
+        Validate(c);
+        return Write(c);
+    }
+    void Decode(const YAML::Node& n, SpringBoneComponent& c)
+    {
+        SpringBoneComponent next;
+        Read(n, next);
+        Validate(next);
+        c = std::move(next);
+    }
+    YAML::Node Encode(const SpringBoneColliderComponent& c)
+    {
+        Validate(c);
+        return Write(c);
+    }
+    void Decode(const YAML::Node& n, SpringBoneColliderComponent& c)
+    {
+        SpringBoneColliderComponent next;
+        Read(n, next);
+        Validate(next);
+        c = std::move(next);
+    }
     YAML::Node Encode(const CharacterControllerComponent& c)
     {
         Validate(c);

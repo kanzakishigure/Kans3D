@@ -9,7 +9,7 @@
 
 namespace Kans::Scripting
 {
-    constexpr uint32_t ApiVersion = 7;
+    constexpr uint32_t ApiVersion = 8;
     enum class ComponentType : uint32_t
     {
 #define KANS_COMPONENT(id, name) name = id,

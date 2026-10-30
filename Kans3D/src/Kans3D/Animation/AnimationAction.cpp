@@ -97,6 +97,8 @@ namespace Kans
             next.HasFrozen    = true;
             FinishAction(l, true);
         }
+        if (next.Data.BlendIn == 0)
+            ++DiscontinuityVersion;
         m_Actions[l]  = std::move(next);
         auto& status  = m_ActionStatus[l];
         status        = {slot,
@@ -243,6 +245,8 @@ namespace Kans
     {
         if (!m_ActionStatus[l].Playing)
             return;
+        if (!interrupted && ActionWeight(l) > 0)
+            ++DiscontinuityVersion;
         ActionEvent(l, AnimationEventKind::ActionEnded, nullptr, interrupted);
         m_ActionStatus[l].Playing = false;
         m_ActionStatus[l].Weight  = 0;
@@ -263,7 +267,10 @@ namespace Kans
         a.StopElapsed  = 0;
         a.StopWeight   = weight;
         if (duration == 0)
+        {
+            ++DiscontinuityVersion;
             FinishAction(l);
+        }
         RebuildPose();
         return true;
     }
@@ -277,6 +284,7 @@ namespace Kans
         for (size_t i = 0; i < a.Data.Sections.size(); ++i)
             if (a.Data.Sections[i].Name == name)
             {
+                ++DiscontinuityVersion;
                 a.Section     = i;
                 s.Section     = name;
                 s.Time        = a.Data.Sections[i].Start;
@@ -473,6 +481,8 @@ namespace Kans
                     for (size_t i = 0; i < a.Data.Sections.size(); ++i)
                         if (a.Data.Sections[i].Name == section.Next)
                         {
+                            if (a.Data.Sections[i].Start != section.End)
+                                ++DiscontinuityVersion;
                             a.Section = i;
                             s.Section = section.Next;
                             s.Time    = a.Data.Sections[i].Start;

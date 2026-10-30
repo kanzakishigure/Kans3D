@@ -30,7 +30,7 @@ namespace Kans
                        id,
                        entity.HasComponent<PrefabOwnedComponent>() ? entity.GetComponent<PrefabOwnedComponent>().Order :
                                                                      SIZE_MAX};
-        const auto world = m_Scene->GetWorldTransform(entity);
+        const auto world = m_Scene->GetSpringBoneRenderTransform(entity);
         if (entity.HasComponent<MeshComponent>() || entity.HasComponent<EditableMeshComponent>())
         {
             CORE_ASSERT(!(entity.HasComponent<MeshComponent>() && entity.HasComponent<EditableMeshComponent>()),
@@ -57,11 +57,11 @@ namespace Kans
             {
                 std::function<glm::mat4(Entity)> relative = [&](Entity part) {
                     auto parent = m_Scene->GetParent(part);
-                    auto local  = part.GetComponent<TransformComponent>().GetTransform();
+                    auto local  = m_Scene->SpringBoneRenderLocal(part);
                     return parent && parent != root ? relative(parent) * local : local;
                 };
-                record.OutlineTransform =
-                    m_Scene->GetWorldTransform(root) * glm::scale(glm::mat4(1), glm::vec3(1.007f)) * relative(entity);
+                record.OutlineTransform = m_Scene->GetSpringBoneRenderTransform(root) *
+                                          glm::scale(glm::mat4(1), glm::vec3(1.007f)) * relative(entity);
             }
             record.MeshSource = m_Scene->ResolveMesh(entity);
             if (record.MeshSource)
@@ -76,7 +76,7 @@ namespace Kans
                     skin = m_Scene->GetSkinningPose(entity);
                     if (skin && !data.Skin.empty())
                     {
-                        geometryWorld           = m_Scene->GetWorldTransform(poseRoot);
+                        geometryWorld           = m_Scene->GetSpringBoneRenderTransform(poseRoot);
                         animatedBounds          = DeformedBounds(data, skin.get());
                         record.Mesh->Transform  = geometryWorld;
                         record.OutlineTransform = geometryWorld * glm::scale(glm::mat4(1), glm::vec3(1.007f));
@@ -266,7 +266,7 @@ namespace Kans
                 continue;
             const auto& c      = entity.GetComponent<TextComponent>();
             auto        layout = GetTextLayout(entity);
-            auto        world  = m_Scene->GetWorldTransform(entity);
+            auto        world  = m_Scene->GetSpringBoneRenderTransform(entity);
             auto        root   = m_Scene->GetPrefabInstanceRoot(entity);
             result.push_back({c,
                               world,
@@ -332,7 +332,8 @@ namespace Kans
                 TextComponent style;
                 style.Billboard = c.Billboard;
                 auto transform =
-                    TextWorldTransform(style, m_Scene->GetWorldTransform(e), camera.Position, camera.viewMatrix) *
+                    TextWorldTransform(
+                        style, m_Scene->GetSpringBoneRenderTransform(e), camera.Position, camera.viewMatrix) *
                     glm::translate(glm::mat4(1), glm::vec3(-c.WorldSize.x * .5f, c.WorldSize.y * .5f, 0)) *
                     glm::scale(glm::mat4(1), glm::vec3(c.WorldSize.x / ref.x, -c.WorldSize.y / ref.y, 1));
                 Bounds bounds;

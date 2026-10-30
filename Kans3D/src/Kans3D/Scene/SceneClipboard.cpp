@@ -312,6 +312,24 @@ namespace Kans::SceneClipboard
                         reference(joint["BodyB"]);
                     }
                 };
+                auto springReferences = [&](YAML::Node spring) {
+                    if (!spring)
+                        return;
+                    reference(spring["Center"]);
+                    for (auto id : spring["ColliderGroups"])
+                        reference(id);
+                    for (auto chain : spring["Chains"])
+                    {
+                        reference(chain["RootBone"]);
+                        reference(chain["EndBone"]);
+                        for (auto id : chain["ExcludedBones"])
+                            reference(id);
+                    }
+                };
+                springReferences(node["SpringBoneComponent"]);
+                if (auto prefab = node["PrefabInstanceComponent"])
+                    for (auto change : prefab["Overrides"])
+                        springReferences(change["SpringBoneComponent"]);
                 jointReferences(node["JointComponent"]);
                 if (auto prefab = node["PrefabInstanceComponent"])
                     for (auto change : prefab["Overrides"])

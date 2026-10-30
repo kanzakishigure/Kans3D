@@ -73,7 +73,8 @@ namespace Kans
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
                     x->second.CharacterController != y->second.CharacterController ||
-                    x->second.Joint != y->second.Joint ||
+                    x->second.Joint != y->second.Joint || x->second.SpringBone != y->second.SpringBone ||
+                    x->second.SpringBoneCollider != y->second.SpringBoneCollider ||
 
                     x->second.RenderCustomDepth != y->second.RenderCustomDepth ||
                     x->second.CustomStencil != y->second.CustomStencil ||
@@ -116,6 +117,8 @@ namespace Kans
         bool Same(const GlobalWindComponent& a, const GlobalWindComponent& b) { return a == b; }
         bool Same(const CharacterControllerComponent& a, const CharacterControllerComponent& b) { return a == b; }
         bool Same(const JointComponent& a, const JointComponent& b) { return a == b; }
+        bool Same(const SpringBoneComponent& a, const SpringBoneComponent& b) { return a == b; }
+        bool Same(const SpringBoneColliderComponent& a, const SpringBoneColliderComponent& b) { return a == b; }
         bool Same(const ScriptComponent& a, const ScriptComponent& b) { return a.ClassName == b.ClassName; }
 
         template<typename T>
@@ -160,7 +163,8 @@ namespace Kans
                Same(a.BoxCollider, b.BoxCollider) && Same(a.SphereCollider, b.SphereCollider) &&
                Same(a.CapsuleCollider, b.CapsuleCollider) && Same(a.MeshCollider, b.MeshCollider) &&
                Same(a.GlobalWind, b.GlobalWind) && Same(a.CharacterController, b.CharacterController) &&
-               Same(a.Joint, b.Joint);
+               Same(a.Joint, b.Joint) && Same(a.SpringBone, b.SpringBone) &&
+               Same(a.SpringBoneCollider, b.SpringBoneCollider);
     }
 
     bool operator==(const SceneSnapshot& a, const SceneSnapshot& b)
@@ -235,6 +239,8 @@ namespace Kans
             Kans::Capture(entity, item.GlobalWind);
             Kans::Capture(entity, item.CharacterController);
             Kans::Capture(entity, item.Joint);
+            Kans::Capture(entity, item.SpringBone);
+            Kans::Capture(entity, item.SpringBoneCollider);
 
             snapshot.Entities.push_back(std::move(item));
         }
@@ -308,6 +314,8 @@ namespace Kans
             Kans::Restore(entity, item.GlobalWind);
             Kans::Restore(entity, item.CharacterController);
             Kans::Restore(entity, item.Joint);
+            Kans::Restore(entity, item.SpringBone);
+            Kans::Restore(entity, item.SpringBoneCollider);
         }
         m_RootOrder         = snapshot.RootOrder;
         m_ReconcilingPrefab = true;

@@ -303,6 +303,185 @@ namespace Kans::ScriptPhysics
                 auto e = scene->GetEntityByUUID(id);
                 if (!e)
                     return 0;
+                if (op >= 70 && op <= 72)
+                {
+                    if (!e.HasComponent<SpringBoneComponent>())
+                        return 0;
+                    auto&      c        = e.GetComponent<SpringBoneComponent>();
+                    const bool write    = mode & 1024;
+                    const int  property = mode & 1023;
+                    if (op == 71)
+                    {
+                        c.Reset();
+                        return 1;
+                    }
+                    if (op == 70 && property == 0)
+                    {
+                        if (write)
+                        {
+                            const bool enabled = v->Integer != 0;
+                            if (enabled != c.Enabled)
+                                c.Reset();
+                            c.Enabled = enabled;
+                        }
+                        else
+                            v->Integer = c.Enabled;
+                        return 1;
+                    }
+                    float* field = nullptr;
+                    if (op == 70)
+                    {
+                        if (property == 1)
+                            field = &c.InertiaScale;
+                        if (property == 2)
+                            field = &c.WindScale;
+                    }
+                    if (op == 72)
+                    {
+                        if (v->Integer < 0 || uint64_t(v->Integer) >= c.Chains.size())
+                            return -1;
+                        auto& chain = c.Chains[size_t(v->Integer)];
+                        if (property == 0)
+                            field = &chain.StiffnessMultiplier;
+                        if (property == 1)
+                            field = &chain.DragMultiplier;
+                        if (property == 2)
+                            field = &chain.GravityMultiplier;
+                    }
+                    if (!field)
+                        return -1;
+                    if (write)
+                    {
+                        if (!std::isfinite(v->X) || (op == 72 && v->X < 0) ||
+                            (op == 70 && property == 1 && (v->X < 0 || v->X > 1)))
+                            return -1;
+                        *field = v->X;
+                    }
+                    else
+                        v->X = *field;
+                    return 1;
+                }
+                if (op == 73)
+                {
+                    if (!e.HasComponent<SpringBoneColliderComponent>())
+                        return 0;
+                    auto       c        = e.GetComponent<SpringBoneColliderComponent>();
+                    const bool write    = mode & 1024;
+                    const int  property = mode & 1023;
+                    if (property == 0)
+                    {
+                        if (write)
+                        {
+                            if (v->Integer < 0 || v->Integer > 2)
+                                return -1;
+                            if (size_t(v->Integer) != c.Shape.index())
+                            {
+                                if (v->Integer == 0)
+                                    c.Shape = Physics::Sphere {};
+                                if (v->Integer == 1)
+                                    c.Shape = Physics::Capsule {};
+                                if (v->Integer == 2)
+                                    c.Shape = Physics::Plane {};
+                            }
+                        }
+                        else
+                            v->Integer = c.Shape.index();
+                    }
+                    else if (property == 1)
+                    {
+                        if (write)
+                            c.Inside = v->Integer != 0;
+                        else
+                            v->Integer = c.Inside;
+                    }
+                    else
+                    {
+                        bool found = true;
+                        std::visit(
+                            [&](auto& shape) {
+                                using T = std::decay_t<decltype(shape)>;
+                                if (property == 2)
+                                {
+                                    if (write)
+                                        shape.Offset.Position = Vector(*v);
+                                    else
+                                        Vector(*v, shape.Offset.Position);
+                                }
+                                else if (property == 3)
+                                {
+                                    if (write)
+                                        shape.Offset.Rotation = {v->W, v->X, v->Y, v->Z};
+                                    else
+                                    {
+                                        v->X = shape.Offset.Rotation.x;
+                                        v->Y = shape.Offset.Rotation.y;
+                                        v->Z = shape.Offset.Rotation.z;
+                                        v->W = shape.Offset.Rotation.w;
+                                    }
+                                }
+                                else if (property == 4)
+                                {
+                                    if (write)
+                                        shape.Offset.Scale = Vector(*v);
+                                    else
+                                        Vector(*v, shape.Offset.Scale);
+                                }
+                                else if constexpr (std::is_same_v<T, Physics::Plane>)
+                                {
+                                    if (property == 8)
+                                    {
+                                        if (write)
+                                            shape.Normal = Vector(*v);
+                                        else
+                                            Vector(*v, shape.Normal);
+                                    }
+                                    else
+                                        found = false;
+                                }
+                                else if (property == 5)
+                                {
+                                    if (write)
+                                        shape.Radius = v->X;
+                                    else
+                                        v->X = shape.Radius;
+                                }
+                                else if constexpr (std::is_same_v<T, Physics::Capsule>)
+                                {
+                                    if (property == 6)
+                                    {
+                                        if (write)
+                                            shape.HalfHeight = v->X;
+                                        else
+                                            v->X = shape.HalfHeight;
+                                    }
+                                    else if (property == 7)
+                                    {
+                                        if (write)
+                                        {
+                                            if (v->Integer < 0 || v->Integer > 2)
+                                                throw std::invalid_argument("Invalid axis");
+                                            shape.Direction = Physics::Axis(v->Integer);
+                                        }
+                                        else
+                                            v->Integer = int64_t(shape.Direction);
+                                    }
+                                    else
+                                        found = false;
+                                }
+                                else
+                                    found = false;
+                            },
+                            c.Shape);
+                        if (!found)
+                            return -1;
+                    }
+                    if (write)
+                    {
+                        PhysicsYaml::Encode(c);
+                        e.SetComponent<SpringBoneColliderComponent>(c);
+                    }
+                    return 1;
+                }
                 if (op >= 40 && op <= 43)
                 {
                     bool write    = bool(mode & 1024);

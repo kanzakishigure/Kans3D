@@ -12,6 +12,8 @@ namespace Kans
         private ScriptComponent m_Script;
         private CharacterControllerComponent m_CharacterController;
         private JointComponent m_Joint;
+        private SpringBoneComponent m_SpringBone;
+        private SpringBoneColliderComponent m_SpringBoneCollider;
 
         public Entity() : this(0) { }
         public Entity(ulong id)
@@ -24,6 +26,8 @@ namespace Kans
             m_Script = new ScriptComponent { Entity = this };
             m_CharacterController = new CharacterControllerComponent { Entity = this };
             m_Joint = new JointComponent { Entity = this };
+            m_SpringBone = new SpringBoneComponent { Entity = this };
+            m_SpringBoneCollider = new SpringBoneColliderComponent { Entity = this };
         }
 
         protected virtual void OnCreate() { }
@@ -110,6 +114,8 @@ namespace Kans
             if (typeof(T) == typeof(ScriptComponent)) return (T)(Component)m_Script;
             if (typeof(T) == typeof(CharacterController) || typeof(T) == typeof(CharacterControllerComponent)) return (T)(Component)m_CharacterController;
             if (typeof(T) == typeof(Joint) || typeof(T) == typeof(JointComponent)) return (T)(Component)m_Joint;
+            if (typeof(T) == typeof(SpringBone) || typeof(T) == typeof(SpringBoneComponent)) return (T)(Component)m_SpringBone;
+            if (typeof(T) == typeof(SpringBoneCollider) || typeof(T) == typeof(SpringBoneColliderComponent)) return (T)(Component)m_SpringBoneCollider;
             return new T { Entity = this };
         }
         public unsafe T AddComponent<T>() where T : Component, new()
@@ -136,6 +142,8 @@ namespace Kans
             (typeof(T) == typeof(SphereCollider) || typeof(T) == typeof(SphereColliderComponent)) ? ComponentIds.SphereColliderComponent :
             (typeof(T) == typeof(CapsuleCollider) || typeof(T) == typeof(CapsuleColliderComponent)) ? ComponentIds.CapsuleColliderComponent :
             (typeof(T) == typeof(MeshCollider) || typeof(T) == typeof(MeshColliderComponent)) ? ComponentIds.MeshColliderComponent :
+            (typeof(T) == typeof(SpringBone) || typeof(T) == typeof(SpringBoneComponent)) ? ComponentIds.SpringBoneComponent :
+            (typeof(T) == typeof(SpringBoneCollider) || typeof(T) == typeof(SpringBoneColliderComponent)) ? ComponentIds.SpringBoneColliderComponent :
             typeof(T) == typeof(TextComponent) ? ComponentIds.TextComponent :
             typeof(T) == typeof(SpriteRendererComponent) ? ComponentIds.SpriteRendererComponent :
             typeof(T) == typeof(UIScreenComponent) ? ComponentIds.UIScreenComponent :

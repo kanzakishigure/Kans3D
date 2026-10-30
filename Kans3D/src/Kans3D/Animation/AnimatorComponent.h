@@ -21,7 +21,9 @@ namespace Kans
         std::vector<UUID>                                JointEntities;
         std::vector<AnimationEventOccurrence>            Events; // Current update; references retained clip data.
         AnimationPose                                    PreviewPose;
+        AnimationPose                                    SpringPose;
         uint64_t                                         PoseVersion = 0;
+        uint64_t                                         LastSpringDiscontinuity = 0;
         std::optional<AssetError>                        LastError;
         AnimatorComponent() = default;
         AnimatorComponent(const AnimatorComponent&);

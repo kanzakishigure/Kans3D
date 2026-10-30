@@ -6,6 +6,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "Kans3D/Animation/AnimatorComponent.h"
 #include "Kans3D/Animation/DeformationComponents.h"
+#include "Kans3D/Animation/SpringBoneComponent.h"
 #include "Kans3D/Asset/Runtime/MeshData.h"
 #include "Kans3D/Asset/Runtime/ModelData.h"
 #include "Kans3D/Audio/AudioComponents.h"
@@ -192,6 +193,8 @@ namespace Kans
         std::optional<MeshColliderComponent>        MeshCollider;
         std::optional<GlobalWindComponent>          GlobalWind;
         std::optional<CharacterControllerComponent> CharacterController;
+        std::optional<SpringBoneComponent>          SpringBone;
+        std::optional<SpringBoneColliderComponent>  SpringBoneCollider;
         std::optional<JointComponent>               Joint;
         std::optional<UIScreenComponent>            UIScreen;
         std::optional<UIWorldComponent>             UIWorld;
@@ -204,7 +207,7 @@ namespace Kans
         {
             return !LocalTransform && Materials.empty() && !Removed && !RenderCustomDepth && !CustomStencil &&
                    !UIScreen && !UIWorld && !RigidBody && !BoxCollider && !SphereCollider && !CapsuleCollider &&
-                   !MeshCollider && !GlobalWind && !CharacterController && !Joint;
+                   !MeshCollider && !GlobalWind && !CharacterController && !Joint && !SpringBone && !SpringBoneCollider;
         }
     };
     struct PrefabNodeState
@@ -307,7 +310,9 @@ namespace Kans
     template<typename... Component>
     struct ComponentGroup
     {};
-    using AllComponents = ComponentGroup<RigidBodyComponent,
+    using AllComponents = ComponentGroup<SpringBoneComponent,
+                                         SpringBoneColliderComponent,
+                                         RigidBodyComponent,
                                          BoxColliderComponent,
                                          SphereColliderComponent,
                                          CapsuleColliderComponent,

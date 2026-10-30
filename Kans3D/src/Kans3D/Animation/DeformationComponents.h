@@ -41,6 +41,7 @@ namespace Kans
         Ref<const SkeletonAsset> SkeletonSource;
         Ref<SkinningPose>        SkinPose;
         AnimationPose            Pose;
+        AnimationPose            SpringPose;
         std::vector<UUID>        JointEntities;
         uint64_t                 PoseVersion = 0;
     };

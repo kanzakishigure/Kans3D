@@ -31,7 +31,8 @@ namespace Kans
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
                     x->second.CharacterController != y->second.CharacterController ||
-                    x->second.Joint != y->second.Joint ||
+                    x->second.Joint != y->second.Joint || x->second.SpringBone != y->second.SpringBone ||
+                    x->second.SpringBoneCollider != y->second.SpringBoneCollider ||
 
                     x->second.RenderCustomDepth != y->second.RenderCustomDepth ||
                     x->second.CustomStencil != y->second.CustomStencil ||
@@ -171,6 +172,13 @@ namespace Kans
                                     std::nullopt;
             change.GlobalWind = part.HasComponent<GlobalWindComponent>() ?
                                     std::optional<GlobalWindComponent>(part.GetComponent<GlobalWindComponent>()) :
+                                    std::nullopt;
+            change.SpringBoneCollider =
+                part.HasComponent<SpringBoneColliderComponent>() ?
+                    std::optional<SpringBoneColliderComponent>(part.GetComponent<SpringBoneColliderComponent>()) :
+                    std::nullopt;
+            change.SpringBone = part.HasComponent<SpringBoneComponent>() ?
+                                    std::optional<SpringBoneComponent>(part.GetComponent<SpringBoneComponent>()) :
                                     std::nullopt;
             change.UIScreen   = part.HasComponent<UIScreenComponent>() ?
                                     std::optional<UIScreenComponent>(part.GetComponent<UIScreenComponent>()) :
@@ -409,6 +417,24 @@ namespace Kans
             }
             else if (entity.HasComponent<GlobalWindComponent>())
                 entity.RemoveComponent<GlobalWindComponent>();
+            if (change != instance.Overrides.end() && change->second.SpringBone)
+            {
+                if (!entity.HasComponent<SpringBoneComponent>())
+                    entity.AddComponent<SpringBoneComponent>(*change->second.SpringBone);
+                else if (entity.GetComponent<SpringBoneComponent>() != *change->second.SpringBone)
+                    entity.SetComponent<SpringBoneComponent>(*change->second.SpringBone);
+            }
+            else if (entity.HasComponent<SpringBoneComponent>())
+                entity.RemoveComponent<SpringBoneComponent>();
+            if (change != instance.Overrides.end() && change->second.SpringBoneCollider)
+            {
+                if (!entity.HasComponent<SpringBoneColliderComponent>())
+                    entity.AddComponent<SpringBoneColliderComponent>(*change->second.SpringBoneCollider);
+                else if (entity.GetComponent<SpringBoneColliderComponent>() != *change->second.SpringBoneCollider)
+                    entity.SetComponent<SpringBoneColliderComponent>(*change->second.SpringBoneCollider);
+            }
+            else if (entity.HasComponent<SpringBoneColliderComponent>())
+                entity.RemoveComponent<SpringBoneColliderComponent>();
             if (change != instance.Overrides.end() && change->second.UIScreen)
             {
                 if (!entity.HasComponent<UIScreenComponent>())

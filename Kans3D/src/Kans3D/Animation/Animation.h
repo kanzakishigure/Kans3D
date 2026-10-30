@@ -163,6 +163,7 @@ namespace Kans
         const std::vector<std::string>& GetIKWarnings() const { return m_IKWarnings; }
         bool                            HasIK() const { return !m_TwoBone.empty() || !m_LookAt.empty(); }
         void                            RebuildPose();
+        uint64_t                        DiscontinuityVersion = 0;
         bool EvaluateControllerIK = true; // Legacy standalone CPU API only; scene uses IKComponent.
         std::map<std::string, float> BaseShapeKeyWeights;
         bool   ExtractRootMotion = false; // Removes sampled root T/R from pose; caller applies GetRootMotion().

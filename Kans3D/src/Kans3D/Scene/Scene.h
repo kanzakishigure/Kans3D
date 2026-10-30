@@ -29,6 +29,8 @@ namespace Kans
     struct MeshMaterialSlot;
     class Entity;
     class PhysicsWorld;
+    struct SpringBoneJointState;
+    struct SpringBoneUpdateCache;
     class DebugDraw;
     struct PhysicsSettings;
     struct SceneSnapshot;
@@ -116,9 +118,19 @@ namespace Kans
                                                       const struct AnimationPose&,
                                                       const std::vector<UUID>& joints,
                                                       Ref<struct SkinningPose>&,
-                                                      uint64_t& version);
+                                                      uint64_t& version,
+                                                      bool      writeTransforms = true);
         void                           ResetAnimator(Entity root);
-        void                           UpdatePrefabs(AssetManager& assets)
+        void                           UpdateSpringBones(double seconds);
+        void                           ResetSecondaryMotion(Entity scope);
+        void                        ResetSecondaryMotion(); // Shared discontinuity hook for secondary-motion solvers.
+        void                        SetSpringBonePreviewEnabled(bool);
+        bool                        IsSpringBonePreviewEnabled() const { return m_SpringBonePreview; }
+        const SpringBoneJointState* GetSpringBoneJointState(Entity, size_t chain, size_t joint) const;
+        double                      GetSpringBoneInterpolationAlpha(Entity) const;
+        uint64_t                    GetSpringBoneSubstepCount(Entity) const;
+        glm::mat4                   GetSpringBoneRenderTransform(Entity) const;
+        void                        UpdatePrefabs(AssetManager& assets)
         {
             SetPrefabAssetManager(&assets);
             UpdatePrefabs();
@@ -256,15 +268,22 @@ namespace Kans
         void OnPhysicsTransformChanged(entt::registry&, entt::entity);
         void OnPhysicsPrefabChanged(entt::registry&, entt::entity);
         // P2: dispatch script OnFixedUpdate here, before PhysicsWorld::Step.
-        void                          DispatchFixedUpdate(double seconds);
-        void                          UpdatePhysics(double seconds);
-        std::unique_ptr<PhysicsWorld> m_PhysicsWorld;
-        double                        m_PhysicsAccumulator = 0;
-        bool m_PhysicsPaused = false, m_PhysicsSingleStep = false, m_PhysicsWritingTransforms = false;
-        SceneRuntimeOptions           m_RuntimeOptions;
-        PhysicsDebugFlags             m_PhysicsDebugView = PhysicsDebugFlags::None;
-        void OnRenderComponentChanged(entt::registry&, entt::entity entity);
-        void OnEditableMeshChanged(entt::registry&, entt::entity entity);
+        void                                    DispatchFixedUpdate(double seconds);
+        void                                    UpdatePhysics(double seconds);
+        void                                    RestoreSpringBoneTransforms();
+        bool                                    m_SpringBonePreview = false;
+        std::vector<std::pair<UUID, glm::quat>> m_SpringRenderRotations;
+        glm::mat4                               SpringBoneRenderLocal(Entity) const;
+        void                                    OnSpringBoneRemoved(entt::registry&, entt::entity);
+        Ref<SpringBoneUpdateCache>              m_SpringBoneUpdate;
+        uint64_t                                m_SecondaryMotionResetEpoch = 1;
+        std::unique_ptr<PhysicsWorld>           m_PhysicsWorld;
+        double                                  m_PhysicsAccumulator = 0;
+        bool                m_PhysicsPaused = false, m_PhysicsSingleStep = false, m_PhysicsWritingTransforms = false;
+        SceneRuntimeOptions m_RuntimeOptions;
+        PhysicsDebugFlags   m_PhysicsDebugView = PhysicsDebugFlags::None;
+        void                OnRenderComponentChanged(entt::registry&, entt::entity entity);
+        void                OnEditableMeshChanged(entt::registry&, entt::entity entity);
         mutable std::unordered_map<entt::entity, Ref<const RuntimeMesh>>              m_EditableMeshes;
         mutable std::unordered_map<entt::entity, std::shared_ptr<const EditableMesh>> m_EditableSources;
         mutable uint64_t                                                              m_EditableMeshBuildCount = 0;

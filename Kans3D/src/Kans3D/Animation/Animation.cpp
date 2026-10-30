@@ -441,6 +441,7 @@ namespace Kans
         if (!IsPrepared() || layer >= m_Status.size() || state >= m_Controller->Layers[layer].States.size() ||
             !std::isfinite(time))
             return false;
+        ++DiscontinuityVersion;
         auto& s = m_Status[layer];
         s       = {};
         s.State = s.Target      = state;

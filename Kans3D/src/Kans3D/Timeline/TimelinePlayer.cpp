@@ -12,6 +12,24 @@ namespace Kans
 {
     namespace
     {
+        void ResetBoundSecondaryMotion(Scene&                             scene,
+                                       const TimelinePlayerComponent*     component,
+                                       const TimelineData*                data,
+                                       const std::map<std::string, UUID>& spawned)
+        {
+            const bool bound =
+                (component && !component->Bindings.empty()) || (data && !data->Bindings.empty()) || !spawned.empty();
+            if (!bound)
+            {
+                scene.ResetSecondaryMotion();
+                return;
+            }
+            if (component)
+                for (const auto& [binding, id] : component->Bindings)
+                    scene.ResetSecondaryMotion(scene.GetEntityByUUID(id));
+            for (const auto& [binding, id] : spawned)
+                scene.ResetSecondaryMotion(scene.GetEntityByUUID(id));
+        }
         AnimatorComponent RuntimeCopy(const AnimatorComponent& a)
         {
             AnimatorComponent b(a);
@@ -572,6 +590,8 @@ namespace Kans
     {
         if (!std::isfinite(t))
             return Fail("non-finite evaluation time");
+        if (!m_State || !m_State->LiveAdvance)
+            ResetBoundSecondaryMotion(m_Scene, Component(), m_Source ? &m_Source->GetData() : nullptr, m_Spawned);
         if (!CaptureBoundState())
             return false;
         m_Error.reset();
@@ -837,6 +857,8 @@ namespace Kans
     {
         if (!std::isfinite(time) || !m_Source)
             return false;
+        if (m_State && m_State->LiveAdvance)
+            ResetBoundSecondaryMotion(m_Scene, Component(), &m_Source->GetData(), m_Spawned);
         double to = std::clamp(time, 0.0, m_Source->GetData().Length), from = m_Time;
         if (!Evaluate(to))
             return false;

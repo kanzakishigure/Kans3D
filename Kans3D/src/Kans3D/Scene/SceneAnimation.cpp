@@ -192,6 +192,7 @@ namespace Kans
     {
         if (root && root.HasComponent<AnimatorComponent>())
         {
+            ResetSecondaryMotion(root);
             auto& a = root.GetComponent<AnimatorComponent>();
             a.Player.reset();
             a.ControllerSource.reset();
@@ -233,7 +234,8 @@ namespace Kans
                                const AnimationPose&     pose,
                                const std::vector<UUID>& joints,
                                Ref<SkinningPose>&       skinPose,
-                               uint64_t&                version)
+                               uint64_t&                version,
+                               bool                     writeTransforms)
     {
         const bool catalogChanged =
             skinPose && (skinPose->ShapeKeys.size() != skeleton.ShapeKeys.size() ||
@@ -246,7 +248,7 @@ namespace Kans
         skinPose->ShapeKeys = skeleton.ShapeKeys;
         const bool old      = m_ReconcilingPrefab;
         m_ReconcilingPrefab = true;
-        for (size_t j = 0; j < joints.size() && j < pose.Local.size(); ++j)
+        for (size_t j = 0; writeTransforms && j < joints.size() && j < pose.Local.size(); ++j)
         {
             auto bone = GetEntityByUUID(joints[j]);
             if (!bone)
@@ -321,7 +323,13 @@ namespace Kans
             for (auto id : entity.GetComponent<RelationshipComponent>().Children)
                 if (auto child = GetEntityByUUID(id))
                 {
-                    const auto local         = child.GetComponent<TransformComponent>().GetTransform();
+                    auto local = child.GetComponent<TransformComponent>().GetTransform();
+                    if (!writeTransforms)
+                    {
+                        const auto found = std::find(joints.begin(), joints.end(), child.GetUUID());
+                        if (found != joints.end())
+                            local = pose.Local[size_t(found - joints.begin())].Matrix();
+                    }
                     const auto childRelative = relative * local;
                     // Owned bones use root * model grouping; ordinary attachments use parentWorld * local,
                     // exactly as GetWorldTransform does (also preserving byte-exact cached validation).
@@ -387,6 +395,11 @@ namespace Kans
             if (ScriptEngine::GetSceneContext() == this)
                 for (const auto& event : a.Events)
                     ScriptAnimation::Queue(root.GetUUID(), event);
+            if (a.LastSpringDiscontinuity != a.Player->DiscontinuityVersion)
+            {
+                a.LastSpringDiscontinuity = a.Player->DiscontinuityVersion;
+                ResetSecondaryMotion(root);
+            }
             ApplyAnimatorPose(root, a.Player->GetPose());
         }
         UpdateModelPoses();
@@ -394,6 +407,8 @@ namespace Kans
     }
     bool Scene::PreviewAnimation(Entity root, size_t layer, uint32_t state, double time)
     {
+        RestoreSpringBoneTransforms();
+        ResetSecondaryMotion(root);
         if (!PrepareAnimator(root))
             return false;
         auto& a = root.GetComponent<AnimatorComponent>();

@@ -804,6 +804,10 @@ namespace Kans
                     item["JointComponent"] = PhysicsYaml::Encode(*change.Joint);
                 if (change.GlobalWind)
                     item["GlobalWindComponent"] = PhysicsYaml::Encode(*change.GlobalWind);
+                if (change.SpringBoneCollider)
+                    item["SpringBoneColliderComponent"] = PhysicsYaml::Encode(*change.SpringBoneCollider);
+                if (change.SpringBone)
+                    item["SpringBoneComponent"] = PhysicsYaml::Encode(*change.SpringBone);
                 if (change.UIScreen)
                     item["UIScreen"] = EncodeUIScreen(*change.UIScreen);
                 if (change.UIWorld)
@@ -849,6 +853,8 @@ namespace Kans
                       "CapsuleColliderComponent",
                       "MeshColliderComponent",
                       "GlobalWindComponent",
+                      "SpringBoneColliderComponent",
+                      "SpringBoneComponent",
                       "CharacterControllerComponent",
                       "JointComponent",
                       "UIScreen",
@@ -904,6 +910,18 @@ namespace Kans
                     GlobalWindComponent c;
                     PhysicsYaml::Decode(item["GlobalWindComponent"], c);
                     change.GlobalWind = c;
+                }
+                if (item["SpringBoneColliderComponent"])
+                {
+                    SpringBoneColliderComponent c;
+                    PhysicsYaml::Decode(item["SpringBoneColliderComponent"], c);
+                    change.SpringBoneCollider = c;
+                }
+                if (item["SpringBoneComponent"])
+                {
+                    SpringBoneComponent c;
+                    PhysicsYaml::Decode(item["SpringBoneComponent"], c);
+                    change.SpringBone = c;
                 }
                 if (item["UIScreen"])
                     change.UIScreen = DecodeUIScreen(item["UIScreen"]);
@@ -1112,6 +1130,11 @@ namespace Kans
                 node["JointComponent"] = PhysicsYaml::Encode(entity.GetComponent<JointComponent>());
             if (entity.HasComponent<GlobalWindComponent>())
                 node["GlobalWindComponent"] = PhysicsYaml::Encode(entity.GetComponent<GlobalWindComponent>());
+            if (entity.HasComponent<SpringBoneColliderComponent>())
+                node["SpringBoneColliderComponent"] =
+                    PhysicsYaml::Encode(entity.GetComponent<SpringBoneColliderComponent>());
+            if (entity.HasComponent<SpringBoneComponent>())
+                node["SpringBoneComponent"] = PhysicsYaml::Encode(entity.GetComponent<SpringBoneComponent>());
             if (entity.HasComponent<AudioSourceComponent>())
             {
                 const auto& c       = entity.GetComponent<AudioSourceComponent>();
@@ -1492,6 +1515,8 @@ namespace Kans
                       "CapsuleColliderComponent",
                       "MeshColliderComponent",
                       "GlobalWindComponent",
+                      "SpringBoneColliderComponent",
+                      "SpringBoneComponent",
                       "CharacterControllerComponent",
                       "JointComponent",
                       "AudioSourceComponent",
@@ -1595,6 +1620,18 @@ namespace Kans
                     GlobalWindComponent c;
                     PhysicsYaml::Decode(node["GlobalWindComponent"], c);
                     entity.AddComponent<GlobalWindComponent>(c);
+                }
+                if (node["SpringBoneColliderComponent"])
+                {
+                    SpringBoneColliderComponent c;
+                    PhysicsYaml::Decode(node["SpringBoneColliderComponent"], c);
+                    entity.AddComponent<SpringBoneColliderComponent>(c);
+                }
+                if (node["SpringBoneComponent"])
+                {
+                    SpringBoneComponent c;
+                    PhysicsYaml::Decode(node["SpringBoneComponent"], c);
+                    entity.AddComponent<SpringBoneComponent>(c);
                 }
                 if (node["AudioSourceComponent"])
                     entity.AddComponent<AudioSourceComponent>(DecodeAudioSource(node["AudioSourceComponent"]));
