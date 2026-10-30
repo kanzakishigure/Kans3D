@@ -34,13 +34,14 @@ namespace Kans
             !SolverPositionIterations || SolverPositionIterations > 255 || !SolverVelocityIterations ||
             SolverVelocityIterations > 255 || !std::isfinite(Gravity.x) || !std::isfinite(Gravity.y) ||
             !std::isfinite(Gravity.z) || !std::isfinite(BounceThreshold) || BounceThreshold < 0 ||
-            !std::isfinite(SleepThreshold) || SleepThreshold < 0 || WorkerThreads > 64)
+            !std::isfinite(SleepThreshold) || SleepThreshold < 0 || WorkerThreads > 64 || !MaxContactsPerPair ||
+            MaxContactsPerPair > 4096)
             throw std::invalid_argument("Invalid PhysicsSettings");
         const auto& material = DefaultMaterial;
         if (!std::isfinite(material.StaticFriction) || !std::isfinite(material.DynamicFriction) ||
             !std::isfinite(material.Restitution) || material.StaticFriction < 0 || material.DynamicFriction < 0 ||
             material.Restitution < 0 || material.Restitution > 1 || uint32_t(material.FrictionCombine) > 3 ||
-            uint32_t(material.RestitutionCombine) > 3 || (uint32_t(DebugDraw) & ~7u))
+            uint32_t(material.RestitutionCombine) > 3 || (uint32_t(DebugDraw) & ~15u))
             throw std::invalid_argument("Invalid default physics material/debug flags");
         for (uint32_t a = 0; a < 32; ++a)
             for (uint32_t b = a; b < 32; ++b)

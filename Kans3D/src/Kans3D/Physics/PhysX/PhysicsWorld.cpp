@@ -10,9 +10,11 @@
 #include <extensions/PxDefaultCpuDispatcher.h>
 #include <extensions/PxRigidBodyExt.h>
 #include "Kans3D/Asset/Manager/AssetManager.h"
+#include "Kans3D/Physics/PhysicsMaterial.h"
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Renderer/Resource/MeshKey.h"
 #include "Kans3D/Scene/Entity.h"
+#include "Kans3D/Script/ScriptEngine.h"
 
 namespace Kans
 {
@@ -29,14 +31,25 @@ namespace Kans
                              PxFilterObjectAttributes b,
                              PxFilterData             y,
                              PxPairFlags&             flags,
-                             const void*,
-                             PxU32)
+                             const void*              settings,
+                             PxU32                    settingsSize)
         {
+            const bool passiveA =
+                PxGetFilterObjectType(a) == PxFilterObjectType::eRIGID_STATIC || PxFilterObjectIsKinematic(a);
+            const bool passiveB =
+                PxGetFilterObjectType(b) == PxFilterObjectType::eRIGID_STATIC || PxFilterObjectIsKinematic(b);
+            if (passiveA && passiveB && (settingsSize != sizeof(bool) || !*static_cast<const bool*>(settings)))
+                return PxFilterFlag::eSUPPRESS;
             if (!(x.word0 & y.word1) || !(y.word0 & x.word1))
                 return PxFilterFlag::eSUPPRESS;
             flags = PxFilterObjectIsTrigger(a) || PxFilterObjectIsTrigger(b) ?
                         PxPairFlags(PxPairFlag::eTRIGGER_DEFAULT) :
-                        PxPairFlags(PxPairFlag::eCONTACT_DEFAULT | PxPairFlag::eDETECT_CCD_CONTACT);
+                        PxPairFlags(PxPairFlag::eCONTACT_DEFAULT | PxPairFlag::eDETECT_CCD_CONTACT |
+                                    PxPairFlag::eNOTIFY_TOUCH_FOUND | PxPairFlag::eNOTIFY_TOUCH_PERSISTS |
+                                    PxPairFlag::eNOTIFY_TOUCH_LOST | PxPairFlag::eNOTIFY_CONTACT_POINTS |
+                                    PxPairFlag::ePRE_SOLVER_VELOCITY | PxPairFlag::eCONTACT_EVENT_POSE);
+            if (passiveA && passiveB)
+                flags &= ~PxPairFlags(PxPairFlag::eSOLVE_CONTACT);
             return PxFilterFlag::eDEFAULT;
         }
         struct Errors : PxErrorCallback
@@ -129,7 +142,7 @@ namespace Kans
             return key;
         }
     } // namespace
-    struct PhysicsWorld::Impl
+    struct PhysicsWorld::Impl : PxSimulationEventCallback
     {
         struct Body
         {
@@ -138,7 +151,7 @@ namespace Kans
             PxTransform        Previous {PxIdentity}, Current {PxIdentity}, Authored {PxIdentity};
             glm::vec3          Scale {1};
             RigidBodyComponent Settings;
-            bool               Explicit = false, HasTriangleMesh = false;
+            bool               Explicit = false, HasTriangleMesh = false, ReconcileSleeping = false;
         };
         Scene&                  Owner;
         PhysicsSettings         Settings;
@@ -178,6 +191,295 @@ namespace Kans
         std::vector<std::string>          Errors;
         std::set<std::string>             Reported;
         double                            Time = 0;
+        struct SharedMaterial
+        {
+            PxMaterial* Material = nullptr;
+        };
+        std::map<AssetID, SharedMaterial> Materials;
+        struct Listeners
+        {
+            uint64_t                                                         Next = 0;
+            std::map<uint64_t, std::function<void(const PhysicsPairEvent&)>> Collision, Trigger;
+        };
+        std::shared_ptr<Listeners> Subscribers = std::make_shared<Listeners>();
+        using ShapeKey                         = std::array<uint64_t, 6>; // body A/B, collider A/B, shape kind A/B
+        using BodyKey                          = std::pair<UUID, UUID>;
+        std::mutex                                EventMutex;
+        std::map<ShapeKey, PhysicsPairEvent>      ContactPairs, TriggerPairs;
+        std::map<BodyKey, PhysicsPairEvent>       PreviousContacts, PreviousTriggers;
+        std::map<UUID, std::pair<PxVec3, PxVec3>> StepVelocities;
+        std::map<UUID, PxTransform>               KinematicTargets;
+        bool                                      Dispatching = false;
+        std::vector<std::function<void()>>        Commands;
+        static UUID     Identity(const void* p) { return UUID(uint64_t(reinterpret_cast<uintptr_t>(p))); }
+        static ShapeKey Key(PxActor* a, PxActor* b, PxShape* x, PxShape* y)
+        {
+            ShapeKey key {uint64_t(Identity(a->userData)),
+                          uint64_t(Identity(b->userData)),
+                          uint64_t(Identity(x->userData)),
+                          uint64_t(Identity(y->userData)),
+                          x->getQueryFilterData().word2,
+                          y->getQueryFilterData().word2};
+            if (key[0] > key[1])
+            {
+                std::swap(key[0], key[1]);
+                std::swap(key[2], key[3]);
+                std::swap(key[4], key[5]);
+            }
+            return key;
+        }
+        static PhysicsPairEvent Pair(const ShapeKey& key)
+        {
+            PhysicsPairEvent e;
+            e.BodyA     = key[0];
+            e.BodyB     = key[1];
+            e.ColliderA = key[2];
+            e.ColliderB = key[3];
+            return e;
+        }
+        void onConstraintBreak(PxConstraintInfo*, PxU32) override {}
+        void onWake(PxActor**, PxU32) override {}
+        void onSleep(PxActor**, PxU32) override {}
+        void onAdvance(const PxRigidBody* const*, const PxTransform*, PxU32) override {}
+        void onContact(const PxContactPairHeader& header, const PxContactPair* pairs, PxU32 count) override
+        {
+            // Removed SDK objects are never dereferenced. RebuildBody already invalidates their shape pairs.
+            if (header.flags & (PxContactPairHeaderFlag::eREMOVED_ACTOR_0 | PxContactPairHeaderFlag::eREMOVED_ACTOR_1))
+                return;
+            std::lock_guard lock(EventMutex);
+            for (PxU32 i = 0; i < count; ++i)
+            {
+                const auto& p = pairs[i];
+                if (p.flags & (PxContactPairFlag::eREMOVED_SHAPE_0 | PxContactPairFlag::eREMOVED_SHAPE_1))
+                    continue;
+                auto key = Key(header.actors[0], header.actors[1], p.shapes[0], p.shapes[1]);
+                if (p.events & PxPairFlag::eNOTIFY_TOUCH_LOST)
+                {
+                    ContactPairs.erase(key);
+                    continue;
+                }
+                auto                            e       = Pair(key);
+                bool                            reverse = uint64_t(Identity(header.actors[0]->userData)) != key[0];
+                std::vector<PxContactPairPoint> points(p.contactCount);
+                auto                            n         = p.extractContacts(points.data(), PxU32(points.size()));
+                const PxContactPairVelocity*    pre       = nullptr;
+                const PxContactPairPose*        eventPose = nullptr;
+                PxContactPairExtraDataIterator  extra(header.extraDataStream, header.extraDataStreamSize);
+                while (extra.nextItemSet())
+                {
+                    if (extra.contactPairIndex > i)
+                        break;
+                    if (extra.preSolverVelocity)
+                        pre = extra.preSolverVelocity;
+                    if (extra.eventPose)
+                        eventPose = extra.eventPose;
+                }
+                const auto velocity = [&](unsigned index, PxVec3 point) {
+                    auto id = Identity(header.actors[index]->userData);
+                    auto b  = Bodies.find(id);
+                    if (b == Bodies.end())
+                        return PxVec3(0);
+                    auto*  d        = b->second.Actor->is<PxRigidBody>();
+                    auto   pose     = eventPose ? eventPose->globalPose[index] : b->second.Current;
+                    auto   center   = d ? (pose * d->getCMassLocalPose()).p : pose.p;
+                    auto   fallback = StepVelocities.find(id);
+                    PxVec3 linear   = pre                              ? pre->linearVelocity[index] :
+                                      fallback == StepVelocities.end() ? PxVec3(0) :
+                                                                         fallback->second.first;
+                    PxVec3 angular  = pre                              ? pre->angularVelocity[index] :
+                                      fallback == StepVelocities.end() ? PxVec3(0) :
+                                                                         fallback->second.second;
+                    return linear + angular.cross(point - center);
+                };
+                if (n)
+                    e.RelativeVelocity =
+                        Gl(velocity(0, points[0].position) - velocity(1, points[0].position)) * (reverse ? -1.f : 1.f);
+                for (PxU32 c = 0; c < n; ++c)
+                {
+                    auto normal  = Gl(points[c].normal) * (reverse ? -1.f : 1.f);
+                    auto impulse = Gl(points[c].impulse) * (reverse ? -1.f : 1.f);
+                    e.TotalImpulse += impulse;
+                    if (e.Contacts.size() < Settings.MaxContactsPerPair)
+                        e.Contacts.push_back(
+                            {Gl(points[c].position), normal, impulse, points[c].separation, e.ColliderA, e.ColliderB});
+                }
+                ContactPairs[key] = std::move(e);
+            }
+        }
+        void onTrigger(PxTriggerPair* pairs, PxU32 count) override
+        {
+            std::lock_guard lock(EventMutex);
+            for (PxU32 i = 0; i < count; ++i)
+            {
+                auto& p = pairs[i];
+                if (p.flags & (PxTriggerPairFlag::eREMOVED_SHAPE_TRIGGER | PxTriggerPairFlag::eREMOVED_SHAPE_OTHER))
+                    continue;
+                auto key = Key(p.triggerActor, p.otherActor, p.triggerShape, p.otherShape);
+                if (p.status & PxPairFlag::eNOTIFY_TOUCH_LOST)
+                    TriggerPairs.erase(key);
+                else
+                    TriggerPairs[key] = Pair(key);
+            }
+        }
+        void InvalidatePairs(UUID id)
+        {
+            for (auto* pairs : {&ContactPairs, &TriggerPairs})
+                for (auto it = pairs->begin(); it != pairs->end();)
+                    if (it->first[0] == uint64_t(id) || it->first[1] == uint64_t(id))
+                        it = pairs->erase(it);
+                    else
+                        ++it;
+        }
+        bool Alive(UUID id) const
+        {
+            auto e = Owner.GetEntityByUUID(id);
+            return Valid(e) && Owner.IsEntityActive(e);
+        }
+        void DispatchPairs(bool trigger)
+        {
+            const auto&                         shapes   = trigger ? TriggerPairs : ContactPairs;
+            auto&                               previous = trigger ? PreviousTriggers : PreviousContacts;
+            std::map<BodyKey, PhysicsPairEvent> current;
+            for (const auto& [key, pair] : shapes)
+            {
+                if (!Alive(pair.BodyA) || !Alive(pair.BodyB) || !Alive(pair.ColliderA) || !Alive(pair.ColliderB))
+                    continue;
+                auto [it, inserted] = current.try_emplace({pair.BodyA, pair.BodyB}, pair);
+                auto& e             = it->second;
+                if (inserted)
+                {
+                    e.Contacts.clear();
+                    e.TotalImpulse = {};
+                }
+                e.Colliders.emplace_back(pair.ColliderA, pair.ColliderB);
+                e.TotalImpulse += pair.TotalImpulse;
+                for (const auto& c : pair.Contacts)
+                    if (e.Contacts.size() < Settings.MaxContactsPerPair)
+                        e.Contacts.push_back(c);
+            }
+            std::vector<PhysicsPairEvent> events;
+            for (auto& [key, e] : current)
+            {
+                auto old = previous.find(key);
+                e.Phase  = old == previous.end() ? PhysicsEventPhase::Enter : PhysicsEventPhase::Stay;
+                if (old != previous.end())
+                    e.RelativeVelocity = old->second.RelativeVelocity;
+                std::sort(e.Colliders.begin(), e.Colliders.end());
+                e.Colliders.erase(std::unique(e.Colliders.begin(), e.Colliders.end()), e.Colliders.end());
+                events.push_back(e);
+            }
+            for (const auto& [key, pair] : previous)
+                if (!current.count(key))
+                {
+                    auto e  = pair;
+                    e.Phase = PhysicsEventPhase::Exit;
+                    e.Contacts.clear();
+                    e.TotalImpulse = {};
+                    e.Removed      = !Alive(e.BodyA) || !Alive(e.BodyB);
+                    for (auto [a, b] : e.Colliders)
+                        e.Removed |= !Alive(a) || !Alive(b) || !ColliderOwners.count(a) || !ColliderOwners.count(b);
+                    events.push_back(std::move(e));
+                }
+            previous                        = std::move(current);
+            auto&                 listeners = trigger ? Subscribers->Trigger : Subscribers->Collision;
+            std::vector<uint64_t> order;
+            for (auto& [id, f] : listeners)
+                order.push_back(id);
+            for (const auto& e : events)
+            {
+                // Global subscribers receive identities (including removed IDs). Per-entity scripting validates every
+                // recipient.
+                for (auto id : order)
+                    if (auto it = listeners.find(id); it != listeners.end())
+                    {
+                        auto f = it->second;
+                        f(e);
+                    }
+                ScriptEngine::OnPhysicsEvent(Owner, e, trigger);
+            }
+        }
+        void UpdateMaterial(AssetID id, PxMaterial* material)
+        {
+            auto values = Settings.DefaultMaterial;
+            bool loaded = false;
+            if (auto* assets = Owner.GetAssetManager())
+            {
+                auto result = assets->Load<PhysicsMaterialAsset>(id);
+                if (auto a = std::get_if<Ref<const PhysicsMaterialAsset>>(&result); a && *a && (*a)->IsValid())
+                {
+                    values = (*a)->GetData();
+                    loaded = true;
+                }
+            }
+            if (!loaded)
+                Error(0, "Physics material unavailable: " + id.ToString());
+            bool changed = material->getStaticFriction() != values.StaticFriction ||
+                           material->getDynamicFriction() != values.DynamicFriction ||
+                           material->getRestitution() != values.Restitution ||
+                           material->getFrictionCombineMode() != PxCombineMode::Enum(values.FrictionCombine) ||
+                           material->getRestitutionCombineMode() != PxCombineMode::Enum(values.RestitutionCombine);
+            material->setStaticFriction(values.StaticFriction);
+            material->setDynamicFriction(values.DynamicFriction);
+            material->setRestitution(values.Restitution);
+            material->setFrictionCombineMode(PxCombineMode::Enum(values.FrictionCombine));
+            material->setRestitutionCombineMode(PxCombineMode::Enum(values.RestitutionCombine));
+            if (changed)
+            {
+                std::set<UUID> users;
+                for (auto& [bodyID, body] : Bodies)
+                {
+                    std::vector<PxShape*> shapes(body.Actor->getNbShapes());
+                    body.Actor->getShapes(shapes.data(), PxU32(shapes.size()));
+                    for (auto* shape : shapes)
+                    {
+                        PxMaterial* m = nullptr;
+                        if (shape->getMaterials(&m, 1) && m == material)
+                        {
+                            users.insert(bodyID);
+                            break;
+                        }
+                    }
+                }
+                auto affected = users;
+                for (const auto& [key, pair] : ContactPairs)
+                    if (users.count(pair.BodyA) || users.count(pair.BodyB))
+                    {
+                        affected.insert(pair.BodyA);
+                        affected.insert(pair.BodyB);
+                    }
+                for (auto id : affected)
+                    if (auto b = Bodies.find(id);
+                        b != Bodies.end() && b->second.Settings.Type == RigidBodyType::Dynamic)
+                        if (auto* d = b->second.Actor->is<PxRigidDynamic>())
+                            d->wakeUp();
+            }
+        }
+        PxMaterial* Material(const ColliderMaterial& c)
+        {
+            if (c.Asset.IsValid())
+            {
+                auto [it, inserted] = Materials.try_emplace(c.Asset);
+                if (inserted)
+                {
+                    const auto& d = Settings.DefaultMaterial;
+                    it->second.Material =
+                        Sdk().Physics->createMaterial(d.StaticFriction, d.DynamicFriction, d.Restitution);
+                    UpdateMaterial(c.Asset, it->second.Material);
+                }
+                it->second.Material->acquireReference();
+                return it->second.Material;
+            }
+            const auto& m = c.UseDefault ? Settings.DefaultMaterial : c.Values;
+            if (std::holds_alternative<AssetError>(ValidatePhysicsMaterial(m)))
+                return nullptr;
+            auto* material = Sdk().Physics->createMaterial(m.StaticFriction, m.DynamicFriction, m.Restitution);
+            if (material)
+            {
+                material->setFrictionCombineMode(PxCombineMode::Enum(m.FrictionCombine));
+                material->setRestitutionCombineMode(PxCombineMode::Enum(m.RestitutionCombine));
+            }
+            return material;
+        }
         Impl(Scene& owner, PhysicsSettings settings) : Owner(owner), Settings(std::move(settings))
         {
             Settings.Validate();
@@ -186,11 +488,20 @@ namespace Kans
             sdk.Init();
             Dispatcher = PxDefaultCpuDispatcherCreate(Settings.WorkerThreads);
             PxSceneDesc desc(sdk.Physics->getTolerancesScale());
-            desc.gravity       = Px(Settings.Gravity);
-            desc.cpuDispatcher = Dispatcher;
-            desc.filterShader  = Filter;
+            desc.gravity                 = Px(Settings.Gravity);
+            desc.cpuDispatcher           = Dispatcher;
+            desc.filterShader            = Filter;
+            desc.filterShaderData        = &Settings.EnableKinematicPairs;
+            desc.filterShaderDataSize    = sizeof(Settings.EnableKinematicPairs);
+            desc.simulationEventCallback = this;
+            if (Settings.EnableKinematicPairs)
+            {
+                desc.kineKineFilteringMode   = PxPairFilteringMode::eKEEP;
+                desc.staticKineFilteringMode = PxPairFilteringMode::eKEEP;
+            }
             desc.flags |= PxSceneFlag::eENABLE_CCD;
-            desc.bounceThresholdVelocity = Settings.BounceThreshold;
+            // PhysX requires a positive threshold; zero is the engine's valid "bounce at any speed" value.
+            desc.bounceThresholdVelocity = std::max(Settings.BounceThreshold, std::numeric_limits<float>::min());
             World                        = sdk.Physics->createScene(desc);
             if (!World)
             {
@@ -203,6 +514,8 @@ namespace Kans
         {
             std::lock_guard lock(SdkMutex());
             Clear();
+            for (auto& [id, m] : Materials)
+                m.Material->release();
             World->release();
             Dispatcher->release();
             --Sdk().Worlds;
@@ -419,15 +732,12 @@ namespace Kans
                 descriptor);
             if (!valid)
                 return;
-            const auto& m = properties.Material.UseDefault ? Settings.DefaultMaterial : properties.Material.Values;
-            auto*       material = sdk.Physics->createMaterial(m.StaticFriction, m.DynamicFriction, m.Restitution);
+            auto* material = Material(properties.Material);
             if (!material)
             {
                 Error(entity.GetUUID(), "Invalid collider material");
                 return;
             }
-            material->setFrictionCombineMode(PxCombineMode::Enum(m.FrictionCombine));
-            material->setRestitutionCombineMode(PxCombineMode::Enum(m.RestitutionCombine));
             auto flags = PxShapeFlag::eSCENE_QUERY_SHAPE |
                          (properties.IsTrigger ? PxShapeFlag::eTRIGGER_SHAPE : PxShapeFlag::eSIMULATION_SHAPE);
             if (properties.IsTrigger && geometry.getType() == PxGeometryType::eTRIANGLEMESH)
@@ -443,6 +753,7 @@ namespace Kans
                 Error(entity.GetUUID(), "Invalid collider geometry");
                 return;
             }
+            shape->userData = reinterpret_cast<void*>(uintptr_t(uint64_t(entity.GetUUID())));
             shape->setLocalPose(body.Authored.getInverse() * worldPose);
             uint32_t layer = properties.Layer.value_or(body.Settings.Layer);
             if (layer >= 32)
@@ -451,7 +762,7 @@ namespace Kans
                 Error(entity.GetUUID(), "Physics layer must be 0..31");
                 return;
             }
-            PxFilterData filter(1u << layer, Settings.CollisionMatrix[layer], 0, 0);
+            PxFilterData filter(1u << layer, Settings.CollisionMatrix[layer], uint32_t(descriptor.index()), 0);
             shape->setSimulationFilterData(filter);
             shape->setQueryFilterData(filter);
             const bool attached = body.Actor->attachShape(*shape);
@@ -590,7 +901,7 @@ namespace Kans
         }
         void InitializeIndex()
         {
-            // The only whole-registry scan: initial world construction (settings are immutable during play).
+            // The only whole-registry scan: initial world construction; subsequent changes use the dirty index.
             ++Stats.FullRebuildCount;
             for (auto handle : Owner.m_Registry.view<IDComponent, TransformComponent>())
                 Queue({handle, &Owner}, Topology, false);
@@ -602,6 +913,21 @@ namespace Kans
             const auto group  = GroupColliders.find(id);
             const bool wanted = Valid(e) && Owner.IsEntityActive(e) &&
                                 (e.HasComponent<RigidBodyComponent>() || group != GroupColliders.end());
+            // Static/kinematic replacements also need sleeping contact partners to participate in narrowphase.
+            for (const auto& [key, pair] : PreviousContacts)
+            {
+                if (pair.BodyA != id && pair.BodyB != id)
+                    continue;
+                auto other = Bodies.find(pair.BodyA == id ? pair.BodyB : pair.BodyA);
+                if (other == Bodies.end() || other->second.Settings.Type != RigidBodyType::Dynamic)
+                    continue;
+                if (auto* d = other->second.Actor->is<PxRigidDynamic>(); d && d->isSleeping())
+                {
+                    other->second.ReconcileSleeping = true;
+                    d->wakeUp();
+                }
+            }
+            InvalidatePairs(id);
             std::optional<PhysicsBodyState> saved;
             if (auto old = Bodies.find(id); old != Bodies.end())
             {
@@ -648,6 +974,7 @@ namespace Kans
                           Sdk().Physics->createRigidDynamic(pose);
             if (!b.Actor)
                 return;
+            b.Actor->userData = reinterpret_cast<void*>(uintptr_t(uint64_t(id)));
             if (auto* dynamic = b.Actor->is<PxRigidDynamic>(); dynamic && b.Settings.Type == RigidBodyType::Kinematic)
                 dynamic->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, true);
             ++Sdk().Actors;
@@ -685,6 +1012,7 @@ namespace Kans
             {
                 bool kinematic = b.Settings.Type == RigidBodyType::Kinematic;
                 d->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, kinematic);
+                d->setRigidBodyFlag(PxRigidBodyFlag::eUSE_KINEMATIC_TARGET_FOR_SCENE_QUERIES, kinematic);
                 d->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_CCD,
                                     !kinematic && b.Settings.ContinuousDetection == ContinuousDetectionMode::CCD);
                 d->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_SPECULATIVE_CCD,
@@ -730,7 +1058,17 @@ namespace Kans
                 }
                 World->addActor(*b.Actor);
                 if (!kinematic && (saved.has_value() ? saved->Sleeping : !b.Settings.StartAwake))
-                    d->putToSleep();
+                {
+                    // A replacement actor needs one narrowphase pass even when its predecessor was asleep.
+                    // Retain entity pair history, discover the new shape contacts, then restore resting sleep.
+                    b.ReconcileSleeping =
+                        saved.has_value() &&
+                        std::any_of(PreviousContacts.begin(), PreviousContacts.end(), [&](const auto& pair) {
+                            return pair.second.BodyA == id || pair.second.BodyB == id;
+                        });
+                    if (!b.ReconcileSleeping)
+                        d->putToSleep();
+                }
             }
             else
                 World->addActor(*b.Actor);
@@ -764,6 +1102,8 @@ namespace Kans
     void PhysicsWorld::NotifyAssetChanged(AssetID asset)
     {
         auto& i = *m_Impl;
+        if (auto m = i.Materials.find(asset); m != i.Materials.end())
+            i.UpdateMaterial(asset, m->second.Material);
         if (auto users = i.MeshUsers.find(asset); users != i.MeshUsers.end())
             for (auto collider : users->second)
             {
@@ -774,6 +1114,8 @@ namespace Kans
     }
     void PhysicsWorld::NotifyAssetProviderChanged()
     {
+        for (auto& [id, m] : m_Impl->Materials)
+            m_Impl->UpdateMaterial(id, m.Material);
         for (const auto& [asset, users] : m_Impl->MeshUsers)
             NotifyAssetChanged(asset);
     }
@@ -794,6 +1136,8 @@ namespace Kans
     }
     void PhysicsWorld::SynchronizeChanges()
     {
+        if (m_Impl->Dispatching)
+            return;
         std::lock_guard lock(SdkMutex());
         auto&           i = *m_Impl;
         if (!i.Initialized)
@@ -821,6 +1165,8 @@ namespace Kans
                     b.Current  = Pose(w);
                     ++i.Stats.TeleportCount;
                 }
+                else if (auto* d = b.Actor->is<PxRigidDynamic>())
+                    d->setKinematicTarget(Pose(w));
             }
             if (auto owner = i.ColliderOwners.find(id); owner != i.ColliderOwners.end())
             {
@@ -841,21 +1187,38 @@ namespace Kans
     {
         SynchronizeChanges();
         auto& i = *m_Impl;
+        i.StepVelocities.clear();
+        for (auto& [key, pair] : i.ContactPairs)
+        {
+            pair.TotalImpulse = {};
+            for (auto& c : pair.Contacts)
+                c.Impulse = {};
+        }
         i.Fields.Clear();
         for (auto h : i.Owner.m_Registry.view<GlobalWindComponent>())
             if (i.Owner.IsEntityActive({h, &i.Owner}))
                 i.Fields.AddGlobalWind(i.Owner.m_Registry.get<GlobalWindComponent>(h));
         for (auto& [id, b] : i.Bodies)
         {
-            b.Previous = b.Current;
-            auto* d    = b.Actor->is<PxRigidDynamic>();
+            b.Previous           = b.Current;
+            auto* d              = b.Actor->is<PxRigidDynamic>();
+            i.StepVelocities[id] = d ? std::make_pair(d->getLinearVelocity(), d->getAngularVelocity()) :
+                                       std::make_pair(PxVec3(0), PxVec3(0));
             if (!d)
                 continue;
             if (b.Settings.Type == RigidBodyType::Kinematic)
             {
                 auto e = i.Owner.GetEntityByUUID(id);
-                if (e)
-                    d->setKinematicTarget(Pose(Physics::TransformShape({}, i.Owner.GetWorldTransform(e))));
+                if (auto target = i.KinematicTargets.find(id); target != i.KinematicTargets.end())
+                    d->setKinematicTarget(target->second);
+                else if (e)
+                {
+                    auto authored = Pose(Physics::TransformShape({}, i.Owner.GetWorldTransform(e)));
+                    if ((authored.p - b.Authored.p).magnitudeSquared() > 1e-12f ||
+                        std::abs(authored.q.dot(b.Authored.q)) < .999999f)
+                        d->setKinematicTarget(authored);
+                    b.Authored = authored;
+                }
                 continue;
             }
             if (b.Settings.GravityScale != 1 && b.Settings.GravityScale != 0 && !d->isSleeping())
@@ -869,12 +1232,44 @@ namespace Kans
                     d->addForce(Px(force));
             }
         }
+        i.KinematicTargets.clear();
         i.World->simulate(float(seconds));
         i.World->fetchResults(true);
         for (auto& [id, b] : i.Bodies)
+        {
             b.Current = b.Actor->getGlobalPose();
+            if (b.ReconcileSleeping)
+            {
+                b.ReconcileSleeping = false;
+                auto*      d        = b.Actor->is<PxRigidDynamic>();
+                const bool touching = std::any_of(i.ContactPairs.begin(), i.ContactPairs.end(), [&](const auto& pair) {
+                    return pair.second.BodyA == id || pair.second.BodyB == id;
+                });
+                if (d && touching && d->getLinearVelocity().magnitudeSquared() <= 2 * i.Settings.SleepThreshold &&
+                    d->getAngularVelocity().magnitudeSquared() <= 2 * i.Settings.SleepThreshold)
+                    d->putToSleep();
+            }
+        }
         ++i.Stats.StepCount;
         i.Time += seconds;
+        i.Dispatching = true;
+        try
+        {
+            i.DispatchPairs(false);
+            i.DispatchPairs(true);
+        }
+        catch (...)
+        {
+            i.Dispatching = false;
+            throw;
+        }
+        i.Dispatching = false;
+        auto commands = std::move(i.Commands);
+        i.Commands.clear();
+        for (auto& command : commands)
+            command();
+        // Commit callback-authored transforms before render interpolation can overwrite them.
+        SynchronizeChanges();
     }
     void PhysicsWorld::WriteTransforms(float alpha)
     {
@@ -887,13 +1282,15 @@ namespace Kans
         };
         std::vector<Write> writes;
         for (const auto& [id, b] : i.Bodies)
-            if (b.Explicit && b.Settings.Type == RigidBodyType::Dynamic)
+            if (b.Explicit && b.Settings.Type != RigidBodyType::Static)
             {
                 auto e = i.Owner.GetEntityByUUID(id);
                 if (!e)
                     continue;
-                float t =
-                    b.Settings.Interpolation == PhysicsInterpolation::Interpolate ? glm::clamp(alpha, 0.f, 1.f) : 1.f;
+                float  t     = b.Settings.Type == RigidBodyType::Dynamic &&
+                                       b.Settings.Interpolation == PhysicsInterpolation::Interpolate ?
+                                   glm::clamp(alpha, 0.f, 1.f) :
+                                   1.f;
                 auto   p     = glm::mix(Gl(b.Previous.p), Gl(b.Current.p), t);
                 auto   q     = glm::slerp(Gl(b.Previous.q), Gl(b.Current.q), t);
                 size_t depth = 0;
@@ -921,6 +1318,7 @@ namespace Kans
         PhysicsBodyState s;
         s.Position        = Gl(b.Current.p);
         s.Rotation        = Gl(b.Current.q);
+        s.CenterOfMass    = Gl(b.Current.p);
         s.ShapeCount      = b.Actor->getNbShapes();
         s.ActorGeneration = b.Generation;
         if (auto* d = b.Actor->is<PxRigidDynamic>())
@@ -928,7 +1326,7 @@ namespace Kans
             s.LinearVelocity  = Gl(d->getLinearVelocity());
             s.AngularVelocity = Gl(d->getAngularVelocity());
             s.Mass            = d->getMass();
-            s.CenterOfMass    = Gl(d->getCMassLocalPose().p);
+            s.CenterOfMass    = Gl((b.Current * d->getCMassLocalPose()).p);
             s.Sleeping        = d->isSleeping();
         }
         return s;
@@ -956,6 +1354,11 @@ namespace Kans
         std::lock_guard lock(SdkMutex());
         return Sdk().Actors;
     }
+    size_t PhysicsWorld::GetLiveMaterialCount()
+    {
+        std::lock_guard lock(SdkMutex());
+        return Sdk().Physics ? Sdk().Physics->getNbMaterials() : 0;
+    }
     uint64_t PhysicsWorld::GetCookCount()
     {
         std::lock_guard lock(SdkMutex());
@@ -972,6 +1375,13 @@ namespace Kans
         auto  flags = uint32_t(i.Settings.DebugDraw);
         if (!flags)
             return;
+        if (flags & 8)
+            for (const auto& [key, pair] : i.PreviousContacts)
+                for (const auto& c : pair.Contacts)
+                {
+                    draw.Cross(c.Position, .04f, {1, .2f, .2f, 1});
+                    draw.Line(c.Position, c.Position + c.Normal * .25f, {1, 1, 0, 1});
+                }
         for (const auto& [id, b] : i.Bodies)
         {
             auto*           dynamic = b.Actor->is<PxRigidDynamic>();
@@ -1042,4 +1452,513 @@ namespace Kans
             }
         }
     }
+} // namespace Kans
+
+namespace Kans
+{
+    namespace
+    {
+        bool Finite(glm::vec3 v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+        bool Direction(glm::vec3& d, float distance)
+        {
+            if (!Finite(d) || !std::isfinite(distance) || distance <= 0)
+                return false;
+            double length = std::sqrt(double(d.x) * d.x + double(d.y) * d.y + double(d.z) * d.z);
+            if (length <= 0)
+                return false;
+            d = glm::vec3(double(d.x) / length, double(d.y) / length, double(d.z) / length);
+            return true;
+        }
+        struct QueryCallback : physx::PxQueryFilterCallback
+        {
+            QueryFilter Filter;
+            bool        HitTriggers, SingleHit;
+            uint64_t    IgnoreBody = 0;
+            QueryCallback(const QueryFilter& f, bool triggers, uint64_t ignore, bool singleHit = false) :
+                Filter(f), HitTriggers(triggers), SingleHit(singleHit), IgnoreBody(ignore)
+            {}
+            physx::PxQueryHitType::Enum preFilter(const physx::PxFilterData&,
+                                                  const physx::PxShape*      shape,
+                                                  const physx::PxRigidActor* actor,
+                                                  physx::PxHitFlags&) override
+            {
+                using namespace physx;
+                if (!(shape->getQueryFilterData().word0 & Filter.LayerMask))
+                    return PxQueryHitType::eNONE;
+                if (IgnoreBody && uint64_t(reinterpret_cast<uintptr_t>(actor->userData)) == IgnoreBody)
+                    return PxQueryHitType::eNONE;
+                if (uint64_t(Filter.IgnoreEntity) &&
+                    uint64_t(reinterpret_cast<uintptr_t>(shape->userData)) == uint64_t(Filter.IgnoreEntity))
+                    return PxQueryHitType::eNONE;
+                bool trigger = shape->getFlags() & PxShapeFlag::eTRIGGER_SHAPE;
+                if (trigger && !(Filter.Triggers == QueryTriggerInteraction::Collide ||
+                                 (Filter.Triggers == QueryTriggerInteraction::UseGlobal && HitTriggers)))
+                    return PxQueryHitType::eNONE;
+                auto* dynamic = actor->is<PxRigidDynamic>();
+                if (!dynamic && !Filter.IncludeStatic)
+                    return PxQueryHitType::eNONE;
+                if (dynamic && (dynamic->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC ? !Filter.IncludeKinematic :
+                                                                                             !Filter.IncludeDynamic))
+                    return PxQueryHitType::eNONE;
+                return SingleHit ? PxQueryHitType::eBLOCK : PxQueryHitType::eTOUCH;
+            }
+            physx::PxQueryHitType::Enum postFilter(const physx::PxFilterData&,
+                                                   const physx::PxQueryHit&,
+                                                   const physx::PxShape*,
+                                                   const physx::PxRigidActor*) override
+            {
+                return SingleHit ? physx::PxQueryHitType::eBLOCK : physx::PxQueryHitType::eTOUCH;
+            }
+        };
+        template<class Hit>
+        struct QueryCollector : physx::PxHitCallback<Hit>
+        {
+            Hit              Buffer[64];
+            std::vector<Hit> Hits;
+            QueryCollector() : physx::PxHitCallback<Hit>(Buffer, 64) {}
+            bool processTouches(const Hit* hits, physx::PxU32 count) override
+            {
+                Hits.insert(Hits.end(), hits, hits + count);
+                return true;
+            }
+            void finalizeQuery() override
+            {
+                if (this->nbTouches)
+                {
+                    processTouches(this->touches, this->nbTouches);
+                    this->nbTouches = 0;
+                }
+            }
+        };
+        template<class Hit>
+        RaycastHit ConvertHit(const Hit& h)
+        {
+            RaycastHit out;
+            out.ColliderEntity = uint64_t(reinterpret_cast<uintptr_t>(h.shape->userData));
+            out.BodyEntity     = uint64_t(reinterpret_cast<uintptr_t>(h.actor->userData));
+            out.Point          = Gl(h.position);
+            out.Normal         = Gl(h.normal);
+            out.Distance       = h.distance;
+            out.FaceIndex      = h.faceIndex;
+            if constexpr (std::is_same_v<Hit, physx::PxSweepHit>)
+                out.InitialOverlap = h.hadInitialOverlap();
+            return out;
+        }
+        bool QueryGeometry(const PhysicsQueryShape&   shape,
+                           const Physics::WorldShape& pose,
+                           physx::PxGeometryHolder&   geometry,
+                           physx::PxTransform&        transform)
+        {
+            if (!Finite(pose.Position) || !Finite(pose.Scale) ||
+                glm::any(glm::lessThanEqual(pose.Scale, glm::vec3(0))) || !std::isfinite(pose.Rotation.x) ||
+                !std::isfinite(pose.Rotation.y) || !std::isfinite(pose.Rotation.z) || !std::isfinite(pose.Rotation.w) ||
+                glm::length(pose.Rotation) < 1e-6f)
+                return false;
+            bool valid = true;
+            std::visit(
+                [&](const auto& s) {
+                    if (!Finite(s.Offset.Position) || !Finite(s.Offset.Scale) ||
+                        glm::any(glm::lessThanEqual(s.Offset.Scale, glm::vec3(0))) ||
+                        !Finite({s.Offset.Rotation.x, s.Offset.Rotation.y, s.Offset.Rotation.z}) ||
+                        !std::isfinite(s.Offset.Rotation.w) || glm::length(s.Offset.Rotation) < 1e-6f)
+                    {
+                        valid = false;
+                        return;
+                    }
+                    auto world = Physics::TransformShape(s.Offset,
+                                                         glm::translate(glm::mat4(1), pose.Position) *
+                                                             glm::mat4_cast(glm::normalize(pose.Rotation)) *
+                                                             glm::scale(glm::mat4(1), pose.Scale));
+                    transform  = Pose(world);
+                    using T    = std::decay_t<decltype(s)>;
+                    if constexpr (std::is_same_v<T, Physics::Box>)
+                    {
+                        auto half = s.HalfExtents * world.Scale;
+                        valid     = Finite(half) && glm::all(glm::greaterThan(half, glm::vec3(0)));
+                        if (valid)
+                            geometry.storeAny(physx::PxBoxGeometry(Px(half)));
+                    }
+                    else if constexpr (std::is_same_v<T, Physics::Sphere>)
+                    {
+                        float radius = Physics::ScaledRadius(s, world);
+                        valid        = std::isfinite(radius) && radius > 0 && s.Radius > 0;
+                        if (valid)
+                            geometry.storeAny(physx::PxSphereGeometry(radius));
+                    }
+                    else
+                    {
+                        if (unsigned(s.Direction) > 2)
+                        {
+                            valid = false;
+                            return;
+                        }
+                        glm::vec3 a, b;
+                        float     radius;
+                        Physics::CapsuleSegment(s, world, a, b, radius);
+                        float half = glm::length(b - a) * .5f;
+                        valid      = std::isfinite(radius) && radius > 0 && s.Radius > 0 && std::isfinite(half) &&
+                                     s.HalfHeight >= 0;
+                        glm::vec3 axis(0);
+                        axis[unsigned(s.Direction)] = 1;
+                        transform.q                 = Px(world.Rotation * glm::rotation(glm::vec3(1, 0, 0), axis));
+                        if (valid)
+                            geometry.storeAny(physx::PxCapsuleGeometry(radius, half));
+                    }
+                    valid &= transform.isValid();
+                },
+                shape);
+            return valid;
+        }
+        void SortHits(std::vector<RaycastHit>& hits)
+        {
+            std::stable_sort(hits.begin(), hits.end(), [](auto& a, auto& b) {
+                if (a.Distance != b.Distance)
+                    return a.Distance < b.Distance;
+                return uint64_t(a.ColliderEntity) < uint64_t(b.ColliderEntity);
+            });
+        }
+    } // namespace
+    std::optional<RaycastHit>
+    PhysicsWorld::Raycast(glm::vec3 origin, glm::vec3 direction, float distance, const QueryFilter& filter)
+    {
+        if (!Finite(origin) || !Direction(direction, distance))
+            return {};
+        SynchronizeChanges();
+        auto&                  i     = *m_Impl;
+        auto                   owner = i.ColliderOwners.find(filter.IgnoreEntity);
+        QueryCallback          callback(filter,
+                                        i.Settings.QueriesHitTriggers,
+                                        owner == i.ColliderOwners.end() ? uint64_t(filter.IgnoreEntity) :
+                                                                          uint64_t(owner->second),
+                                        true);
+        physx::PxRaycastBuffer result; // Blocking hit only: no touch buffer or collection allocation.
+        i.World->raycast(Px(origin),
+                         Px(direction),
+                         distance,
+                         result,
+                         physx::PxHitFlag::eDEFAULT,
+                         physx::PxQueryFilterData(physx::PxQueryFlag::eSTATIC | physx::PxQueryFlag::eDYNAMIC |
+                                                  physx::PxQueryFlag::ePREFILTER),
+                         &callback);
+        return result.hasBlock ? std::optional<RaycastHit>(ConvertHit(result.block)) : std::nullopt;
+    }
+    std::vector<RaycastHit>
+    PhysicsWorld::RaycastAll(glm::vec3 origin, glm::vec3 direction, float distance, const QueryFilter& filter)
+    {
+        std::vector<RaycastHit> hits;
+        if (!Finite(origin) || !Direction(direction, distance))
+            return hits;
+        SynchronizeChanges();
+        auto&                               i     = *m_Impl;
+        auto                                owner = i.ColliderOwners.find(filter.IgnoreEntity);
+        QueryCallback                       callback(filter,
+                                                     i.Settings.QueriesHitTriggers,
+                                                     owner == i.ColliderOwners.end() ? uint64_t(filter.IgnoreEntity) :
+                                                                                       uint64_t(owner->second));
+        QueryCollector<physx::PxRaycastHit> collector;
+        i.World->raycast(Px(origin),
+                         Px(direction),
+                         distance,
+                         collector,
+                         physx::PxHitFlag::eDEFAULT,
+                         physx::PxQueryFilterData(physx::PxQueryFlag::eSTATIC | physx::PxQueryFlag::eDYNAMIC |
+                                                  physx::PxQueryFlag::ePREFILTER),
+                         &callback);
+        for (const auto& h : collector.Hits)
+            hits.push_back(ConvertHit(h));
+        SortHits(hits);
+        return hits;
+    }
+    std::optional<RaycastHit> PhysicsWorld::Cast(const PhysicsQueryShape&   shape,
+                                                 const Physics::WorldShape& pose,
+                                                 glm::vec3                  direction,
+                                                 float                      distance,
+                                                 const QueryFilter&         filter)
+    {
+        physx::PxGeometryHolder geometry;
+        physx::PxTransform      transform(physx::PxIdentity);
+        if (!Direction(direction, distance) || !QueryGeometry(shape, pose, geometry, transform))
+            return {};
+        SynchronizeChanges();
+        auto&                i     = *m_Impl;
+        auto                 owner = i.ColliderOwners.find(filter.IgnoreEntity);
+        QueryCallback        callback(filter,
+                                      i.Settings.QueriesHitTriggers,
+                                      owner == i.ColliderOwners.end() ? uint64_t(filter.IgnoreEntity) :
+                                                                        uint64_t(owner->second),
+                                      true);
+        physx::PxSweepBuffer result;
+        i.World->sweep(geometry.any(),
+                       transform,
+                       Px(direction),
+                       distance,
+                       result,
+                       physx::PxHitFlag::eDEFAULT | physx::PxHitFlag::ePRECISE_SWEEP,
+                       physx::PxQueryFilterData(physx::PxQueryFlag::eSTATIC | physx::PxQueryFlag::eDYNAMIC |
+                                                physx::PxQueryFlag::ePREFILTER),
+                       &callback);
+        if (!result.hasBlock)
+            return {};
+        auto hit = ConvertHit(result.block);
+        if (hit.InitialOverlap)
+            hit.Point = Gl(transform.p);
+        return hit;
+    }
+    std::vector<RaycastHit> PhysicsWorld::CastAll(const PhysicsQueryShape&   shape,
+                                                  const Physics::WorldShape& pose,
+                                                  glm::vec3                  direction,
+                                                  float                      distance,
+                                                  const QueryFilter&         filter)
+    {
+        std::vector<RaycastHit> hits;
+        physx::PxGeometryHolder geometry;
+        physx::PxTransform      transform(physx::PxIdentity);
+        if (!Direction(direction, distance) || !QueryGeometry(shape, pose, geometry, transform))
+            return hits;
+        SynchronizeChanges();
+        auto&                             i     = *m_Impl;
+        auto                              owner = i.ColliderOwners.find(filter.IgnoreEntity);
+        QueryCallback                     callback(filter,
+                                                   i.Settings.QueriesHitTriggers,
+                                                   owner == i.ColliderOwners.end() ? uint64_t(filter.IgnoreEntity) :
+                                                                                     uint64_t(owner->second));
+        QueryCollector<physx::PxSweepHit> collector;
+        i.World->sweep(geometry.any(),
+                       transform,
+                       Px(direction),
+                       distance,
+                       collector,
+                       physx::PxHitFlag::eDEFAULT | physx::PxHitFlag::ePRECISE_SWEEP,
+                       physx::PxQueryFilterData(physx::PxQueryFlag::eSTATIC | physx::PxQueryFlag::eDYNAMIC |
+                                                physx::PxQueryFlag::ePREFILTER),
+                       &callback);
+        for (const auto& h : collector.Hits)
+        {
+            auto hit = ConvertHit(h);
+            if (hit.InitialOverlap)
+                hit.Point = Gl(transform.p);
+            hits.push_back(hit);
+        }
+        SortHits(hits);
+        return hits;
+    }
+    std::vector<UUID>
+    PhysicsWorld::Overlap(const PhysicsQueryShape& shape, const Physics::WorldShape& pose, const QueryFilter& filter)
+    {
+        physx::PxGeometryHolder geometry;
+        physx::PxTransform      transform(physx::PxIdentity);
+        if (!QueryGeometry(shape, pose, geometry, transform))
+            return {};
+        SynchronizeChanges();
+        auto&                               i     = *m_Impl;
+        auto                                owner = i.ColliderOwners.find(filter.IgnoreEntity);
+        QueryCallback                       callback(filter,
+                                                     i.Settings.QueriesHitTriggers,
+                                                     owner == i.ColliderOwners.end() ? uint64_t(filter.IgnoreEntity) :
+                                                                                       uint64_t(owner->second));
+        QueryCollector<physx::PxOverlapHit> collector;
+        i.World->overlap(geometry.any(),
+                         transform,
+                         collector,
+                         physx::PxQueryFilterData(physx::PxQueryFlag::eSTATIC | physx::PxQueryFlag::eDYNAMIC |
+                                                  physx::PxQueryFlag::ePREFILTER),
+                         &callback);
+        std::set<UUID> ids;
+        for (const auto& h : collector.Hits)
+            ids.emplace(uint64_t(reinterpret_cast<uintptr_t>(h.shape->userData)));
+        return {ids.begin(), ids.end()};
+    }
+    PhysicsSubscription PhysicsWorld::OnCollision(std::function<void(const PhysicsPairEvent&)> f)
+    {
+        auto state = m_Impl->Subscribers;
+        auto id    = ++state->Next;
+        state->Collision.emplace(id, std::move(f));
+        return PhysicsSubscription([weak = std::weak_ptr<Impl::Listeners>(state), id] {
+            if (auto s = weak.lock())
+                s->Collision.erase(id);
+        });
+    }
+    PhysicsSubscription PhysicsWorld::OnTrigger(std::function<void(const PhysicsPairEvent&)> f)
+    {
+        auto state = m_Impl->Subscribers;
+        auto id    = ++state->Next;
+        state->Trigger.emplace(id, std::move(f));
+        return PhysicsSubscription([weak = std::weak_ptr<Impl::Listeners>(state), id] {
+            if (auto s = weak.lock())
+                s->Trigger.erase(id);
+        });
+    }
+    void PhysicsWorld::SetGravity(glm::vec3 v)
+    {
+        if (!Finite(v))
+            return;
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, v] { SetGravity(v); });
+            return;
+        }
+        i.Settings.Gravity = v;
+        i.World->setGravity(Px(v));
+        for (auto& [id, b] : i.Bodies)
+            if (auto* d = b.Actor->is<physx::PxRigidDynamic>(); d && b.Settings.Type == RigidBodyType::Dynamic)
+                d->wakeUp();
+    }
+    void PhysicsWorld::IgnoreLayerCollision(uint32_t a, uint32_t b, bool ignore)
+    {
+        if (a >= 32 || b >= 32)
+            return;
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, a, b, ignore] { IgnoreLayerCollision(a, b, ignore); });
+            return;
+        }
+        i.Settings.SetLayerCollision(a, b, !ignore);
+        for (auto& [id, body] : i.Bodies)
+        {
+            std::vector<physx::PxShape*> shapes(body.Actor->getNbShapes());
+            body.Actor->getShapes(shapes.data(), physx::PxU32(shapes.size()));
+            for (auto* shape : shapes)
+            {
+                auto f = shape->getSimulationFilterData();
+                for (unsigned layer = 0; layer < 32; ++layer)
+                    if (f.word0 & (1u << layer))
+                    {
+                        f.word1 = i.Settings.CollisionMatrix[layer];
+                        break;
+                    }
+                shape->setSimulationFilterData(f);
+                shape->setQueryFilterData(f);
+            }
+            i.World->resetFiltering(*body.Actor);
+            i.InvalidatePairs(id);
+        }
+    }
+    void PhysicsWorld::SetVelocity(UUID id, glm::vec3 v, bool angular)
+    {
+        if (!Finite(v))
+            return;
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, id, v, angular] { SetVelocity(id, v, angular); });
+            return;
+        }
+        SynchronizeChanges();
+        auto it = i.Bodies.find(id);
+        if (it == i.Bodies.end() || it->second.Settings.Type != RigidBodyType::Dynamic)
+            return;
+        auto* d = it->second.Actor->is<physx::PxRigidDynamic>();
+        if (angular)
+            d->setAngularVelocity(Px(v));
+        else
+            d->setLinearVelocity(Px(v));
+    }
+    void PhysicsWorld::AddForce(UUID id, glm::vec3 v, ForceMode mode, bool torque)
+    {
+        if (!Finite(v) || unsigned(mode) > 3)
+            return;
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, id, v, mode, torque] { AddForce(id, v, mode, torque); });
+            return;
+        }
+        SynchronizeChanges();
+        auto it = i.Bodies.find(id);
+        if (it == i.Bodies.end() || it->second.Settings.Type != RigidBodyType::Dynamic)
+            return;
+        auto* d = it->second.Actor->is<physx::PxRigidDynamic>();
+        if (torque)
+            d->addTorque(Px(v), physx::PxForceMode::Enum(mode));
+        else
+            d->addForce(Px(v), physx::PxForceMode::Enum(mode));
+    }
+    void PhysicsWorld::AddForceAtPosition(UUID id, glm::vec3 force, glm::vec3 position, ForceMode mode)
+    {
+        if (!Finite(force) || !Finite(position) || unsigned(mode) > 3)
+            return;
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, id, force, position, mode] { AddForceAtPosition(id, force, position, mode); });
+            return;
+        }
+        SynchronizeChanges();
+        auto it = i.Bodies.find(id);
+        if (it == i.Bodies.end() || it->second.Settings.Type != RigidBodyType::Dynamic)
+            return;
+        auto* d = it->second.Actor->is<physx::PxRigidDynamic>();
+        // Acceleration/velocity-change describe COM acceleration; convert to physical force/impulse before computing
+        // torque.
+        auto f            = Px(force);
+        auto physicalMode = physx::PxForceMode::Enum(mode);
+        if (mode == ForceMode::Acceleration || mode == ForceMode::VelocityChange)
+        {
+            f *= d->getMass();
+            physicalMode = mode == ForceMode::Acceleration ? physx::PxForceMode::eFORCE : physx::PxForceMode::eIMPULSE;
+        }
+        physx::PxRigidBodyExt::addForceAtPos(*d, f, Px(position), physicalMode);
+    }
+    void PhysicsWorld::MovePosition(UUID id, glm::vec3 p)
+    {
+        if (!Finite(p))
+            return;
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, id, p] { MovePosition(id, p); });
+            return;
+        }
+        SynchronizeChanges();
+        auto it = i.Bodies.find(id);
+        if (it == i.Bodies.end() || it->second.Settings.Type != RigidBodyType::Kinematic)
+            return;
+        auto [target, inserted] = i.KinematicTargets.try_emplace(id, it->second.Current);
+        target->second.p        = Px(p);
+    }
+    void PhysicsWorld::MoveRotation(UUID id, glm::quat q)
+    {
+        if (!std::isfinite(q.w) || !Finite({q.x, q.y, q.z}) || glm::length(q) < 1e-6f)
+            return;
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, id, q] { MoveRotation(id, q); });
+            return;
+        }
+        SynchronizeChanges();
+        auto it = i.Bodies.find(id);
+        if (it == i.Bodies.end() || it->second.Settings.Type != RigidBodyType::Kinematic)
+            return;
+        auto [target, inserted] = i.KinematicTargets.try_emplace(id, it->second.Current);
+        target->second.q        = Px(glm::normalize(q));
+    }
+    void PhysicsWorld::SetSleeping(UUID id, bool sleep)
+    {
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, id, sleep] { SetSleeping(id, sleep); });
+            return;
+        }
+        SynchronizeChanges();
+        auto it = i.Bodies.find(id);
+        if (it == i.Bodies.end() || it->second.Settings.Type != RigidBodyType::Dynamic)
+            return;
+        auto* d = it->second.Actor->is<physx::PxRigidDynamic>();
+        if (sleep)
+            d->putToSleep();
+        else
+            d->wakeUp();
+    }
+    bool PhysicsWorld::DeferMutation(std::function<void()> command)
+    {
+        if (!m_Impl->Dispatching)
+            return false;
+        m_Impl->Commands.push_back(std::move(command));
+        return true;
+    }
+    size_t PhysicsWorld::GetSharedMaterialCount() const { return m_Impl->Materials.size(); }
 } // namespace Kans

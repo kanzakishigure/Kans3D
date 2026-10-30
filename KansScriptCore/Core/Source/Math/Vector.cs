@@ -7,6 +7,16 @@ using System.Threading.Tasks;
 namespace Kans
 {
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    public struct Quaternion
+    {
+        public float X, Y, Z, W;
+        public Quaternion(float x, float y, float z, float w) { X=x; Y=y; Z=z; W=w; }
+        public static Quaternion Identity => new(0,0,0,1);
+        public static implicit operator Vector4(Quaternion q) => new(q.X,q.Y,q.Z,q.W);
+        public static implicit operator Quaternion(Vector4 q) => new(q.X,q.Y,q.Z,q.W);
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     public struct Vector2
     {
         public float X, Y;

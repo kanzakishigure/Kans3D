@@ -10,6 +10,7 @@
 #include "Kans3D/Core/Math/Bounds.h"
 #include "Kans3D/Core/TimeStep.h"
 #include "Kans3D/Core/UUID.h"
+#include "Kans3D/Physics/PhysicsWorld.h"
 #include "Kans3D/Renderer/Resource/PostProcessSettings.h"
 #include "Kans3D/UI/UIContext.h"
 #include "EnvironmentSettings.h"
@@ -130,6 +131,44 @@ namespace Kans
         std::vector<MeshMaterialSlot> GetMeshSlots(Entity entity) const;
         void                          UpdateBounds();
 
+        std::optional<RaycastHit>
+        Raycast(glm::vec3 origin, glm::vec3 direction, float distance, const QueryFilter& f = {})
+        {
+            return m_PhysicsWorld ? m_PhysicsWorld->Raycast(origin, direction, distance, f) : std::nullopt;
+        }
+        std::vector<RaycastHit>
+        RaycastAll(glm::vec3 origin, glm::vec3 direction, float distance, const QueryFilter& f = {})
+        {
+            return m_PhysicsWorld ? m_PhysicsWorld->RaycastAll(origin, direction, distance, f) :
+                                    std::vector<RaycastHit> {};
+        }
+#define KANS_SCENE_QUERY(Name) \
+    std::optional<RaycastHit> Name##Cast(const Physics::Name&       shape, \
+                                         const Physics::WorldShape& pose, \
+                                         glm::vec3                  direction, \
+                                         float                      distance, \
+                                         const QueryFilter&         f = {}) \
+    { \
+        return m_PhysicsWorld ? m_PhysicsWorld->Name##Cast(shape, pose, direction, distance, f) : std::nullopt; \
+    } \
+    std::vector<RaycastHit> Name##CastAll(const Physics::Name&       shape, \
+                                          const Physics::WorldShape& pose, \
+                                          glm::vec3                  direction, \
+                                          float                      distance, \
+                                          const QueryFilter&         f = {}) \
+    { \
+        return m_PhysicsWorld ? m_PhysicsWorld->Name##CastAll(shape, pose, direction, distance, f) : \
+                                std::vector<RaycastHit> {}; \
+    } \
+    std::vector<UUID> Overlap##Name( \
+        const Physics::Name& shape, const Physics::WorldShape& pose, const QueryFilter& f = {}) \
+    { \
+        return m_PhysicsWorld ? m_PhysicsWorld->Overlap##Name(shape, pose, f) : std::vector<UUID> {}; \
+    }
+        KANS_SCENE_QUERY(Sphere)
+        KANS_SCENE_QUERY(Capsule)
+        KANS_SCENE_QUERY(Box)
+#undef KANS_SCENE_QUERY
         const EnvironmentSettings& GetEnvironmentSettings() const { return m_EnvironmentSettings; }
         bool                       HasEnvironmentSettings() const { return m_HasEnvironmentSettings; }
         // Validates and immediately notifies the render world, including map removal.
@@ -150,15 +189,15 @@ namespace Kans
         // Replaces every entity with the snapshot's; UUIDs are preserved.
         void Restore(const SceneSnapshot& snapshot);
 
-        void OnRuntimeStart();
+        void                   OnRuntimeStart();
         void                   OnRuntimeSingleStep();
         PhysicsWorld*          GetPhysicsWorld() const { return m_PhysicsWorld.get(); }
         const PhysicsSettings& GetPhysicsSettings() const;
         double                 GetPhysicsInterpolationAlpha() const;
         DebugDraw&             GetDebugDraw() const;
-        void OnRuntimeStop();
-        void OnRuntimePause();
-        void OnRuntimeResume();
+        void                   OnRuntimeStop();
+        void                   OnRuntimePause();
+        void                   OnRuntimeResume();
         // The engine must outlive its attachment to this scene.
         void SetAudioEngine(AudioEngine* engine);
         void PlayAudioSource(Entity entity);

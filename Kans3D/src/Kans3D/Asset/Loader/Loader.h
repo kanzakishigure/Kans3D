@@ -20,6 +20,13 @@ namespace Kans
 
     template<typename T>
     class Loader;
+    class PhysicsMaterialAsset;
+    template<>
+    class Loader<PhysicsMaterialAsset>
+    {
+    public:
+        std::variant<Ref<PhysicsMaterialAsset>, AssetError> Load(const AssetLoadContext&) const;
+    };
     class MeshAsset;
     class ModelAsset;
     class MaterialDataAsset;

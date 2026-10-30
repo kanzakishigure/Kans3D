@@ -4,6 +4,7 @@
 #include "Kans3D/Physics/PhysicsWorld.h"
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Renderer/RenderWorld.h"
+#include "Kans3D/Script/ScriptEngine.h"
 #include "Entity.h"
 #include "Scene.h"
 namespace Kans
@@ -60,7 +61,7 @@ namespace Kans
         if (!m_SuppressNotifications && !m_PhysicsWritingTransforms && m_PhysicsWorld)
             m_PhysicsWorld->NotifyTransformChanged({handle, this});
     }
-    void Scene::DispatchFixedUpdate(double) {}
+    void Scene::DispatchFixedUpdate(double dt) { ScriptEngine::OnFixedUpdate(*this, float(dt)); }
     void Scene::OnRuntimeSingleStep()
     {
         if (!m_PhysicsWorld)

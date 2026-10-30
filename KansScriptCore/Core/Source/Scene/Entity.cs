@@ -25,6 +25,21 @@ namespace Kans
         protected virtual void OnCreate() { }
         protected virtual void OnUpdate(float ts) { }
         protected virtual void OnDestroy() { }
+        protected virtual void OnFixedUpdate(float dt) { }
+        /// <summary>Physics callbacks run after each fixed step on the owning body and touching collider entities with scripts,
+        /// once per entity per body pair. Contact spans and other-entity wrappers are borrowed for the callback; copy IDs to retain them.</summary>
+        protected virtual void OnCollisionEnter(Collision collision) { }
+        protected virtual void OnCollisionStay(Collision collision) { }
+        protected virtual void OnCollisionExit(Collision collision) { }
+        /// <summary>Other is the opposing body. This wrapper is reused and is valid only during the callback; retain other.ID instead.</summary>
+        protected virtual void OnTriggerEnter(Entity other) { }
+        protected virtual void OnTriggerStay(Entity other) { }
+        protected virtual void OnTriggerExit(Entity other) { }
+        internal void FixedUpdate(float dt) => OnFixedUpdate(dt);
+        internal void PhysicsEvent(int phase, Collision collision)
+        { if (phase == 0) OnCollisionEnter(collision); else if (phase == 1) OnCollisionStay(collision); else OnCollisionExit(collision); }
+        internal void TriggerEvent(int phase, Entity other)
+        { if (phase == 0) OnTriggerEnter(other); else if (phase == 1) OnTriggerStay(other); else OnTriggerExit(other); }
         internal void Attach(ulong id) { ID = id; }
         internal void Create() => OnCreate();
         internal void Update(float ts) => OnUpdate(ts);
@@ -103,6 +118,11 @@ namespace Kans
             typeof(T) == typeof(ScriptComponent) ? ComponentIds.ScriptComponent :
             (typeof(T) == typeof(Animator) || typeof(T) == typeof(AnimatorComponent)) ? ComponentIds.AnimatorComponent :
             (typeof(T) == typeof(TimelinePlayer) || typeof(T) == typeof(TimelinePlayerComponent)) ? ComponentIds.TimelinePlayerComponent :
+            (typeof(T) == typeof(Rigidbody) || typeof(T) == typeof(RigidBodyComponent)) ? ComponentIds.RigidBodyComponent :
+            (typeof(T) == typeof(BoxCollider) || typeof(T) == typeof(BoxColliderComponent)) ? ComponentIds.BoxColliderComponent :
+            (typeof(T) == typeof(SphereCollider) || typeof(T) == typeof(SphereColliderComponent)) ? ComponentIds.SphereColliderComponent :
+            (typeof(T) == typeof(CapsuleCollider) || typeof(T) == typeof(CapsuleColliderComponent)) ? ComponentIds.CapsuleColliderComponent :
+            (typeof(T) == typeof(MeshCollider) || typeof(T) == typeof(MeshColliderComponent)) ? ComponentIds.MeshColliderComponent :
             typeof(T) == typeof(TextComponent) ? ComponentIds.TextComponent :
             typeof(T) == typeof(SpriteRendererComponent) ? ComponentIds.SpriteRendererComponent :
             typeof(T) == typeof(UIScreenComponent) ? ComponentIds.UIScreenComponent :

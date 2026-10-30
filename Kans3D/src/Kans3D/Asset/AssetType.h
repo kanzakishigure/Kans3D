@@ -30,5 +30,6 @@ namespace Kans
         Expression          = 16,
         Action              = 17,
         Timeline            = 18,
+        PhysicsMaterial     = 19,
     };
 } // namespace Kans

@@ -7,6 +7,7 @@
 #include "FontImporter.h"
 #include "MaterialImporter.h"
 #include "ModelImporter.h"
+#include "PhysicsMaterialImporter.h"
 #include "ShaderImporter.h"
 #include "TextureImporter.h"
 #include "TimelineImporter.h"
@@ -111,6 +112,7 @@ namespace Kans
                 {"ShaderImporter", {{".vert", ".frag", ".comp", ".shaderprog"}, std::make_shared<ShaderImporter>()}},
                 {"MaterialImporter", {{".material"}, std::make_shared<MaterialImporter>()}},
                 {"ActionImporter", {{".action"}, std::make_shared<ActionImporter>()}},
+                {"PhysicsMaterialImporter", {{".physmat"}, std::make_shared<PhysicsMaterialImporter>()}},
                 {"TimelineImporter", {{".timeline"}, std::make_shared<TimelineImporter>()}},
                 {"ExpressionImporter", {{".expression"}, std::make_shared<ExpressionImporter>()}},
                 {"UIImporter", {{".kui"}, std::make_shared<UIImporter>()}},

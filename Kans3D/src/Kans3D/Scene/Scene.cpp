@@ -275,12 +275,32 @@ namespace Kans
             add(c.Skeleton);
             add(c.Expression);
         }
+        auto colliderMaterials = [&](auto tag) {
+            using T = decltype(tag);
+            for (auto h : m_Registry.view<T>())
+                add(m_Registry.get<T>(h).Material.Asset);
+        };
+        colliderMaterials(BoxColliderComponent {});
+        colliderMaterials(SphereColliderComponent {});
+        colliderMaterials(CapsuleColliderComponent {});
+        colliderMaterials(MeshColliderComponent {});
         for (auto h : m_Registry.view<MeshColliderComponent>())
             add(m_Registry.get<MeshColliderComponent>(h).Shape.Mesh);
         for (auto h : m_Registry.view<PrefabInstanceComponent>())
             for (const auto& [key, value] : m_Registry.get<PrefabInstanceComponent>(h).Overrides)
+            {
+                if (value.BoxCollider)
+                    add(value.BoxCollider->Material.Asset);
+                if (value.SphereCollider)
+                    add(value.SphereCollider->Material.Asset);
+                if (value.CapsuleCollider)
+                    add(value.CapsuleCollider->Material.Asset);
                 if (value.MeshCollider)
+                {
                     add(value.MeshCollider->Shape.Mesh);
+                    add(value.MeshCollider->Material.Asset);
+                }
+            }
         for (auto h : m_Registry.view<TimelinePlayerComponent>())
             add(m_Registry.get<TimelinePlayerComponent>(h).Timeline);
         for (const auto& entry : GetPostProcessSettings().Materials)
@@ -423,6 +443,13 @@ namespace Kans
     }
     void Scene::DestroyEntity(Entity entity)
     {
+        if (!entity || !m_Registry.valid(entt::entity(entity)))
+            return;
+        if (m_PhysicsWorld && m_PhysicsWorld->DeferMutation([this, id = entity.GetUUID()] {
+                if (auto e = GetEntityByUUID(id))
+                    DestroyEntity(e);
+            }))
+            return;
         if (entity.HasComponent<TimelinePlayerComponent>())
         {
             auto player = entity.GetComponent<TimelinePlayerComponent>().Player;

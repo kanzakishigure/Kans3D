@@ -9,6 +9,7 @@ namespace Kans
 {
     class Entity;
     class Scene;
+    struct PhysicsPairEvent;
     enum class ScriptBackend
     {
         CoreCLR,
@@ -34,17 +35,19 @@ namespace Kans
     {
     public:
         static bool                     Init(const ScriptInitOptions& options = {});
-        static void ShutDown();
-        static bool IsInitialized();
+        static void                     ShutDown();
+        static bool                     IsInitialized();
         static bool                     LoadAppAssembly(const std::filesystem::path& path);
         static bool                     ReloadAppAssembly();
         static bool                     EntityClassExists(const std::string& name);
         static std::vector<std::string> GetEntityClasses();
-        static void OnRuntimeStart(Scene* scene);
-        static void OnRuntimeEnd();
-        static void OnCreateEntity(Entity entity);
+        static void                     OnRuntimeStart(Scene* scene);
+        static void                     OnRuntimeEnd();
+        static void                     OnCreateEntity(Entity entity);
         static void                     OnDestroyEntity(Entity entity);
         static void                     OnUpdate(TimeStep ts);
+        static void                     OnFixedUpdate(Scene&, float);
+        static void                     OnPhysicsEvent(Scene&, const PhysicsPairEvent&, bool trigger);
         static Scene*                   GetSceneContext();
         static uint64_t                 GetUpdateTransitionCount();
         static int64_t                  GetManagedAllocatedBytes();

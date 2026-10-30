@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "ScriptEngine.h"
 #include "Kans3D/FileSystem/FileSystem.h"
+#include "Kans3D/Physics/PhysicsWorld.h"
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Scene/Scene.h"
@@ -137,6 +138,13 @@ namespace Kans
                 s_UpdateOrder.push_back(instance->second);
             for (auto child : scene->GetChildren(entity))
                 CollectUpdateTree(scene, child);
+        }
+        void CollectUpdateOrder(Scene* scene)
+        {
+            s_UpdateOrder.clear();
+            s_UpdateOrder.reserve(s_Instances.size());
+            for (auto entity : scene->GetRootEntities())
+                CollectUpdateTree(scene, entity);
         }
         void CreateTree(Scene* scene, Entity entity)
         {
@@ -310,12 +318,71 @@ namespace Kans
             ScriptAnimation::BeginFrame();
             ScriptTimeline::BeginFrame();
             ++s_UpdateTransitions;
-            s_UpdateOrder.clear();
-            s_UpdateOrder.reserve(s_Instances.size());
-            for (auto entity : s_Scene->GetRootEntities())
-                CollectUpdateTree(s_Scene, entity);
+            CollectUpdateOrder(s_Scene);
             s_Api.Update(s_UpdateOrder.data(), int32_t(s_UpdateOrder.size()), float(ts));
         }
+    }
+    void ScriptEngine::OnFixedUpdate(Scene& scene, float dt)
+    {
+        if (!s_Initialized || s_Scene != &scene)
+            return;
+        CollectUpdateOrder(&scene);
+        s_Api.FixedUpdate(s_UpdateOrder.data(), int32_t(s_UpdateOrder.size()), dt);
+    }
+    void ScriptEngine::OnPhysicsEvent(Scene& scene, const PhysicsPairEvent& pair, bool trigger)
+    {
+        if (!s_Initialized || s_Scene != &scene)
+            return;
+        auto dispatch = [&](bool reverse) {
+            UUID           body  = reverse ? pair.BodyB : pair.BodyA;
+            UUID           other = reverse ? pair.BodyA : pair.BodyB;
+            std::set<UUID> recipients {body};
+            for (auto [a, b] : pair.Colliders)
+                recipients.insert(reverse ? b : a);
+            for (auto id : recipients)
+            {
+                auto entity   = scene.GetEntityByUUID(id);
+                auto instance = s_Instances.find(id);
+                if (!entity || !scene.IsEntityActive(entity) || instance == s_Instances.end())
+                    continue;
+                uint32_t mask = 1u << (uint32_t(pair.Phase) + (trigger ? 4 : 1));
+                if (!(s_Api.PhysicsCallbacks(instance->second) & mask))
+                    continue;
+                // One reusable native contact buffer. Borrowed only for this synchronous call, never retained by C#.
+                static thread_local std::vector<Scripting::PhysicsContactData> contacts;
+                contacts.clear();
+                float sign   = reverse ? -1.f : 1.f;
+                auto  vector = [](glm::vec3 v) { return Scripting::Vector3 {v.x, v.y, v.z}; };
+                for (const auto& c : pair.Contacts)
+                    contacts.push_back({vector(c.Position),
+                                        vector(c.Normal * sign),
+                                        vector(c.Impulse * sign),
+                                        c.Separation,
+                                        uint64_t(reverse ? c.ColliderB : c.ColliderA),
+                                        uint64_t(reverse ? c.ColliderA : c.ColliderB)});
+                Scripting::PhysicsEventData data;
+                data.Other         = other;
+                data.Collider      = reverse ? pair.ColliderB : pair.ColliderA;
+                data.OtherCollider = reverse ? pair.ColliderA : pair.ColliderB;
+                for (auto [a, b] : pair.Colliders)
+                    if ((reverse ? b : a) == id)
+                    {
+                        data.Collider      = id;
+                        data.OtherCollider = reverse ? a : b;
+                        break;
+                    }
+                data.Impulse          = vector(pair.TotalImpulse * sign);
+                data.RelativeVelocity = vector(pair.RelativeVelocity * sign);
+                data.Contacts         = contacts.data();
+                data.Count            = int32_t(contacts.size());
+                data.Phase            = int32_t(pair.Phase);
+                data.Trigger          = trigger;
+                data.Removed          = pair.Removed;
+                s_Api.PhysicsEvent(instance->second, &data);
+            }
+        };
+        dispatch(false);
+        dispatch(true);
     }
     Scene*             ScriptEngine::GetSceneContext() { return s_Scene; }
     uint64_t           ScriptEngine::GetUpdateTransitionCount() { return s_UpdateTransitions; }

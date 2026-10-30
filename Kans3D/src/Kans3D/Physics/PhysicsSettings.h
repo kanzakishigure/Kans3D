@@ -25,7 +25,8 @@ namespace Kans
         None          = 0,
         Colliders     = 1,
         CentersOfMass = 2,
-        Sleeping      = 4
+        Sleeping      = 4,
+        Contacts      = 8
     };
     inline PhysicsDebugFlags operator|(PhysicsDebugFlags a, PhysicsDebugFlags b)
     {
@@ -43,6 +44,10 @@ namespace Kans
         std::array<uint32_t, 32>    CollisionMatrix;
         PhysicsDebugFlags           DebugDraw = PhysicsDebugFlags::None;
         PhysicsMaterialValues       DefaultMaterial;
+        bool                        QueriesHitTriggers = false;
+        // Enables PhysX kinematic-static and kinematic-kinematic detection (static-static remains suppressed).
+        bool     EnableKinematicPairs = false;
+        uint32_t MaxContactsPerPair   = 16;
         PhysicsSettings();
         void SetLayerCollision(uint32_t a, uint32_t b, bool enabled);
         bool LayersCollide(uint32_t a, uint32_t b) const;

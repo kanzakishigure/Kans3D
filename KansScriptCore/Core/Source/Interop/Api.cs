@@ -40,9 +40,27 @@ namespace Kans.Interop
         public int Finished, Reserved;
     }
     [StructLayout(LayoutKind.Sequential)]
+    internal struct PhysicsQueryData
+    {
+        public uint Kind, LayerMask, Flags, Triggers;
+        public ulong Ignore;
+        public Vector3 Origin, Direction, HalfExtents;
+        public float Distance, Radius, HalfHeight;
+        public float RotationX, RotationY, RotationZ, RotationW;
+        public uint Axis;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    public unsafe struct PhysicsEventData
+    {
+        public ulong Other, Collider, OtherCollider;
+        public Vector3 Impulse, RelativeVelocity;
+        public ContactPoint* Contacts;
+        public int Count, Phase, Trigger, Removed;
+    }
+    [StructLayout(LayoutKind.Sequential)]
     public unsafe struct NativeApi
     {
-        public const uint ApiVersion = 5;
+        public const uint ApiVersion = 6;
         public uint Version, Size;
         public delegate* unmanaged[Cdecl]<int, byte*, void> Log;
         public delegate* unmanaged[Cdecl]<ulong, uint, int> HasComponent;
@@ -64,6 +82,8 @@ namespace Kans.Interop
         internal delegate* unmanaged[Cdecl]<int, AnimationEventData*, int, byte*, int, int> ReadAnimationEvent;
         internal delegate* unmanaged[Cdecl]<ulong, int, byte*, ulong, double*, int> TimelineCommand;
         internal delegate* unmanaged[Cdecl]<int, TimelineEventData*, int, byte*, int, int> ReadTimelineEvent;
+        internal delegate* unmanaged[Cdecl]<ulong, int, int, PropertyValue*, Vector3*, byte*, int> PhysicsCommand;
+        internal delegate* unmanaged[Cdecl]<PhysicsQueryData*, RaycastHit*, int, int, int> PhysicsQuery;
     }
     [StructLayout(LayoutKind.Sequential)]
     public unsafe struct ManagedApi
@@ -82,6 +102,9 @@ namespace Kans.Interop
         // Diagnostic hooks, also useful for validating packaged builds.
         public delegate* unmanaged[Cdecl]<long> AllocatedBytes;
         public delegate* unmanaged[Cdecl]<int> LastUnloadCollected;
+        public delegate* unmanaged[Cdecl]<ulong*, int, float, void> FixedUpdate;
+        public delegate* unmanaged[Cdecl]<ulong, PhysicsEventData*, void> PhysicsEvent;
+        public delegate* unmanaged[Cdecl]<ulong, uint> PhysicsCallbacks;
     }
 
     public interface IScriptRegistry
@@ -89,6 +112,7 @@ namespace Kans.Interop
         string[] Names { get; }
         Entity? Create(string name);
         bool InvokeTimeline(Entity target, string method, string payload) => false;
+        uint PhysicsCallbacks(Entity target) => 0;
     }
     public static class ScriptRegistry
     {

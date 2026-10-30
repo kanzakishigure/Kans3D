@@ -58,6 +58,17 @@ namespace Kans.Generators
             foreach (string name in names)
                 source.Append('"').Append(name).Append("\" => new global::").Append(name).Append("(),\n");
             source.Append("_ => null };\n");
+            source.Append("public uint PhysicsCallbacks(global::Kans.Entity target) {\n");
+            string[] callbacks = { "OnFixedUpdate", "OnCollisionEnter", "OnCollisionStay", "OnCollisionExit", "OnTriggerEnter", "OnTriggerStay", "OnTriggerExit" };
+            foreach (var type in classes.Where(c => c != null).GroupBy(c => c!.ToDisplayString()).Select(g => g.First()!))
+            {
+                uint mask = 0;
+                for (int i = 0; i < callbacks.Length; ++i)
+                    for (var parent = type; parent != null && parent.ToDisplayString() != "Kans.Entity"; parent = parent.BaseType)
+                        if (parent.GetMembers(callbacks[i]).OfType<IMethodSymbol>().Any(m => m.IsOverride)) { mask |= 1u << i; break; }
+                source.Append("if (target.GetType() == typeof(global::").Append(type.ToDisplayString()).Append(")) return ").Append(mask).Append("u;\n");
+            }
+            source.Append("return 0; }\n");
             source.Append("public bool InvokeTimeline(global::Kans.Entity target, string method, string payload) {\n");
             int dispatchIndex = 0;
             foreach (var type in classes.Where(c => c != null).GroupBy(c => c!.ToDisplayString()).Select(g => g.First()!))

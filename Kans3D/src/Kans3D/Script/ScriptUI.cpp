@@ -126,6 +126,16 @@ namespace Kans::ScriptUI
                     return 0;
                 switch (Scripting::ComponentType(type))
                 {
+                    case Scripting::ComponentType::RigidBodyComponent:
+                        return Add<RigidBodyComponent>(e);
+                    case Scripting::ComponentType::BoxColliderComponent:
+                        return Add<BoxColliderComponent>(e);
+                    case Scripting::ComponentType::SphereColliderComponent:
+                        return Add<SphereColliderComponent>(e);
+                    case Scripting::ComponentType::CapsuleColliderComponent:
+                        return Add<CapsuleColliderComponent>(e);
+                    case Scripting::ComponentType::MeshColliderComponent:
+                        return Add<MeshColliderComponent>(e);
                     case Scripting::ComponentType::AnimatorComponent:
                         return Add<AnimatorComponent>(e);
                     case Scripting::ComponentType::TransformComponent:

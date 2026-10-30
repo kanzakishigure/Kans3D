@@ -161,6 +161,9 @@ namespace Kans::PhysicsYaml
             f("CollisionMatrix", c.CollisionMatrix);
             f("DebugDraw", c.DebugDraw);
             f("DefaultMaterial", c.DefaultMaterial);
+            f("QueriesHitTriggers", c.QueriesHitTriggers);
+            f("EnableKinematicPairs", c.EnableKinematicPairs);
+            f("MaxContactsPerPair", c.MaxContactsPerPair);
         }
         template<class F>
         void Fields(Physics::ShapeOffset& c, F f)
@@ -419,7 +422,7 @@ namespace Kans::PhysicsYaml
                 if constexpr (std::is_same_v<T, PhysicsInterpolation>)
                     max = 1;
                 if constexpr (std::is_same_v<T, PhysicsDebugFlags>)
-                    max = 7;
+                    max = 15;
                 Require(v <= max, "Invalid physics enum");
                 value = T(v);
             }

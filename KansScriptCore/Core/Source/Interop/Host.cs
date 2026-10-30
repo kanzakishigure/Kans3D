@@ -19,6 +19,8 @@ namespace Kans.Interop
             internal ulong Handle;
             internal string Class = "";
             internal bool Disabled;
+            internal uint PhysicsMask;
+            internal Entity? PhysicsOther, PhysicsCollider, PhysicsOtherCollider;
         }
         private static readonly List<Instance> s_Instances = new();
         private static readonly Dictionary<ulong, Instance> s_Handles = new();
@@ -43,13 +45,13 @@ namespace Kans.Interop
             if (native->Log == null || native->HasComponent == null || native->GetTranslation == null ||
                 native->SetTranslation == null || native->GetRotation == null || native->SetRotation == null || native->IsKeyPressed == null ||
                 native->SetMaterialParameter == null || native->ClearMaterialParameter == null || native->GetMaterialParameter == null || native->AddComponent == null || native->DestroyEntity == null ||
-                native->ComponentProperty == null || native->WidgetProperty == null || native->ReadUIEvent == null || native->UIUtility == null || native->AnimationCommand == null || native->ReadAnimationEvent == null || native->TimelineCommand == null || native->ReadTimelineEvent == null) return -1;
+                native->ComponentProperty == null || native->WidgetProperty == null || native->ReadUIEvent == null || native->UIUtility == null || native->AnimationCommand == null || native->ReadAnimationEvent == null || native->TimelineCommand == null || native->ReadTimelineEvent == null || native->PhysicsCommand == null || native->PhysicsQuery == null) return -1;
             InternalCalls.Api = *native;
             *managed = new ManagedApi {
                 Version = NativeApi.ApiVersion, Size = (uint)sizeof(ManagedApi), Shutdown = &Shutdown, LoadAssembly = &LoadAssembly,
                 ReloadAssembly = &ReloadAssembly, ClassCount = &ClassCount, ClassName = &ClassName,
                 ClassExists = &ClassExists, Create = &Create, Destroy = &Destroy, Update = &Update,
-                SetPlaying = &SetPlaying, AllocatedBytes = &AllocatedBytes, LastUnloadCollected = &LastUnloadCollected
+                SetPlaying = &SetPlaying, AllocatedBytes = &AllocatedBytes, LastUnloadCollected = &LastUnloadCollected, FixedUpdate = &FixedUpdate, PhysicsEvent = &PhysicsEvent, PhysicsCallbacks = &PhysicsCallbacks
             };
             if (!RuntimeFeature.IsDynamicCodeSupported) s_Registry = ScriptRegistry.Pending;
             return 0;
@@ -245,6 +247,9 @@ namespace Kans.Interop
                 if (entity == null) return 0;
                 entity.Attach(id);
                 instance = new Instance { Root = GCHandle.Alloc(entity), Handle = ++s_NextHandle, Class = className };
+                instance.PhysicsMask = s_Registry!.PhysicsCallbacks(entity);
+                if ((instance.PhysicsMask & ~1u) != 0)
+                { instance.PhysicsOther = new Entity(); instance.PhysicsCollider = new Entity(); instance.PhysicsOtherCollider = new Entity(); }
                 s_Instances.Add(instance);
                 s_Handles.Add(instance.Handle, instance);
                 using var scope = new UI.ScriptScope(instance.Handle);
@@ -291,6 +296,43 @@ namespace Kans.Interop
                 }
             }
             catch (Exception e) { Error(e); }
+        }
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static uint PhysicsCallbacks(ulong handle)
+        { try { return s_Handles.TryGetValue(handle, out var i) && !i.Disabled ? i.PhysicsMask : 0; } catch { return 0; } }
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void FixedUpdate(ulong* handles, int count, float dt)
+        {
+            try
+            {
+                if (!s_Playing) return;
+                for (int n = 0; n < count && s_Playing; ++n)
+                {
+                    if (!s_Handles.TryGetValue(handles[n], out var i) || i.Disabled || (i.PhysicsMask & 1) == 0) continue;
+                    var e = (Entity)i.Root.Target!;
+                    using var scope = new UI.ScriptScope(i.Handle);
+                    try { e.FixedUpdate(dt); } catch (Exception ex) { i.Disabled = true; Error(ex,e,i.Class); }
+                }
+            } catch (Exception ex) { Error(ex); }
+        }
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void PhysicsEvent(ulong handle, PhysicsEventData* data)
+        {
+            try
+            {
+                if (!s_Playing || data == null || !s_Handles.TryGetValue(handle,out var i) || i.Disabled) return;
+                uint bit = 1u << (data->Phase + (data->Trigger != 0 ? 4 : 1));
+                if ((i.PhysicsMask & bit) == 0) return;
+                var e = (Entity)i.Root.Target!;
+                using var scope = new UI.ScriptScope(i.Handle);
+                i.PhysicsOther!.Attach(data->Other); i.PhysicsCollider!.Attach(data->Collider); i.PhysicsOtherCollider!.Attach(data->OtherCollider);
+                try
+                {
+                    if (data->Trigger != 0) e.TriggerEvent(data->Phase,i.PhysicsOther);
+                    else e.PhysicsEvent(data->Phase,new Collision(i.PhysicsOther,i.PhysicsCollider,i.PhysicsOtherCollider,
+                        new ReadOnlySpan<ContactPoint>(data->Contacts,data->Count),data->Impulse,data->RelativeVelocity,data->Removed!=0));
+                } catch (Exception ex) { i.Disabled = true; Error(ex,e,i.Class); }
+            } catch (Exception ex) { Error(ex); }
         }
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void SetPlaying(int playing)

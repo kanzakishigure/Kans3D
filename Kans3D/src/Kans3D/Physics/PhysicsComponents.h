@@ -40,7 +40,7 @@ namespace Kans
     };
     struct ColliderMaterial
     {
-        // Reserved reference slot for P2 .physmat assets; inline values are authoritative in P1.
+        // Loaded asset > inline when !UseDefault > project default. A failed asset uses project default.
         AssetID               Asset;
         bool                  UseDefault = true;
         PhysicsMaterialValues Values;
