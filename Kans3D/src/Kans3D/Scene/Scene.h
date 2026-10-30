@@ -27,6 +27,9 @@ namespace Kans
     struct Bounds;
     struct MeshMaterialSlot;
     class Entity;
+    class PhysicsWorld;
+    class DebugDraw;
+    struct PhysicsSettings;
     struct SceneSnapshot;
 
     using EntityMap = std::unordered_map<UUID, Entity>;
@@ -148,6 +151,11 @@ namespace Kans
         void Restore(const SceneSnapshot& snapshot);
 
         void OnRuntimeStart();
+        void                   OnRuntimeSingleStep();
+        PhysicsWorld*          GetPhysicsWorld() const { return m_PhysicsWorld.get(); }
+        const PhysicsSettings& GetPhysicsSettings() const;
+        double                 GetPhysicsInterpolationAlpha() const;
+        DebugDraw&             GetDebugDraw() const;
         void OnRuntimeStop();
         void OnRuntimePause();
         void OnRuntimeResume();
@@ -187,6 +195,18 @@ namespace Kans
         bool              m_HasCameraAudioPosition = false;
 
     private:
+        void OnPhysicsComponentChanged(entt::registry&, entt::entity);
+        void OnPhysicsBodyOwnershipChanged(entt::registry&, entt::entity);
+        void OnPhysicsHierarchyChanged(entt::registry&, entt::entity);
+        void OnPhysicsMeshChanged(entt::registry&, entt::entity);
+        void OnPhysicsTransformChanged(entt::registry&, entt::entity);
+        void OnPhysicsPrefabChanged(entt::registry&, entt::entity);
+        // P2: dispatch script OnFixedUpdate here, before PhysicsWorld::Step.
+        void                          DispatchFixedUpdate(double seconds);
+        void                          UpdatePhysics(double seconds);
+        std::unique_ptr<PhysicsWorld> m_PhysicsWorld;
+        double                        m_PhysicsAccumulator = 0;
+        bool m_PhysicsPaused = false, m_PhysicsSingleStep = false, m_PhysicsWritingTransforms = false;
         void OnRenderComponentChanged(entt::registry&, entt::entity entity);
         void OnEditableMeshChanged(entt::registry&, entt::entity entity);
         mutable std::unordered_map<entt::entity, Ref<const RuntimeMesh>>              m_EditableMeshes;
@@ -229,6 +249,7 @@ namespace Kans
     private:
         friend class Entity;
         friend class RenderWorld;
+        friend class PhysicsWorld;
         friend class SceneSerializer;
         friend struct SceneClipboardAccess;
     };

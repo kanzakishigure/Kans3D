@@ -283,6 +283,7 @@ namespace Kans
     }
     void Scene::OnRuntimePause()
     {
+        m_PhysicsPaused = true;
         if (!m_AudioRunning || m_AudioPaused)
             return;
         m_AudioPaused = true;
@@ -300,6 +301,7 @@ namespace Kans
     }
     void Scene::OnRuntimeResume()
     {
+        m_PhysicsPaused = false;
         if (!m_AudioRunning || !m_AudioPaused)
             return;
         m_AudioPaused = false;

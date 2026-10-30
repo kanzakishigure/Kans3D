@@ -1,6 +1,8 @@
 #include "ProjectFile.h"
 #include <algorithm>
 #include <fstream>
+#include <limits>
+#include "Kans3D/Physics/PhysicsSerialization.h"
 #include "ProjectYaml.h"
 
 namespace Kans
@@ -70,6 +72,8 @@ namespace Kans
                 project.AssetDirectory = fs::u8path(node["AssetDirectory"].as<std::string>());
             if (node["CacheDirectory"])
                 project.CacheDirectory = fs::u8path(node["CacheDirectory"].as<std::string>());
+            if (node["PhysicsSettings"])
+                PhysicsYaml::Decode(node["PhysicsSettings"], project.Physics);
             if (auto error = Validate(kproj, project))
                 return *error;
             return project;
@@ -78,7 +82,7 @@ namespace Kans
         {
             return ProjectYaml::Error(AssetErrorCode::IoError, kproj, e.what());
         }
-        catch (const YAML::Exception& e)
+        catch (const std::exception& e)
         {
             return ProjectYaml::Error(AssetErrorCode::InvalidData, kproj, e.what());
         }
@@ -88,9 +92,20 @@ namespace Kans
     {
         if (auto error = Validate(kproj, project))
             return error;
+        try
+        {
+            PhysicsYaml::Encode(project.Physics);
+        }
+        catch (const std::exception& e)
+        {
+            return ProjectYaml::Error(AssetErrorCode::InvalidData, kproj, e.what());
+        }
         YAML::Emitter out;
-        out << YAML::BeginMap << YAML::Key << "Name" << YAML::Value << project.Name << YAML::Key << "FormatVersion"
-            << YAML::Value << project.FormatVersion << YAML::Key << "StartupScene" << YAML::Value
+        out.SetFloatPrecision(std::numeric_limits<float>::max_digits10);
+        out.SetDoublePrecision(std::numeric_limits<double>::max_digits10);
+        out << YAML::BeginMap << YAML::Key << "PhysicsSettings" << YAML::Value << PhysicsYaml::Encode(project.Physics)
+            << YAML::Key << "Name" << YAML::Value << project.Name << YAML::Key << "FormatVersion" << YAML::Value
+            << project.FormatVersion << YAML::Key << "StartupScene" << YAML::Value
             << project.StartupScene.generic_u8string() << YAML::Key << "AssetDirectory" << YAML::Value
             << project.AssetDirectory.generic_u8string() << YAML::Key << "CacheDirectory" << YAML::Value
             << project.CacheDirectory.generic_u8string() << YAML::EndMap;
@@ -122,6 +137,7 @@ namespace Kans
     ProjectConfig MakeProjectConfig(const fs::path& root, const ProjectFile& project)
     {
         ProjectConfig config;
+        config.Physics        = project.Physics;
         config.Name           = project.Name;
         config.RootDirectory  = fs::absolute(root).lexically_normal();
         config.AssetDirectory = project.AssetDirectory;

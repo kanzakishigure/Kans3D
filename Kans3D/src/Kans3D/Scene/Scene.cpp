@@ -4,6 +4,8 @@
 #include <glm/glm.hpp>
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Core/Math/Math.h"
+#include "Kans3D/Physics/PhysicsWorld.h"
+#include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Components.h"
 #include "Entity.h"
@@ -18,7 +20,54 @@ namespace Kans
     Scene::Scene(const std::string& name) : m_Name(name)
     {
         m_RenderWorld = std::make_unique<RenderWorld>(*this);
-        auto connect  = [&](auto* type) {
+        auto physics  = [&](auto* type) {
+            using T = std::remove_pointer_t<decltype(type)>;
+            if constexpr (std::is_same_v<T, BoxColliderComponent> || std::is_same_v<T, SphereColliderComponent> ||
+                          std::is_same_v<T, CapsuleColliderComponent> || std::is_same_v<T, MeshColliderComponent>)
+            {
+                m_Registry.on_construct<T>().template connect<&Scene::OnPhysicsComponentChanged>(this);
+                m_Registry.on_update<T>().template connect<&Scene::OnPhysicsComponentChanged>(this);
+                m_Registry.on_destroy<T>().template connect<&Scene::OnPhysicsComponentChanged>(this);
+            }
+            else if constexpr (std::is_same_v<T, RigidBodyComponent>)
+            {
+                m_Registry.on_construct<T>().template connect<&Scene::OnPhysicsBodyOwnershipChanged>(this);
+                m_Registry.on_update<T>().template connect<&Scene::OnPhysicsComponentChanged>(this);
+                m_Registry.on_destroy<T>().template connect<&Scene::OnPhysicsBodyOwnershipChanged>(this);
+            }
+            else if constexpr (std::is_same_v<T, ActiveComponent> || std::is_same_v<T, RelationshipComponent>)
+            {
+                m_Registry.on_construct<T>().template connect<&Scene::OnPhysicsHierarchyChanged>(this);
+                m_Registry.on_update<T>().template connect<&Scene::OnPhysicsHierarchyChanged>(this);
+                m_Registry.on_destroy<T>().template connect<&Scene::OnPhysicsHierarchyChanged>(this);
+            }
+            else if constexpr (std::is_same_v<T, MeshComponent> || std::is_same_v<T, EditableMeshComponent>)
+            {
+                m_Registry.on_construct<T>().template connect<&Scene::OnPhysicsMeshChanged>(this);
+                m_Registry.on_update<T>().template connect<&Scene::OnPhysicsMeshChanged>(this);
+                m_Registry.on_destroy<T>().template connect<&Scene::OnPhysicsMeshChanged>(this);
+            }
+            else
+            {
+                m_Registry.on_construct<T>().template connect<&Scene::OnPhysicsPrefabChanged>(this);
+                m_Registry.on_update<T>().template connect<&Scene::OnPhysicsPrefabChanged>(this);
+                m_Registry.on_destroy<T>().template connect<&Scene::OnPhysicsPrefabChanged>(this);
+            }
+        };
+        physics(static_cast<RigidBodyComponent*>(nullptr));
+        physics(static_cast<ActiveComponent*>(nullptr));
+        physics(static_cast<RelationshipComponent*>(nullptr));
+        physics(static_cast<BoxColliderComponent*>(nullptr));
+        physics(static_cast<SphereColliderComponent*>(nullptr));
+        physics(static_cast<CapsuleColliderComponent*>(nullptr));
+        physics(static_cast<MeshColliderComponent*>(nullptr));
+        physics(static_cast<MeshComponent*>(nullptr));
+        physics(static_cast<EditableMeshComponent*>(nullptr));
+        physics(static_cast<GlobalWindComponent*>(nullptr));
+        m_Registry.on_update<TransformComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
+        m_Registry.on_update<RelationshipComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
+
+        auto connect = [&](auto* type) {
             using T = std::remove_pointer_t<decltype(type)>;
             m_Registry.on_construct<T>().template connect<&Scene::OnRenderComponentChanged>(this);
             m_Registry.on_update<T>().template connect<&Scene::OnRenderComponentChanged>(this);
@@ -59,6 +108,7 @@ namespace Kans
 
     Scene::~Scene()
     {
+        m_PhysicsWorld.reset();
         if (ScriptEngine::GetSceneContext() == this)
             ScriptEngine::OnRuntimeEnd();
         StopAudio();
@@ -101,7 +151,7 @@ namespace Kans
             return;
         Entity entity {handle, this};
         DirtySubtree(entity);
-        if (!m_ReconcilingPrefab && entity.HasComponent<PrefabOwnedComponent>())
+        if (!m_PhysicsWritingTransforms && !m_ReconcilingPrefab && entity.HasComponent<PrefabOwnedComponent>())
             m_CapturePrefabNodes.insert(handle);
     }
     void Scene::OnRenderComponentChanged(entt::registry&, entt::entity handle)
@@ -161,6 +211,8 @@ namespace Kans
         m_RenderWorld->m_UIRecords.clear();
         m_PrefabAssets = assets;
         m_AssetChanges = assets ? assets->ObserveChanges() : nullptr;
+        if (m_PhysicsWorld)
+            m_PhysicsWorld->NotifyAssetProviderChanged();
         for (auto handle : m_Registry.view<PrefabInstanceComponent>())
             m_DirtyPrefabs.insert(handle);
         for (auto handle : m_Registry.view<MeshComponent>())
@@ -223,6 +275,12 @@ namespace Kans
             add(c.Skeleton);
             add(c.Expression);
         }
+        for (auto h : m_Registry.view<MeshColliderComponent>())
+            add(m_Registry.get<MeshColliderComponent>(h).Shape.Mesh);
+        for (auto h : m_Registry.view<PrefabInstanceComponent>())
+            for (const auto& [key, value] : m_Registry.get<PrefabInstanceComponent>(h).Overrides)
+                if (value.MeshCollider)
+                    add(value.MeshCollider->Shape.Mesh);
         for (auto h : m_Registry.view<TimelinePlayerComponent>())
             add(m_Registry.get<TimelinePlayerComponent>(h).Timeline);
         for (const auto& entry : GetPostProcessSettings().Materials)
@@ -260,6 +318,8 @@ namespace Kans
         for (auto id : m_AssetChanges->Drain())
         {
             m_RenderWorld->AssetChanged(id);
+            if (m_PhysicsWorld)
+                m_PhysicsWorld->NotifyAssetChanged(id);
             const auto found = m_PrefabAssetUsers.find(id);
             if (found != m_PrefabAssetUsers.end())
                 for (auto handle : found->second)
@@ -299,6 +359,7 @@ namespace Kans
         UpdatePrefabs();
         UpdateAnimations(double(ts));
         UpdateTimelines(double(ts));
+        UpdatePhysics(double(ts));
 
         // update ScripteableEntity
         {
@@ -402,6 +463,8 @@ namespace Kans
         }
         Detach(entity);
         auto& id = entity.GetComponent<IDComponent>().ID;
+        if (m_PhysicsWorld && !m_SuppressNotifications)
+            m_PhysicsWorld->NotifyTopologyChanged(entity);
         m_EntityMap.erase(id);
         m_ChildBounds.erase(entt::entity(entity));
         m_Registry.destroy(entity);
@@ -480,7 +543,7 @@ namespace Kans
         }
         if (keepWorld)
             SetWorldTransform(entity, world);
-        DirtySubtree(entity);
+        m_Registry.patch<RelationshipComponent>(entity);
         return true;
     }
 
@@ -604,6 +667,13 @@ namespace Kans
         const glm::mat4 local  = parent ? glm::inverse(GetWorldTransform(parent)) * world : world;
         entity.PatchComponent<TransformComponent>([&](auto& transform) {
             Math::DecomposeTransform(local, transform.Position, transform.Rotation, transform.Scale);
+            // The existing matrix override is general local-transform storage despite
+            // its historical Imported* names. It also preserves shear from inverse-parent
+            // multiplication. Editing a TRS field invalidates the override in GetTransform().
+            transform.ImportedMatrix   = local;
+            transform.ImportedPosition = transform.Position;
+            transform.ImportedRotation = transform.Rotation;
+            transform.ImportedScale    = transform.Scale;
         });
     }
 
@@ -639,6 +709,13 @@ namespace Kans
         CopyComponent<MaterialParameterDriversComponent>(source, copy);
         CopyComponent<TimelinePlayerComponent>(source, copy);
         CopyComponent<ActiveComponent>(source, copy);
+        CopyComponent<RigidBodyComponent>(source, copy);
+        CopyComponent<BoxColliderComponent>(source, copy);
+        CopyComponent<SphereColliderComponent>(source, copy);
+        CopyComponent<CapsuleColliderComponent>(source, copy);
+        CopyComponent<MeshColliderComponent>(source, copy);
+        CopyComponent<GlobalWindComponent>(source, copy);
+
         CopyComponent<AudioSourceComponent>(source, copy);
         CopyComponent<AudioListenerComponent>(source, copy);
         if (source.HasComponent<PrefabInstanceComponent>())
@@ -735,6 +812,12 @@ namespace Kans
 
     void Scene::OnRuntimeStart()
     {
+        if (m_PhysicsWorld)
+            return;
+        UpdatePrefabs();
+        m_PhysicsAccumulator = 0;
+        m_PhysicsPaused = m_PhysicsSingleStep = false;
+        m_PhysicsWorld                        = std::make_unique<PhysicsWorld>(*this, GetPhysicsSettings());
         StartAudio();
         if (ScriptEngine::IsInitialized())
             ScriptEngine::OnRuntimeStart(this);
@@ -764,6 +847,10 @@ namespace Kans
 
     void Scene::OnRuntimeStop()
     {
+        m_PhysicsWorld.reset();
+        m_PhysicsAccumulator = 0;
+        m_PhysicsPaused = m_PhysicsSingleStep = false;
+        GetDebugDraw().BeginFrame();
         std::vector<Ref<TimelinePlayer>> players;
         for (auto h : m_Registry.view<TimelinePlayerComponent>())
             if (auto p = m_Registry.get<TimelinePlayerComponent>(h).Player)
@@ -796,6 +883,25 @@ namespace Kans
     {
         static_assert(sizeof(T) == 0);
     }
+
+    template<>
+    void Scene::OnComponentAdd<RigidBodyComponent>(Entity, RigidBodyComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<BoxColliderComponent>(Entity, BoxColliderComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<SphereColliderComponent>(Entity, SphereColliderComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<CapsuleColliderComponent>(Entity, CapsuleColliderComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<MeshColliderComponent>(Entity, MeshColliderComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<GlobalWindComponent>(Entity, GlobalWindComponent&)
+    {}
 
     template<>
     void Scene::OnComponentAdd<AudioSourceComponent>(Entity, AudioSourceComponent&)

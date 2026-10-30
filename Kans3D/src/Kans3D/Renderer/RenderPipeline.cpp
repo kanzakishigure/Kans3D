@@ -2,6 +2,7 @@
 #include "RenderPipeline.h"
 #include <map>
 #include <stdexcept>
+#include "Kans3D/Renderer/Features/DebugDrawFeature.h"
 #include "RenderFrame.h"
 #include "Resource/InternalShader.h"
 #include "Resource/ShadowMaps.h"
@@ -39,6 +40,9 @@ namespace Kans
     }
     void RenderPipeline::Inject(RenderExtensionPoint point, const RenderFeatureContext& context)
     {
+        DebugDrawFeature debug;
+        if (debug.RunsAt(point))
+            debug.AddPasses(point, context);
         if (context.View.Features)
             context.View.Features->Inject(point, context);
     }

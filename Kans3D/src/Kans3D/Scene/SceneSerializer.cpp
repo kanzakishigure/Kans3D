@@ -8,6 +8,7 @@
 #include "Kans3D/Animation/AnimationProduct.h"
 #include "Kans3D/Animation/DeformationProduct.h"
 #include "Kans3D/Asset/Storage/ProductFiles.h"
+#include "Kans3D/Physics/PhysicsSerialization.h"
 #include "Kans3D/UI/UIAsset.h"
 #include "Entity.h"
 namespace Kans
@@ -787,6 +788,18 @@ namespace Kans
                     item["RenderCustomDepth"] = *change.RenderCustomDepth;
                 if (change.CustomStencil)
                     item["CustomStencil"] = uint32_t(*change.CustomStencil);
+                if (change.RigidBody)
+                    item["RigidBodyComponent"] = PhysicsYaml::Encode(*change.RigidBody);
+                if (change.BoxCollider)
+                    item["BoxColliderComponent"] = PhysicsYaml::Encode(*change.BoxCollider);
+                if (change.SphereCollider)
+                    item["SphereColliderComponent"] = PhysicsYaml::Encode(*change.SphereCollider);
+                if (change.CapsuleCollider)
+                    item["CapsuleColliderComponent"] = PhysicsYaml::Encode(*change.CapsuleCollider);
+                if (change.MeshCollider)
+                    item["MeshColliderComponent"] = PhysicsYaml::Encode(*change.MeshCollider);
+                if (change.GlobalWind)
+                    item["GlobalWindComponent"] = PhysicsYaml::Encode(*change.GlobalWind);
                 if (change.UIScreen)
                     item["UIScreen"] = EncodeUIScreen(*change.UIScreen);
                 if (change.UIWorld)
@@ -826,12 +839,54 @@ namespace Kans
                       "Materials",
                       "RenderCustomDepth",
                       "CustomStencil",
+                      "RigidBodyComponent",
+                      "BoxColliderComponent",
+                      "SphereColliderComponent",
+                      "CapsuleColliderComponent",
+                      "MeshColliderComponent",
+                      "GlobalWindComponent",
                       "UIScreen",
                       "UIWorld"});
                 const auto key = Text(item["Node"]);
                 Require(!key.empty() && !prefab.Overrides.count(key), "Duplicate/empty prefab override key");
                 auto& change   = prefab.Overrides[key];
                 change.Removed = item["Removed"].as<bool>();
+                if (item["RigidBodyComponent"])
+                {
+                    RigidBodyComponent c;
+                    PhysicsYaml::Decode(item["RigidBodyComponent"], c);
+                    change.RigidBody = c;
+                }
+                if (item["BoxColliderComponent"])
+                {
+                    BoxColliderComponent c;
+                    PhysicsYaml::Decode(item["BoxColliderComponent"], c);
+                    change.BoxCollider = c;
+                }
+                if (item["SphereColliderComponent"])
+                {
+                    SphereColliderComponent c;
+                    PhysicsYaml::Decode(item["SphereColliderComponent"], c);
+                    change.SphereCollider = c;
+                }
+                if (item["CapsuleColliderComponent"])
+                {
+                    CapsuleColliderComponent c;
+                    PhysicsYaml::Decode(item["CapsuleColliderComponent"], c);
+                    change.CapsuleCollider = c;
+                }
+                if (item["MeshColliderComponent"])
+                {
+                    MeshColliderComponent c;
+                    PhysicsYaml::Decode(item["MeshColliderComponent"], c);
+                    change.MeshCollider = c;
+                }
+                if (item["GlobalWindComponent"])
+                {
+                    GlobalWindComponent c;
+                    PhysicsYaml::Decode(item["GlobalWindComponent"], c);
+                    change.GlobalWind = c;
+                }
                 if (item["UIScreen"])
                     change.UIScreen = DecodeUIScreen(item["UIScreen"]);
                 if (item["UIWorld"])
@@ -1022,6 +1077,18 @@ namespace Kans
             }
             if (entity.HasComponent<PrefabInstanceComponent>())
                 node["PrefabInstanceComponent"] = EncodePrefab(entity.GetComponent<PrefabInstanceComponent>());
+            if (entity.HasComponent<RigidBodyComponent>())
+                node["RigidBodyComponent"] = PhysicsYaml::Encode(entity.GetComponent<RigidBodyComponent>());
+            if (entity.HasComponent<BoxColliderComponent>())
+                node["BoxColliderComponent"] = PhysicsYaml::Encode(entity.GetComponent<BoxColliderComponent>());
+            if (entity.HasComponent<SphereColliderComponent>())
+                node["SphereColliderComponent"] = PhysicsYaml::Encode(entity.GetComponent<SphereColliderComponent>());
+            if (entity.HasComponent<CapsuleColliderComponent>())
+                node["CapsuleColliderComponent"] = PhysicsYaml::Encode(entity.GetComponent<CapsuleColliderComponent>());
+            if (entity.HasComponent<MeshColliderComponent>())
+                node["MeshColliderComponent"] = PhysicsYaml::Encode(entity.GetComponent<MeshColliderComponent>());
+            if (entity.HasComponent<GlobalWindComponent>())
+                node["GlobalWindComponent"] = PhysicsYaml::Encode(entity.GetComponent<GlobalWindComponent>());
             if (entity.HasComponent<AudioSourceComponent>())
             {
                 const auto& c       = entity.GetComponent<AudioSourceComponent>();
@@ -1396,6 +1463,12 @@ namespace Kans
                       "IKComponent",
                       "ShapeKeysComponent",
                       "MaterialParameterDriversComponent",
+                      "RigidBodyComponent",
+                      "BoxColliderComponent",
+                      "SphereColliderComponent",
+                      "CapsuleColliderComponent",
+                      "MeshColliderComponent",
+                      "GlobalWindComponent",
                       "AudioSourceComponent",
                       "AudioListenerComponent",
                       "TextComponent",
@@ -1449,6 +1522,42 @@ namespace Kans
                 {
                     Require(!model, "Scene entity has both prefab and legacy model");
                     entity.AddComponent<PrefabInstanceComponent>(DecodePrefab(node["PrefabInstanceComponent"]));
+                }
+                if (node["RigidBodyComponent"])
+                {
+                    RigidBodyComponent c;
+                    PhysicsYaml::Decode(node["RigidBodyComponent"], c);
+                    entity.AddComponent<RigidBodyComponent>(c);
+                }
+                if (node["BoxColliderComponent"])
+                {
+                    BoxColliderComponent c;
+                    PhysicsYaml::Decode(node["BoxColliderComponent"], c);
+                    entity.AddComponent<BoxColliderComponent>(c);
+                }
+                if (node["SphereColliderComponent"])
+                {
+                    SphereColliderComponent c;
+                    PhysicsYaml::Decode(node["SphereColliderComponent"], c);
+                    entity.AddComponent<SphereColliderComponent>(c);
+                }
+                if (node["CapsuleColliderComponent"])
+                {
+                    CapsuleColliderComponent c;
+                    PhysicsYaml::Decode(node["CapsuleColliderComponent"], c);
+                    entity.AddComponent<CapsuleColliderComponent>(c);
+                }
+                if (node["MeshColliderComponent"])
+                {
+                    MeshColliderComponent c;
+                    PhysicsYaml::Decode(node["MeshColliderComponent"], c);
+                    entity.AddComponent<MeshColliderComponent>(c);
+                }
+                if (node["GlobalWindComponent"])
+                {
+                    GlobalWindComponent c;
+                    PhysicsYaml::Decode(node["GlobalWindComponent"], c);
+                    entity.AddComponent<GlobalWindComponent>(c);
                 }
                 if (node["AudioSourceComponent"])
                     entity.AddComponent<AudioSourceComponent>(DecodeAudioSource(node["AudioSourceComponent"]));

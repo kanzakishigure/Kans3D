@@ -6,6 +6,7 @@ namespace Kans
 {
     struct ProjectFile
     {
+        PhysicsSettings       Physics;
         std::string           Name;
         uint32_t              FormatVersion = 1;
         std::filesystem::path StartupScene;

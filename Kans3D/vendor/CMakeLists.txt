@@ -257,3 +257,67 @@ foreach(text_dependency harfbuzz msdfgen-core)
         target_compile_options(${text_dependency} PRIVATE /utf-8 /bigobj)
     endif()
 endforeach()
+
+# PhysX 5.9 CPU SDK. Reuse the pinned SDK's module source lists, without its
+# top-level configure (which writes PxConfig.h into the checkout and replaces
+# the parent's configurations/CRT flags). No packman or GPU/PVD runtime.
+function(kans_add_physx)
+    set(PHYSX_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/PhysX/physx")
+    set(PROJECT_CMAKE_FILES_DIR source/compiler/cmake)
+    set(PX_GENERATE_STATIC_LIBRARIES ON)
+    set(PX_GENERATE_GPU_PROJECTS OFF)
+    set(PX_GENERATE_GPU_PROJECTS_ONLY OFF)
+    set(PX_ENABLE_INSTALL OFF)
+    set(PUBLIC_RELEASE 1)
+    if(WIN32)
+        set(TARGET_BUILD_PLATFORM windows)
+    else()
+        set(TARGET_BUILD_PLATFORM linux)
+    endif()
+    set(base_defs PX_PHYSX_STATIC_LIB PX_PUBLIC_RELEASE=1 DISABLE_CUDA_PHYSX
+        PX_SUPPORT_PVD=0 PX_SUPPORT_OMNI_PVD=0 PX_NVTX=0)
+    set(PHYSX_LINUX_COMPILE_DEFS ${base_defs})
+    set(PHYSX_WINDOWS_COMPILE_DEFS ${base_defs} NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    foreach(platform LINUX WINDOWS)
+        set(PHYSX_${platform}_DEBUG_COMPILE_DEFS PX_DEBUG=1 PX_CHECKED=1)
+        set(PHYSX_${platform}_RELEASE_COMPILE_DEFS NDEBUG)
+    endforeach()
+    # The disabled PVD dependency appears in upstream link lists only.
+    add_library(PhysXPvdSDK INTERFACE)
+    set(modules PhysXFoundation LowLevel LowLevelAABB LowLevelDynamics PhysXTask
+        SceneQuery SimulationController PhysXCommon PhysXCooking PhysX
+        PhysXExtensions PhysXCharacterKinematic PhysXVehicle)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/physx/include")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/physx/include/PxConfig.h"
+        "#pragma once\n#define PX_PHYSX_STATIC_LIB\n")
+    foreach(module IN LISTS modules)
+        include("${PHYSX_ROOT_DIR}/${PROJECT_CMAKE_FILES_DIR}/${module}.cmake")
+        get_target_property(module_sources ${module} SOURCES)
+        # GPU module loaders are guarded stubs in a CPU SDK; omit them entirely.
+        list(FILTER module_sources EXCLUDE REGEX "/(gpu|gpucommon|cudamanager)/.*\\.(cpp|cu)$")
+        set_property(TARGET ${module} PROPERTY SOURCES "${module_sources}")
+        set_target_properties(${module} PROPERTIES CXX_STANDARD 17
+            POSITION_INDEPENDENT_CODE ON FOLDER "Dependencies/PhysX"
+            MSVC_RUNTIME_LIBRARY "${CMAKE_MSVC_RUNTIME_LIBRARY}")
+        target_compile_definitions(${module} PRIVATE ${base_defs}
+            "$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
+        target_include_directories(${module} SYSTEM PUBLIC
+            "${CMAKE_CURRENT_BINARY_DIR}/physx/include" "${PHYSX_ROOT_DIR}/include")
+        # Prevent upstream PUBLIC include paths from exposing vendor warnings.
+        set_property(TARGET ${module} PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+            "${CMAKE_CURRENT_BINARY_DIR}/physx/include;${PHYSX_ROOT_DIR}/include")
+        if(MSVC)
+            target_compile_options(${module} PRIVATE /w /bigobj /utf-8)
+        else()
+            # Line-level SDK debugging keeps static consumers small enough to link
+            # on memory-limited builders. Engine debug information is unchanged.
+            target_compile_options(${module} PRIVATE -w -fno-strict-aliasing
+                "$<$<CONFIG:Debug>:-g1>")
+        endif()
+        kans_set_output_dirs(${module})
+    endforeach()
+    if(UNIX)
+        target_link_libraries(PhysXFoundation PRIVATE pthread ${CMAKE_DL_LIBS})
+    endif()
+endfunction()
+kans_add_physx()

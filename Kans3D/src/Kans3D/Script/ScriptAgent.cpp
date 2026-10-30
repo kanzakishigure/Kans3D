@@ -47,6 +47,18 @@ namespace Kans
                     return 0;
                 switch (Scripting::ComponentType(type))
                 {
+                    case Scripting::ComponentType::RigidBodyComponent:
+                        return entity.HasComponent<RigidBodyComponent>();
+                    case Scripting::ComponentType::BoxColliderComponent:
+                        return entity.HasComponent<BoxColliderComponent>();
+                    case Scripting::ComponentType::SphereColliderComponent:
+                        return entity.HasComponent<SphereColliderComponent>();
+                    case Scripting::ComponentType::CapsuleColliderComponent:
+                        return entity.HasComponent<CapsuleColliderComponent>();
+                    case Scripting::ComponentType::MeshColliderComponent:
+                        return entity.HasComponent<MeshColliderComponent>();
+                    case Scripting::ComponentType::GlobalWindComponent:
+                        return entity.HasComponent<GlobalWindComponent>();
                     case Scripting::ComponentType::TimelinePlayerComponent:
                         return entity.HasComponent<TimelinePlayerComponent>();
                     case Scripting::ComponentType::AnimatorComponent:

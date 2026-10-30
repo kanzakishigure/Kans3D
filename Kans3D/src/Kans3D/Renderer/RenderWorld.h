@@ -2,6 +2,7 @@
 #include <map>
 #include <unordered_set>
 #include <entt.hpp>
+#include "DebugDraw.h"
 #include "RenderView.h"
 
 namespace Kans
@@ -57,6 +58,7 @@ namespace Kans
         void                          SetValidationEnabled(bool enabled) { m_Validate = enabled; }
         // Debug-only full reference extraction. Throws with the stale UUID.
         void                  Validate() const;
+        DebugDraw                          Debug;
         RenderResource        Settings;
         std::filesystem::path              EnvironmentPath; // View/editor default for legacy scenes.
         std::filesystem::path              EnvironmentRoot; // Project directory; empty means current working directory.

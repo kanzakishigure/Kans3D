@@ -29,3 +29,7 @@
 	path = Kans3D/vendor/msdfgen
 	url = https://github.com/Chlumsky/msdfgen
 	shallow = true
+[submodule "Kans3D/vendor/PhysX"]
+	path = Kans3D/vendor/PhysX
+	url = https://github.com/NVIDIA-Omniverse/PhysX.git
+	shallow = true

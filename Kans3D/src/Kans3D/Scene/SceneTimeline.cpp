@@ -18,11 +18,10 @@ namespace Kans
         {
             if (e.GetComponent<ActiveComponent>().Active == active)
                 return;
-            e.GetComponent<ActiveComponent>().Active = active;
+            e.PatchComponent<ActiveComponent>([&](auto& c) { c.Active = active; });
         }
         else
-            e.AddComponent<ActiveComponent>().Active = active;
-        DirtySubtree(e);
+            e.AddComponent<ActiveComponent>(ActiveComponent {active});
     }
     bool Scene::PrepareTimeline(Entity owner)
     {

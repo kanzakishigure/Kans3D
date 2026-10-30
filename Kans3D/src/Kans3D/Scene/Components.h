@@ -9,6 +9,8 @@
 #include "Kans3D/Asset/Runtime/MeshData.h"
 #include "Kans3D/Asset/Runtime/ModelData.h"
 #include "Kans3D/Audio/AudioComponents.h"
+#include "Kans3D/Physics/PhysicsComponents.h"
+#include "Kans3D/Physics/PhysicsEquality.h"
 #include "Kans3D/Timeline/Timeline.h"
 
 #include "Kans3D/Core/UUID.h"
@@ -183,6 +185,12 @@ namespace Kans
     };
     struct PrefabNodeOverride
     {
+        std::optional<RigidBodyComponent>       RigidBody;
+        std::optional<BoxColliderComponent>     BoxCollider;
+        std::optional<SphereColliderComponent>  SphereCollider;
+        std::optional<CapsuleColliderComponent> CapsuleCollider;
+        std::optional<MeshColliderComponent>    MeshCollider;
+        std::optional<GlobalWindComponent>      GlobalWind;
         std::optional<UIScreenComponent>  UIScreen;
         std::optional<UIWorldComponent>   UIWorld;
         std::optional<TransformComponent> LocalTransform;
@@ -193,7 +201,8 @@ namespace Kans
         bool                              Empty() const
         {
             return !LocalTransform && Materials.empty() && !Removed && !RenderCustomDepth && !CustomStencil &&
-                   !UIScreen && !UIWorld;
+                   !UIScreen && !UIWorld && !RigidBody && !BoxCollider && !SphereCollider && !CapsuleCollider &&
+                   !MeshCollider && !GlobalWind;
         }
     };
     struct PrefabNodeState
@@ -296,7 +305,13 @@ namespace Kans
     template<typename... Component>
     struct ComponentGroup
     {};
-    using AllComponents = ComponentGroup<IDComponent,
+    using AllComponents = ComponentGroup<RigidBodyComponent,
+                                         BoxColliderComponent,
+                                         SphereColliderComponent,
+                                         CapsuleColliderComponent,
+                                         MeshColliderComponent,
+                                         GlobalWindComponent,
+                                         IDComponent,
                                          TagComponent,
                                          TransformComponent,
                                          CameraComponent,

@@ -123,3 +123,13 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KANS_MSDF_INCL
 file(READ "${KANS_MSDF_INCLUDE}" KANS_MSDF_GLSL)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/KansMSDFInclude.h" "R\"KANSMSDF(${KANS_MSDF_GLSL})KANSMSDF\"")
 target_include_directories(Kans3D PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+
+# PhysX stays private: only Physics/PhysX implementation files include its SDK.
+target_link_libraries(Kans3D PRIVATE PhysX PhysXCooking PhysXExtensions
+    PhysXCharacterKinematic PhysXVehicle)
+file(GLOB_RECURSE KANS_PHYSX_IMPLEMENTATION CONFIGURE_DEPENDS
+    "${KANS3D_SRC}/Kans3D/Physics/PhysX/*.cpp")
+# Match SDK header ABI and Windows static import decoration only in private SDK users.
+set_source_files_properties(${KANS_PHYSX_IMPLEMENTATION} PROPERTIES
+    SKIP_PRECOMPILE_HEADERS ON
+    COMPILE_DEFINITIONS "PX_PHYSX_STATIC_LIB;DISABLE_CUDA_PHYSX;PX_SUPPORT_PVD=0;PX_SUPPORT_OMNI_PVD=0;$<$<CONFIG:Debug>:PX_DEBUG=1>;$<$<CONFIG:Debug>:PX_CHECKED=1>")

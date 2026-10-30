@@ -1,4 +1,5 @@
 #include "kspch.h"
+#include "Kans3D/Physics/PhysicsWorld.h"
 
 #include "Kans3D/Audio/AudioSystem.h"
 #include "Kans3D/Core/Application.h"
@@ -85,6 +86,7 @@ namespace Kans
 
         KansFileSystem::ShutDown();
         AudioSystem::Shutdown();
+        PhysicsWorld::Shutdown();
         Renderer::Shutdown();
         ScriptEngine::ShutDown();
     }

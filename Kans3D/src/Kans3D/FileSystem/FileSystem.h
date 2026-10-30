@@ -8,6 +8,7 @@
 namespace Kans
 {
     class ProjectConfig;
+    struct PhysicsSettings;
 
     class FileSystemSpecification
     {
@@ -58,6 +59,7 @@ namespace Kans
         static const std::filesystem::path& GetShaderCacheFolder() { return s_Specification->m_ShaderCachePath; }
 
         static void SetProject(const ProjectConfig& config);
+        static const PhysicsSettings&       GetProjectPhysicsSettings();
         static const std::filesystem::path& GetProjectRoot() { return s_ProjectRoot; }
         static const std::filesystem::path& GetAssetFolder() { return s_AssetFolder; }
         static const std::filesystem::path& GetFontsFolder() { return s_Specification->m_FontsPath; }
@@ -70,6 +72,7 @@ namespace Kans
         static void ResetFileCache();
 
     private:
+        static PhysicsSettings          s_PhysicsSettings;
         static FileSystemSpecification* s_Specification;
         static std::filesystem::path s_ProjectRoot, s_AssetFolder;
     };

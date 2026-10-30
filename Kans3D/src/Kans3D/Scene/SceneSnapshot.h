@@ -36,6 +36,12 @@ namespace Kans
         std::optional<DirLightComponent>                 DirLight;
         std::optional<PointLightComponent>               PointLight;
         std::optional<ScriptComponent>                   Script;
+        std::optional<RigidBodyComponent>                RigidBody;
+        std::optional<BoxColliderComponent>              BoxCollider;
+        std::optional<SphereColliderComponent>           SphereCollider;
+        std::optional<CapsuleColliderComponent>          CapsuleCollider;
+        std::optional<MeshColliderComponent>             MeshCollider;
+        std::optional<GlobalWindComponent>               GlobalWind;
     };
 
     struct SceneSnapshot

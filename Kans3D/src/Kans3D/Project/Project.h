@@ -3,6 +3,7 @@
 #include "Kans3D/Asset/AssetError.h"
 #include "Kans3D/Asset/Importer/AssetBuildService.h"
 #include "Kans3D/Asset/SourceAssetDatabase.h"
+#include "Kans3D/Physics/PhysicsSettings.h"
 
 #include <filesystem>
 #include <memory>
@@ -19,6 +20,7 @@ namespace Kans
     class ProjectConfig
     {
     public:
+        PhysicsSettings       Physics;
         std::string           Name;
         std::filesystem::path RootDirectory;
         std::filesystem::path AssetDirectory = "assets";

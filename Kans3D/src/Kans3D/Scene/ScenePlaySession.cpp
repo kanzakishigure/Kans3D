@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include "ScenePlaySession.h"
+#include "Kans3D/Physics/PhysicsSettings.h"
 #include "Scene.h"
 
 namespace Kans
@@ -64,11 +65,14 @@ namespace Kans
         if (!IsActive() || m_Scene != &scene || (m_State == State::Paused && !m_StepRequested))
             return false;
 
-        const TimeStep step = m_State == State::Paused ? TimeStep(FixedStep) : ts;
+        const TimeStep step = m_State == State::Paused ? TimeStep(float(scene.GetPhysicsSettings().FixedTimeStep)) : ts;
         m_StepRequested = false;
         scene.UpdateUI(m_UIInput, m_UIViewport, step.GetSeconds());
         m_UIInput.NextFrame();
-        scene.OnUpdate(step);
+        if (m_State == State::Paused)
+            scene.OnRuntimeSingleStep();
+        else
+            scene.OnUpdate(step);
         m_PlayTime += step.GetSeconds();
         ++m_FrameCount;
         return true;

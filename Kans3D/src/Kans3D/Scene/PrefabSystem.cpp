@@ -25,7 +25,12 @@ namespace Kans
             for (; x != a.end(); ++x, ++y)
                 if (x->first != y->first || x->second.Removed != y->second.Removed ||
                     x->second.Materials != y->second.Materials || x->second.UIScreen != y->second.UIScreen ||
-                    x->second.UIWorld != y->second.UIWorld ||
+                    x->second.UIWorld != y->second.UIWorld || x->second.RigidBody != y->second.RigidBody ||
+                    x->second.BoxCollider != y->second.BoxCollider ||
+                    x->second.SphereCollider != y->second.SphereCollider ||
+                    x->second.CapsuleCollider != y->second.CapsuleCollider ||
+                    x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
+
                     x->second.RenderCustomDepth != y->second.RenderCustomDepth ||
                     x->second.CustomStencil != y->second.CustomStencil ||
                     x->second.LocalTransform.has_value() != y->second.LocalTransform.has_value() ||
@@ -138,6 +143,26 @@ namespace Kans
                                                mesh.CustomStencil;
                 state.AppliedMesh = mesh;
             }
+            change.RigidBody   = part.HasComponent<RigidBodyComponent>() ?
+                                     std::optional<RigidBodyComponent>(part.GetComponent<RigidBodyComponent>()) :
+                                     std::nullopt;
+            change.BoxCollider = part.HasComponent<BoxColliderComponent>() ?
+                                     std::optional<BoxColliderComponent>(part.GetComponent<BoxColliderComponent>()) :
+                                     std::nullopt;
+            change.SphereCollider =
+                part.HasComponent<SphereColliderComponent>() ?
+                    std::optional<SphereColliderComponent>(part.GetComponent<SphereColliderComponent>()) :
+                    std::nullopt;
+            change.CapsuleCollider =
+                part.HasComponent<CapsuleColliderComponent>() ?
+                    std::optional<CapsuleColliderComponent>(part.GetComponent<CapsuleColliderComponent>()) :
+                    std::nullopt;
+            change.MeshCollider = part.HasComponent<MeshColliderComponent>() ?
+                                      std::optional<MeshColliderComponent>(part.GetComponent<MeshColliderComponent>()) :
+                                      std::nullopt;
+            change.GlobalWind   = part.HasComponent<GlobalWindComponent>() ?
+                                      std::optional<GlobalWindComponent>(part.GetComponent<GlobalWindComponent>()) :
+                                      std::nullopt;
             change.UIScreen = part.HasComponent<UIScreenComponent>() ?
                                   std::optional<UIScreenComponent>(part.GetComponent<UIScreenComponent>()) :
                                   std::nullopt;
@@ -303,6 +328,60 @@ namespace Kans
                     mesh.Materials[slot] = material;
                 }
             }
+            if (change != instance.Overrides.end() && change->second.RigidBody)
+            {
+                if (!entity.HasComponent<RigidBodyComponent>())
+                    entity.AddComponent<RigidBodyComponent>(*change->second.RigidBody);
+                else if (entity.GetComponent<RigidBodyComponent>() != *change->second.RigidBody)
+                    entity.SetComponent<RigidBodyComponent>(*change->second.RigidBody);
+            }
+            else if (entity.HasComponent<RigidBodyComponent>())
+                entity.RemoveComponent<RigidBodyComponent>();
+            if (change != instance.Overrides.end() && change->second.BoxCollider)
+            {
+                if (!entity.HasComponent<BoxColliderComponent>())
+                    entity.AddComponent<BoxColliderComponent>(*change->second.BoxCollider);
+                else if (entity.GetComponent<BoxColliderComponent>() != *change->second.BoxCollider)
+                    entity.SetComponent<BoxColliderComponent>(*change->second.BoxCollider);
+            }
+            else if (entity.HasComponent<BoxColliderComponent>())
+                entity.RemoveComponent<BoxColliderComponent>();
+            if (change != instance.Overrides.end() && change->second.SphereCollider)
+            {
+                if (!entity.HasComponent<SphereColliderComponent>())
+                    entity.AddComponent<SphereColliderComponent>(*change->second.SphereCollider);
+                else if (entity.GetComponent<SphereColliderComponent>() != *change->second.SphereCollider)
+                    entity.SetComponent<SphereColliderComponent>(*change->second.SphereCollider);
+            }
+            else if (entity.HasComponent<SphereColliderComponent>())
+                entity.RemoveComponent<SphereColliderComponent>();
+            if (change != instance.Overrides.end() && change->second.CapsuleCollider)
+            {
+                if (!entity.HasComponent<CapsuleColliderComponent>())
+                    entity.AddComponent<CapsuleColliderComponent>(*change->second.CapsuleCollider);
+                else if (entity.GetComponent<CapsuleColliderComponent>() != *change->second.CapsuleCollider)
+                    entity.SetComponent<CapsuleColliderComponent>(*change->second.CapsuleCollider);
+            }
+            else if (entity.HasComponent<CapsuleColliderComponent>())
+                entity.RemoveComponent<CapsuleColliderComponent>();
+            if (change != instance.Overrides.end() && change->second.MeshCollider)
+            {
+                if (!entity.HasComponent<MeshColliderComponent>())
+                    entity.AddComponent<MeshColliderComponent>(*change->second.MeshCollider);
+                else if (entity.GetComponent<MeshColliderComponent>() != *change->second.MeshCollider)
+                    entity.SetComponent<MeshColliderComponent>(*change->second.MeshCollider);
+            }
+            else if (entity.HasComponent<MeshColliderComponent>())
+                entity.RemoveComponent<MeshColliderComponent>();
+            if (change != instance.Overrides.end() && change->second.GlobalWind)
+            {
+                if (!entity.HasComponent<GlobalWindComponent>())
+                    entity.AddComponent<GlobalWindComponent>(*change->second.GlobalWind);
+                else if (entity.GetComponent<GlobalWindComponent>() != *change->second.GlobalWind)
+                    entity.SetComponent<GlobalWindComponent>(*change->second.GlobalWind);
+            }
+            else if (entity.HasComponent<GlobalWindComponent>())
+                entity.RemoveComponent<GlobalWindComponent>();
             if (change != instance.Overrides.end() && change->second.UIScreen)
             {
                 if (!entity.HasComponent<UIScreenComponent>())

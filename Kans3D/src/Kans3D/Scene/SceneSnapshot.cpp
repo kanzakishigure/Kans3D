@@ -1,6 +1,8 @@
 #include "kspch.h"
 #include "SceneSnapshot.h"
 #include <algorithm>
+#include "Kans3D/Physics/PhysicsEquality.h"
+#include "Kans3D/Physics/PhysicsWorld.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Script/ScriptEngine.h"
 #include "Entity.h"
@@ -65,7 +67,12 @@ namespace Kans
             for (; x != a.Overrides.end(); ++x, ++y)
                 if (x->first != y->first || x->second.Removed != y->second.Removed ||
                     x->second.Materials != y->second.Materials || x->second.UIScreen != y->second.UIScreen ||
-                    x->second.UIWorld != y->second.UIWorld ||
+                    x->second.UIWorld != y->second.UIWorld || x->second.RigidBody != y->second.RigidBody ||
+                    x->second.BoxCollider != y->second.BoxCollider ||
+                    x->second.SphereCollider != y->second.SphereCollider ||
+                    x->second.CapsuleCollider != y->second.CapsuleCollider ||
+                    x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
+
                     x->second.RenderCustomDepth != y->second.RenderCustomDepth ||
                     x->second.CustomStencil != y->second.CustomStencil ||
                     x->second.LocalTransform.has_value() != y->second.LocalTransform.has_value() ||
@@ -99,6 +106,12 @@ namespace Kans
         bool Same(const ActiveComponent& a, const ActiveComponent& b) { return a == b; }
         bool Same(const IKComponent& a, const IKComponent& b) { return a == b; }
         bool Same(const ShapeKeysComponent& a, const ShapeKeysComponent& b) { return a == b; }
+        bool Same(const RigidBodyComponent& a, const RigidBodyComponent& b) { return a == b; }
+        bool Same(const BoxColliderComponent& a, const BoxColliderComponent& b) { return a == b; }
+        bool Same(const SphereColliderComponent& a, const SphereColliderComponent& b) { return a == b; }
+        bool Same(const CapsuleColliderComponent& a, const CapsuleColliderComponent& b) { return a == b; }
+        bool Same(const MeshColliderComponent& a, const MeshColliderComponent& b) { return a == b; }
+        bool Same(const GlobalWindComponent& a, const GlobalWindComponent& b) { return a == b; }
         bool Same(const ScriptComponent& a, const ScriptComponent& b) { return a.ClassName == b.ClassName; }
 
         template<typename T>
@@ -139,7 +152,10 @@ namespace Kans
                Same(a.Timeline, b.Timeline) && Same(a.Active, b.Active) && Same(a.ShapeKeys, b.ShapeKeys) &&
                Same(a.MaterialDrivers, b.MaterialDrivers) && Same(a.DirLight, b.DirLight) &&
                Same(a.PointLight, b.PointLight) && Same(a.Script, b.Script) && Same(a.AudioSource, b.AudioSource) &&
-               Same(a.AudioListener, b.AudioListener);
+               Same(a.AudioListener, b.AudioListener) && Same(a.RigidBody, b.RigidBody) &&
+               Same(a.BoxCollider, b.BoxCollider) && Same(a.SphereCollider, b.SphereCollider) &&
+               Same(a.CapsuleCollider, b.CapsuleCollider) && Same(a.MeshCollider, b.MeshCollider) &&
+               Same(a.GlobalWind, b.GlobalWind);
     }
 
     bool operator==(const SceneSnapshot& a, const SceneSnapshot& b)
@@ -206,6 +222,13 @@ namespace Kans
             Kans::Capture(entity, item.DirLight);
             Kans::Capture(entity, item.PointLight);
             Kans::Capture(entity, item.Script);
+            Kans::Capture(entity, item.RigidBody);
+            Kans::Capture(entity, item.BoxCollider);
+            Kans::Capture(entity, item.SphereCollider);
+            Kans::Capture(entity, item.CapsuleCollider);
+            Kans::Capture(entity, item.MeshCollider);
+            Kans::Capture(entity, item.GlobalWind);
+
             snapshot.Entities.push_back(std::move(item));
         }
         std::sort(snapshot.Entities.begin(), snapshot.Entities.end(), [](const auto& a, const auto& b) {
@@ -216,6 +239,7 @@ namespace Kans
 
     void Scene::Restore(const SceneSnapshot& snapshot)
     {
+        m_PhysicsWorld.reset();
         StopAudio();
         DestroyNativeScriptInstances();
         if (ScriptEngine::IsInitialized() && ScriptEngine::GetSceneContext() == this)
@@ -269,6 +293,12 @@ namespace Kans
             Kans::Restore(entity, item.DirLight);
             Kans::Restore(entity, item.PointLight);
             Kans::Restore(entity, item.Script);
+            Kans::Restore(entity, item.RigidBody);
+            Kans::Restore(entity, item.BoxCollider);
+            Kans::Restore(entity, item.SphereCollider);
+            Kans::Restore(entity, item.CapsuleCollider);
+            Kans::Restore(entity, item.MeshCollider);
+            Kans::Restore(entity, item.GlobalWind);
         }
         m_RootOrder         = snapshot.RootOrder;
         m_ReconcilingPrefab = true;
