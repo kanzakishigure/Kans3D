@@ -34,6 +34,17 @@ namespace Kans::ComponentEditors
     void DrawIK(Entity entity, ComponentUI& ui);
     void DrawShapeKeys(Entity entity, ComponentUI& ui);
     void DrawTimelinePlayer(Entity entity, ComponentUI& ui);
+    // Physics (PhysicsComponentEditors.cpp).
+    void DrawRigidBody(Entity entity, ComponentUI& ui);
+    void DrawBoxCollider(Entity entity, ComponentUI& ui);
+    void DrawSphereCollider(Entity entity, ComponentUI& ui);
+    void DrawCapsuleCollider(Entity entity, ComponentUI& ui);
+    void DrawMeshCollider(Entity entity, ComponentUI& ui);
+    void DrawGlobalWind(Entity entity, ComponentUI& ui);
+    void DrawCharacterController(Entity entity, ComponentUI& ui);
+    void DrawJoint(Entity entity, ComponentUI& ui);
+    // Friction, bounciness and their combine modes as grid rows; true when changed.
+    bool PhysicsMaterialRows(PhysicsMaterialValues& values);
     // A joint of `skeleton` (empty = none) as a grid row; true when changed.
     bool JointCombo(const char* label, std::string& joint, const SkeletonData* skeleton);
     void DrawMaterialParameterDrivers(Entity entity, ComponentUI& ui);

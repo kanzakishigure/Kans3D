@@ -109,3 +109,13 @@
 #define ICON_FA_CHEVRON_DOWN           "\xef\x81\xb8" // U+F078
 #define ICON_FA_CHEVRON_RIGHT          "\xef\x81\x94" // U+F054
 #define ICON_FA_LINK_SLASH             "\xef\x84\xa7" // U+F127
+// Physics
+#define ICON_FA_WEIGHT_HANGING "\xef\x97\x8d" // U+F5CD
+#define ICON_FA_CAPSULES "\xef\x91\xab"       // U+F46B
+#define ICON_FA_WIND "\xef\x9c\xae"           // U+F72E
+#define ICON_FA_PERSON_WALKING "\xef\x95\x94" // U+F554
+#define ICON_FA_INFINITY "\xef\x94\xb4"       // U+F534
+#define ICON_FA_ATOM "\xef\x97\x92"           // U+F5D2
+#define ICON_FA_BASEBALL "\xef\x90\xb3"       // U+F433
+#define ICON_FA_BOX "\xef\x91\xa6"            // U+F466
+#define ICON_FA_GAMEPAD "\xef\x84\x9b"        // U+F11B

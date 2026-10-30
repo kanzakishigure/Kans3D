@@ -53,6 +53,7 @@ namespace Kans::Browser
             {".timeline", AssetKind::Timeline},
             {".action", AssetKind::Action},
             {".expression", AssetKind::Expression},
+            {".physmat", AssetKind::PhysicsMaterial},
         };
         const auto found = kinds.find(extension);
         return found == kinds.end() ? AssetKind::Other : found->second;
@@ -86,6 +87,8 @@ namespace Kans::Browser
                 return "Action";
             case AssetKind::Expression:
                 return "Expression";
+            case AssetKind::PhysicsMaterial:
+                return "Physics Material";
             default:
                 return "File";
         }

@@ -1439,11 +1439,12 @@ namespace Kans
 
 namespace Kans
 {
-    void PhysicsWorld::Draw(DebugDraw& draw) const
+    void PhysicsWorld::Draw(DebugDraw& draw) const { Draw(draw, m_Impl->Settings.DebugDraw); }
+    void PhysicsWorld::Draw(DebugDraw& draw, PhysicsDebugFlags debugFlags) const
     {
         using namespace physx;
         auto& i     = *m_Impl;
-        auto  flags = uint32_t(i.Settings.DebugDraw);
+        auto  flags = uint32_t(debugFlags);
         if (!flags)
             return;
         if (flags & 16)

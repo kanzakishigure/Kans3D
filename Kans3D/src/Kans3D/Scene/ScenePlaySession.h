@@ -23,6 +23,10 @@ namespace Kans
         State GetState() const { return m_State; }
         bool IsActive() const { return m_State != State::Edit; }
         void Play(Scene& scene);
+        // Like Play, but without scripts: physics (with animation, timelines and audio) runs from
+        // the edit state, and Stop restores it. Resumes a paused session of either kind.
+        void Simulate(Scene& scene);
+        bool IsSimulating() const { return IsActive() && m_Simulating; }
         void Pause();
         void Step();
         void Stop(Scene& scene);
@@ -47,6 +51,7 @@ namespace Kans
 
     private:
         void Reset();
+        void         Start(Scene& scene, bool simulate);
         UIInputState m_UIInput;
         UIViewport   m_UIViewport;
 
@@ -54,6 +59,7 @@ namespace Kans
         Scene*                      m_Scene = nullptr;
         std::optional<SceneSnapshot> m_Snapshot;
         bool                        m_StepRequested = false;
+        bool                         m_Simulating    = false;
         float                       m_PlayTime = 0.0f;
         uint64_t                    m_FrameCount = 0;
     };

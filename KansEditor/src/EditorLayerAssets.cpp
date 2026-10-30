@@ -15,6 +15,7 @@
 #include "Components/MaterialAssignment.h"
 #include "EditorLayer.h"
 #include "Launcher/LauncherModel.h"
+#include "Physics/PhysicsEditing.h"
 
 namespace Kans
 {
@@ -78,12 +79,16 @@ namespace Kans
         m_ProductImportPanel.Bind(m_AssetImports.get());
         m_MaterialEditorPanel.Bind(m_AssetImports.get());
         m_TimelinePanel.Bind(m_AssetImports.get());
+        m_PhysicsMaterialPanel.Bind(m_AssetImports.get());
+        m_ProjectSettingsPanel.Bind(m_ProjectFile);
         m_UIDesignerPanel.Bind(m_AssetImports.get());
         m_ContentBrowserPanel.SetOpenFileCallback([this](const std::filesystem::path& path) {
             if (path.extension() == ".kans")
                 ConfirmDiscard("opening " + path.filename().u8string(), [this, path] { Record(OpenScene(path)); });
             else if (path.extension() == ".material")
                 OpenMaterial(path);
+            else if (path.extension() == ".physmat")
+                OpenPhysicsMaterial(path);
             else if (path.extension() == ".kui")
             {
                 if (m_UIDesignerPanel.Open(path))
@@ -112,6 +117,14 @@ namespace Kans
             YAML::Emitter out;
             out << EncodeTimelineNode(data);
             std::ofstream(UniqueFile(directory, "NewTimeline", ".timeline"), std::ios::binary) << out.c_str() << '\n';
+        });
+        m_ContentBrowserPanel.SetCreatePhysicsMaterialCallback([this](const std::filesystem::path& directory) {
+            auto created = PhysicsEditing::CreatePhysicsMaterialFile(directory);
+            if (const auto* error = std::get_if<AssetError>(&created))
+                return Record(*error);
+            // Import it (so colliders can pick it) and open it for editing.
+            OpenPhysicsMaterial(std::get<std::filesystem::path>(created));
+            m_PhysicsMaterialPanel.Save();
         });
         m_ContentBrowserPanel.SetImportCallback([this](const std::filesystem::path& path) { ImportSource(path); });
         m_ContentBrowserPanel.SetImportSettingsCallback(
@@ -818,5 +831,14 @@ namespace Kans
         else if (m_Unsaved.WaitingForSaveAs() && !m_SceneFileDialog.IsOpen() && m_SceneDialog == SceneDialog::None)
             m_Unsaved.SaveCancelled();
         DrawUnsavedPrompt();
+    }
+    void EditorLayer::OpenPhysicsMaterial(const std::filesystem::path& file)
+    {
+        if (m_PhysicsMaterialPanel.IsDirty() && m_PhysicsMaterialPanel.GetFile() != file)
+            m_PhysicsMaterialPanel.Save(); // Switching files keeps the edits instead of dropping them.
+        if (m_PhysicsMaterialPanel.Open(file))
+            m_Panels.Open(PanelID::PhysicsMaterial);
+        else
+            Record(AssetError {AssetErrorCode::InvalidData, "Cannot open " + file.filename().u8string()});
     }
 } // namespace Kans

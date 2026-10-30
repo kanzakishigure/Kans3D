@@ -1,6 +1,7 @@
 #include "ComponentEditors.h"
 #include "Kans3D/Animation/AnimatorComponent.h"
 #include "Kans3D/Animation/DeformationComponents.h"
+#include "Kans3D/Physics/PhysicsComponents.h"
 #include "Kans3D/Renderer/Renderer.h"
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Scene.h"
@@ -208,6 +209,43 @@ namespace Kans
         point.CreateName = "Point Light";
         point.CreateOrder = 3;
         point.Create     = point.Add;
+
+        // Physics: bodies, colliders, characters, joints and fields.
+        auto& body    = registry.Register<RigidBodyComponent>("Rigid Body", ICON_FA_WEIGHT_HANGING, "Physics");
+        body.IconRank = 10;
+        body.Draw     = DrawRigidBody;
+
+        auto& box    = registry.Register<BoxColliderComponent>("Box Collider", ICON_FA_BOX, "Physics");
+        box.IconRank = 11;
+        box.Draw     = DrawBoxCollider;
+
+        auto& sphere    = registry.Register<SphereColliderComponent>("Sphere Collider", ICON_FA_BASEBALL, "Physics");
+        sphere.IconRank = 11;
+        sphere.Draw     = DrawSphereCollider;
+
+        auto& capsule    = registry.Register<CapsuleColliderComponent>("Capsule Collider", ICON_FA_CAPSULES, "Physics");
+        capsule.IconRank = 11;
+        capsule.Draw     = DrawCapsuleCollider;
+
+        auto& meshCollider = registry.Register<MeshColliderComponent>("Mesh Collider", ICON_FA_DRAW_POLYGON, "Physics");
+        meshCollider.IconRank = 11;
+        meshCollider.Draw     = DrawMeshCollider;
+
+        auto& controller =
+            registry.Register<CharacterControllerComponent>("Character Controller", ICON_FA_PERSON_WALKING, "Physics");
+        controller.IconRank = 9;
+        controller.Draw     = DrawCharacterController;
+
+        auto& joint    = registry.Register<JointComponent>("Joint", ICON_FA_LINK, "Physics");
+        joint.IconRank = 10;
+        joint.Draw     = DrawJoint;
+
+        auto& wind       = registry.Register<GlobalWindComponent>("Global Wind", ICON_FA_WIND, "Physics");
+        wind.IconRank    = 9;
+        wind.Draw        = DrawGlobalWind;
+        wind.CreateName  = "Global Wind";
+        wind.CreateOrder = 6;
+        wind.Create      = [](Entity e) { e.AddComponent<GlobalWindComponent>().Strength = 1.0f; };
 
         auto& script    = registry.Register<ScriptComponent>("Script", ICON_FA_CODE, "Scripting");
         script.IconRank = 7;

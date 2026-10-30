@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <variant>
 #include "Kans3D/Editor/EditorCamera.h"
 #include "Kans3D/UI/UIInput.h"
 #include "HierarchyPanel.h"
@@ -85,6 +86,13 @@ namespace Kans
         void HandleShortcuts();
         void DrawToolbar();
         void DrawGizmo();
+        // Physics (ViewportPhysics.cpp): the selection's collider, controller and joint gizmos,
+        // the View menu's debug toggles, and the collider and hinge-limit handles.
+        void DrawPhysicsOverlay();
+        void DrawPhysicsMenu();
+        void PhysicsHandles(Entity selected);
+        // A world segment on the overlay, clipped at the near plane.
+        void OverlaySegment(ImDrawList* draw, glm::vec3 a, glm::vec3 b, ImU32 color, float thickness) const;
         void AcceptDrop();
         // The surface under `mouse` (screen position), with its entity and material slot.
         ScenePickHit SurfaceAt(ImVec2 mouse);
@@ -135,5 +143,20 @@ namespace Kans
         float m_SnapMove   = 0.5f;
         float m_SnapRotate = 15.0f;
         float m_SnapScale  = 0.1f;
+        // Physics debug drawing this viewport adds (editor-local; neither the scene nor the project
+        // saves it). Outside play, colliders and joints are drawn from their components.
+        PhysicsDebugFlags m_PhysicsView = PhysicsDebugFlags::None;
+        // The physics handle being dragged: its owner, which handle, the pointer where the drag
+        // started, the screen offset one shape unit along the handle makes, and the shape then.
+        struct PhysicsDrag
+        {
+            using ShapeVariant  = std::variant<std::monostate, Physics::Box, Physics::Sphere, Physics::Capsule>;
+            ImGuiID      Handle = 0;
+            ImVec2       Start {};
+            glm::vec2    PixelsPerUnit {0.0f};
+            ShapeVariant Shape;
+        };
+        std::optional<PhysicsDrag> m_PhysicsDrag;
+        bool                       m_PhysicsHandleHot = false; // Hovered or dragged: the transform gizmo waits.
     };
 } // namespace Kans

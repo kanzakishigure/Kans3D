@@ -90,6 +90,20 @@ namespace Kans
             spec(
                 PanelID::UIDesigner, "UI Designer", ICON_FA_DESKTOP, PanelCategory::Assets, PanelDock::Floating, false),
             [this] { m_UIDesignerPanel.Draw(); });
+        m_Panels.Register(spec(PanelID::ProjectSettings,
+                               "Project Settings",
+                               ICON_FA_GEAR,
+                               PanelCategory::Assets,
+                               PanelDock::Floating,
+                               false),
+                          [this] { m_ProjectSettingsPanel.Draw(); });
+        m_Panels.Register(spec(PanelID::PhysicsMaterial,
+                               "Physics Material",
+                               ICON_FA_ATOM,
+                               PanelCategory::Assets,
+                               PanelDock::Right,
+                               false),
+                          [this] { m_PhysicsMaterialPanel.Draw(); });
     }
 
     void EditorLayer::OpenImporter(const std::filesystem::path& file)
@@ -217,7 +231,7 @@ namespace Kans
         if (io.WantTextInput)
             return;
         // The material editor has its own undo, redo and save while it has focus.
-        const bool material = m_MaterialEditorPanel.HasFocus();
+        const bool material = m_MaterialEditorPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus();
         if (io.KeyCtrl)
         {
             if (ImGui::IsKeyPressed(ImGuiKey_N, false))
@@ -270,6 +284,16 @@ namespace Kans
         m_Play.Play(*m_ActiveScene);
     }
 
+    void EditorLayer::StartSimulate()
+    {
+        if (!m_ActiveScene || m_Play.IsActive())
+            return;
+        m_TimelinePanel.StopPreview();
+        m_History.Record(*m_ActiveScene);
+        m_EditPending = false;
+        m_Play.Simulate(*m_ActiveScene);
+    }
+
     void EditorLayer::StopPlay()
     {
         if (!m_ActiveScene || !m_Play.IsActive())
@@ -312,6 +336,21 @@ namespace Kans
             case Widgets::Transport::None:
                 break;
         }
+        // Simulate (as in Unreal): physics, animation and timelines run without scripts, from
+        // the edit state that Stop restores. Selection and editing stay available.
+        const bool simulating = m_Play.IsSimulating();
+        right                 = Widgets::Pill({right + EditorTheme::Px(EditorTheme::Space2), position.y}, [&] {
+            const char* tip = simulating           ? "Stop simulating and restore the scene" :
+                              state == State::Edit ? "Simulate: run physics without scripts" :
+                                                     "Stop playing to simulate";
+            if (ToolButton(ICON_FA_ATOM, tip, simulating, state == State::Edit || simulating))
+            {
+                if (simulating)
+                    StopPlay();
+                else
+                    StartSimulate();
+            }
+        });
         return right;
     }
 
@@ -332,6 +371,8 @@ namespace Kans
             openBrowser(ProjectBrowser::Page::Recent);
             m_ProjectBrowser->BrowseForProject();
         }
+        if (ImGui::MenuItem(MenuLabel(ICON_FA_GEAR, "Project Settings...").c_str()))
+            m_Panels.Open(PanelID::ProjectSettings);
         if (ImGui::BeginMenu(MenuLabel(ICON_FA_CLOCK_ROTATE_LEFT, "Recent Projects").c_str()))
         {
             RecentProjects recent(RecentProjects::DefaultStorageFile());
@@ -548,7 +589,9 @@ namespace Kans
             std::snprintf(clock,
                           sizeof(clock),
                           "%s %.1f s   ",
-                          m_Play.GetState() == ScenePlaySession::State::Paused ? "Paused" : "Playing",
+                          m_Play.GetState() == ScenePlaySession::State::Paused ? "Paused" :
+                          m_Play.IsSimulating()                                ? "Simulating" :
+                                                                                 "Playing",
                           m_Play.GetPlayTime());
             status = clock + status;
         }

@@ -34,11 +34,15 @@ namespace Kans
     const PhysicsSettings&   KansFileSystem::GetProjectPhysicsSettings() { return s_PhysicsSettings; }
     std::filesystem::path KansFileSystem::s_ProjectRoot, KansFileSystem::s_AssetFolder;
 
-    void KansFileSystem::SetProject(const ProjectConfig& config)
+    void KansFileSystem::SetProjectPhysicsSettings(const PhysicsSettings& settings)
     {
-        auto physics = config.Physics;
+        auto physics = settings;
         physics.Validate();
         s_PhysicsSettings = std::move(physics);
+    }
+    void KansFileSystem::SetProject(const ProjectConfig& config)
+    {
+        SetProjectPhysicsSettings(config.Physics);
         s_ProjectRoot = std::filesystem::absolute(config.RootDirectory).lexically_normal();
         s_AssetFolder = (s_ProjectRoot / config.AssetDirectory).lexically_normal();
     }

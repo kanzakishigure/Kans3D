@@ -39,6 +39,7 @@ namespace Kans::EditorTheme
         ImVec4 TypeTimeline;
         ImVec4 TypeAction;
         ImVec4 TypeExpression;
+        ImVec4 TypePhysics;
     };
 
     const Palette& Colors();

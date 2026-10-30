@@ -112,6 +112,6 @@ namespace Kans
             }
             m_PhysicsWorld->WriteTransforms(float(GetPhysicsInterpolationAlpha()));
         }
-        m_PhysicsWorld->Draw(GetDebugDraw());
+        m_PhysicsWorld->Draw(GetDebugDraw(), settings.DebugDraw | m_PhysicsDebugView);
     }
 } // namespace Kans

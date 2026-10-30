@@ -35,6 +35,14 @@ namespace Kans
 
     using EntityMap = std::unordered_map<UUID, Entity>;
 
+    // How a runtime session runs the scene. Without scripts (an editor's physics-only
+    // simulation), C# and native scripts are neither started nor updated; physics,
+    // animation, timelines and audio run as in play.
+    struct SceneRuntimeOptions
+    {
+        bool RunScripts = true;
+    };
+
     // the scene to the GamePlayer system
     class Scene : public Asset
     {
@@ -189,12 +197,18 @@ namespace Kans
         // Replaces every entity with the snapshot's; UUIDs are preserved.
         void Restore(const SceneSnapshot& snapshot);
 
-        void                   OnRuntimeStart();
+        void OnRuntimeStart(const SceneRuntimeOptions& options = {});
+        // The options of the running session (defaults outside one).
+        const SceneRuntimeOptions& GetRuntimeOptions() const { return m_RuntimeOptions; }
         void                   OnRuntimeSingleStep();
         PhysicsWorld*          GetPhysicsWorld() const { return m_PhysicsWorld.get(); }
         const PhysicsSettings& GetPhysicsSettings() const;
         double                 GetPhysicsInterpolationAlpha() const;
         DebugDraw&             GetDebugDraw() const;
+        // Debug drawing a viewer adds to the project's PhysicsSettings::DebugDraw while the scene
+        // runs (e.g. an editor viewport's toggles); it is not saved with the scene or the project.
+        void                   SetPhysicsDebugView(PhysicsDebugFlags flags) { m_PhysicsDebugView = flags; }
+        PhysicsDebugFlags      GetPhysicsDebugView() const { return m_PhysicsDebugView; }
         void                   OnRuntimeStop();
         void                   OnRuntimePause();
         void                   OnRuntimeResume();
@@ -247,6 +261,8 @@ namespace Kans
         std::unique_ptr<PhysicsWorld> m_PhysicsWorld;
         double                        m_PhysicsAccumulator = 0;
         bool m_PhysicsPaused = false, m_PhysicsSingleStep = false, m_PhysicsWritingTransforms = false;
+        SceneRuntimeOptions           m_RuntimeOptions;
+        PhysicsDebugFlags             m_PhysicsDebugView = PhysicsDebugFlags::None;
         void OnRenderComponentChanged(entt::registry&, entt::entity entity);
         void OnEditableMeshChanged(entt::registry&, entt::entity entity);
         mutable std::unordered_map<entt::entity, Ref<const RuntimeMesh>>              m_EditableMeshes;

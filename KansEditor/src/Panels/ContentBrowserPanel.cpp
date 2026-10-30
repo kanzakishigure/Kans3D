@@ -198,6 +198,8 @@ namespace Kans
                     return p.TypeAction;
                 case Browser::AssetKind::Expression:
                     return p.TypeExpression;
+                case Browser::AssetKind::PhysicsMaterial:
+                    return p.TypePhysics;
                 default:
                     return p.TextDim;
             }
@@ -485,6 +487,9 @@ namespace Kans
                 m_CreateUI(m_Current), Refresh();
             if (ImGui::MenuItem(Label(ICON_FA_FILM, "Timeline").c_str(), nullptr, false, bool(m_CreateTimeline)))
                 m_CreateTimeline(m_Current), Refresh();
+            if (ImGui::MenuItem(
+                    Label(ICON_FA_ATOM, "Physics Material").c_str(), nullptr, false, bool(m_CreatePhysicsMaterial)))
+                m_CreatePhysicsMaterial(m_Current), Refresh();
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -1524,6 +1529,8 @@ namespace Kans
                     m_CreateUI(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_FILM, "Timeline").c_str()) && m_CreateTimeline)
                     m_CreateTimeline(folder), Refresh();
+                if (ImGui::MenuItem(Label(ICON_FA_ATOM, "Physics Material").c_str()) && m_CreatePhysicsMaterial)
+                    m_CreatePhysicsMaterial(folder), Refresh();
                 ImGui::EndMenu();
             }
             if (ImGui::MenuItem(Label(ICON_FA_PASTE, "Paste").c_str(), "Ctrl+V", false, hasClipboard))

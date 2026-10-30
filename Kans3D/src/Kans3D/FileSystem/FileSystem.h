@@ -60,6 +60,9 @@ namespace Kans
 
         static void SetProject(const ProjectConfig& config);
         static const PhysicsSettings&       GetProjectPhysicsSettings();
+        // Replaces the project's physics settings (validated; throws std::invalid_argument and keeps
+        // the current ones when invalid). Worlds created afterwards use them.
+        static void                         SetProjectPhysicsSettings(const PhysicsSettings& settings);
         static const std::filesystem::path& GetProjectRoot() { return s_ProjectRoot; }
         static const std::filesystem::path& GetAssetFolder() { return s_AssetFolder; }
         static const std::filesystem::path& GetFontsFolder() { return s_Specification->m_FontsPath; }

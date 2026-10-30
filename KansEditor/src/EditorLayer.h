@@ -18,7 +18,9 @@
 #include "Panels/FrameGraphPanel.h"
 #include "Panels/HierarchyPanel.h"
 #include "Panels/MaterialEditorPanel.h"
+#include "Panels/PhysicsMaterialPanel.h"
 #include "Panels/ProductImportPanel.h"
+#include "Panels/ProjectSettingsPanel.h"
 #include "Panels/PropertiesPanel.h"
 #include "Panels/TimelinePanel.h"
 #include "Panels/UIDesignerPanel.h"
@@ -46,6 +48,8 @@ namespace Kans
         inline constexpr const char* AnimatorGraph  = "AnimatorGraph";
         inline constexpr const char* Timeline       = "Timeline";
         inline constexpr const char* UIDesigner     = "UIDesigner";
+        inline constexpr const char* ProjectSettings = "ProjectSettings";
+        inline constexpr const char* PhysicsMaterial = "PhysicsMaterial";
     } // namespace PanelID
 
     class EditorLayer : public Kans::Layer
@@ -160,6 +164,8 @@ namespace Kans
         void UndoScene(int steps = 1);
         // Play mode: the scene runs from a snapshot that Stop restores.
         void StartPlay();
+        // Simulate: physics without scripts, restored on stop like play.
+        void StartSimulate();
         void StopPlay();
         void TogglePause();
         // Returns the right edge of the controls.
@@ -168,6 +174,7 @@ namespace Kans
         void OpenImporter(const std::filesystem::path& file);
         void OpenMaterial(const std::filesystem::path& file);
         void CreateMaterial(const std::filesystem::path& directory);
+        void  OpenPhysicsMaterial(const std::filesystem::path& file);
 
         // Project C# scripts: <project root>/Scripts/GameScripts.csproj, built with the SDK.
         std::filesystem::path ScriptProjectPath() const;
@@ -222,6 +229,8 @@ namespace Kans
         AnimatorGraphPanel  m_AnimatorGraphPanel {m_HierarchyPanel};
         TimelinePanel       m_TimelinePanel {m_HierarchyPanel};
         UIDesignerPanel     m_UIDesignerPanel;
+        ProjectSettingsPanel m_ProjectSettingsPanel;
+        PhysicsMaterialPanel m_PhysicsMaterialPanel;
         // Keys and text typed while playing with the viewport focused, for the game's UI.
         UIInputState m_UIInput;
         // Editor view frame times (ms) for the Stats panel's graph, oldest first.

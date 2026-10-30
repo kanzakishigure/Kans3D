@@ -39,6 +39,7 @@ namespace Kans::EditorTheme
             Rgb(156, 200, 70),  // TypeTimeline
             Rgb(52, 186, 150),  // TypeAction
             Rgb(214, 100, 214), // TypeExpression
+            Rgb(232, 140, 60),  // TypePhysics
         };
 
         float g_Scale = 1.0f;

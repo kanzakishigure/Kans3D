@@ -108,6 +108,7 @@ namespace Kans
         }
         AcceptDrop();
         DrawSceneOverlays();
+        DrawPhysicsOverlay();
         if (editing)
         {
             m_MeshTool.DrawOverlay(selected, EditView());
@@ -611,6 +612,9 @@ namespace Kans
         Entity selected = m_Hierarchy.GetSelected();
         if (!selected || m_GizmoType < 0 || (m_Playing && !m_UseEditorCameraInPlay && m_Scene->GetCameraEntity()))
             return;
+        // A physics handle under the pointer (or being dragged) takes the click.
+        if (m_PhysicsHandleHot)
+            return;
         const bool  snap      = m_GizmoSnap || ImGui::GetIO().KeyCtrl;
         const float step      = m_GizmoType == ImGuizmo::ROTATE ? m_SnapRotate :
                                 m_GizmoType == ImGuizmo::SCALE  ? m_SnapScale :
@@ -848,6 +852,8 @@ namespace Kans
                 ImGui::Checkbox(label(ICON_FA_VECTOR_SQUARE, "Stencil (all models)").c_str(), &state.EnableStencil);
                 ImGui::Checkbox(label(ICON_FA_CROSSHAIRS, "Debug normals").c_str(), &state.EnableDebugNormal);
                 m_Scene->GetRenderWorld().Settings = resource;
+                ImGui::Separator();
+                DrawPhysicsMenu();
                 if (m_Playing)
                 {
                     ImGui::Separator();

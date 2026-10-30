@@ -389,7 +389,7 @@ namespace Kans
         {
 
             m_Registry.view<NativeScriptComponent>().each([=](auto entity, auto& nsc) {
-                if (!IsEntityActive(Entity {entity, this}))
+                if (!m_RuntimeOptions.RunScripts || !IsEntityActive(Entity {entity, this}))
                     return;
                 if (!nsc.Instance)
                 {
@@ -861,16 +861,17 @@ namespace Kans
         return {};
     }
 
-    void Scene::OnRuntimeStart()
+    void Scene::OnRuntimeStart(const SceneRuntimeOptions& options)
     {
         if (m_PhysicsWorld)
             return;
+        m_RuntimeOptions = options;
         UpdatePrefabs();
         m_PhysicsAccumulator = 0;
         m_PhysicsPaused = m_PhysicsSingleStep = false;
         m_PhysicsWorld                        = std::make_unique<PhysicsWorld>(*this, GetPhysicsSettings());
         StartAudio();
-        if (ScriptEngine::IsInitialized())
+        if (m_RuntimeOptions.RunScripts && ScriptEngine::IsInitialized())
             ScriptEngine::OnRuntimeStart(this);
         std::vector<UUID> timelines;
         for (auto h : m_Registry.view<TimelinePlayerComponent>())
@@ -898,6 +899,7 @@ namespace Kans
 
     void Scene::OnRuntimeStop()
     {
+        m_RuntimeOptions = {};
         m_PhysicsWorld.reset();
         m_PhysicsAccumulator = 0;
         m_PhysicsPaused = m_PhysicsSingleStep = false;

@@ -5,7 +5,11 @@
 
 namespace Kans
 {
-    void ScenePlaySession::Play(Scene& scene)
+    void ScenePlaySession::Play(Scene& scene) { Start(scene, false); }
+
+    void ScenePlaySession::Simulate(Scene& scene) { Start(scene, true); }
+
+    void ScenePlaySession::Start(Scene& scene, bool simulate)
     {
         if (IsActive())
         {
@@ -24,8 +28,11 @@ namespace Kans
         m_FrameCount = 0;
         m_StepRequested = false;
         m_State = State::Playing;
+        m_Simulating    = simulate;
         scene.UI().Reset();
-        scene.OnRuntimeStart();
+        SceneRuntimeOptions options;
+        options.RunScripts = !simulate;
+        scene.OnRuntimeStart(options);
     }
 
     void ScenePlaySession::Pause()
@@ -87,6 +94,7 @@ namespace Kans
         m_Scene = nullptr;
         m_Snapshot.reset();
         m_StepRequested = false;
+        m_Simulating    = false;
         m_PlayTime = 0.0f;
         m_FrameCount = 0;
     }

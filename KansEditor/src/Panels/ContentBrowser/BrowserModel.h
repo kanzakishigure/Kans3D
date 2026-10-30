@@ -27,6 +27,7 @@ namespace Kans::Browser
         Timeline,
         Action,
         Expression,
+        PhysicsMaterial,
         Other,
     };
     constexpr int AssetKindCount = int(AssetKind::Other) + 1;
@@ -92,9 +93,10 @@ namespace Kans::Browser
 
     struct Filter
     {
-        static_assert(AssetKindCount == 13, "Every kind starts shown: extend Kinds below.");
+        static_assert(AssetKindCount == 14, "Every kind starts shown: extend Kinds below.");
         std::string Text; // Case-insensitive substring of the name.
-        bool Kinds[AssetKindCount] = {true, true, true, true, true, true, true, true, true, true, true, true, true};
+        bool        Kinds[AssetKindCount] =
+            {true, true, true, true, true, true, true, true, true, true, true, true, true, true};
 
         bool Matches(const Entry& entry) const;
         bool IsActive() const;

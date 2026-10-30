@@ -174,7 +174,9 @@ namespace Kans
         void                            SynchronizeChanges();
         void                            Step(double seconds);
         void                            WriteTransforms(float alpha);
+        // Draws what the settings' DebugDraw flags select, or exactly `flags`.
         void                            Draw(DebugDraw&) const;
+        void                            Draw(DebugDraw&, PhysicsDebugFlags flags) const;
         std::optional<PhysicsBodyState> GetBodyState(UUID) const;
         const PhysicsStatistics&        GetStatistics() const;
         const PhysicsSettings&          GetSettings() const;
