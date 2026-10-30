@@ -59,7 +59,7 @@ namespace Kans.Generators
                 source.Append('"').Append(name).Append("\" => new global::").Append(name).Append("(),\n");
             source.Append("_ => null };\n");
             source.Append("public uint PhysicsCallbacks(global::Kans.Entity target) {\n");
-            string[] callbacks = { "OnFixedUpdate", "OnCollisionEnter", "OnCollisionStay", "OnCollisionExit", "OnTriggerEnter", "OnTriggerStay", "OnTriggerExit" };
+            string[] callbacks = { "OnFixedUpdate", "OnCollisionEnter", "OnCollisionStay", "OnCollisionExit", "OnTriggerEnter", "OnTriggerStay", "OnTriggerExit", "OnControllerColliderHit", "OnJointBreak" };
             foreach (var type in classes.Where(c => c != null).GroupBy(c => c!.ToDisplayString()).Select(g => g.First()!))
             {
                 uint mask = 0;

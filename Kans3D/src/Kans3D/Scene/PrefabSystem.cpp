@@ -30,6 +30,8 @@ namespace Kans
                     x->second.SphereCollider != y->second.SphereCollider ||
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
+                    x->second.CharacterController != y->second.CharacterController ||
+                    x->second.Joint != y->second.Joint ||
 
                     x->second.RenderCustomDepth != y->second.RenderCustomDepth ||
                     x->second.CustomStencil != y->second.CustomStencil ||
@@ -160,15 +162,22 @@ namespace Kans
             change.MeshCollider = part.HasComponent<MeshColliderComponent>() ?
                                       std::optional<MeshColliderComponent>(part.GetComponent<MeshColliderComponent>()) :
                                       std::nullopt;
-            change.GlobalWind   = part.HasComponent<GlobalWindComponent>() ?
-                                      std::optional<GlobalWindComponent>(part.GetComponent<GlobalWindComponent>()) :
-                                      std::nullopt;
-            change.UIScreen = part.HasComponent<UIScreenComponent>() ?
-                                  std::optional<UIScreenComponent>(part.GetComponent<UIScreenComponent>()) :
-                                  std::nullopt;
-            change.UIWorld  = part.HasComponent<UIWorldComponent>() ?
-                                  std::optional<UIWorldComponent>(part.GetComponent<UIWorldComponent>()) :
-                                  std::nullopt;
+            change.CharacterController =
+                part.HasComponent<CharacterControllerComponent>() ?
+                    std::optional<CharacterControllerComponent>(part.GetComponent<CharacterControllerComponent>()) :
+                    std::nullopt;
+            change.Joint      = part.HasComponent<JointComponent>() ?
+                                    std::optional<JointComponent>(part.GetComponent<JointComponent>()) :
+                                    std::nullopt;
+            change.GlobalWind = part.HasComponent<GlobalWindComponent>() ?
+                                    std::optional<GlobalWindComponent>(part.GetComponent<GlobalWindComponent>()) :
+                                    std::nullopt;
+            change.UIScreen   = part.HasComponent<UIScreenComponent>() ?
+                                    std::optional<UIScreenComponent>(part.GetComponent<UIScreenComponent>()) :
+                                    std::nullopt;
+            change.UIWorld    = part.HasComponent<UIWorldComponent>() ?
+                                    std::optional<UIWorldComponent>(part.GetComponent<UIWorldComponent>()) :
+                                    std::nullopt;
             if (change.Empty())
             {
                 instance.Overrides.erase(owned.NodeKey);
@@ -373,6 +382,24 @@ namespace Kans
             }
             else if (entity.HasComponent<MeshColliderComponent>())
                 entity.RemoveComponent<MeshColliderComponent>();
+            if (change != instance.Overrides.end() && change->second.CharacterController)
+            {
+                if (!entity.HasComponent<CharacterControllerComponent>())
+                    entity.AddComponent<CharacterControllerComponent>(*change->second.CharacterController);
+                else if (entity.GetComponent<CharacterControllerComponent>() != *change->second.CharacterController)
+                    entity.SetComponent<CharacterControllerComponent>(*change->second.CharacterController);
+            }
+            else if (entity.HasComponent<CharacterControllerComponent>())
+                entity.RemoveComponent<CharacterControllerComponent>();
+            if (change != instance.Overrides.end() && change->second.Joint)
+            {
+                if (!entity.HasComponent<JointComponent>())
+                    entity.AddComponent<JointComponent>(*change->second.Joint);
+                else if (entity.GetComponent<JointComponent>() != *change->second.Joint)
+                    entity.SetComponent<JointComponent>(*change->second.Joint);
+            }
+            else if (entity.HasComponent<JointComponent>())
+                entity.RemoveComponent<JointComponent>();
             if (change != instance.Overrides.end() && change->second.GlobalWind)
             {
                 if (!entity.HasComponent<GlobalWindComponent>())

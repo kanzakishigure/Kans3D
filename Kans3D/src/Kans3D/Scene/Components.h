@@ -185,24 +185,26 @@ namespace Kans
     };
     struct PrefabNodeOverride
     {
-        std::optional<RigidBodyComponent>       RigidBody;
-        std::optional<BoxColliderComponent>     BoxCollider;
-        std::optional<SphereColliderComponent>  SphereCollider;
-        std::optional<CapsuleColliderComponent> CapsuleCollider;
-        std::optional<MeshColliderComponent>    MeshCollider;
-        std::optional<GlobalWindComponent>      GlobalWind;
-        std::optional<UIScreenComponent>  UIScreen;
-        std::optional<UIWorldComponent>   UIWorld;
-        std::optional<TransformComponent> LocalTransform;
-        std::map<uint32_t, AssetID>       Materials;
-        bool                              Removed = false;
-        std::optional<bool>               RenderCustomDepth;
-        std::optional<uint8_t>            CustomStencil;
-        bool                              Empty() const
+        std::optional<RigidBodyComponent>           RigidBody;
+        std::optional<BoxColliderComponent>         BoxCollider;
+        std::optional<SphereColliderComponent>      SphereCollider;
+        std::optional<CapsuleColliderComponent>     CapsuleCollider;
+        std::optional<MeshColliderComponent>        MeshCollider;
+        std::optional<GlobalWindComponent>          GlobalWind;
+        std::optional<CharacterControllerComponent> CharacterController;
+        std::optional<JointComponent>               Joint;
+        std::optional<UIScreenComponent>            UIScreen;
+        std::optional<UIWorldComponent>             UIWorld;
+        std::optional<TransformComponent>           LocalTransform;
+        std::map<uint32_t, AssetID>                 Materials;
+        bool                                        Removed = false;
+        std::optional<bool>                         RenderCustomDepth;
+        std::optional<uint8_t>                      CustomStencil;
+        bool                                        Empty() const
         {
             return !LocalTransform && Materials.empty() && !Removed && !RenderCustomDepth && !CustomStencil &&
                    !UIScreen && !UIWorld && !RigidBody && !BoxCollider && !SphereCollider && !CapsuleCollider &&
-                   !MeshCollider && !GlobalWind;
+                   !MeshCollider && !GlobalWind && !CharacterController && !Joint;
         }
     };
     struct PrefabNodeState
@@ -311,6 +313,8 @@ namespace Kans
                                          CapsuleColliderComponent,
                                          MeshColliderComponent,
                                          GlobalWindComponent,
+                                         CharacterControllerComponent,
+                                         JointComponent,
                                          IDComponent,
                                          TagComponent,
                                          TransformComponent,

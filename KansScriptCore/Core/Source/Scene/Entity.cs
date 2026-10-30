@@ -10,6 +10,8 @@ namespace Kans
         private MaterialComponent m_Material;
         private CameraComponent m_Camera;
         private ScriptComponent m_Script;
+        private CharacterControllerComponent m_CharacterController;
+        private JointComponent m_Joint;
 
         public Entity() : this(0) { }
         public Entity(ulong id)
@@ -20,6 +22,8 @@ namespace Kans
             m_Material = new MaterialComponent { Entity = this };
             m_Camera = new CameraComponent { Entity = this };
             m_Script = new ScriptComponent { Entity = this };
+            m_CharacterController = new CharacterControllerComponent { Entity = this };
+            m_Joint = new JointComponent { Entity = this };
         }
 
         protected virtual void OnCreate() { }
@@ -35,6 +39,11 @@ namespace Kans
         protected virtual void OnTriggerEnter(Entity other) { }
         protected virtual void OnTriggerStay(Entity other) { }
         protected virtual void OnTriggerExit(Entity other) { }
+        /// <summary>Hit entity wrappers are reused; retain IDs to store a hit beyond this callback.</summary>
+        protected virtual void OnControllerColliderHit(ControllerColliderHit hit) { }
+        protected virtual void OnJointBreak(Joint joint) { }
+        internal void ControllerHit(ControllerColliderHit hit) => OnControllerColliderHit(hit);
+        internal void JointBreak(Joint joint) => OnJointBreak(joint);
         internal void FixedUpdate(float dt) => OnFixedUpdate(dt);
         internal void PhysicsEvent(int phase, Collision collision)
         { if (phase == 0) OnCollisionEnter(collision); else if (phase == 1) OnCollisionStay(collision); else OnCollisionExit(collision); }
@@ -99,6 +108,8 @@ namespace Kans
             if (typeof(T) == typeof(MaterialComponent)) return (T)(Component)m_Material;
             if (typeof(T) == typeof(CameraComponent)) return (T)(Component)m_Camera;
             if (typeof(T) == typeof(ScriptComponent)) return (T)(Component)m_Script;
+            if (typeof(T) == typeof(CharacterController) || typeof(T) == typeof(CharacterControllerComponent)) return (T)(Component)m_CharacterController;
+            if (typeof(T) == typeof(Joint) || typeof(T) == typeof(JointComponent)) return (T)(Component)m_Joint;
             return new T { Entity = this };
         }
         public unsafe T AddComponent<T>() where T : Component, new()
@@ -118,6 +129,8 @@ namespace Kans
             typeof(T) == typeof(ScriptComponent) ? ComponentIds.ScriptComponent :
             (typeof(T) == typeof(Animator) || typeof(T) == typeof(AnimatorComponent)) ? ComponentIds.AnimatorComponent :
             (typeof(T) == typeof(TimelinePlayer) || typeof(T) == typeof(TimelinePlayerComponent)) ? ComponentIds.TimelinePlayerComponent :
+            (typeof(T) == typeof(CharacterController) || typeof(T) == typeof(CharacterControllerComponent)) ? ComponentIds.CharacterControllerComponent :
+            (typeof(T) == typeof(Joint) || typeof(T) == typeof(JointComponent)) ? ComponentIds.JointComponent :
             (typeof(T) == typeof(Rigidbody) || typeof(T) == typeof(RigidBodyComponent)) ? ComponentIds.RigidBodyComponent :
             (typeof(T) == typeof(BoxCollider) || typeof(T) == typeof(BoxColliderComponent)) ? ComponentIds.BoxColliderComponent :
             (typeof(T) == typeof(SphereCollider) || typeof(T) == typeof(SphereColliderComponent)) ? ComponentIds.SphereColliderComponent :

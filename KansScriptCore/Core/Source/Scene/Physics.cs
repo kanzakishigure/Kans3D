@@ -57,7 +57,7 @@ namespace Kans
             byte[]? bytes=text==null ? null : Encoding.UTF8.GetBytes(text+"\0");
             fixed(byte* p=bytes) Check(InternalCalls.Api.PhysicsCommand(id,op,mode,&v,&second,p));
         }
-        private static void Check(int result) { if(result<0) throw new ArgumentException("Invalid physics operation or value."); }
+        internal static void Check(int result) { if(result<0) throw new ArgumentException("Invalid physics operation or value."); }
         internal static PropertyValue V(Vector3 v) => new() { X=v.X,Y=v.Y,Z=v.Z };
         internal static Vector3 V(PropertyValue v) => new(v.X,v.Y,v.Z);
         internal static PropertyValue Q(Quaternion v) => new() { X=v.X,Y=v.Y,Z=v.Z,W=v.W };

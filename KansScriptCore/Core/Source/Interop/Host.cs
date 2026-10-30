@@ -21,6 +21,7 @@ namespace Kans.Interop
             internal bool Disabled;
             internal uint PhysicsMask;
             internal Entity? PhysicsOther, PhysicsCollider, PhysicsOtherCollider;
+            internal Joint? BrokenJoint;
         }
         private static readonly List<Instance> s_Instances = new();
         private static readonly Dictionary<ulong, Instance> s_Handles = new();
@@ -51,7 +52,7 @@ namespace Kans.Interop
                 Version = NativeApi.ApiVersion, Size = (uint)sizeof(ManagedApi), Shutdown = &Shutdown, LoadAssembly = &LoadAssembly,
                 ReloadAssembly = &ReloadAssembly, ClassCount = &ClassCount, ClassName = &ClassName,
                 ClassExists = &ClassExists, Create = &Create, Destroy = &Destroy, Update = &Update,
-                SetPlaying = &SetPlaying, AllocatedBytes = &AllocatedBytes, LastUnloadCollected = &LastUnloadCollected, FixedUpdate = &FixedUpdate, PhysicsEvent = &PhysicsEvent, PhysicsCallbacks = &PhysicsCallbacks
+                SetPlaying = &SetPlaying, AllocatedBytes = &AllocatedBytes, LastUnloadCollected = &LastUnloadCollected, FixedUpdate = &FixedUpdate, PhysicsEvent = &PhysicsEvent, PhysicsCallbacks = &PhysicsCallbacks, ControllerHit = &ControllerHit, JointBreak = &JointBreak
             };
             if (!RuntimeFeature.IsDynamicCodeSupported) s_Registry = ScriptRegistry.Pending;
             return 0;
@@ -250,6 +251,7 @@ namespace Kans.Interop
                 instance.PhysicsMask = s_Registry!.PhysicsCallbacks(entity);
                 if ((instance.PhysicsMask & ~1u) != 0)
                 { instance.PhysicsOther = new Entity(); instance.PhysicsCollider = new Entity(); instance.PhysicsOtherCollider = new Entity(); }
+                if ((instance.PhysicsMask & (1u << 8)) != 0) instance.BrokenJoint = new Joint { Entity = entity };
                 s_Instances.Add(instance);
                 s_Handles.Add(instance.Handle, instance);
                 using var scope = new UI.ScriptScope(instance.Handle);
@@ -332,6 +334,30 @@ namespace Kans.Interop
                     else e.PhysicsEvent(data->Phase,new Collision(i.PhysicsOther,i.PhysicsCollider,i.PhysicsOtherCollider,
                         new ReadOnlySpan<ContactPoint>(data->Contacts,data->Count),data->Impulse,data->RelativeVelocity,data->Removed!=0));
                 } catch (Exception ex) { i.Disabled = true; Error(ex,e,i.Class); }
+            } catch (Exception ex) { Error(ex); }
+        }
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void ControllerHit(ulong handle, ControllerHitData* data)
+        {
+            try
+            {
+                if (!s_Playing || data == null || !s_Handles.TryGetValue(handle,out var i) || i.Disabled || (i.PhysicsMask & (1u << 7)) == 0) return;
+                var e = (Entity)i.Root.Target!;
+                using var scope = new UI.ScriptScope(i.Handle);
+                i.PhysicsOther!.Attach(data->Body); i.PhysicsCollider!.Attach(data->Collider);
+                try { e.ControllerHit(new ControllerColliderHit(i.PhysicsCollider,i.PhysicsOther,data->Point,data->Normal,data->MoveDirection,data->MoveLength)); }
+                catch (Exception ex) { i.Disabled = true; Error(ex,e,i.Class); }
+            } catch (Exception ex) { Error(ex); }
+        }
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void JointBreak(ulong handle, ulong id)
+        {
+            try
+            {
+                if (!s_Playing || !s_Handles.TryGetValue(handle,out var i) || i.Disabled || (i.PhysicsMask & (1u << 8)) == 0) return;
+                var e = (Entity)i.Root.Target!;
+                using var scope = new UI.ScriptScope(i.Handle);
+                try { e.JointBreak(i.BrokenJoint!); } catch (Exception ex) { i.Disabled = true; Error(ex,e,i.Class); }
             } catch (Exception ex) { Error(ex); }
         }
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]

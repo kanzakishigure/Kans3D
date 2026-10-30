@@ -6,11 +6,15 @@
 #include <mutex>
 #include <set>
 #include <stdexcept>
+#include <characterkinematic/PxBoxController.h>
+#include <characterkinematic/PxCapsuleController.h>
+#include <characterkinematic/PxControllerManager.h>
 #include <cooking/PxCooking.h>
 #include <extensions/PxDefaultCpuDispatcher.h>
 #include <extensions/PxRigidBodyExt.h>
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Physics/PhysicsMaterial.h"
+#include "Kans3D/Physics/PhysicsSerialization.h"
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Renderer/Resource/MeshKey.h"
 #include "Kans3D/Scene/Entity.h"
@@ -38,7 +42,8 @@ namespace Kans
                 PxGetFilterObjectType(a) == PxFilterObjectType::eRIGID_STATIC || PxFilterObjectIsKinematic(a);
             const bool passiveB =
                 PxGetFilterObjectType(b) == PxFilterObjectType::eRIGID_STATIC || PxFilterObjectIsKinematic(b);
-            if (passiveA && passiveB && (settingsSize != sizeof(bool) || !*static_cast<const bool*>(settings)))
+            if (passiveA && passiveB && !x.word3 && !y.word3 &&
+                (settingsSize != sizeof(bool) || !*static_cast<const bool*>(settings)))
                 return PxFilterFlag::eSUPPRESS;
             if (!(x.word0 & y.word1) || !(y.word0 & x.word1))
                 return PxFilterFlag::eSUPPRESS;
@@ -142,7 +147,7 @@ namespace Kans
             return key;
         }
     } // namespace
-    struct PhysicsWorld::Impl : PxSimulationEventCallback
+    struct PhysicsWorld::Impl : PxSimulationEventCallback, PxUserControllerHitReport, PxControllerBehaviorCallback
     {
         struct Body
         {
@@ -198,8 +203,10 @@ namespace Kans
         std::map<AssetID, SharedMaterial> Materials;
         struct Listeners
         {
-            uint64_t                                                         Next = 0;
-            std::map<uint64_t, std::function<void(const PhysicsPairEvent&)>> Collision, Trigger;
+            uint64_t                                                                    Next = 0;
+            std::map<uint64_t, std::function<void(const PhysicsPairEvent&)>>            Collision, Trigger;
+            std::map<uint64_t, std::function<void(const JointBreakEvent&)>>             JointBreak;
+            std::map<uint64_t, std::function<void(UUID, const ControllerColliderHit&)>> ControllerHit;
         };
         std::shared_ptr<Listeners> Subscribers = std::make_shared<Listeners>();
         using ShapeKey                         = std::array<uint64_t, 6>; // body A/B, collider A/B, shape kind A/B
@@ -211,6 +218,7 @@ namespace Kans
         std::map<UUID, PxTransform>               KinematicTargets;
         bool                                      Dispatching = false;
         std::vector<std::function<void()>>        Commands;
+#include "Mechanisms.inl"
         static UUID     Identity(const void* p) { return UUID(uint64_t(reinterpret_cast<uintptr_t>(p))); }
         static ShapeKey Key(PxActor* a, PxActor* b, PxShape* x, PxShape* y)
         {
@@ -237,7 +245,7 @@ namespace Kans
             e.ColliderB = key[3];
             return e;
         }
-        void onConstraintBreak(PxConstraintInfo*, PxU32) override {}
+        void onConstraintBreak(PxConstraintInfo* info, PxU32 count) override { CollectBreaks(info, count); }
         void onWake(PxActor**, PxU32) override {}
         void onSleep(PxActor**, PxU32) override {}
         void onAdvance(const PxRigidBody* const*, const PxTransform*, PxU32) override {}
@@ -494,7 +502,6 @@ namespace Kans
             desc.filterShaderData        = &Settings.EnableKinematicPairs;
             desc.filterShaderDataSize    = sizeof(Settings.EnableKinematicPairs);
             desc.simulationEventCallback = this;
-            if (Settings.EnableKinematicPairs)
             {
                 desc.kineKineFilteringMode   = PxPairFilteringMode::eKEEP;
                 desc.staticKineFilteringMode = PxPairFilteringMode::eKEEP;
@@ -508,6 +515,9 @@ namespace Kans
                 Dispatcher->release();
                 throw std::runtime_error("PhysX scene creation failed");
             }
+            ControllerManager = PxCreateControllerManager(*World);
+            if (!ControllerManager)
+                throw std::runtime_error("Controller manager creation failed");
             ++sdk.Worlds;
         }
         ~Impl()
@@ -516,18 +526,19 @@ namespace Kans
             Clear();
             for (auto& [id, m] : Materials)
                 m.Material->release();
+            ControllerManager->release();
             World->release();
             Dispatcher->release();
             --Sdk().Worlds;
         }
         void Clear()
         {
-            for (auto& [id, b] : Bodies)
-            {
-                b.Actor->release();
-                --Sdk().Actors;
-            }
-            Bodies.clear();
+            for (auto& [id, j] : Joints)
+                ReleaseJoint(j);
+            Joints.clear();
+            BodyJoints.clear();
+            while (!Bodies.empty())
+                ReleaseBody(Bodies.begin()->first);
             Stats.ActorCount = 0;
         }
         void Error(UUID id, const std::string& message)
@@ -545,7 +556,7 @@ namespace Kans
         Entity BodyOwner(Entity entity)
         {
             for (auto e = entity; e; e = Owner.GetParent(e))
-                if (e.HasComponent<RigidBodyComponent>())
+                if (e.HasComponent<RigidBodyComponent>() || e.HasComponent<CharacterControllerComponent>())
                     return e;
             return entity;
         }
@@ -789,13 +800,16 @@ namespace Kans
             if (e.HasComponent<IDComponent>())
             {
                 const auto id = e.GetUUID();
+                if (e.HasComponent<JointComponent>() || Joints.count(id))
+                    DirtyJoints.insert(id);
                 if (Bodies.count(id) || ColliderOwners.count(id) || HasCollider(e) ||
-                    e.HasComponent<RigidBodyComponent>())
+                    (e.HasComponent<RigidBodyComponent>() || e.HasComponent<CharacterControllerComponent>()))
                     DirtyEntities[id] |= reason;
             }
             if (subtree && e.HasComponent<RelationshipComponent>())
                 for (auto child : Owner.GetChildren(e))
-                    if (!stopAtNestedBodies || !child.HasComponent<RigidBodyComponent>())
+                    if (!stopAtNestedBodies || (!child.HasComponent<RigidBodyComponent>() &&
+                                                !child.HasComponent<CharacterControllerComponent>()))
                         Queue(child, reason, true, stopAtNestedBodies);
         }
         MeshSourceStamp SourceStamp(Entity e)
@@ -885,7 +899,14 @@ namespace Kans
                 return;
             if (e.HasComponent<RigidBodyComponent>())
                 DirtyBodies.insert(id);
+            if (e.HasComponent<CharacterControllerComponent>())
+            {
+                DirtyBodies.insert(id);
+                return;
+            }
             if (!HasCollider(e))
+                return;
+            if (BodyOwner(e).HasComponent<CharacterControllerComponent>())
                 return;
             const auto owner   = BodyOwner(e).GetUUID();
             ColliderOwners[id] = owner;
@@ -913,6 +934,12 @@ namespace Kans
             const auto group  = GroupColliders.find(id);
             const bool wanted = Valid(e) && Owner.IsEntityActive(e) &&
                                 (e.HasComponent<RigidBodyComponent>() || group != GroupColliders.end());
+            if (Valid(e) && Owner.IsEntityActive(e) && e.HasComponent<CharacterControllerComponent>())
+            {
+                BuildController(e);
+                return;
+            }
+            DetachBodyJoints(id);
             // Static/kinematic replacements also need sleeping contact partners to participate in narrowphase.
             for (const auto& [key, pair] : PreviousContacts)
             {
@@ -941,9 +968,7 @@ namespace Kans
                     saved->AngularVelocity = Gl(d->getAngularVelocity());
                     saved->Sleeping        = d->isSleeping();
                 }
-                b.Actor->release();
-                --Sdk().Actors;
-                Bodies.erase(old);
+                ReleaseBody(id);
             }
             if (!wanted)
             {
@@ -1127,8 +1152,16 @@ namespace Kans
         if (e.HasComponent<IDComponent>())
         {
             const auto id = e.GetUUID();
-            if (i.Bodies.count(id) || i.ColliderOwners.count(id))
+            if (i.Bodies.count(id) || i.ColliderOwners.count(id) || i.Joints.count(id) ||
+                e.HasComponent<JointComponent>())
                 i.ChangedTransforms.insert(id);
+            if (e.HasComponent<JointComponent>())
+            {
+                i.DirtyJoints.insert(id);
+                // Keep authored recapture pending while inactive or while a connected actor is absent.
+                if (auto joint = i.Joints.find(id); joint != i.Joints.end())
+                    joint->second.Captured = false;
+            }
         }
         if (e.HasComponent<RelationshipComponent>())
             for (auto child : i.Owner.GetChildren(e))
@@ -1140,6 +1173,9 @@ namespace Kans
             return;
         std::lock_guard lock(SdkMutex());
         auto&           i = *m_Impl;
+        for (auto id : i.RemovedJoints)
+            i.RemoveJoint(id);
+        i.RemovedJoints.clear();
         if (!i.Initialized)
             i.InitializeIndex();
         auto dirty = std::move(i.DirtyEntities);
@@ -1153,7 +1189,19 @@ namespace Kans
                 continue;
             if (auto actor = i.Bodies.find(id); actor != i.Bodies.end())
             {
-                auto&      b = actor->second;
+                auto& b = actor->second;
+                if (auto controller = i.Controllers.find(id); controller != i.Controllers.end())
+                {
+                    auto w = Physics::TransformShape({}, i.Owner.GetWorldTransform(e));
+                    auto p = w.Position + controller->second.Settings.Center;
+                    controller->second.Native->setPosition({p.x, p.y, p.z});
+                    controller->second.State = {};
+                    b.Current                = Pose(w);
+                    b.Previous               = Pose(w);
+                    b.Scale                  = w.Scale;
+                    ++i.Stats.TeleportCount;
+                    continue;
+                }
                 const auto w = Physics::TransformShape({}, i.Owner.GetWorldTransform(e));
                 if (glm::length(w.Scale - b.Scale) > 1e-6f)
                     i.DirtyBodies.insert(id);
@@ -1168,7 +1216,7 @@ namespace Kans
                 else if (auto* d = b.Actor->is<PxRigidDynamic>())
                     d->setKinematicTarget(Pose(w));
             }
-            if (auto owner = i.ColliderOwners.find(id); owner != i.ColliderOwners.end())
+            if (auto owner = i.ColliderOwners.find(id); owner != i.ColliderOwners.end() && !i.Controllers.count(id))
             {
                 const auto local    = i.ColliderLocalMatrix(e, owner->second);
                 auto       previous = i.ColliderLocalMatrices.find(id);
@@ -1180,6 +1228,10 @@ namespace Kans
         i.DirtyBodies.clear();
         for (auto id : bodies)
             i.RebuildBody(id);
+        auto joints = std::move(i.DirtyJoints);
+        i.DirtyJoints.clear();
+        for (auto id : joints)
+            i.RefreshJoint(id);
         i.Stats.ActorCount = i.Bodies.size();
         i.ChangedTransforms.clear();
     }
@@ -1200,6 +1252,16 @@ namespace Kans
                 i.Fields.AddGlobalWind(i.Owner.m_Registry.get<GlobalWindComponent>(h));
         for (auto& [id, b] : i.Bodies)
         {
+            if (i.Controllers.count(id))
+            {
+                // CCT sweeps already resolved the motion. Publish the proxy pose before broadphase;
+                // trigger processing otherwise observes the preceding kinematic pose for one step.
+                auto*       proxy = b.Actor->is<PxRigidDynamic>();
+                PxTransform target(PxIdentity);
+                if (proxy->getKinematicTarget(target))
+                    proxy->setGlobalPose(target);
+                continue;
+            }
             b.Previous           = b.Current;
             auto* d              = b.Actor->is<PxRigidDynamic>();
             i.StepVelocities[id] = d ? std::make_pair(d->getLinearVelocity(), d->getAngularVelocity()) :
@@ -1232,11 +1294,17 @@ namespace Kans
                     d->addForce(Px(force));
             }
         }
+        for (auto& [id, j] : i.Joints)
+            if (j.Native && j.Settings.Type == JointType::Hinge && j.Settings.HingeFreeSpin &&
+                j.Settings.HingeMotorEnabled)
+                i.UpdateJoint(j);
         i.KinematicTargets.clear();
         i.World->simulate(float(seconds));
         i.World->fetchResults(true);
         for (auto& [id, b] : i.Bodies)
         {
+            if (i.Controllers.count(id))
+                continue;
             b.Current = b.Actor->getGlobalPose();
             if (b.ReconcileSleeping)
             {
@@ -1250,6 +1318,8 @@ namespace Kans
                     d->putToSleep();
             }
         }
+        i.FollowPlatforms(float(seconds));
+        i.CollectJointStates();
         ++i.Stats.StepCount;
         i.Time += seconds;
         i.Dispatching = true;
@@ -1257,6 +1327,7 @@ namespace Kans
         {
             i.DispatchPairs(false);
             i.DispatchPairs(true);
+            i.DispatchMechanisms();
         }
         catch (...)
         {
@@ -1375,6 +1446,8 @@ namespace Kans
         auto  flags = uint32_t(i.Settings.DebugDraw);
         if (!flags)
             return;
+        if (flags & 16)
+            i.DrawJoints(draw);
         if (flags & 8)
             for (const auto& [key, pair] : i.PreviousContacts)
                 for (const auto& c : pair.Contacts)
@@ -1826,6 +1899,8 @@ namespace Kans
                     if (f.word0 & (1u << layer))
                     {
                         f.word1 = i.Settings.CollisionMatrix[layer];
+                        if (auto c = i.Controllers.find(id); c != i.Controllers.end())
+                            f.word1 &= c->second.Settings.CollisionMask;
                         break;
                     }
                 shape->setSimulationFilterData(f);
@@ -1961,4 +2036,164 @@ namespace Kans
         return true;
     }
     size_t PhysicsWorld::GetSharedMaterialCount() const { return m_Impl->Materials.size(); }
+} // namespace Kans
+
+namespace Kans
+{
+    CollisionFlags PhysicsWorld::MoveController(UUID id, glm::vec3 displacement, float dt)
+    {
+        if (!Finite(displacement) || !std::isfinite(dt) || dt <= 0)
+            return CollisionFlags::None;
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, id, displacement, dt] { MoveController(id, displacement, dt); });
+            return CollisionFlags::None;
+        }
+        SynchronizeChanges();
+        auto flags    = i.MoveCharacter(id, displacement, dt);
+        i.Dispatching = true;
+        try
+        {
+            i.DispatchMechanisms();
+        }
+        catch (...)
+        {
+            i.Dispatching = false;
+            throw;
+        }
+        i.Dispatching = false;
+        auto commands = std::move(i.Commands);
+        i.Commands.clear();
+        for (auto& command : commands)
+            command();
+        SynchronizeChanges();
+        return flags;
+    }
+    std::optional<CharacterControllerState> PhysicsWorld::GetControllerState(UUID id) const
+    {
+        auto c = m_Impl->Controllers.find(id);
+        return c == m_Impl->Controllers.end() ? std::nullopt : std::optional<CharacterControllerState>(c->second.State);
+    }
+    bool PhysicsWorld::CanResizeController(UUID id, float height)
+    {
+        SynchronizeChanges();
+        auto& i = *m_Impl;
+        auto  c = i.Controllers.find(id);
+        if (c == i.Controllers.end())
+            return false;
+        physx::PxGeometryHolder g;
+        physx::PxTransform      pose(physx::PxIdentity);
+        if (!i.ControllerGeometry(c->second, height, g, pose))
+            return false;
+        Impl::ControllerFilter filter(i, id, c->second.Settings);
+        physx::PxOverlapBuffer hit;
+        i.World->overlap(g.any(),
+                         pose,
+                         hit,
+                         physx::PxQueryFilterData(physx::PxQueryFlag::eSTATIC | physx::PxQueryFlag::eDYNAMIC |
+                                                  physx::PxQueryFlag::ePREFILTER | physx::PxQueryFlag::eANY_HIT),
+                         &filter);
+        return !hit.hasBlock;
+    }
+    bool PhysicsWorld::ResizeController(UUID id, float height)
+    {
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, id, height] { ResizeController(id, height); });
+            return false;
+        }
+        if (!CanResizeController(id, height))
+            return false;
+        auto& c    = i.Controllers.at(id);
+        auto  next = c.Settings;
+        if (next.Shape == ControllerShape::Capsule)
+            next.Height = height;
+        else
+            next.HalfExtents.y = height * .5f;
+        try
+        {
+            PhysicsYaml::Encode(next);
+        }
+        catch (...)
+        {
+            return false;
+        }
+        c.Native->resize(next.Shape == ControllerShape::Capsule ? height : height * .5f);
+        c.Settings = next;
+        i.Owner.GetEntityByUUID(id).SetComponent<CharacterControllerComponent>(next);
+        i.ControllerPose(id, c);
+        SynchronizeChanges();
+        return true;
+    }
+    void PhysicsWorld::TeleportController(UUID id, glm::vec3 position)
+    {
+        if (!Finite(position))
+            return;
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, id, position] { TeleportController(id, position); });
+            return;
+        }
+        SynchronizeChanges();
+        auto c = i.Controllers.find(id);
+        if (c == i.Controllers.end())
+            return;
+        auto center = position + c->second.Settings.Center;
+        c->second.Native->setPosition({center.x, center.y, center.z});
+        c->second.State = {};
+        i.ControllerPose(id, c->second);
+        ++i.Stats.TeleportCount;
+    }
+    std::optional<JointState> PhysicsWorld::GetJointState(UUID id) const
+    {
+        auto j = m_Impl->Joints.find(id);
+        return j == m_Impl->Joints.end() ? std::nullopt : std::optional<JointState>(j->second.State);
+    }
+    void PhysicsWorld::ResetJoint(UUID id)
+    {
+        auto& i = *m_Impl;
+        if (i.Dispatching)
+        {
+            i.Commands.push_back([this, id] { ResetJoint(id); });
+            return;
+        }
+        SynchronizeChanges();
+        auto j = i.Joints.find(id);
+        if (j == i.Joints.end())
+            return;
+        i.ReleaseJoint(j->second);
+        j->second.State.IsBroken      = false;
+        j->second.State.CurrentForce  = {};
+        j->second.State.CurrentTorque = {};
+        i.DirtyJoints.insert(id);
+        SynchronizeChanges();
+    }
+    void PhysicsWorld::NotifyJointRemoved(UUID id)
+    {
+        m_Impl->RemovedJoints.insert(id);
+        m_Impl->DirtyJoints.insert(id);
+    }
+    PhysicsSubscription PhysicsWorld::OnControllerHit(std::function<void(UUID, const ControllerColliderHit&)> f)
+    {
+        auto state = m_Impl->Subscribers;
+        auto id    = ++state->Next;
+        state->ControllerHit.emplace(id, std::move(f));
+        return PhysicsSubscription([weak = std::weak_ptr<Impl::Listeners>(state), id] {
+            if (auto s = weak.lock())
+                s->ControllerHit.erase(id);
+        });
+    }
+    PhysicsSubscription PhysicsWorld::OnJointBreak(std::function<void(const JointBreakEvent&)> f)
+    {
+        auto state = m_Impl->Subscribers;
+        auto id    = ++state->Next;
+        state->JointBreak.emplace(id, std::move(f));
+        return PhysicsSubscription([weak = std::weak_ptr<Impl::Listeners>(state), id] {
+            if (auto s = weak.lock())
+                s->JointBreak.erase(id);
+        });
+    }
 } // namespace Kans

@@ -9,7 +9,7 @@
 
 namespace Kans::Scripting
 {
-    constexpr uint32_t ApiVersion = 6;
+    constexpr uint32_t ApiVersion = 7;
     enum class ComponentType : uint32_t
     {
 #define KANS_COMPONENT(id, name) name = id,
@@ -74,6 +74,12 @@ namespace Kans::Scripting
         float    Separation = 0;
         uint64_t ColliderA = 0, ColliderB = 0;
     };
+    struct ControllerHitData
+    {
+        uint64_t Collider = 0, Body = 0;
+        Vector3  Point {}, Normal {}, MoveDirection {};
+        float    MoveLength = 0;
+    };
     struct PhysicsEventData
     {
         uint64_t                  Other = 0, Collider = 0, OtherCollider = 0;
@@ -81,7 +87,7 @@ namespace Kans::Scripting
         const PhysicsContactData* Contacts = nullptr;
         int32_t                   Count = 0, Phase = 0, Trigger = 0, Removed = 0;
     };
-    // ABI v6: UTF-8, NUL terminated strings; Cdecl callbacks; int32 booleans/status;
+    // ABI v7: UTF-8, NUL terminated strings; Cdecl callbacks; int32 booleans/status;
     // no engine pointers cross this boundary. Handles are opaque uint64 values.
     struct NativeApi
     {
@@ -124,26 +130,28 @@ namespace Kans::Scripting
     struct ManagedApi
     {
         uint32_t Version = ApiVersion, Size = sizeof(ManagedApi);
-        void(KANS_SCRIPT_CALL* Shutdown)()                                      = nullptr;
-        int32_t(KANS_SCRIPT_CALL* LoadAssembly)(const char*)                    = nullptr;
-        int32_t(KANS_SCRIPT_CALL* ReloadAssembly)()                             = nullptr;
-        int32_t(KANS_SCRIPT_CALL* ClassCount)()                                 = nullptr;
-        int32_t(KANS_SCRIPT_CALL* ClassName)(int32_t, char*, int32_t)           = nullptr;
-        int32_t(KANS_SCRIPT_CALL* ClassExists)(const char*)                     = nullptr;
-        uint64_t(KANS_SCRIPT_CALL* Create)(uint64_t, const char*)               = nullptr;
-        void(KANS_SCRIPT_CALL* Destroy)(uint64_t)                               = nullptr;
-        void(KANS_SCRIPT_CALL* Update)(const uint64_t*, int32_t, float)         = nullptr;
-        void(KANS_SCRIPT_CALL* SetPlaying)(int32_t)                             = nullptr;
-        int64_t(KANS_SCRIPT_CALL* AllocatedBytes)()                             = nullptr;
-        int32_t(KANS_SCRIPT_CALL* LastUnloadCollected)()                        = nullptr;
-        void(KANS_SCRIPT_CALL* FixedUpdate)(const uint64_t*, int32_t, float)    = nullptr;
-        void(KANS_SCRIPT_CALL* PhysicsEvent)(uint64_t, const PhysicsEventData*) = nullptr;
-        uint32_t(KANS_SCRIPT_CALL* PhysicsCallbacks)(uint64_t)                  = nullptr;
+        void(KANS_SCRIPT_CALL* Shutdown)()                                        = nullptr;
+        int32_t(KANS_SCRIPT_CALL* LoadAssembly)(const char*)                      = nullptr;
+        int32_t(KANS_SCRIPT_CALL* ReloadAssembly)()                               = nullptr;
+        int32_t(KANS_SCRIPT_CALL* ClassCount)()                                   = nullptr;
+        int32_t(KANS_SCRIPT_CALL* ClassName)(int32_t, char*, int32_t)             = nullptr;
+        int32_t(KANS_SCRIPT_CALL* ClassExists)(const char*)                       = nullptr;
+        uint64_t(KANS_SCRIPT_CALL* Create)(uint64_t, const char*)                 = nullptr;
+        void(KANS_SCRIPT_CALL* Destroy)(uint64_t)                                 = nullptr;
+        void(KANS_SCRIPT_CALL* Update)(const uint64_t*, int32_t, float)           = nullptr;
+        void(KANS_SCRIPT_CALL* SetPlaying)(int32_t)                               = nullptr;
+        int64_t(KANS_SCRIPT_CALL* AllocatedBytes)()                               = nullptr;
+        int32_t(KANS_SCRIPT_CALL* LastUnloadCollected)()                          = nullptr;
+        void(KANS_SCRIPT_CALL* FixedUpdate)(const uint64_t*, int32_t, float)      = nullptr;
+        void(KANS_SCRIPT_CALL* PhysicsEvent)(uint64_t, const PhysicsEventData*)   = nullptr;
+        uint32_t(KANS_SCRIPT_CALL* PhysicsCallbacks)(uint64_t)                    = nullptr;
+        void(KANS_SCRIPT_CALL* ControllerHit)(uint64_t, const ControllerHitData*) = nullptr;
+        void(KANS_SCRIPT_CALL* JointBreak)(uint64_t, uint64_t)                    = nullptr;
     };
     using InitializeFn = int32_t(KANS_SCRIPT_CALL*)(const NativeApi*, int32_t, ManagedApi*, int32_t);
     static_assert(sizeof(Vector3) == 12);
     static_assert(sizeof(Value) == 24);
     static_assert(sizeof(UIEventData) == 64);
     static_assert(sizeof(NativeApi) == 8 + 22 * sizeof(void*));
-    static_assert(sizeof(ManagedApi) == 8 + 15 * sizeof(void*));
+    static_assert(sizeof(ManagedApi) == 8 + 17 * sizeof(void*));
 } // namespace Kans::Scripting

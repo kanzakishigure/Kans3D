@@ -50,6 +50,13 @@ namespace Kans.Interop
         public uint Axis;
     }
     [StructLayout(LayoutKind.Sequential)]
+    public struct ControllerHitData
+    {
+        public ulong Collider, Body;
+        public Vector3 Point, Normal, MoveDirection;
+        public float MoveLength;
+    }
+    [StructLayout(LayoutKind.Sequential)]
     public unsafe struct PhysicsEventData
     {
         public ulong Other, Collider, OtherCollider;
@@ -60,7 +67,7 @@ namespace Kans.Interop
     [StructLayout(LayoutKind.Sequential)]
     public unsafe struct NativeApi
     {
-        public const uint ApiVersion = 6;
+        public const uint ApiVersion = 7;
         public uint Version, Size;
         public delegate* unmanaged[Cdecl]<int, byte*, void> Log;
         public delegate* unmanaged[Cdecl]<ulong, uint, int> HasComponent;
@@ -105,6 +112,8 @@ namespace Kans.Interop
         public delegate* unmanaged[Cdecl]<ulong*, int, float, void> FixedUpdate;
         public delegate* unmanaged[Cdecl]<ulong, PhysicsEventData*, void> PhysicsEvent;
         public delegate* unmanaged[Cdecl]<ulong, uint> PhysicsCallbacks;
+        public delegate* unmanaged[Cdecl]<ulong, ControllerHitData*, void> ControllerHit;
+        public delegate* unmanaged[Cdecl]<ulong, ulong, void> JointBreak;
     }
 
     public interface IScriptRegistry

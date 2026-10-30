@@ -26,7 +26,8 @@ namespace Kans
         Colliders     = 1,
         CentersOfMass = 2,
         Sleeping      = 4,
-        Contacts      = 8
+        Contacts      = 8,
+        Joints        = 16
     };
     inline PhysicsDebugFlags operator|(PhysicsDebugFlags a, PhysicsDebugFlags b)
     {

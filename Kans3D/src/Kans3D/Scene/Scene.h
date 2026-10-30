@@ -234,6 +234,7 @@ namespace Kans
         bool              m_HasCameraAudioPosition = false;
 
     private:
+        void OnPhysicsJointRemoved(entt::registry&, entt::entity);
         void OnPhysicsComponentChanged(entt::registry&, entt::entity);
         void OnPhysicsBodyOwnershipChanged(entt::registry&, entt::entity);
         void OnPhysicsHierarchyChanged(entt::registry&, entt::entity);

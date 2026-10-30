@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include "Kans3D/Core/TimeStep.h"
+#include "Kans3D/Core/UUID.h"
 #include "ScriptInterop.h"
 
 namespace Kans
@@ -10,6 +11,8 @@ namespace Kans
     class Entity;
     class Scene;
     struct PhysicsPairEvent;
+    struct ControllerColliderHit;
+    struct JointBreakEvent;
     enum class ScriptBackend
     {
         CoreCLR,
@@ -47,6 +50,9 @@ namespace Kans
         static void                     OnDestroyEntity(Entity entity);
         static void                     OnUpdate(TimeStep ts);
         static void                     OnFixedUpdate(Scene&, float);
+        static void                     OnControllerHit(Scene&, UUID, const ControllerColliderHit&);
+        static void                     OnJointBreak(Scene&, const JointBreakEvent&);
+        static float                    GetPhysicsDeltaTime();
         static void                     OnPhysicsEvent(Scene&, const PhysicsPairEvent&, bool trigger);
         static Scene*                   GetSceneContext();
         static uint64_t                 GetUpdateTransitionCount();

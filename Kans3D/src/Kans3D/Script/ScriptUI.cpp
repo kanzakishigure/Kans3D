@@ -126,6 +126,10 @@ namespace Kans::ScriptUI
                     return 0;
                 switch (Scripting::ComponentType(type))
                 {
+                    case Scripting::ComponentType::CharacterControllerComponent:
+                        return Add<CharacterControllerComponent>(e);
+                    case Scripting::ComponentType::JointComponent:
+                        return Add<JointComponent>(e);
                     case Scripting::ComponentType::RigidBodyComponent:
                         return Add<RigidBodyComponent>(e);
                     case Scripting::ComponentType::BoxColliderComponent:

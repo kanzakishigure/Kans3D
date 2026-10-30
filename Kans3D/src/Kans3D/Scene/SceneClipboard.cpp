@@ -305,6 +305,17 @@ namespace Kans::SceneClipboard
                     if (!attachment["Instance"].as<uint64_t>())
                         node.remove("PrefabParent");
                 }
+                auto jointReferences = [&](YAML::Node joint) {
+                    if (joint)
+                    {
+                        reference(joint["BodyA"]);
+                        reference(joint["BodyB"]);
+                    }
+                };
+                jointReferences(node["JointComponent"]);
+                if (auto prefab = node["PrefabInstanceComponent"])
+                    for (auto change : prefab["Overrides"])
+                        jointReferences(change["JointComponent"]);
                 if (auto drivers = node["MaterialParameterDriversComponent"])
                     for (auto binding : drivers["Bindings"])
                         reference(binding["SourceEntity"]);

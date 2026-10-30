@@ -3,6 +3,10 @@
 #include "PhysicsComponents.h"
 namespace Kans::PhysicsYaml
 {
+    YAML::Node Encode(const CharacterControllerComponent&);
+    void       Decode(const YAML::Node&, CharacterControllerComponent&);
+    YAML::Node Encode(const JointComponent&);
+    void       Decode(const YAML::Node&, JointComponent&);
     YAML::Node Encode(const RigidBodyComponent&);
     void       Decode(const YAML::Node&, RigidBodyComponent&);
     YAML::Node Encode(const BoxColliderComponent&);

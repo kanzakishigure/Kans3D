@@ -95,6 +95,44 @@ namespace Kans
     private:
         std::function<void()> Disconnect;
     };
+    enum class CollisionFlags : uint32_t
+    {
+        None  = 0,
+        Sides = 1,
+        Above = 2,
+        Below = 4
+    };
+    inline CollisionFlags operator|(CollisionFlags a, CollisionFlags b)
+    {
+        return CollisionFlags(uint32_t(a) | uint32_t(b));
+    }
+    struct ControllerColliderHit
+    {
+        UUID      ColliderEntity = 0, BodyEntity = 0;
+        glm::vec3 Point {0}, Normal {0}, MoveDirection {0};
+        float     MoveLength = 0;
+    };
+    struct CharacterControllerState
+    {
+        bool           IsGrounded = false;
+        glm::vec3      GroundNormal {0}, GroundPoint {0}, Velocity {0};
+        UUID           GroundColliderEntity = 0, GroundBodyEntity = 0;
+        CollisionFlags Flags = CollisionFlags::None;
+    };
+    struct JointState
+    {
+        bool                IsBroken     = false;
+        float               CurrentAngle = 0, CurrentPosition = 0;
+        glm::vec3           CurrentForce {0}, CurrentTorque {0};
+        UUID                BodyA = 0, BodyB = 0;
+        Physics::WorldShape LocalFrameA, LocalFrameB;
+    };
+    struct JointBreakEvent
+    {
+        UUID      Entity = 0, BodyA = 0, BodyB = 0;
+        glm::vec3 Force {0}, Torque {0};
+        bool      ForceAvailable = false;
+    };
     enum class ForceMode : uint32_t
     {
         Force,
@@ -185,6 +223,18 @@ namespace Kans
         KANS_QUERY_API(Capsule)
         KANS_QUERY_API(Box)
 #undef KANS_QUERY_API
+        // Immediate, gravity-free sweep. Prefer fixed update. Render calls write the current pose
+        // immediately; both pose histories are reset, so interpolation cannot undo the move.
+        CollisionFlags                          MoveController(UUID, glm::vec3 displacement, float dt);
+        std::optional<CharacterControllerState> GetControllerState(UUID) const;
+        bool                                    CanResizeController(UUID, float height);
+        bool                                    ResizeController(UUID, float height);
+        void                                    TeleportController(UUID, glm::vec3 position);
+        std::optional<JointState>               GetJointState(UUID) const;
+        void                                    ResetJoint(UUID);
+        void                                    NotifyJointRemoved(UUID);
+        PhysicsSubscription OnControllerHit(std::function<void(UUID, const ControllerColliderHit&)>);
+        PhysicsSubscription OnJointBreak(std::function<void(const JointBreakEvent&)>);
         PhysicsSubscription OnCollision(std::function<void(const PhysicsPairEvent&)>);
         PhysicsSubscription OnTrigger(std::function<void(const PhysicsPairEvent&)>);
         void                SetGravity(glm::vec3);

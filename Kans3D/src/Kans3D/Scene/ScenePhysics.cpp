@@ -24,6 +24,11 @@ namespace Kans
             m_Registry.all_of<PrefabOwnedComponent>(handle))
             m_CapturePrefabNodes.insert(handle);
     }
+    void Scene::OnPhysicsJointRemoved(entt::registry&, entt::entity handle)
+    {
+        if (m_PhysicsWorld && m_Registry.all_of<IDComponent>(handle))
+            m_PhysicsWorld->NotifyJointRemoved(m_Registry.get<IDComponent>(handle).ID);
+    }
     void Scene::OnPhysicsComponentChanged(entt::registry& registry, entt::entity handle)
     {
         if (m_SuppressNotifications || m_PhysicsWritingTransforms)

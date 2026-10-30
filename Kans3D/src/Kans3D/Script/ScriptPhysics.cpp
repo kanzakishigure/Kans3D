@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "ScriptPhysics.h"
 #include <cstring>
+#include "Kans3D/Physics/PhysicsMechanismFields.h"
 #include "Kans3D/Physics/PhysicsSerialization.h"
 #include "Kans3D/Scene/Entity.h"
 #include "ScriptEngine.h"
@@ -169,6 +170,95 @@ namespace Kans::ScriptPhysics
             }
             return 1;
         }
+        template<class T>
+        void MechanismValue(T& x, bool write, Scripting::Value& v, int axis)
+        {
+            if constexpr (std::is_same_v<T, glm::vec3>)
+            {
+                if (write)
+                    x = Vector(v);
+                else
+                    Vector(v, x);
+            }
+            else if constexpr (std::is_same_v<T, glm::quat>)
+            {
+                if (write)
+                    x = {v.W, v.X, v.Y, v.Z};
+                else
+                {
+                    v.X = x.x;
+                    v.Y = x.y;
+                    v.Z = x.z;
+                    v.W = x.w;
+                }
+            }
+            else if constexpr (std::is_same_v<T, float>)
+            {
+                if (write)
+                    x = v.X;
+                else
+                    v.X = x;
+            }
+            else if constexpr (std::is_same_v<T, UUID>)
+            {
+                if (write)
+                    x = uint64_t(v.Integer);
+                else
+                    v.Integer = int64_t(uint64_t(x));
+            }
+            else if constexpr (std::is_arithmetic_v<T> || std::is_enum_v<T>)
+            {
+                if (write)
+                {
+                    if constexpr (std::is_enum_v<T>)
+                    {
+                        const int64_t maximum =
+                            std::is_same_v<T, JointType> ? 5 : (std::is_same_v<T, JointMotion> ? 2 : 1);
+                        if (v.Integer < 0 || v.Integer > maximum)
+                            throw std::invalid_argument("Invalid mechanism enum");
+                    }
+                    else if constexpr (std::is_same_v<T, uint32_t>)
+                        if (v.Integer < 0 || uint64_t(v.Integer) > UINT32_MAX)
+                            throw std::invalid_argument("Invalid mechanism mask/layer");
+                    x = T(v.Integer);
+                }
+                else
+                    v.Integer = int64_t(x);
+            }
+            else
+            {
+                if (axis < 0 || axis >= int(x.size()))
+                    throw std::invalid_argument("Invalid joint axis");
+                MechanismValue(x[axis], write, v, 0);
+            }
+        }
+        template<class T>
+        int MechanismProperty(Entity e, int mode, Scripting::Value& v)
+        {
+            if (!e.HasComponent<T>())
+                return 0;
+            auto c     = e.GetComponent<T>();
+            bool found = false, write = mode & 1024;
+            auto property = [&](const char*, auto& x, int index) {
+                if (index == (mode & 127))
+                {
+                    MechanismValue(x, write, v, (mode & 1023) >> 7);
+                    found = true;
+                }
+            };
+            if constexpr (std::is_same_v<T, CharacterControllerComponent>)
+                PhysicsFields::CharacterControllerComponentFields(c, property);
+            else
+                PhysicsFields::JointComponentFields(c, property);
+            if (!found)
+                return -1;
+            if (write)
+            {
+                PhysicsYaml::Encode(c);
+                e.SetComponent<T>(c);
+            }
+            return 1;
+        }
         int32_t KANS_SCRIPT_CALL Command(uint64_t            id,
                                          int32_t             op,
                                          int32_t             mode,
@@ -228,6 +318,83 @@ namespace Kans::ScriptPhysics
                         case 43:
                             return Collider<MeshColliderComponent>(e, property, write, *v, text);
                     }
+                }
+                if (op == 50)
+                    return MechanismProperty<CharacterControllerComponent>(e, mode, *v);
+                if (op == 60)
+                    return MechanismProperty<JointComponent>(e, mode, *v);
+                if (op >= 51 && op <= 58)
+                {
+                    if (!world || !e.HasComponent<CharacterControllerComponent>())
+                        return 0;
+                    if (op == 51)
+                    {
+                        v->Integer =
+                            int64_t(world->MoveController(id, Vector(*v), ScriptEngine::GetPhysicsDeltaTime()));
+                        return 1;
+                    }
+                    if (op == 52)
+                    {
+                        v->Integer = world->ResizeController(id, v->X);
+                        return 1;
+                    }
+                    if (op == 53)
+                    {
+                        v->Integer = world->CanResizeController(id, v->X);
+                        return 1;
+                    }
+                    if (op == 54)
+                    {
+                        world->TeleportController(id, Vector(*v));
+                        return 1;
+                    }
+                    world->SynchronizeChanges();
+                    auto state = world->GetControllerState(id);
+                    if (!state)
+                        return 0;
+                    if (op == 55)
+                    {
+                        v->Integer = int64_t(state->Flags);
+                        Vector(*v, state->Velocity);
+                    }
+                    if (op == 56)
+                    {
+                        v->Integer = state->IsGrounded;
+                        Vector(*v, state->GroundNormal);
+                    }
+                    if (op == 57)
+                    {
+                        v->Integer = int64_t(uint64_t(state->GroundColliderEntity));
+                        Vector(*v, state->GroundPoint);
+                    }
+                    if (op == 58)
+                        v->X = ScriptEngine::GetPhysicsDeltaTime();
+                    return 1;
+                }
+                if (op >= 61 && op <= 65)
+                {
+                    if (!world || !e.HasComponent<JointComponent>())
+                        return 0;
+                    if (op == 61)
+                    {
+                        world->ResetJoint(id);
+                        return 1;
+                    }
+                    world->SynchronizeChanges();
+                    auto state = world->GetJointState(id);
+                    if (!state)
+                        return 0;
+                    if (op == 62)
+                    {
+                        v->Integer = state->IsBroken;
+                        v->X       = state->CurrentAngle;
+                        v->Y       = state->CurrentPosition;
+                    }
+                    if (op == 63)
+                        Vector(*v, state->CurrentForce);
+                    if (op == 64)
+                        Vector(*v, state->CurrentTorque);
+                    return 1;
                 }
                 if (!e.HasComponent<RigidBodyComponent>())
                     return 0;

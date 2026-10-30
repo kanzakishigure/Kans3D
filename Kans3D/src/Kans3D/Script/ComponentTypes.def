@@ -16,3 +16,6 @@ KANS_COMPONENT(13, SphereColliderComponent)
 KANS_COMPONENT(14, CapsuleColliderComponent)
 KANS_COMPONENT(15, MeshColliderComponent)
 KANS_COMPONENT(16, GlobalWindComponent)
+
+KANS_COMPONENT(17, CharacterControllerComponent)
+KANS_COMPONENT(18, JointComponent)

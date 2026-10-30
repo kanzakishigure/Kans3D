@@ -42,6 +42,8 @@ namespace Kans
         std::optional<CapsuleColliderComponent>          CapsuleCollider;
         std::optional<MeshColliderComponent>             MeshCollider;
         std::optional<GlobalWindComponent>               GlobalWind;
+        std::optional<CharacterControllerComponent>      CharacterController;
+        std::optional<JointComponent>                    Joint;
     };
 
     struct SceneSnapshot

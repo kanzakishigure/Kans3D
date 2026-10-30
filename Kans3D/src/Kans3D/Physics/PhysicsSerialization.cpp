@@ -3,6 +3,7 @@
 #include <set>
 #include <stdexcept>
 #include <type_traits>
+#include "PhysicsMechanismFields.h"
 namespace Kans::PhysicsYaml
 {
     namespace
@@ -325,6 +326,26 @@ namespace Kans::PhysicsYaml
         {
             FieldsPhysicsSettings(c, f);
         }
+        template<class F>
+        void Fields(CharacterControllerComponent& c, F f)
+        {
+            PhysicsFields::CharacterControllerComponentFields(c, [&](const char* k, auto& v, int) { f(k, v); });
+        }
+        template<class F>
+        void Fields(const CharacterControllerComponent& c, F f)
+        {
+            PhysicsFields::CharacterControllerComponentFields(c, [&](const char* k, auto& v, int) { f(k, v); });
+        }
+        template<class F>
+        void Fields(JointComponent& c, F f)
+        {
+            PhysicsFields::JointComponentFields(c, [&](const char* k, auto& v, int) { f(k, v); });
+        }
+        template<class F>
+        void Fields(const JointComponent& c, F f)
+        {
+            PhysicsFields::JointComponentFields(c, [&](const char* k, auto& v, int) { f(k, v); });
+        }
         template<class T>
         YAML::Node Write(const T&);
         template<class T>
@@ -391,6 +412,8 @@ namespace Kans::PhysicsYaml
             }
             else if constexpr (std::is_same_v<T, AssetID>)
                 n = value.ToString();
+            else if constexpr (std::is_same_v<T, UUID>)
+                n = uint64_t(value);
             else if constexpr (std::is_same_v<T, glm::vec3>)
             {
                 n = YAML::Node(YAML::NodeType::Sequence);
@@ -422,7 +445,11 @@ namespace Kans::PhysicsYaml
                 if constexpr (std::is_same_v<T, PhysicsInterpolation>)
                     max = 1;
                 if constexpr (std::is_same_v<T, PhysicsDebugFlags>)
-                    max = 15;
+                    max = 31;
+                if constexpr (std::is_same_v<T, JointType>)
+                    max = 5;
+                if constexpr (std::is_same_v<T, ControllerShape> || std::is_same_v<T, NonWalkableMode>)
+                    max = 1;
                 Require(v <= max, "Invalid physics enum");
                 value = T(v);
             }
@@ -441,6 +468,8 @@ namespace Kans::PhysicsYaml
             {
                 value = AssetID::FromString(n.as<std::string>());
             }
+            else if constexpr (std::is_same_v<T, UUID>)
+                value = n.as<uint64_t>();
             else if constexpr (std::is_same_v<T, glm::vec3> || std::is_same_v<T, glm::quat>)
             {
                 const size_t count = std::is_same_v<T, glm::vec3> ? 3 : 4;
@@ -501,6 +530,44 @@ namespace Kans::PhysicsYaml
         void Validate(const SphereColliderComponent& c) { ValidateCollider(c); }
         void Validate(const CapsuleColliderComponent& c) { ValidateCollider(c); }
         void Validate(const MeshColliderComponent& c) { ValidateCollider(c); }
+        void Validate(const CharacterControllerComponent& c)
+        {
+            Require(uint32_t(c.Shape) <= 1 && uint32_t(c.NonWalkable) <= 1 && c.Layer < 32 && c.Radius > 0 &&
+                        c.Height > 0 && c.HalfExtents.x > 0 && c.HalfExtents.y > 0 && c.HalfExtents.z > 0 &&
+                        c.SlopeLimit >= 0 && c.SlopeLimit <= 90 && c.StepOffset >= 0 &&
+                        c.StepOffset <=
+                            (c.Shape == ControllerShape::Capsule ? c.Height + 2 * c.Radius : 2 * c.HalfExtents.y) &&
+                        c.SkinWidth > 0 && c.MinMoveDistance >= 0 && glm::length(c.UpDirection) > 1e-6f && c.Mass > 0 &&
+                        c.PushForceScale >= 0 && c.SnapDistance >= 0,
+                    "Invalid character controller");
+        }
+        void Validate(const JointComponent& c)
+        {
+            Require(uint32_t(c.Type) <= 5 && c.BreakForce >= 0 && c.BreakTorque >= 0 && c.InvMassScaleA >= 0 &&
+                        c.InvMassScaleB >= 0 && c.InvInertiaScaleA >= 0 && c.InvInertiaScaleB >= 0 &&
+                        c.HingeLowerAngle <= c.HingeUpperAngle && c.HingeLowerAngle > -360 && c.HingeUpperAngle < 360 &&
+                        c.SliderLowerLimit <= c.SliderUpperLimit && c.DistanceMin >= 0 &&
+                        c.DistanceMax >= c.DistanceMin && c.DistanceTolerance >= 0 && c.SphericalYAngle > 0 &&
+                        c.SphericalYAngle < 180 && c.SphericalZAngle > 0 && c.SphericalZAngle < 180 &&
+                        c.D6TwistLower <= c.D6TwistUpper && c.D6TwistLower > -360 && c.D6TwistUpper < 360 &&
+                        c.D6SwingY > 0 && c.D6SwingY < 180 && c.D6SwingZ > 0 && c.D6SwingZ < 180 &&
+                        glm::all(glm::lessThanEqual(c.D6LinearLower, c.D6LinearUpper)) &&
+                        glm::length(c.DriveRotation) > 1e-6f,
+                    "Invalid joint limits");
+            PhysicsFields::JointComponentFields(c, [&](const char* key, const auto& v, int) {
+                using T = std::decay_t<decltype(v)>;
+                const std::string name(key);
+                if constexpr (std::is_same_v<T, float>)
+                    if (name.find("Stiffness") != std::string::npos || name.find("Damping") != std::string::npos ||
+                        name.find("MaxForce") != std::string::npos)
+                        Require(v >= 0, "Negative joint spring/drive value");
+            });
+            for (auto v : c.D6Motion)
+                Require(uint32_t(v) <= 2, "Invalid D6 motion");
+            for (auto* values : {&c.DriveStiffness, &c.DriveDamping, &c.DriveMaxForce})
+                for (auto v : *values)
+                    Require(v >= 0, "Negative D6 drive value");
+        }
         void Validate(const PhysicsSettings& c)
         {
             auto copy = c;
@@ -508,6 +575,30 @@ namespace Kans::PhysicsYaml
             Validate(c.DefaultMaterial);
         }
     } // namespace
+    YAML::Node Encode(const CharacterControllerComponent& c)
+    {
+        Validate(c);
+        return Write(c);
+    }
+    void Decode(const YAML::Node& n, CharacterControllerComponent& c)
+    {
+        CharacterControllerComponent next;
+        Read(n, next);
+        Validate(next);
+        c = next;
+    }
+    YAML::Node Encode(const JointComponent& c)
+    {
+        Validate(c);
+        return Write(c);
+    }
+    void Decode(const YAML::Node& n, JointComponent& c)
+    {
+        JointComponent next;
+        Read(n, next);
+        Validate(next);
+        c = next;
+    }
     YAML::Node Encode(const RigidBodyComponent& c)
     {
         Validate(c);

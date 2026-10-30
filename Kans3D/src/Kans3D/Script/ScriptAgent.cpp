@@ -58,6 +58,10 @@ namespace Kans
                         return entity.HasComponent<CapsuleColliderComponent>();
                     case Scripting::ComponentType::MeshColliderComponent:
                         return entity.HasComponent<MeshColliderComponent>();
+                    case Scripting::ComponentType::CharacterControllerComponent:
+                        return entity.HasComponent<CharacterControllerComponent>();
+                    case Scripting::ComponentType::JointComponent:
+                        return entity.HasComponent<JointComponent>();
                     case Scripting::ComponentType::GlobalWindComponent:
                         return entity.HasComponent<GlobalWindComponent>();
                     case Scripting::ComponentType::TimelinePlayerComponent:

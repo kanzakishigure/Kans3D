@@ -310,7 +310,9 @@ namespace Kans
             s_Instances.erase(found);
         }
     }
-    void ScriptEngine::OnUpdate(TimeStep ts)
+    static float s_PhysicsDeltaTime = 1.f / 60;
+    float        ScriptEngine::GetPhysicsDeltaTime() { return s_PhysicsDeltaTime; }
+    void         ScriptEngine::OnUpdate(TimeStep ts)
     {
         if (s_Initialized && s_Scene)
         {
@@ -319,6 +321,7 @@ namespace Kans
             ScriptTimeline::BeginFrame();
             ++s_UpdateTransitions;
             CollectUpdateOrder(s_Scene);
+            s_PhysicsDeltaTime = float(ts);
             s_Api.Update(s_UpdateOrder.data(), int32_t(s_UpdateOrder.size()), float(ts));
         }
     }
@@ -327,7 +330,10 @@ namespace Kans
         if (!s_Initialized || s_Scene != &scene)
             return;
         CollectUpdateOrder(&scene);
+        const auto previous = s_PhysicsDeltaTime;
+        s_PhysicsDeltaTime  = dt;
         s_Api.FixedUpdate(s_UpdateOrder.data(), int32_t(s_UpdateOrder.size()), dt);
+        s_PhysicsDeltaTime = previous;
     }
     void ScriptEngine::OnPhysicsEvent(Scene& scene, const PhysicsPairEvent& pair, bool trigger)
     {
@@ -383,6 +389,35 @@ namespace Kans
         };
         dispatch(false);
         dispatch(true);
+    }
+    void ScriptEngine::OnControllerHit(Scene& scene, UUID id, const ControllerColliderHit& h)
+    {
+        if (!s_Initialized || s_Scene != &scene)
+            return;
+        auto e  = scene.GetEntityByUUID(id);
+        auto it = s_Instances.find(id);
+        if (!e || !scene.IsEntityActive(e) || it == s_Instances.end() ||
+            !(s_Api.PhysicsCallbacks(it->second) & (1u << 7)))
+            return;
+        auto                         v = [](glm::vec3 p) { return Scripting::Vector3 {p.x, p.y, p.z}; };
+        Scripting::ControllerHitData data {uint64_t(h.ColliderEntity),
+                                           uint64_t(h.BodyEntity),
+                                           v(h.Point),
+                                           v(h.Normal),
+                                           v(h.MoveDirection),
+                                           h.MoveLength};
+        s_Api.ControllerHit(it->second, &data);
+    }
+    void ScriptEngine::OnJointBreak(Scene& scene, const JointBreakEvent& event)
+    {
+        if (!s_Initialized || s_Scene != &scene)
+            return;
+        auto e  = scene.GetEntityByUUID(event.Entity);
+        auto it = s_Instances.find(event.Entity);
+        if (!e || !scene.IsEntityActive(e) || it == s_Instances.end() ||
+            !(s_Api.PhysicsCallbacks(it->second) & (1u << 8)))
+            return;
+        s_Api.JointBreak(it->second, event.Entity);
     }
     Scene*             ScriptEngine::GetSceneContext() { return s_Scene; }
     uint64_t           ScriptEngine::GetUpdateTransitionCount() { return s_UpdateTransitions; }

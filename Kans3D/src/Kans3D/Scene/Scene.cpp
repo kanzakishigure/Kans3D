@@ -23,13 +23,14 @@ namespace Kans
         auto physics  = [&](auto* type) {
             using T = std::remove_pointer_t<decltype(type)>;
             if constexpr (std::is_same_v<T, BoxColliderComponent> || std::is_same_v<T, SphereColliderComponent> ||
-                          std::is_same_v<T, CapsuleColliderComponent> || std::is_same_v<T, MeshColliderComponent>)
+                          std::is_same_v<T, CapsuleColliderComponent> || std::is_same_v<T, MeshColliderComponent> ||
+                          std::is_same_v<T, JointComponent>)
             {
                 m_Registry.on_construct<T>().template connect<&Scene::OnPhysicsComponentChanged>(this);
                 m_Registry.on_update<T>().template connect<&Scene::OnPhysicsComponentChanged>(this);
                 m_Registry.on_destroy<T>().template connect<&Scene::OnPhysicsComponentChanged>(this);
             }
-            else if constexpr (std::is_same_v<T, RigidBodyComponent>)
+            else if constexpr (std::is_same_v<T, RigidBodyComponent> || std::is_same_v<T, CharacterControllerComponent>)
             {
                 m_Registry.on_construct<T>().template connect<&Scene::OnPhysicsBodyOwnershipChanged>(this);
                 m_Registry.on_update<T>().template connect<&Scene::OnPhysicsComponentChanged>(this);
@@ -63,6 +64,9 @@ namespace Kans
         physics(static_cast<MeshColliderComponent*>(nullptr));
         physics(static_cast<MeshComponent*>(nullptr));
         physics(static_cast<EditableMeshComponent*>(nullptr));
+        physics(static_cast<CharacterControllerComponent*>(nullptr));
+        physics(static_cast<JointComponent*>(nullptr));
+        m_Registry.on_destroy<JointComponent>().connect<&Scene::OnPhysicsJointRemoved>(this);
         physics(static_cast<GlobalWindComponent*>(nullptr));
         m_Registry.on_update<TransformComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
         m_Registry.on_update<RelationshipComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
@@ -491,7 +495,11 @@ namespace Kans
         Detach(entity);
         auto& id = entity.GetComponent<IDComponent>().ID;
         if (m_PhysicsWorld && !m_SuppressNotifications)
+        {
+            if (entity.HasComponent<JointComponent>())
+                m_PhysicsWorld->NotifyJointRemoved(id);
             m_PhysicsWorld->NotifyTopologyChanged(entity);
+        }
         m_EntityMap.erase(id);
         m_ChildBounds.erase(entt::entity(entity));
         m_Registry.destroy(entity);
@@ -741,6 +749,8 @@ namespace Kans
         CopyComponent<SphereColliderComponent>(source, copy);
         CopyComponent<CapsuleColliderComponent>(source, copy);
         CopyComponent<MeshColliderComponent>(source, copy);
+        CopyComponent<CharacterControllerComponent>(source, copy);
+        CopyComponent<JointComponent>(source, copy);
         CopyComponent<GlobalWindComponent>(source, copy);
 
         CopyComponent<AudioSourceComponent>(source, copy);
@@ -825,6 +835,20 @@ namespace Kans
                     auto found = remap.find(UUID(id));
                     return found == remap.end() ? id : uint64_t(found->second);
                 });
+        for (const auto& [source, target] : remap)
+            if (auto copied = GetEntityByUUID(target); copied.HasComponent<JointComponent>())
+                copied.PatchComponent<JointComponent>([&](auto& joint) {
+                    for (auto* id : {&joint.BodyA, &joint.BodyB})
+                        if (auto found = remap.find(*id); found != remap.end())
+                            *id = found->second;
+                });
+        for (const auto& [source, target] : remap)
+            if (auto copied = GetEntityByUUID(target); copied.HasComponent<PrefabInstanceComponent>())
+                for (auto& [key, change] : copied.GetComponent<PrefabInstanceComponent>().Overrides)
+                    if (change.Joint)
+                        for (auto* id : {&change.Joint->BodyA, &change.Joint->BodyB})
+                            if (auto found = remap.find(*id); found != remap.end())
+                                *id = found->second;
         return copy;
     }
 
@@ -925,6 +949,12 @@ namespace Kans
     {}
     template<>
     void Scene::OnComponentAdd<MeshColliderComponent>(Entity, MeshColliderComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<CharacterControllerComponent>(Entity, CharacterControllerComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<JointComponent>(Entity, JointComponent&)
     {}
     template<>
     void Scene::OnComponentAdd<GlobalWindComponent>(Entity, GlobalWindComponent&)

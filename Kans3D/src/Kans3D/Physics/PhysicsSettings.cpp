@@ -41,7 +41,7 @@ namespace Kans
         if (!std::isfinite(material.StaticFriction) || !std::isfinite(material.DynamicFriction) ||
             !std::isfinite(material.Restitution) || material.StaticFriction < 0 || material.DynamicFriction < 0 ||
             material.Restitution < 0 || material.Restitution > 1 || uint32_t(material.FrictionCombine) > 3 ||
-            uint32_t(material.RestitutionCombine) > 3 || (uint32_t(DebugDraw) & ~15u))
+            uint32_t(material.RestitutionCombine) > 3 || (uint32_t(DebugDraw) & ~31u))
             throw std::invalid_argument("Invalid default physics material/debug flags");
         for (uint32_t a = 0; a < 32; ++a)
             for (uint32_t b = a; b < 32; ++b)

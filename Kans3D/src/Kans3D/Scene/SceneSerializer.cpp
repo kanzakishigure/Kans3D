@@ -798,6 +798,10 @@ namespace Kans
                     item["CapsuleColliderComponent"] = PhysicsYaml::Encode(*change.CapsuleCollider);
                 if (change.MeshCollider)
                     item["MeshColliderComponent"] = PhysicsYaml::Encode(*change.MeshCollider);
+                if (change.CharacterController)
+                    item["CharacterControllerComponent"] = PhysicsYaml::Encode(*change.CharacterController);
+                if (change.Joint)
+                    item["JointComponent"] = PhysicsYaml::Encode(*change.Joint);
                 if (change.GlobalWind)
                     item["GlobalWindComponent"] = PhysicsYaml::Encode(*change.GlobalWind);
                 if (change.UIScreen)
@@ -845,6 +849,8 @@ namespace Kans
                       "CapsuleColliderComponent",
                       "MeshColliderComponent",
                       "GlobalWindComponent",
+                      "CharacterControllerComponent",
+                      "JointComponent",
                       "UIScreen",
                       "UIWorld"});
                 const auto key = Text(item["Node"]);
@@ -880,6 +886,18 @@ namespace Kans
                     MeshColliderComponent c;
                     PhysicsYaml::Decode(item["MeshColliderComponent"], c);
                     change.MeshCollider = c;
+                }
+                if (item["CharacterControllerComponent"])
+                {
+                    CharacterControllerComponent c;
+                    PhysicsYaml::Decode(item["CharacterControllerComponent"], c);
+                    change.CharacterController = c;
+                }
+                if (item["JointComponent"])
+                {
+                    JointComponent c;
+                    PhysicsYaml::Decode(item["JointComponent"], c);
+                    change.Joint = c;
                 }
                 if (item["GlobalWindComponent"])
                 {
@@ -1087,6 +1105,11 @@ namespace Kans
                 node["CapsuleColliderComponent"] = PhysicsYaml::Encode(entity.GetComponent<CapsuleColliderComponent>());
             if (entity.HasComponent<MeshColliderComponent>())
                 node["MeshColliderComponent"] = PhysicsYaml::Encode(entity.GetComponent<MeshColliderComponent>());
+            if (entity.HasComponent<CharacterControllerComponent>())
+                node["CharacterControllerComponent"] =
+                    PhysicsYaml::Encode(entity.GetComponent<CharacterControllerComponent>());
+            if (entity.HasComponent<JointComponent>())
+                node["JointComponent"] = PhysicsYaml::Encode(entity.GetComponent<JointComponent>());
             if (entity.HasComponent<GlobalWindComponent>())
                 node["GlobalWindComponent"] = PhysicsYaml::Encode(entity.GetComponent<GlobalWindComponent>());
             if (entity.HasComponent<AudioSourceComponent>())
@@ -1469,6 +1492,8 @@ namespace Kans
                       "CapsuleColliderComponent",
                       "MeshColliderComponent",
                       "GlobalWindComponent",
+                      "CharacterControllerComponent",
+                      "JointComponent",
                       "AudioSourceComponent",
                       "AudioListenerComponent",
                       "TextComponent",
@@ -1552,6 +1577,18 @@ namespace Kans
                     MeshColliderComponent c;
                     PhysicsYaml::Decode(node["MeshColliderComponent"], c);
                     entity.AddComponent<MeshColliderComponent>(c);
+                }
+                if (node["CharacterControllerComponent"])
+                {
+                    CharacterControllerComponent c;
+                    PhysicsYaml::Decode(node["CharacterControllerComponent"], c);
+                    entity.AddComponent<CharacterControllerComponent>(c);
+                }
+                if (node["JointComponent"])
+                {
+                    JointComponent c;
+                    PhysicsYaml::Decode(node["JointComponent"], c);
+                    entity.AddComponent<JointComponent>(c);
                 }
                 if (node["GlobalWindComponent"])
                 {
