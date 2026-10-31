@@ -343,6 +343,18 @@ namespace Kans
             InvMass[i] = d.MaxDistance[i] * c.MaxDistanceScale <= 0 ?
                              0 :
                              1 / std::max(1e-8f, c.AreaDensity > 0 ? c.AreaDensity * InvMass[i] : c.ParticleMass);
+        if (!paused && !reset)
+            for (const auto& impulse : fields.GetImpulses())
+            {
+                if (impulse.Sequence && impulse.Sequence <= LastImpulseSequence)
+                    continue;
+                for (size_t i = 0; i < Positions.size(); ++i)
+                    if (InvMass[i] > 0)
+                        Velocities[i] +=
+                            glm::mat3(glm::inverse(Center)) *
+                            impulse.Sample(glm::vec3(Center * glm::vec4(Positions[i], 1)), 0, FieldSystem::Cloth);
+                LastImpulseSequence = std::max(LastImpulseSequence, impulse.Sequence);
+            }
         const double oldRemainder = Clock.Remainder, frame = std::isfinite(seconds) && seconds > 0 ? seconds : 0;
         const auto   steps = reset || paused ? 0 : Clock.Accumulate(frame, step, std::max(1u, c.MaxSubsteps));
         for (uint32_t sub = 0; sub < steps; ++sub)
@@ -394,7 +406,15 @@ namespace Kans
                     Velocities[i] = glm::vec3(0);
                 }
                 else
-                    Velocities[i] += glm::mat3(inverseCenter) * (Gravity * c.GravityScale) * dt;
+                {
+                    auto sample = fields.Sample(glm::vec3(center * glm::vec4(Positions[i], 1)),
+                                                glm::mat3(center) * Velocities[i],
+                                                Clock.Time,
+                                                0,
+                                                FieldSystem::Cloth);
+                    Velocities[i] += glm::mat3(inverseCenter) *
+                                     (Gravity * c.GravityScale + sample.Acceleration + sample.Force * InvMass[i]) * dt;
+                }
             }
             // Fixed triangle order; distribute area-based aerodynamic force equally to its vertices.
             for (size_t tri = 0; tri < d.Triangles.size(); tri += 3)
@@ -404,10 +424,12 @@ namespace Kans
                 const float twiceArea = glm::length(cross);
                 if (twiceArea < 1e-12f)
                     continue;
-                const auto  n = cross / twiceArea, point = (Positions[a] + Positions[b] + Positions[e]) / 3.f;
-                const auto  air = glm::mat3(inverseCenter) *
-                                  fields.SampleWind(glm::vec3(center * glm::vec4(point, 1)), Clock.Time) * c.WindScale;
-                const auto  v   = air - (Velocities[a] + Velocities[b] + Velocities[e]) / 3.f;
+                const auto n = cross / twiceArea, point = (Positions[a] + Positions[b] + Positions[e]) / 3.f;
+                const auto air =
+                    glm::mat3(inverseCenter) *
+                    fields.Sample(glm::vec3(center * glm::vec4(point, 1)), {}, Clock.Time, 0, FieldSystem::Cloth).Wind *
+                    c.WindScale;
+                const auto  v     = air - (Velocities[a] + Velocities[b] + Velocities[e]) / 3.f;
                 const float speed = glm::length(v);
                 if (speed < 1e-8f)
                     continue;

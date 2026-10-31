@@ -9,7 +9,9 @@
 #include "Kans3D/Core/UUID.h"
 #include "ForceFields.h"
 #include "PhysicsSettings.h"
+#include "RagdollComponent.h"
 #include "Shapes.h"
+#include "VehicleComponent.h"
 namespace Kans
 {
     class Scene;
@@ -30,11 +32,12 @@ namespace Kans
     };
     struct RaycastHit
     {
-        UUID      ColliderEntity = 0, BodyEntity = 0;
-        glm::vec3 Point {0}, Normal {0};
-        float     Distance       = 0;
-        uint32_t  FaceIndex      = UINT32_MAX;
-        bool      InitialOverlap = false;
+        UUID        ColliderEntity = 0, BodyEntity = 0;
+        glm::vec3   Point {0}, Normal {0};
+        float       Distance       = 0;
+        uint32_t    FaceIndex      = UINT32_MAX;
+        bool        InitialOverlap = false;
+        std::string BoneName;
     };
     enum class PhysicsEventPhase : uint32_t
     {
@@ -44,9 +47,10 @@ namespace Kans
     };
     struct PhysicsContactPoint
     {
-        glm::vec3 Position {0}, Normal {0}, Impulse {0};
-        float     Separation = 0;
-        UUID      ColliderA = 0, ColliderB = 0;
+        glm::vec3   Position {0}, Normal {0}, Impulse {0};
+        float       Separation = 0;
+        UUID        ColliderA = 0, ColliderB = 0;
+        std::string BoneA, BoneB;
     };
     struct PhysicsPairEvent
     {
@@ -163,17 +167,26 @@ namespace Kans
     public:
         PhysicsWorld(Scene&, const PhysicsSettings&);
         ~PhysicsWorld();
-        PhysicsWorld(const PhysicsWorld&)                              = delete;
-        PhysicsWorld&                   operator=(const PhysicsWorld&) = delete;
-        void                            NotifyTopologyChanged(Entity, bool includeSubtree = false);
-        void                            NotifyBodyOwnershipChanged(Entity);
-        void                            NotifyMeshSourceChanged(Entity);
-        void                            NotifyAssetChanged(AssetID);
-        void                            NotifyAssetProviderChanged();
-        void                            NotifyTransformChanged(Entity);
-        void                            SynchronizeChanges();
-        void                            Step(double seconds);
-        void                            WriteTransforms(float alpha);
+        PhysicsWorld(const PhysicsWorld&)                          = delete;
+        PhysicsWorld&               operator=(const PhysicsWorld&) = delete;
+        void                        NotifyTopologyChanged(Entity, bool includeSubtree = false);
+        void                        NotifyBodyOwnershipChanged(Entity);
+        void                        NotifyMeshSourceChanged(Entity);
+        void                        NotifyAssetChanged(AssetID);
+        void                        NotifyAssetProviderChanged();
+        void                        NotifyTransformChanged(Entity);
+        void                        SynchronizeChanges();
+        void                        CaptureRagdollTargets(double frameSeconds);
+        void                        Step(double seconds);
+        std::optional<VehicleState> GetVehicleState(UUID) const;
+        void                        ResetRagdoll(UUID);
+        void SetRagdollBlendWeight(UUID, const std::string& bone, float weight, bool includeChildren = false);
+        void SimulateRagdoll(UUID, const std::string& fromBone = {});
+        void BlendRagdollToAnimation(UUID, float duration);
+        std::optional<PhysicsBodyState> GetRagdollBodyState(UUID, const std::string& bone) const;
+        void AddRagdollForce(UUID, const std::string& bone, glm::vec3, ForceMode = ForceMode::Force);
+        void AddRagdollImpulse(UUID, const std::string& bone, glm::vec3 impulse, glm::vec3 worldPoint);
+        void WriteTransforms(float alpha);
         // Draws what the settings' DebugDraw flags select, or exactly `flags`.
         void                            Draw(DebugDraw&) const;
         void                            Draw(DebugDraw&, PhysicsDebugFlags flags) const;
@@ -239,6 +252,12 @@ namespace Kans
         PhysicsSubscription OnJointBreak(std::function<void(const JointBreakEvent&)>);
         PhysicsSubscription OnCollision(std::function<void(const PhysicsPairEvent&)>);
         PhysicsSubscription OnTrigger(std::function<void(const PhysicsPairEvent&)>);
+        void                                    Explode(glm::vec3    position,
+                                                        float        radius,
+                                                        float        impulse,
+                                                        FieldFalloff falloff         = FieldFalloff::Linear,
+                                                        float        upwardsModifier = 0,
+                                                        uint32_t     layerMask       = UINT32_MAX);
         void                SetGravity(glm::vec3);
         void                IgnoreLayerCollision(uint32_t a, uint32_t b, bool ignore);
         void                SetVelocity(UUID, glm::vec3, bool angular = false);

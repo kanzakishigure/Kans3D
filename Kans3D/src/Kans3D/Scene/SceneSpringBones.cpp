@@ -38,8 +38,9 @@ namespace Kans
             Entity             BoneEntity;
             glm::mat4          OldLocal {1}, Local {1}, World {1};
             glm::vec3          Tail {0, 1, 0};
-            float              Coordinate = 0;
-            bool               Written    = false;
+            float              Coordinate          = 0;
+            bool               Written             = false;
+            uint64_t           LastImpulseSequence = 0;
         };
         struct Chain
         {
@@ -50,9 +51,9 @@ namespace Kans
         };
         struct Collider
         {
-            UUID                               ID = 0;
-            glm::mat4                          Old {1}, Current {1}, Step {1};
-            const MotionColliderComponent*     Data = nullptr;
+            UUID                           ID = 0;
+            glm::mat4                      Old {1}, Current {1}, Step {1};
+            const MotionColliderComponent* Data = nullptr;
         };
     } // namespace
     struct SpringBoneRuntime
@@ -62,7 +63,7 @@ namespace Kans
         std::vector<Collider>                      Colliders;
         Physics::SubstepClock                      Clock;
         glm::mat4                                  OldCenter {1}, Center {1};
-        uint64_t                                   ResetEpoch   = 0;
+        uint64_t                                   ResetEpoch = 0, LastImpulseSequence = 0;
         bool                                       ResetPending = true, Active = false;
     };
     bool operator==(const SpringBoneChain& a, const SpringBoneChain& b)
@@ -320,14 +321,25 @@ namespace Kans
     {
         if (!m_SpringBoneUpdate)
             m_SpringBoneUpdate = CreateRef<SpringBoneUpdateCache>(*this);
-        auto& snapshot = *m_SpringBoneUpdate;
+        auto& snapshot        = *m_SpringBoneUpdate;
         m_MotionSnapshotReady = true;
         snapshot.Begin();
-        for (auto h : m_Registry.view<GlobalWindComponent>())
+        if (m_PhysicsWorld)
+            snapshot.Fields = m_PhysicsWorld->GetForceFields();
+        else
         {
-            Entity e {h, this};
-            if (snapshot.Active(snapshot.Get(e.GetUUID(), e)))
-                snapshot.Fields.AddGlobalWind(e.GetComponent<GlobalWindComponent>());
+            for (auto h : m_Registry.view<WindZoneComponent>())
+            {
+                Entity e {h, this};
+                if (snapshot.Active(snapshot.Get(e.GetUUID(), e)))
+                    snapshot.Fields.AddWind(e.GetComponent<WindZoneComponent>(), GetWorldTransform(e));
+            }
+            for (auto h : m_Registry.view<ForceFieldComponent>())
+            {
+                Entity e {h, this};
+                if (snapshot.Active(snapshot.Get(e.GetUUID(), e)))
+                    snapshot.Fields.AddField(e.GetComponent<ForceFieldComponent>(), GetWorldTransform(e));
+            }
         }
         for (auto h : m_Registry.view<MotionColliderComponent>())
         {
@@ -348,7 +360,7 @@ namespace Kans
         m_SpringRenderRotations.clear();
         PrepareMotionSnapshot();
         auto&      snapshot = *m_SpringBoneUpdate;
-        const bool paused = playing && m_PhysicsPaused && !m_PhysicsSingleStep;
+        const bool paused   = playing && m_PhysicsPaused && !m_PhysicsSingleStep;
         for (auto h : m_Registry.view<SpringBoneComponent>())
         {
             Entity owner {h, this};
@@ -543,10 +555,22 @@ namespace Kans
                             glm::vec3(0));
                         gravity *= std::max(0.f, Sample(setting.GravityPowerCurve, u, setting.GravityPower)) *
                                    setting.GravityMultiplier;
-                        auto acceleration =
-                            glm::mat3(inverseCenter) *
-                            (gravity + c.WindScale * snapshot.Fields.SampleWind(
-                                                         glm::vec3(centerStep * glm::vec4(tip, 1)), r.Clock.Time));
+                        const auto worldTip = glm::vec3(centerStep * glm::vec4(tip, 1));
+                        const auto sample =
+                            snapshot.Fields.Sample(worldTip,
+                                                   glm::mat3(centerStep) * (tip - previous) / float(step),
+                                                   r.Clock.Time,
+                                                   0,
+                                                   FieldSystem::SpringBones);
+                        auto acceleration = glm::mat3(inverseCenter) *
+                                            (gravity + c.WindScale * sample.Wind + sample.Acceleration + sample.Force);
+                        for (const auto& impulse : snapshot.Fields.GetImpulses())
+                            if (!impulse.Sequence || impulse.Sequence > n.LastImpulseSequence)
+                            {
+                                previous -= glm::mat3(inverseCenter) *
+                                            impulse.Sample(worldTip, 0, FieldSystem::SpringBones) * float(step);
+                                n.LastImpulseSequence = std::max(n.LastImpulseSequence, impulse.Sequence);
+                            }
                         const float stiffness = std::max(
                             0.f, Sample(setting.StiffnessCurve, u, setting.Stiffness) * setting.StiffnessMultiplier);
                         auto        candidate = tip + (tip - previous) * std::pow(1 - drag, float(step * 60)) +

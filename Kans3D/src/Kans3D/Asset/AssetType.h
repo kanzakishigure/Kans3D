@@ -32,5 +32,6 @@ namespace Kans
         Timeline            = 18,
         PhysicsMaterial     = 19,
         Cloth               = 20,
+        Ragdoll             = 21,
     };
 } // namespace Kans

@@ -27,17 +27,150 @@ namespace Kans
             return result;
         }
     } // namespace
-    glm::vec3 ForceFieldSet::SampleWind(glm::vec3 position, double time) const
+    namespace
     {
-        glm::vec3 result(0);
-        for (const auto& w : m_Winds)
+        float Attenuation(FieldFalloff mode, float d, const std::array<float, 8>& curve = {})
         {
-            if (glm::dot(w.Direction, w.Direction) > 1e-12f)
-                result += glm::normalize(w.Direction) * w.Strength;
-            const auto p = position * w.TurbulenceFrequency + glm::vec3(float(time * w.TurbulenceFrequency));
-            result += w.TurbulenceAmplitude *
-                      glm::vec3(Noise(p), Noise(p + glm::vec3(19, 37, 11)), Noise(p + glm::vec3(47, 7, 29)));
+            switch (mode)
+            {
+                case FieldFalloff::Linear:
+                    return 1 - d;
+                case FieldFalloff::InverseSquare:
+                    return 1 / (1 + 99 * d * d);
+                case FieldFalloff::Curve: {
+                    float x = glm::clamp(d, 0.f, 1.f) * 7;
+                    auto  i = std::min(6u, uint32_t(x));
+                    return glm::mix(curve[i], curve[i + 1], x - i);
+                }
+                default:
+                    return 1;
+            }
         }
-        return result;
+        glm::vec3 Unit(glm::vec3 v)
+        {
+            float n = glm::length(v);
+            return n > 1e-8f ? v / n : glm::vec3(0);
+        }
+        FieldRecord Record(FieldShape shape, const glm::mat4& world, float radius, glm::vec3 extents)
+        {
+            FieldRecord r;
+            r.Kind.y         = uint32_t(shape);
+            r.PositionRadius = glm::vec4(glm::vec3(world[3]), radius);
+            glm::vec3 scale(
+                glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2])));
+            glm::mat3 rotation(1);
+            for (int i = 0; i < 3; ++i)
+                if (scale[i] > 1e-8f)
+                    rotation[i] = glm::vec3(world[i]) / scale[i];
+            auto q        = glm::normalize(glm::quat_cast(rotation));
+            r.Rotation    = {q.x, q.y, q.z, q.w};
+            r.ExtentsBand = glm::vec4(extents * scale, 0);
+            r.PositionRadius.w *= std::max(scale.x, std::max(scale.y, scale.z));
+            return r;
+        }
+    } // namespace
+    void ForceFieldSet::AddWind(const WindZoneComponent& w, const glm::mat4& world)
+    {
+        auto r              = Record(w.Shape, world, w.Radius, w.HalfExtents);
+        r.Kind.x            = uint32_t(FieldType::Wind);
+        r.Filter            = {w.LayerMask, w.AffectMask, 0, 0};
+        r.DirectionStrength = glm::vec4(w.Direction, w.Strength);
+        r.ExtentsBand.w     = w.FalloffBand;
+        r.NoisePulse        = {w.TurbulenceAmplitude, w.TurbulenceFrequency, w.PulseMagnitude, w.PulseFrequency};
+        m_Records.push_back(r);
+    }
+    void ForceFieldSet::AddField(const ForceFieldComponent& f, const glm::mat4& world)
+    {
+        auto r              = Record(f.Shape, world, f.Radius, f.HalfExtents);
+        r.Kind              = {uint32_t(f.Type), uint32_t(f.Shape), uint32_t(f.Falloff), f.Acceleration};
+        r.Filter            = {f.LayerMask, f.AffectMask, f.Seed, f.CurlNoise};
+        r.DirectionStrength = glm::vec4(f.Direction, f.Strength);
+        r.NoisePulse.y      = f.Frequency;
+        r.ScrollInward      = glm::vec4(f.Scroll, f.InwardPull);
+        r.Curve             = f.FalloffCurve;
+        m_Records.push_back(r);
+    }
+    FieldSample
+    ForceFieldSet::Sample(glm::vec3 position, glm::vec3 velocity, double time, uint32_t layer, FieldSystem system) const
+    {
+        FieldSample out;
+        if (layer >= 32)
+            return out;
+        for (const auto& r : m_Records)
+        {
+            if (!(r.Filter.x & (1u << layer)) || !(r.Filter.y & uint32_t(system)))
+                continue;
+            glm::quat q(r.Rotation.w, r.Rotation.x, r.Rotation.y, r.Rotation.z);
+            auto      delta = position - glm::vec3(r.PositionRadius);
+            auto      local = glm::conjugate(q) * delta;
+            float     d     = 0;
+            if (r.Kind.y == uint32_t(FieldShape::Sphere))
+                d = glm::length(delta) / std::max(1e-8f, r.PositionRadius.w);
+            if (r.Kind.y == uint32_t(FieldShape::Box))
+            {
+                auto v = glm::abs(local) / glm::max(glm::vec3(r.ExtentsBand), glm::vec3(1e-8f));
+                d      = std::max(v.x, std::max(v.y, v.z));
+            }
+            if (d > 1)
+                continue;
+            const auto type        = FieldType(r.Kind.x);
+            float      attenuation = type == FieldType::Wind ?
+                                         (r.ExtentsBand.w > 0 ? glm::clamp((1 - d) / r.ExtentsBand.w, 0.f, 1.f) : 1.f) :
+                                         Attenuation(FieldFalloff(r.Kind.z), d, r.Curve);
+            glm::vec3  v(0), axis = q * Unit(glm::vec3(r.DirectionStrength));
+            auto       p     = position * r.NoisePulse.y + glm::vec3(r.ScrollInward) * float(time) +
+                               glm::vec3(float(r.Filter.z % 65536));
+            auto       noise = [](glm::vec3 x) {
+                return glm::vec3(Noise(x), Noise(x + glm::vec3(19, 37, 11)), Noise(x + glm::vec3(47, 7, 29)));
+            };
+            switch (type)
+            {
+                case FieldType::Wind:
+                    p = position * r.NoisePulse.y + glm::vec3(float(time * r.NoisePulse.y));
+                    out.Wind +=
+                        attenuation * (axis * (r.DirectionStrength.w +
+                                               r.NoisePulse.z * std::sin(float(time) * r.NoisePulse.w * 6.283185307f)) +
+                                       r.NoisePulse.x * noise(p));
+                    continue;
+                case FieldType::Radial:
+                    v = Unit(delta);
+                    break;
+                case FieldType::Directional:
+                    v = axis;
+                    break;
+                case FieldType::Vortex: {
+                    auto radial = delta - axis * glm::dot(delta, axis);
+                    v           = Unit(glm::cross(axis, radial)) - r.ScrollInward.w * Unit(radial);
+                    break;
+                }
+                case FieldType::Drag:
+                    v = -velocity;
+                    break;
+                case FieldType::Noise:
+                    if (r.Filter.w)
+                    {
+                        constexpr float e  = .01f;
+                        auto            dx = (noise(p + glm::vec3(e, 0, 0)) - noise(p - glm::vec3(e, 0, 0))) / (2 * e);
+                        auto            dy = (noise(p + glm::vec3(0, e, 0)) - noise(p - glm::vec3(0, e, 0))) / (2 * e);
+                        auto            dz = (noise(p + glm::vec3(0, 0, e)) - noise(p - glm::vec3(0, 0, e))) / (2 * e);
+                        v                  = {dy.z - dz.y, dz.x - dx.z, dx.y - dy.x};
+                    }
+                    else
+                        v = noise(p);
+                    break;
+            }
+            (r.Kind.w ? out.Acceleration : out.Force) += v * r.DirectionStrength.w * attenuation;
+        }
+        return out;
+    }
+    glm::vec3 FieldImpulse::Sample(glm::vec3 position, uint32_t layer, FieldSystem system) const
+    {
+        if (layer >= 32 || !(LayerMask & (1u << layer)) || !(AffectMask & uint32_t(system)) || Radius <= 0)
+            return {};
+        float distance = glm::distance(position, Position);
+        if (distance > Radius)
+            return {};
+        auto v = Radial ? Unit(position - (Position - glm::vec3(0, UpwardsModifier, 0))) * Impulse.x : Impulse;
+        return v * Attenuation(Falloff, distance / Radius);
     }
 } // namespace Kans

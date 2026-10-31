@@ -329,11 +329,18 @@ namespace Kans::SceneClipboard
                 };
                 springReferences(node["SpringBoneComponent"]);
                 springReferences(node["ClothComponent"]);
+                auto vehicleReferences = [&](YAML::Node vehicle) {
+                    if (vehicle)
+                        for (auto wheel : vehicle["Wheels"])
+                            reference(wheel["Visual"]);
+                };
+                vehicleReferences(node["VehicleComponent"]);
                 if (auto prefab = node["PrefabInstanceComponent"])
                     for (auto change : prefab["Overrides"])
                     {
                         springReferences(change["SpringBoneComponent"]);
                         springReferences(change["ClothComponent"]);
+                        vehicleReferences(change["VehicleComponent"]);
                     }
                 jointReferences(node["JointComponent"]);
                 if (auto prefab = node["PrefabInstanceComponent"])

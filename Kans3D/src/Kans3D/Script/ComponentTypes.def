@@ -15,7 +15,7 @@ KANS_COMPONENT(12, BoxColliderComponent)
 KANS_COMPONENT(13, SphereColliderComponent)
 KANS_COMPONENT(14, CapsuleColliderComponent)
 KANS_COMPONENT(15, MeshColliderComponent)
-KANS_COMPONENT(16, GlobalWindComponent)
+KANS_COMPONENT(16, WindZoneComponent)
 
 KANS_COMPONENT(17, CharacterControllerComponent)
 KANS_COMPONENT(18, JointComponent)
@@ -24,3 +24,8 @@ KANS_COMPONENT(19, SpringBoneComponent)
 KANS_COMPONENT(20, MotionColliderComponent)
 
 KANS_COMPONENT(21, ClothComponent)
+
+KANS_COMPONENT(22, RagdollComponent)
+KANS_COMPONENT(24, ForceFieldComponent)
+
+KANS_COMPONENT(23, VehicleComponent)

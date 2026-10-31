@@ -12,6 +12,10 @@ namespace Kans
         private ScriptComponent m_Script;
         private CharacterControllerComponent m_CharacterController;
         private JointComponent m_Joint;
+        private RagdollComponent m_Ragdoll;
+        private VehicleComponent m_Vehicle;
+        private ForceFieldComponent m_ForceField;
+        private WindZoneComponent m_WindZone;
         private ClothComponent m_Cloth;
         private SpringBoneComponent m_SpringBone;
         private MotionColliderComponent m_MotionCollider;
@@ -27,6 +31,10 @@ namespace Kans
             m_Script = new ScriptComponent { Entity = this };
             m_CharacterController = new CharacterControllerComponent { Entity = this };
             m_Joint = new JointComponent { Entity = this };
+            m_Ragdoll = new RagdollComponent { Entity = this };
+            m_Vehicle = new VehicleComponent { Entity = this };
+            m_ForceField = new ForceFieldComponent { Entity = this };
+            m_WindZone = new WindZoneComponent { Entity = this };
             m_Cloth = new ClothComponent { Entity = this };
             m_SpringBone = new SpringBoneComponent { Entity = this };
             m_MotionCollider = new MotionColliderComponent { Entity = this };
@@ -116,6 +124,10 @@ namespace Kans
             if (typeof(T) == typeof(ScriptComponent)) return (T)(Component)m_Script;
             if (typeof(T) == typeof(CharacterController) || typeof(T) == typeof(CharacterControllerComponent)) return (T)(Component)m_CharacterController;
             if (typeof(T) == typeof(Joint) || typeof(T) == typeof(JointComponent)) return (T)(Component)m_Joint;
+            if (typeof(T) == typeof(Ragdoll) || typeof(T) == typeof(RagdollComponent)) return (T)(Component)m_Ragdoll;
+            if (typeof(T) == typeof(Vehicle) || typeof(T) == typeof(VehicleComponent)) return (T)(Component)m_Vehicle;
+            if (typeof(T) == typeof(ForceField) || typeof(T) == typeof(ForceFieldComponent)) return (T)(Component)m_ForceField;
+            if (typeof(T) == typeof(WindZone) || typeof(T) == typeof(WindZoneComponent)) return (T)(Component)m_WindZone;
             if (typeof(T) == typeof(Cloth) || typeof(T) == typeof(ClothComponent)) return (T)(Component)m_Cloth;
             if (typeof(T) == typeof(SpringBone) || typeof(T) == typeof(SpringBoneComponent)) return (T)(Component)m_SpringBone;
             if (typeof(T) == typeof(MotionCollider) || typeof(T) == typeof(MotionColliderComponent)) return (T)(Component)m_MotionCollider;
@@ -145,6 +157,10 @@ namespace Kans
             (typeof(T) == typeof(SphereCollider) || typeof(T) == typeof(SphereColliderComponent)) ? ComponentIds.SphereColliderComponent :
             (typeof(T) == typeof(CapsuleCollider) || typeof(T) == typeof(CapsuleColliderComponent)) ? ComponentIds.CapsuleColliderComponent :
             (typeof(T) == typeof(MeshCollider) || typeof(T) == typeof(MeshColliderComponent)) ? ComponentIds.MeshColliderComponent :
+            (typeof(T) == typeof(Ragdoll) || typeof(T) == typeof(RagdollComponent)) ? ComponentIds.RagdollComponent :
+            (typeof(T) == typeof(Vehicle) || typeof(T) == typeof(VehicleComponent)) ? ComponentIds.VehicleComponent :
+            (typeof(T) == typeof(ForceField) || typeof(T) == typeof(ForceFieldComponent)) ? ComponentIds.ForceFieldComponent :
+            (typeof(T) == typeof(WindZone) || typeof(T) == typeof(WindZoneComponent)) ? ComponentIds.WindZoneComponent :
             (typeof(T) == typeof(Cloth) || typeof(T) == typeof(ClothComponent)) ? ComponentIds.ClothComponent :
             (typeof(T) == typeof(SpringBone) || typeof(T) == typeof(SpringBoneComponent)) ? ComponentIds.SpringBoneComponent :
             (typeof(T) == typeof(MotionCollider) || typeof(T) == typeof(MotionColliderComponent)) ? ComponentIds.MotionColliderComponent :

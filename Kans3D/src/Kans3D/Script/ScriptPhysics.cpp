@@ -272,6 +272,7 @@ namespace Kans::ScriptPhysics
                 if (!scene || !v)
                     return 0;
                 auto* world = scene->GetPhysicsWorld();
+#include "ScriptP4.inl"
                 if (op == 0)
                 {
                     Vector(*v, scene->GetPhysicsSettings().Gravity);
@@ -846,6 +847,8 @@ namespace Kans::ScriptPhysics
                     result.Distance       = h.Distance;
                     result.FaceIndex      = h.FaceIndex;
                     result.InitialOverlap = h.InitialOverlap;
+                    std::memcpy(
+                        result.BoneName, h.BoneName.data(), std::min(h.BoneName.size(), sizeof(result.BoneName) - 1));
                 };
                 if (mode == 2)
                 {

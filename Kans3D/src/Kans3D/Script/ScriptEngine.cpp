@@ -351,6 +351,9 @@ namespace Kans
                 auto instance = s_Instances.find(id);
                 if (!entity || !scene.IsEntityActive(entity) || instance == s_Instances.end())
                     continue;
+                if (!trigger && entity.HasComponent<RagdollComponent>() &&
+                    glm::length(pair.TotalImpulse) < entity.GetComponent<RagdollComponent>().ImpactThreshold)
+                    continue;
                 uint32_t mask = 1u << (uint32_t(pair.Phase) + (trigger ? 4 : 1));
                 if (!(s_Api.PhysicsCallbacks(instance->second) & mask))
                     continue;
@@ -360,12 +363,22 @@ namespace Kans
                 float sign   = reverse ? -1.f : 1.f;
                 auto  vector = [](glm::vec3 v) { return Scripting::Vector3 {v.x, v.y, v.z}; };
                 for (const auto& c : pair.Contacts)
+                {
                     contacts.push_back({vector(c.Position),
                                         vector(c.Normal * sign),
                                         vector(c.Impulse * sign),
                                         c.Separation,
                                         uint64_t(reverse ? c.ColliderB : c.ColliderA),
                                         uint64_t(reverse ? c.ColliderA : c.ColliderB)});
+                    const auto& bone      = reverse ? c.BoneB : c.BoneA;
+                    const auto& otherBone = reverse ? c.BoneA : c.BoneB;
+                    std::memcpy(contacts.back().BoneName,
+                                bone.data(),
+                                std::min(bone.size(), sizeof(contacts.back().BoneName) - 1));
+                    std::memcpy(contacts.back().OtherBoneName,
+                                otherBone.data(),
+                                std::min(otherBone.size(), sizeof(contacts.back().OtherBoneName) - 1));
+                }
                 Scripting::PhysicsEventData data;
                 data.Other         = other;
                 data.Collider      = reverse ? pair.ColliderB : pair.ColliderA;

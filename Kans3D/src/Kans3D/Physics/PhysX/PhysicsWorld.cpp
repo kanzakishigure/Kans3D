@@ -12,6 +12,7 @@
 #include <cooking/PxCooking.h>
 #include <extensions/PxDefaultCpuDispatcher.h>
 #include <extensions/PxRigidBodyExt.h>
+#include <glm/gtx/quaternion.hpp>
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Physics/PhysicsMaterial.h"
 #include "Kans3D/Physics/PhysicsSerialization.h"
@@ -19,6 +20,7 @@
 #include "Kans3D/Renderer/Resource/MeshKey.h"
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Script/ScriptEngine.h"
+#include "VehicleSDK.h"
 
 namespace Kans
 {
@@ -55,7 +57,7 @@ namespace Kans
                                     PxPairFlag::ePRE_SOLVER_VELOCITY | PxPairFlag::eCONTACT_EVENT_POSE);
             if (passiveA && passiveB)
                 flags &= ~PxPairFlags(PxPairFlag::eSOLVE_CONTACT);
-            return PxFilterFlag::eDEFAULT;
+            return x.word3 & y.word3 & 0x80000000u ? PxFilterFlag::eCALLBACK : PxFilterFlag::eDEFAULT;
         }
         struct Errors : PxErrorCallback
         {
@@ -91,7 +93,7 @@ namespace Kans
                 if (!Foundation)
                     throw std::runtime_error("PhysX foundation creation failed");
                 Physics = PxCreatePhysics(PX_PHYSICS_VERSION, *Foundation, PxTolerancesScale(), false, nullptr);
-                if (!Physics || !PxInitExtensions(*Physics, nullptr))
+                if (!Physics || !PxInitExtensions(*Physics, nullptr) || !PxInitVehicleExtension(*Foundation))
                     throw std::runtime_error("PhysX initialization failed");
             }
             void Release()
@@ -106,6 +108,7 @@ namespace Kans
                 Triangles.clear();
                 if (Physics)
                 {
+                    PxCloseVehicleExtension();
                     PxCloseExtensions();
                     Physics->release();
                     Physics = nullptr;
@@ -147,7 +150,10 @@ namespace Kans
             return key;
         }
     } // namespace
-    struct PhysicsWorld::Impl : PxSimulationEventCallback, PxUserControllerHitReport, PxControllerBehaviorCallback
+    struct PhysicsWorld::Impl : PxSimulationEventCallback,
+                                PxUserControllerHitReport,
+                                PxControllerBehaviorCallback,
+                                PxSimulationFilterCallback
     {
         struct Body
         {
@@ -192,6 +198,8 @@ namespace Kans
         std::map<AssetID, std::set<UUID>> MeshUsers;
         std::map<UUID, glm::mat4>         ColliderLocalMatrices;
         ForceFieldSet                     Fields;
+        std::vector<FieldImpulse>         PendingImpulses, PublishedImpulses;
+        uint64_t                          ImpulseSequence = 0;
         PhysicsStatistics                 Stats;
         std::vector<std::string>          Errors;
         std::set<std::string>             Reported;
@@ -219,6 +227,8 @@ namespace Kans
         bool                                      Dispatching = false;
         std::vector<std::function<void()>>        Commands;
 #include "Mechanisms.inl"
+#include "Ragdolls.inl"
+#include "Vehicles.inl"
         static UUID     Identity(const void* p) { return UUID(uint64_t(reinterpret_cast<uintptr_t>(p))); }
         static ShapeKey Key(PxActor* a, PxActor* b, PxShape* x, PxShape* y)
         {
@@ -311,9 +321,54 @@ namespace Kans
                         e.Contacts.push_back(
                             {Gl(points[c].position), normal, impulse, points[c].separation, e.ColliderA, e.ColliderB});
                 }
+                for (auto& point : e.Contacts)
+                {
+                    auto name = [&](const PxShape* shape) {
+                        auto it = ShapeBones.find(shape);
+                        return it == ShapeBones.end() ? std::string() : it->second;
+                    };
+                    point.BoneA = name(p.shapes[reverse ? 1 : 0]);
+                    point.BoneB = name(p.shapes[reverse ? 0 : 1]);
+                }
                 ContactPairs[key] = std::move(e);
             }
         }
+        PxFilterFlags pairFound(PxU64,
+                                PxFilterObjectAttributes,
+                                PxFilterData   x,
+                                const PxActor* a,
+                                const PxShape*,
+                                PxFilterObjectAttributes,
+                                PxFilterData   y,
+                                const PxActor* b,
+                                const PxShape*,
+                                PxPairFlags&) override
+        {
+            if (a->userData == b->userData)
+            {
+                auto it = Ragdolls.find(Identity(a->userData));
+                if (it != Ragdolls.end())
+                {
+                    auto        i = x.word2 - 0x10000u, j = y.word2 - 0x10000u;
+                    const auto& r = it->second;
+                    if (i < r.Binding.Parents.size() && j < r.Binding.Parents.size())
+                    {
+                        if (r.Binding.Parents[i] == int32_t(j) || r.Binding.Parents[j] == int32_t(i))
+                            return PxFilterFlag::eSUPPRESS;
+                        auto& data = r.Source->GetData();
+                        for (auto& pair : data.DisabledCollisionPairs)
+                            if ((pair.first == data.Bodies[i].Bone && pair.second == data.Bodies[j].Bone) ||
+                                (pair.second == data.Bodies[i].Bone && pair.first == data.Bodies[j].Bone))
+                                return PxFilterFlag::eSUPPRESS;
+                    }
+                }
+            }
+            return PxFilterFlag::eDEFAULT;
+        }
+        void
+        pairLost(PxU64, PxFilterObjectAttributes, PxFilterData, PxFilterObjectAttributes, PxFilterData, bool) override
+        {}
+        bool statusChange(PxU64&, PxPairFlags&, PxFilterFlags&) override { return false; }
         void onTrigger(PxTriggerPair* pairs, PxU32 count) override
         {
             std::lock_guard lock(EventMutex);
@@ -499,6 +554,7 @@ namespace Kans
             desc.gravity                 = Px(Settings.Gravity);
             desc.cpuDispatcher           = Dispatcher;
             desc.filterShader            = Filter;
+            desc.filterCallback          = this;
             desc.filterShaderData        = &Settings.EnableKinematicPairs;
             desc.filterShaderDataSize    = sizeof(Settings.EnableKinematicPairs);
             desc.simulationEventCallback = this;
@@ -533,6 +589,10 @@ namespace Kans
         }
         void Clear()
         {
+            for (auto& [id, r] : Ragdolls)
+                ReleaseRagdoll(r);
+            Ragdolls.clear();
+            Vehicles.clear();
             for (auto& [id, j] : Joints)
                 ReleaseJoint(j);
             Joints.clear();
@@ -1247,9 +1307,20 @@ namespace Kans
                 c.Impulse = {};
         }
         i.Fields.Clear();
-        for (auto h : i.Owner.m_Registry.view<GlobalWindComponent>())
+        for (auto h : i.Owner.m_Registry.view<WindZoneComponent>())
             if (i.Owner.IsEntityActive({h, &i.Owner}))
-                i.Fields.AddGlobalWind(i.Owner.m_Registry.get<GlobalWindComponent>(h));
+                i.Fields.AddWind(i.Owner.m_Registry.get<WindZoneComponent>(h),
+                                 i.Owner.GetWorldTransform({h, &i.Owner}));
+        for (auto h : i.Owner.m_Registry.view<ForceFieldComponent>())
+            if (i.Owner.IsEntityActive({h, &i.Owner}))
+                i.Fields.AddField(i.Owner.m_Registry.get<ForceFieldComponent>(h),
+                                  i.Owner.GetWorldTransform({h, &i.Owner}));
+        for (const auto& impulse : i.PendingImpulses)
+        {
+            i.Fields.AddImpulse(impulse);
+            i.PublishedImpulses.push_back(impulse);
+        }
+        i.PendingImpulses.clear();
         for (auto& [id, b] : i.Bodies)
         {
             if (i.Controllers.count(id))
@@ -1285,11 +1356,22 @@ namespace Kans
             }
             if (b.Settings.GravityScale != 1 && b.Settings.GravityScale != 0 && !d->isSleeping())
                 d->addForce(Px(i.Settings.Gravity * b.Settings.GravityScale), PxForceMode::eACCELERATION, false);
+            if (b.Settings.AffectedByFields)
+            {
+                auto sample = i.Fields.Sample(
+                    Gl(b.Current.p), Gl(d->getLinearVelocity()), i.Time, b.Settings.Layer, FieldSystem::RigidBodies);
+                if (glm::dot(sample.Force, sample.Force) > 0)
+                    d->addForce(Px(sample.Force));
+                if (glm::dot(sample.Acceleration, sample.Acceleration) > 0)
+                    d->addForce(Px(sample.Acceleration), PxForceMode::eACCELERATION);
+            }
             if (b.Settings.AffectedByWind)
             {
-                auto       relative = i.Fields.SampleWind(Gl(b.Current.p), i.Time) - Gl(d->getLinearVelocity());
-                const auto force    = .5f * b.Settings.AirDensity * b.Settings.DragCoefficient * b.Settings.WindArea *
-                                      glm::length(relative) * relative;
+                auto relative =
+                    i.Fields.Sample(Gl(b.Current.p), {}, i.Time, b.Settings.Layer, FieldSystem::RigidBodies).Wind -
+                    Gl(d->getLinearVelocity());
+                const auto force = .5f * b.Settings.AirDensity * b.Settings.DragCoefficient * b.Settings.WindArea *
+                                   glm::length(relative) * relative;
                 if (glm::dot(force, force) > 1e-10f)
                     d->addForce(Px(force));
             }
@@ -1298,6 +1380,62 @@ namespace Kans
             if (j.Native && j.Settings.Type == JointType::Hinge && j.Settings.HingeFreeSpin &&
                 j.Settings.HingeMotorEnabled)
                 i.UpdateJoint(j);
+        i.PrepareRagdolls(float(seconds));
+        // Broadphase overlap gathers each actor once, even when it has several primitives.
+        for (const auto& impulse : i.Fields.GetImpulses())
+        {
+            struct ExplosionQuery : PxOverlapCallback, PxQueryFilterCallback
+            {
+                PxOverlapHit            Buffer[64];
+                std::set<PxRigidActor*> Actors;
+                uint32_t                Mask;
+                explicit ExplosionQuery(uint32_t mask) : PxOverlapCallback(Buffer, 64), Mask(mask) {}
+                bool processTouches(const PxOverlapHit* hits, PxU32 count) override
+                {
+                    for (PxU32 j = 0; j < count; ++j)
+                        Actors.insert(hits[j].actor);
+                    return true;
+                }
+                PxQueryHitType::Enum
+                preFilter(const PxFilterData&, const PxShape* shape, const PxRigidActor*, PxHitFlags&) override
+                {
+                    return !(shape->getFlags() & PxShapeFlag::eTRIGGER_SHAPE) &&
+                                   (shape->getQueryFilterData().word0 & Mask) ?
+                               PxQueryHitType::eTOUCH :
+                               PxQueryHitType::eNONE;
+                }
+                PxQueryHitType::Enum
+                postFilter(const PxFilterData&, const PxQueryHit&, const PxShape*, const PxRigidActor*) override
+                {
+                    return PxQueryHitType::eTOUCH;
+                }
+            } query(impulse.LayerMask);
+            i.World->overlap(PxSphereGeometry(impulse.Radius),
+                             PxTransform(Px(impulse.Position)),
+                             query,
+                             PxQueryFilterData(PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER),
+                             &query);
+            for (auto* actor : query.Actors)
+            {
+                auto* body = actor->is<PxRigidBody>();
+                if (!body || (body->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC))
+                    continue;
+                auto it = i.Bodies.find(i.Identity(actor->userData));
+                if (it != i.Bodies.end() && !it->second.Settings.AffectedByFields)
+                    continue;
+                PxShape* shape = nullptr;
+                actor->getShapes(&shape, 1);
+                uint32_t layer = shape ? uint32_t(glm::findLSB(shape->getQueryFilterData().word0)) : 0;
+                auto     value = impulse.Sample(Gl(actor->getGlobalPose().p), layer);
+                if (glm::dot(value, value) == 0)
+                    continue;
+                if (actor->is<PxArticulationLink>())
+                    body->addForce(Px(value / float(seconds)));
+                else
+                    body->addForce(Px(value), PxForceMode::eIMPULSE);
+            }
+        }
+        i.UpdateVehicles(float(seconds));
         i.KinematicTargets.clear();
         i.World->simulate(float(seconds));
         i.World->fetchResults(true);
@@ -1318,6 +1456,7 @@ namespace Kans
                     d->putToSleep();
             }
         }
+        i.CollectRagdolls();
         i.FollowPlatforms(float(seconds));
         i.CollectJointStates();
         ++i.Stats.StepCount;
@@ -1377,6 +1516,13 @@ namespace Kans
         i.Owner.m_PhysicsWritingTransforms = true;
         for (auto& write : writes)
             i.Owner.SetWorldTransform(write.E, write.Matrix);
+        i.WriteRagdolls(glm::clamp(alpha, 0.f, 1.f));
+        i.WriteVehicles(glm::clamp(alpha, 0.f, 1.f));
+        if (!i.PublishedImpulses.empty())
+        {
+            i.Fields.SetImpulses(i.PublishedImpulses);
+            i.PublishedImpulses.clear();
+        }
         i.Owner.m_PhysicsWritingTransforms = previous;
     }
     std::optional<PhysicsBodyState> PhysicsWorld::GetBodyState(UUID id) const
@@ -1449,6 +1595,92 @@ namespace Kans
             return;
         if (flags & 16)
             i.DrawJoints(draw);
+        if (flags & 32)
+            for (auto& [id, r] : i.Ragdolls)
+            {
+                for (size_t j = 0; j < r.Actors.size(); ++j)
+                {
+                    auto pose   = r.Actors[j]->getGlobalPose();
+                    auto matrix = glm::translate(glm::mat4(1), Gl(pose.p)) * glm::mat4_cast(Gl(pose.q));
+                    for (const auto& shape : r.Source->GetData().Bodies[j].Shapes)
+                        std::visit([&](const auto& s) { draw.Shape(Physics::Shape(s), matrix, {.8f, .3f, 1, 1}); },
+                                   shape);
+                    if (r.Binding.Parents[j] >= 0)
+                    {
+                        const auto& joint =
+                            *std::find_if(r.Source->GetData().Constraints.begin(),
+                                          r.Source->GetData().Constraints.end(),
+                                          [&](auto& c) { return c.Bone == r.Source->GetData().Bodies[j].Bone; });
+                        auto      frame  = matrix * joint.Frame.Matrix();
+                        auto      origin = glm::vec3(frame[3]);
+                        glm::vec3 previous;
+                        for (int k = 0; k <= 24; ++k)
+                        {
+                            float t = k * glm::two_pi<float>() / 24;
+                            auto  p = glm::vec3(
+                                frame *
+                                glm::vec4(.2f,
+                                          .2f * std::tan(glm::radians(std::min(80.f, joint.SwingY))) * std::cos(t),
+                                          .2f * std::tan(glm::radians(std::min(80.f, joint.SwingZ))) * std::sin(t),
+                                          1));
+                            if (k)
+                                draw.Line(previous, p, {1, .7f, 0, 1});
+                            if (k % 6 == 0)
+                                draw.Line(origin, p, {1, .7f, 0, 1});
+                            previous = p;
+                        }
+                    }
+                }
+            }
+        if (flags & 64)
+            for (auto& [id, owned] : i.Vehicles)
+            {
+                auto& v = *owned;
+                for (size_t j = 0; j < v.State.Wheels.size(); ++j)
+                {
+                    auto& w = v.State.Wheels[j];
+                    draw.Sphere(w.Position, v.Settings.Wheels[j].Radius, {.1f, .8f, 1, 1});
+                    auto attach = Gl(v.Chassis->getGlobalPose().transform(Px(v.Settings.Wheels[j].AttachPosition)));
+                    draw.Line(
+                        attach,
+                        attach + Gl(v.Chassis->getGlobalPose().q.rotate(Px(v.Settings.Wheels[j].SuspensionDirection))) *
+                                     v.Settings.Wheels[j].SuspensionTravel,
+                        {1, 1, 0, 1});
+                    if (w.Grounded)
+                    {
+                        draw.Cross(w.ContactPoint, .06f, {0, 1, 0, 1});
+                        draw.Arrow(w.ContactPoint,
+                                   w.ContactPoint + glm::vec3(w.LateralSlip, 0, w.LongitudinalSlip),
+                                   {1, 0, 0, 1});
+                    }
+                }
+            }
+        if (flags & (128 | 256))
+            for (const auto& f : i.Fields.GetRecords())
+            {
+                glm::quat q(f.Rotation.w, f.Rotation.x, f.Rotation.y, f.Rotation.z);
+                auto      world = glm::translate(glm::mat4(1), glm::vec3(f.PositionRadius)) * glm::mat4_cast(q);
+                if (flags & 128)
+                {
+                    if (f.Kind.y == 1)
+                        draw.Sphere(glm::vec3(f.PositionRadius), f.PositionRadius.w, {0, .8f, 1, 1});
+                    else if (f.Kind.y == 2)
+                        draw.Box(world, glm::vec3(f.ExtentsBand), {0, .8f, 1, 1});
+                    else
+                        draw.Cross(glm::vec3(f.PositionRadius), .5f, {0, .8f, 1, 1});
+                }
+                if (flags & 256)
+                    for (int x = -2; x <= 2; ++x)
+                        for (int y = -2; y <= 2; ++y)
+                            for (int z = -2; z <= 2; ++z)
+                            {
+                                auto p = glm::vec3(f.PositionRadius) + glm::vec3(x, y, z) * .5f;
+                                auto s = i.Fields.Sample(p, {}, i.Time, 0, FieldSystem::RigidBodies);
+                                auto v = s.Wind + s.Force + s.Acceleration;
+                                if (glm::length(v) > 1e-6f)
+                                    draw.Arrow(p, p + glm::normalize(v) * .25f, {0, .8f, 1, 1});
+                            }
+            }
         if (flags & 8)
             for (const auto& [key, pair] : i.PreviousContacts)
                 for (const auto& c : pair.Contacts)
@@ -1569,8 +1801,10 @@ namespace Kans
                                  (Filter.Triggers == QueryTriggerInteraction::UseGlobal && HitTriggers)))
                     return PxQueryHitType::eNONE;
                 auto* dynamic = actor->is<PxRigidDynamic>();
-                if (!dynamic && !Filter.IncludeStatic)
+                if (!dynamic && !actor->is<PxArticulationLink>() && !Filter.IncludeStatic)
                     return PxQueryHitType::eNONE;
+                if (actor->is<PxArticulationLink>() && !Filter.IncludeDynamic)
+                    return physx::PxQueryHitType::eNONE;
                 if (dynamic && (dynamic->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC ? !Filter.IncludeKinematic :
                                                                                              !Filter.IncludeDynamic))
                     return PxQueryHitType::eNONE;
@@ -1605,7 +1839,7 @@ namespace Kans
             }
         };
         template<class Hit>
-        RaycastHit ConvertHit(const Hit& h)
+        RaycastHit ConvertHit(const Hit& h, const std::map<const PxShape*, std::string>& bones)
         {
             RaycastHit out;
             out.ColliderEntity = uint64_t(reinterpret_cast<uintptr_t>(h.shape->userData));
@@ -1614,6 +1848,8 @@ namespace Kans
             out.Normal         = Gl(h.normal);
             out.Distance       = h.distance;
             out.FaceIndex      = h.faceIndex;
+            if (auto it = bones.find(h.shape); it != bones.end())
+                out.BoneName = it->second;
             if constexpr (std::is_same_v<Hit, physx::PxSweepHit>)
                 out.InitialOverlap = h.hadInitialOverlap();
             return out;
@@ -1714,7 +1950,7 @@ namespace Kans
                          physx::PxQueryFilterData(physx::PxQueryFlag::eSTATIC | physx::PxQueryFlag::eDYNAMIC |
                                                   physx::PxQueryFlag::ePREFILTER),
                          &callback);
-        return result.hasBlock ? std::optional<RaycastHit>(ConvertHit(result.block)) : std::nullopt;
+        return result.hasBlock ? std::optional<RaycastHit>(ConvertHit(result.block, i.ShapeBones)) : std::nullopt;
     }
     std::vector<RaycastHit>
     PhysicsWorld::RaycastAll(glm::vec3 origin, glm::vec3 direction, float distance, const QueryFilter& filter)
@@ -1739,7 +1975,7 @@ namespace Kans
                                                   physx::PxQueryFlag::ePREFILTER),
                          &callback);
         for (const auto& h : collector.Hits)
-            hits.push_back(ConvertHit(h));
+            hits.push_back(ConvertHit(h, i.ShapeBones));
         SortHits(hits);
         return hits;
     }
@@ -1773,7 +2009,7 @@ namespace Kans
                        &callback);
         if (!result.hasBlock)
             return {};
-        auto hit = ConvertHit(result.block);
+        auto hit = ConvertHit(result.block, i.ShapeBones);
         if (hit.InitialOverlap)
             hit.Point = Gl(transform.p);
         return hit;
@@ -1808,7 +2044,7 @@ namespace Kans
                        &callback);
         for (const auto& h : collector.Hits)
         {
-            auto hit = ConvertHit(h);
+            auto hit = ConvertHit(h, i.ShapeBones);
             if (hit.InitialOverlap)
                 hit.Point = Gl(transform.p);
             hits.push_back(hit);
@@ -1861,6 +2097,26 @@ namespace Kans
             if (auto s = weak.lock())
                 s->Trigger.erase(id);
         });
+    }
+    void PhysicsWorld::Explode(glm::vec3    position,
+                               float        radius,
+                               float        impulse,
+                               FieldFalloff falloff,
+                               float        upwardsModifier,
+                               uint32_t     layerMask)
+    {
+        if (!std::isfinite(radius) || radius <= 0 || !std::isfinite(impulse) || !std::isfinite(upwardsModifier))
+            return;
+        FieldImpulse f;
+        f.Position        = position;
+        f.Radius          = radius;
+        f.Impulse         = {impulse, 0, 0};
+        f.Radial          = true;
+        f.Falloff         = falloff;
+        f.UpwardsModifier = upwardsModifier;
+        f.LayerMask       = layerMask;
+        f.Sequence        = ++m_Impl->ImpulseSequence;
+        m_Impl->PendingImpulses.push_back(f);
     }
     void PhysicsWorld::SetGravity(glm::vec3 v)
     {
@@ -2196,5 +2452,11 @@ namespace Kans
             if (auto s = weak.lock())
                 s->JointBreak.erase(id);
         });
+    }
+#include "RagdollAPI.inl"
+    std::optional<VehicleState> PhysicsWorld::GetVehicleState(UUID id) const
+    {
+        auto it = m_Impl->Vehicles.find(id);
+        return it == m_Impl->Vehicles.end() ? std::nullopt : std::optional<VehicleState>(it->second->State);
     }
 } // namespace Kans

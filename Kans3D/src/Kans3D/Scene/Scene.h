@@ -128,11 +128,11 @@ namespace Kans
         bool                           BindCloth(Entity, Ref<const class ClothAsset>, Ref<const MeshAsset> mesh = {});
         // Binds `asset` in place of the component's stored asset until cleared (null), e.g. unsaved
         // painted maps; the asset must carry the component's AssetID. False when it does not bind.
-        bool SetClothSourceOverride(Entity, Ref<const class ClothAsset>);
+        bool                        SetClothSourceOverride(Entity, Ref<const class ClothAsset>);
         void                SetSecondaryMotionPreviewEnabled(bool enabled) { SetSpringBonePreviewEnabled(enabled); }
         bool                IsSecondaryMotionPreviewEnabled() const { return IsSpringBonePreviewEnabled(); }
         const ClothRuntime* GetClothState(Entity) const;
-        void                           ResetSecondaryMotion(Entity scope);
+        void                        ResetSecondaryMotion(Entity scope);
         void                        ResetSecondaryMotion(); // Shared discontinuity hook for secondary-motion solvers.
         void                        SetSpringBonePreviewEnabled(bool);
         bool                        IsSpringBonePreviewEnabled() const { return m_SpringBonePreview; }
@@ -165,6 +165,16 @@ namespace Kans
         Raycast(glm::vec3 origin, glm::vec3 direction, float distance, const QueryFilter& f = {})
         {
             return m_PhysicsWorld ? m_PhysicsWorld->Raycast(origin, direction, distance, f) : std::nullopt;
+        }
+        void Explode(glm::vec3    position,
+                     float        radius,
+                     float        impulse,
+                     FieldFalloff falloff         = FieldFalloff::Linear,
+                     float        upwardsModifier = 0,
+                     uint32_t     layerMask       = UINT32_MAX)
+        {
+            if (m_PhysicsWorld)
+                m_PhysicsWorld->Explode(position, radius, impulse, falloff, upwardsModifier, layerMask);
         }
         std::vector<RaycastHit>
         RaycastAll(glm::vec3 origin, glm::vec3 direction, float distance, const QueryFilter& f = {})
@@ -222,18 +232,18 @@ namespace Kans
         void OnRuntimeStart(const SceneRuntimeOptions& options = {});
         // The options of the running session (defaults outside one).
         const SceneRuntimeOptions& GetRuntimeOptions() const { return m_RuntimeOptions; }
-        void                   OnRuntimeSingleStep();
-        PhysicsWorld*          GetPhysicsWorld() const { return m_PhysicsWorld.get(); }
-        const PhysicsSettings& GetPhysicsSettings() const;
-        double                 GetPhysicsInterpolationAlpha() const;
-        DebugDraw&             GetDebugDraw() const;
+        void                       OnRuntimeSingleStep();
+        PhysicsWorld*              GetPhysicsWorld() const { return m_PhysicsWorld.get(); }
+        const PhysicsSettings&     GetPhysicsSettings() const;
+        double                     GetPhysicsInterpolationAlpha() const;
+        DebugDraw&                 GetDebugDraw() const;
         // Debug drawing a viewer adds to the project's PhysicsSettings::DebugDraw while the scene
         // runs (e.g. an editor viewport's toggles); it is not saved with the scene or the project.
-        void                   SetPhysicsDebugView(PhysicsDebugFlags flags) { m_PhysicsDebugView = flags; }
-        PhysicsDebugFlags      GetPhysicsDebugView() const { return m_PhysicsDebugView; }
-        void                   OnRuntimeStop();
-        void                   OnRuntimePause();
-        void                   OnRuntimeResume();
+        void              SetPhysicsDebugView(PhysicsDebugFlags flags) { m_PhysicsDebugView = flags; }
+        PhysicsDebugFlags GetPhysicsDebugView() const { return m_PhysicsDebugView; }
+        void              OnRuntimeStop();
+        void              OnRuntimePause();
+        void              OnRuntimeResume();
         // The engine must outlive its attachment to this scene.
         void SetAudioEngine(AudioEngine* engine);
         void PlayAudioSource(Entity entity);

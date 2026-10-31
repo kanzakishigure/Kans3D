@@ -96,6 +96,7 @@ namespace Kans
                         a.InitialAngularVelocity,
                         a.StartAwake,
                         a.AffectedByWind,
+                        a.AffectedByFields,
                         a.WindArea,
                         a.DragCoefficient,
                         a.AirDensity,
@@ -114,6 +115,7 @@ namespace Kans
                                              b.InitialAngularVelocity,
                                              b.StartAwake,
                                              b.AffectedByWind,
+                                             b.AffectedByFields,
                                              b.WindArea,
                                              b.DragCoefficient,
                                              b.AirDensity,
@@ -159,12 +161,33 @@ namespace Kans
 } // namespace Kans
 namespace Kans
 {
-    inline bool operator==(const GlobalWindComponent& a, const GlobalWindComponent& b)
+    inline bool operator==(const WindZoneComponent& a, const WindZoneComponent& b)
     {
-        return std::tie(a.Direction, a.Strength, a.TurbulenceAmplitude, a.TurbulenceFrequency) ==
-               std::tie(b.Direction, b.Strength, b.TurbulenceAmplitude, b.TurbulenceFrequency);
+        return std::tie(a.Shape,
+                        a.Direction,
+                        a.Strength,
+                        a.TurbulenceAmplitude,
+                        a.TurbulenceFrequency,
+                        a.PulseMagnitude,
+                        a.PulseFrequency,
+                        a.Radius,
+                        a.FalloffBand,
+                        a.HalfExtents,
+                        a.LayerMask,
+                        a.AffectMask) == std::tie(b.Shape,
+                                                  b.Direction,
+                                                  b.Strength,
+                                                  b.TurbulenceAmplitude,
+                                                  b.TurbulenceFrequency,
+                                                  b.PulseMagnitude,
+                                                  b.PulseFrequency,
+                                                  b.Radius,
+                                                  b.FalloffBand,
+                                                  b.HalfExtents,
+                                                  b.LayerMask,
+                                                  b.AffectMask);
     }
-    inline bool operator!=(const GlobalWindComponent& a, const GlobalWindComponent& b) { return !(a == b); }
+    inline bool operator!=(const WindZoneComponent& a, const WindZoneComponent& b) { return !(a == b); }
 } // namespace Kans
 namespace Kans
 {
@@ -384,4 +407,43 @@ namespace Kans
                                                   b.SlerpDrive);
     }
     inline bool operator!=(const JointComponent& a, const JointComponent& b) { return !(a == b); }
+} // namespace Kans
+
+namespace Kans
+{
+    inline bool operator==(const ForceFieldComponent& a, const ForceFieldComponent& b)
+    {
+        return std::tie(a.Type,
+                        a.Shape,
+                        a.Falloff,
+                        a.Direction,
+                        a.HalfExtents,
+                        a.Scroll,
+                        a.Radius,
+                        a.Strength,
+                        a.InwardPull,
+                        a.Frequency,
+                        a.Acceleration,
+                        a.CurlNoise,
+                        a.LayerMask,
+                        a.AffectMask,
+                        a.Seed,
+                        a.FalloffCurve) == std::tie(b.Type,
+                                                    b.Shape,
+                                                    b.Falloff,
+                                                    b.Direction,
+                                                    b.HalfExtents,
+                                                    b.Scroll,
+                                                    b.Radius,
+                                                    b.Strength,
+                                                    b.InwardPull,
+                                                    b.Frequency,
+                                                    b.Acceleration,
+                                                    b.CurlNoise,
+                                                    b.LayerMask,
+                                                    b.AffectMask,
+                                                    b.Seed,
+                                                    b.FalloffCurve);
+    }
+    inline bool operator!=(const ForceFieldComponent& a, const ForceFieldComponent& b) { return !(a == b); }
 } // namespace Kans

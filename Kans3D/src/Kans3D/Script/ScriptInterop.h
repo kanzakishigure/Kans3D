@@ -9,7 +9,7 @@
 
 namespace Kans::Scripting
 {
-    constexpr uint32_t ApiVersion = 9;
+    constexpr uint32_t ApiVersion = 10;
     enum class ComponentType : uint32_t
     {
 #define KANS_COMPONENT(id, name) name = id,
@@ -67,12 +67,14 @@ namespace Kans::Scripting
         Vector3  Point {}, Normal {};
         float    Distance  = 0;
         uint32_t FaceIndex = UINT32_MAX, InitialOverlap = 0, Reserved = 0;
+        char     BoneName[128] {};
     };
     struct PhysicsContactData
     {
         Vector3  Position {}, Normal {}, Impulse {};
         float    Separation = 0;
         uint64_t ColliderA = 0, ColliderB = 0;
+        char     BoneName[128] {}, OtherBoneName[128] {};
     };
     struct ControllerHitData
     {

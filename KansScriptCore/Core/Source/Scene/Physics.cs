@@ -19,23 +19,28 @@ namespace Kans
         public QueryFilter() { LayerMask=uint.MaxValue; Triggers=QueryTriggerInteraction.UseGlobal; IgnoreEntity=null; IncludeStatic=IncludeDynamic=IncludeKinematic=true; }
     }
     [StructLayout(LayoutKind.Sequential)]
-    public struct RaycastHit
+    public unsafe struct RaycastHit
     {
         public ulong ColliderID, BodyID;
         public Vector3 Point, Normal;
         public float Distance;
         public uint FaceIndex;
         public uint Flags, Reserved;
+        private fixed byte m_BoneName[128];
+        public string BoneName {get {fixed(byte* p=m_BoneName){int n=0;while(n<128 && p[n]!=0)++n;return Encoding.UTF8.GetString(p,n);}}}
         public bool InitialOverlap => (Flags & 1) != 0;
         public Entity Collider => new Entity(ColliderID);
         public Entity Body => new Entity(BodyID);
     }
     [StructLayout(LayoutKind.Sequential)]
-    public struct ContactPoint
+    public unsafe struct ContactPoint
     {
         public Vector3 Position, Normal, Impulse;
         public float Separation;
         public ulong ColliderID, OtherColliderID;
+        private fixed byte m_BoneName[128],m_OtherBoneName[128];
+        public string BoneName {get {fixed(byte* p=m_BoneName){int n=0;while(n<128 && p[n]!=0)++n;return Encoding.UTF8.GetString(p,n);}}}
+        public string OtherBoneName {get {fixed(byte* p=m_OtherBoneName){int n=0;while(n<128 && p[n]!=0)++n;return Encoding.UTF8.GetString(p,n);}}}
     }
     /// <summary>Borrowed contact data and entity wrappers are valid only during the callback. Copy values to retain them.</summary>
     public readonly ref struct Collision
@@ -69,6 +74,7 @@ namespace Kans
     }
     public class Rigidbody : Component
     {
+        public bool AffectedByFields { get=>PhysicsCalls.Read(Entity.ID,97).Integer!=0;set=>PhysicsCalls.Write(Entity.ID,97,new(){Integer=value?1:0}); }
         public RigidBodyType Type { get => (RigidBodyType)PhysicsCalls.Read(Entity.ID,10).Integer; set => PhysicsCalls.Write(Entity.ID,10,new(){Integer=(long)value}); }
         public float Mass { get => PhysicsCalls.Read(Entity.ID,11).X; set => PhysicsCalls.Write(Entity.ID,11,new(){X=value}); }
         public float LinearDamping { get => PhysicsCalls.Read(Entity.ID,12).X; set => PhysicsCalls.Write(Entity.ID,12,new(){X=value}); }
@@ -144,6 +150,9 @@ namespace Kans
     }
     public static unsafe class Physics
     {
+        public static void Explode(Vector3 position,float radius,float impulse,FieldFalloff falloff=FieldFalloff.Linear,float upwardsModifier=0,uint layerMask=uint.MaxValue)
+        { var v=PhysicsCalls.V(position);v.W=radius;v.Integer=layerMask;PhysicsCalls.Write(0,99,v,(int)falloff,new(impulse,upwardsModifier,0)); }
+
         public static Vector3 Gravity { get=>PhysicsCalls.V(PhysicsCalls.Read(0,0)); set=>PhysicsCalls.Write(0,1,PhysicsCalls.V(value),0); }
         public static void IgnoreLayerCollision(int a,int b,bool ignore=true) => PhysicsCalls.Write(0,2,new(){Integer=a,X=ignore?1:0},b);
         private static PhysicsQueryData Request(uint kind,Vector3 position,Vector3 direction,float distance,QueryFilter? filter)

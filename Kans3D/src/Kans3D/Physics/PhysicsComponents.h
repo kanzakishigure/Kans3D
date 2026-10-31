@@ -155,7 +155,7 @@ namespace Kans
         ContinuousDetectionMode ContinuousDetection = ContinuousDetectionMode::Off;
         PhysicsInterpolation    Interpolation       = PhysicsInterpolation::Interpolate;
         glm::vec3               InitialLinearVelocity {0}, InitialAngularVelocity {0};
-        bool                    StartAwake = true, AffectedByWind = false;
+        bool                    StartAwake = true, AffectedByWind = false, AffectedByFields = true;
         // F = .5 * AirDensity * DragCoefficient * WindArea * |wind-velocity| * (wind-velocity).
         float    WindArea = 1, DragCoefficient = 1, AirDensity = 1.225f;
         uint32_t Layer = 0;

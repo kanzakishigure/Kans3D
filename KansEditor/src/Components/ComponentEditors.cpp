@@ -240,12 +240,12 @@ namespace Kans
         joint.IconRank = 10;
         joint.Draw     = DrawJoint;
 
-        auto& wind       = registry.Register<GlobalWindComponent>("Global Wind", ICON_FA_WIND, "Physics");
+        auto& wind       = registry.Register<WindZoneComponent>("Global Wind", ICON_FA_WIND, "Physics");
         wind.IconRank    = 9;
         wind.Draw        = DrawGlobalWind;
         wind.CreateName  = "Global Wind";
         wind.CreateOrder = 6;
-        wind.Create      = [](Entity e) { e.AddComponent<GlobalWindComponent>().Strength = 1.0f; };
+        wind.Create      = [](Entity e) { e.AddComponent<WindZoneComponent>().Strength = 1.0f; };
 
         // Secondary motion: spring bones and cloth on characters, and the colliders they share.
         auto& spring    = registry.Register<SpringBoneComponent>("Spring Bone", ICON_FA_BONE, "Physics");

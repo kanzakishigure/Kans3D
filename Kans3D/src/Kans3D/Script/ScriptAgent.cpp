@@ -68,8 +68,14 @@ namespace Kans
                         return entity.HasComponent<ClothComponent>();
                     case Scripting::ComponentType::MotionColliderComponent:
                         return entity.HasComponent<MotionColliderComponent>();
-                    case Scripting::ComponentType::GlobalWindComponent:
-                        return entity.HasComponent<GlobalWindComponent>();
+                    case Scripting::ComponentType::RagdollComponent:
+                        return entity.HasComponent<RagdollComponent>();
+                    case Scripting::ComponentType::VehicleComponent:
+                        return entity.HasComponent<VehicleComponent>();
+                    case Scripting::ComponentType::ForceFieldComponent:
+                        return entity.HasComponent<ForceFieldComponent>();
+                    case Scripting::ComponentType::WindZoneComponent:
+                        return entity.HasComponent<WindZoneComponent>();
                     case Scripting::ComponentType::TimelinePlayerComponent:
                         return entity.HasComponent<TimelinePlayerComponent>();
                     case Scripting::ComponentType::AnimatorComponent:

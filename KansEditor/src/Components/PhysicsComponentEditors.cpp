@@ -486,8 +486,8 @@ namespace Kans::ComponentEditors
 
     void DrawGlobalWind(Entity entity, ComponentUI&)
     {
-        static const GlobalWindComponent defaults;
-        EditComponent<GlobalWindComponent>(entity, [](GlobalWindComponent& c) {
+        static const WindZoneComponent defaults;
+        EditComponent<WindZoneComponent>(entity, [](WindZoneComponent& c) {
             bool changed = false;
             if (PropertyGrid::BeginGroup("Wind"))
             {

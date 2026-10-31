@@ -20,7 +20,7 @@ namespace Kans
         bool             ValidRecord(const ProductRecord& record)
         {
             const auto type = static_cast<uint16_t>(record.Metadata.Type);
-            if (!record.Metadata.IsValid() || type > static_cast<uint16_t>(AssetType::Cloth) ||
+            if (!record.Metadata.IsValid() || type > static_cast<uint16_t>(AssetType::Ragdoll) ||
                 !IsProductTarget(record.Target) || !record.Location.RelativeFile.IsValid() ||
                 record.Location.RelativeFile.ToString().size() > 4096 || !record.Location.ByteSize ||
                 !IsContentDigest(record.Location.ContentDigest) ||

@@ -13,6 +13,8 @@
 #include "Kans3D/Physics/ClothComponent.h"
 #include "Kans3D/Physics/PhysicsComponents.h"
 #include "Kans3D/Physics/PhysicsEquality.h"
+#include "Kans3D/Physics/RagdollComponent.h"
+#include "Kans3D/Physics/VehicleComponent.h"
 #include "Kans3D/Timeline/Timeline.h"
 
 #include "Kans3D/Core/UUID.h"
@@ -192,7 +194,10 @@ namespace Kans
         std::optional<SphereColliderComponent>      SphereCollider;
         std::optional<CapsuleColliderComponent>     CapsuleCollider;
         std::optional<MeshColliderComponent>        MeshCollider;
-        std::optional<GlobalWindComponent>          GlobalWind;
+        std::optional<ForceFieldComponent>          ForceField;
+        std::optional<RagdollComponent>             Ragdoll;
+        std::optional<VehicleComponent>             Vehicle;
+        std::optional<WindZoneComponent>            GlobalWind;
         std::optional<CharacterControllerComponent> CharacterController;
         std::optional<ClothComponent>               Cloth;
         std::optional<SpringBoneComponent>          SpringBone;
@@ -209,8 +214,8 @@ namespace Kans
         {
             return !LocalTransform && Materials.empty() && !Removed && !RenderCustomDepth && !CustomStencil &&
                    !UIScreen && !UIWorld && !RigidBody && !BoxCollider && !SphereCollider && !CapsuleCollider &&
-                   !MeshCollider && !GlobalWind && !CharacterController && !Joint && !Cloth && !SpringBone &&
-                   !MotionCollider;
+                   !MeshCollider && !ForceField && !Ragdoll && !Vehicle && !GlobalWind && !CharacterController &&
+                   !Joint && !Cloth && !SpringBone && !MotionCollider;
         }
     };
     struct PrefabNodeState
@@ -321,7 +326,10 @@ namespace Kans
                                          SphereColliderComponent,
                                          CapsuleColliderComponent,
                                          MeshColliderComponent,
-                                         GlobalWindComponent,
+                                         ForceFieldComponent,
+                                         RagdollComponent,
+                                         VehicleComponent,
+                                         WindZoneComponent,
                                          CharacterControllerComponent,
                                          JointComponent,
                                          IDComponent,

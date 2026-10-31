@@ -31,6 +31,8 @@ namespace Kans
                     x->second.SphereCollider != y->second.SphereCollider ||
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
+                    x->second.ForceField != y->second.ForceField || x->second.Ragdoll != y->second.Ragdoll ||
+                    x->second.Vehicle != y->second.Vehicle ||
                     x->second.CharacterController != y->second.CharacterController ||
                     x->second.Joint != y->second.Joint || x->second.SpringBone != y->second.SpringBone ||
                     x->second.Cloth != y->second.Cloth || x->second.MotionCollider != y->second.MotionCollider ||
@@ -171,8 +173,17 @@ namespace Kans
             change.Joint      = part.HasComponent<JointComponent>() ?
                                     std::optional<JointComponent>(part.GetComponent<JointComponent>()) :
                                     std::nullopt;
-            change.GlobalWind = part.HasComponent<GlobalWindComponent>() ?
-                                    std::optional<GlobalWindComponent>(part.GetComponent<GlobalWindComponent>()) :
+            change.GlobalWind = part.HasComponent<WindZoneComponent>() ?
+                                    std::optional<WindZoneComponent>(part.GetComponent<WindZoneComponent>()) :
+                                    std::nullopt;
+            change.ForceField = part.HasComponent<ForceFieldComponent>() ?
+                                    std::optional<ForceFieldComponent>(part.GetComponent<ForceFieldComponent>()) :
+                                    std::nullopt;
+            change.Ragdoll    = part.HasComponent<RagdollComponent>() ?
+                                    std::optional<RagdollComponent>(part.GetComponent<RagdollComponent>()) :
+                                    std::nullopt;
+            change.Vehicle    = part.HasComponent<VehicleComponent>() ?
+                                    std::optional<VehicleComponent>(part.GetComponent<VehicleComponent>()) :
                                     std::nullopt;
             change.MotionCollider =
                 part.HasComponent<MotionColliderComponent>() ?
@@ -414,13 +425,40 @@ namespace Kans
                 entity.RemoveComponent<JointComponent>();
             if (change != instance.Overrides.end() && change->second.GlobalWind)
             {
-                if (!entity.HasComponent<GlobalWindComponent>())
-                    entity.AddComponent<GlobalWindComponent>(*change->second.GlobalWind);
-                else if (entity.GetComponent<GlobalWindComponent>() != *change->second.GlobalWind)
-                    entity.SetComponent<GlobalWindComponent>(*change->second.GlobalWind);
+                if (!entity.HasComponent<WindZoneComponent>())
+                    entity.AddComponent<WindZoneComponent>(*change->second.GlobalWind);
+                else if (entity.GetComponent<WindZoneComponent>() != *change->second.GlobalWind)
+                    entity.SetComponent<WindZoneComponent>(*change->second.GlobalWind);
             }
-            else if (entity.HasComponent<GlobalWindComponent>())
-                entity.RemoveComponent<GlobalWindComponent>();
+            else if (entity.HasComponent<WindZoneComponent>())
+                entity.RemoveComponent<WindZoneComponent>();
+            if (change != instance.Overrides.end() && change->second.ForceField)
+            {
+                if (!entity.HasComponent<ForceFieldComponent>())
+                    entity.AddComponent<ForceFieldComponent>(*change->second.ForceField);
+                else if (entity.GetComponent<ForceFieldComponent>() != *change->second.ForceField)
+                    entity.SetComponent<ForceFieldComponent>(*change->second.ForceField);
+            }
+            else if (entity.HasComponent<ForceFieldComponent>())
+                entity.RemoveComponent<ForceFieldComponent>();
+            if (change != instance.Overrides.end() && change->second.Ragdoll)
+            {
+                if (!entity.HasComponent<RagdollComponent>())
+                    entity.AddComponent<RagdollComponent>(*change->second.Ragdoll);
+                else if (entity.GetComponent<RagdollComponent>() != *change->second.Ragdoll)
+                    entity.SetComponent<RagdollComponent>(*change->second.Ragdoll);
+            }
+            else if (entity.HasComponent<RagdollComponent>())
+                entity.RemoveComponent<RagdollComponent>();
+            if (change != instance.Overrides.end() && change->second.Vehicle)
+            {
+                if (!entity.HasComponent<VehicleComponent>())
+                    entity.AddComponent<VehicleComponent>(*change->second.Vehicle);
+                else if (entity.GetComponent<VehicleComponent>() != *change->second.Vehicle)
+                    entity.SetComponent<VehicleComponent>(*change->second.Vehicle);
+            }
+            else if (entity.HasComponent<VehicleComponent>())
+                entity.RemoveComponent<VehicleComponent>();
             if (change != instance.Overrides.end() && change->second.SpringBone)
             {
                 if (!entity.HasComponent<SpringBoneComponent>())

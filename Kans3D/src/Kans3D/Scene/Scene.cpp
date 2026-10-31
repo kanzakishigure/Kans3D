@@ -68,7 +68,10 @@ namespace Kans
         physics(static_cast<CharacterControllerComponent*>(nullptr));
         physics(static_cast<JointComponent*>(nullptr));
         m_Registry.on_destroy<JointComponent>().connect<&Scene::OnPhysicsJointRemoved>(this);
-        physics(static_cast<GlobalWindComponent*>(nullptr));
+        physics(static_cast<WindZoneComponent*>(nullptr));
+        physics(static_cast<ForceFieldComponent*>(nullptr));
+        physics(static_cast<RagdollComponent*>(nullptr));
+        physics(static_cast<VehicleComponent*>(nullptr));
         m_Registry.on_destroy<SpringBoneComponent>().connect<&Scene::OnSpringBoneRemoved>(this);
         m_Registry.on_update<SpringBoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_construct<SpringBoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
@@ -246,6 +249,12 @@ namespace Kans
             {
                 if (change.Cloth)
                     add(change.Cloth->Asset);
+                if (change.Ragdoll)
+                    add(change.Ragdoll->Asset);
+                if (change.Vehicle)
+                    for (const auto& w : change.Vehicle->Wheels)
+                        for (const auto& f : w.MaterialFriction)
+                            add(f.Material);
                 if (change.UIScreen)
                     add(change.UIScreen->UI);
                 if (change.UIWorld)
@@ -253,6 +262,12 @@ namespace Kans
             }
         for (auto h : m_Registry.view<ClothComponent>())
             add(m_Registry.get<ClothComponent>(h).Asset);
+        for (auto h : m_Registry.view<RagdollComponent>())
+            add(m_Registry.get<RagdollComponent>(h).Asset);
+        for (auto h : m_Registry.view<VehicleComponent>())
+            for (const auto& w : m_Registry.get<VehicleComponent>(h).Wheels)
+                for (const auto& f : w.MaterialFriction)
+                    add(f.Material);
         for (auto handle : m_Registry.view<UIScreenComponent>())
             add(m_Registry.get<UIScreenComponent>(handle).UI);
         for (auto handle : m_Registry.view<UIWorldComponent>())
@@ -402,8 +417,11 @@ namespace Kans
 
         RestoreSpringBoneTransforms();
         UpdatePrefabs();
-        UpdateAnimations(m_PhysicsPaused && !m_PhysicsSingleStep ? 0 : double(ts));
-        UpdateTimelines(m_PhysicsPaused && !m_PhysicsSingleStep ? 0 : double(ts));
+        const double animationDelta = m_PhysicsPaused && !m_PhysicsSingleStep ? 0 : double(ts);
+        UpdateAnimations(animationDelta);
+        UpdateTimelines(animationDelta);
+        if (m_PhysicsWorld)
+            m_PhysicsWorld->CaptureRagdollTargets(animationDelta);
         UpdatePhysics(double(ts));
         UpdateSpringBones(double(ts));
         UpdateCloth(double(ts));
@@ -777,7 +795,10 @@ namespace Kans
         CopyComponent<SpringBoneComponent>(source, copy);
         CopyComponent<ClothComponent>(source, copy);
         CopyComponent<MotionColliderComponent>(source, copy);
-        CopyComponent<GlobalWindComponent>(source, copy);
+        CopyComponent<WindZoneComponent>(source, copy);
+        CopyComponent<ForceFieldComponent>(source, copy);
+        CopyComponent<RagdollComponent>(source, copy);
+        CopyComponent<VehicleComponent>(source, copy);
 
         CopyComponent<AudioSourceComponent>(source, copy);
         CopyComponent<AudioListenerComponent>(source, copy);
@@ -882,6 +903,8 @@ namespace Kans
         for (const auto& [source, target] : remap)
         {
             auto e = GetEntityByUUID(target);
+            if (e.HasComponent<VehicleComponent>())
+                e.PatchComponent<VehicleComponent>([&](auto& c) { c.RemapEntities(springRemap); });
             if (e.HasComponent<ClothComponent>())
                 e.PatchComponent<ClothComponent>([&](auto& c) { c.RemapEntities(springRemap); });
             if (e.HasComponent<SpringBoneComponent>())
@@ -889,6 +912,8 @@ namespace Kans
             if (e.HasComponent<PrefabInstanceComponent>())
                 for (auto& [key, change] : e.GetComponent<PrefabInstanceComponent>().Overrides)
                 {
+                    if (change.Vehicle)
+                        change.Vehicle->RemapEntities(springRemap);
                     if (change.Cloth)
                         change.Cloth->RemapEntities(springRemap);
                     if (change.SpringBone)
@@ -921,10 +946,12 @@ namespace Kans
         StartAudio();
         if (m_RuntimeOptions.RunScripts && ScriptEngine::IsInitialized())
             ScriptEngine::OnRuntimeStart(this);
-        const bool springBones =
-            !m_Registry.view<SpringBoneComponent>().empty() || !m_Registry.view<ClothComponent>().empty();
+        const bool springBones = !m_Registry.view<SpringBoneComponent>().empty() ||
+                                 !m_Registry.view<ClothComponent>().empty() ||
+                                 !m_Registry.view<RagdollComponent>().empty();
         if (springBones)
             UpdateAnimations(0);
+        m_PhysicsWorld->CaptureRagdollTargets(0);
         std::vector<UUID> timelines;
         for (auto h : m_Registry.view<TimelinePlayerComponent>())
             timelines.push_back(m_Registry.get<IDComponent>(h).ID);
@@ -973,7 +1000,8 @@ namespace Kans
         DestroyNativeScriptInstances();
         if (ScriptEngine::GetSceneContext() == this)
             ScriptEngine::OnRuntimeEnd();
-        if (!m_Registry.view<SpringBoneComponent>().empty() || !m_Registry.view<ClothComponent>().empty())
+        if (!m_Registry.view<SpringBoneComponent>().empty() || !m_Registry.view<ClothComponent>().empty() ||
+            !m_Registry.view<RagdollComponent>().empty())
         {
             const bool preview = m_SpringBonePreview;
             SetSpringBonePreviewEnabled(false);
@@ -1033,7 +1061,16 @@ namespace Kans
     void Scene::OnComponentAdd<JointComponent>(Entity, JointComponent&)
     {}
     template<>
-    void Scene::OnComponentAdd<GlobalWindComponent>(Entity, GlobalWindComponent&)
+    void Scene::OnComponentAdd<ForceFieldComponent>(Entity, ForceFieldComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<RagdollComponent>(Entity, RagdollComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<VehicleComponent>(Entity, VehicleComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<WindZoneComponent>(Entity, WindZoneComponent&)
     {}
 
     template<>

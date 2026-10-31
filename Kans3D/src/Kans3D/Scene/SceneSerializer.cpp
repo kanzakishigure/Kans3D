@@ -803,7 +803,13 @@ namespace Kans
                 if (change.Joint)
                     item["JointComponent"] = PhysicsYaml::Encode(*change.Joint);
                 if (change.GlobalWind)
-                    item["GlobalWindComponent"] = PhysicsYaml::Encode(*change.GlobalWind);
+                    item["WindZoneComponent"] = PhysicsYaml::Encode(*change.GlobalWind);
+                if (change.ForceField)
+                    item["ForceFieldComponent"] = PhysicsYaml::Encode(*change.ForceField);
+                if (change.Ragdoll)
+                    item["RagdollComponent"] = PhysicsYaml::Encode(*change.Ragdoll);
+                if (change.Vehicle)
+                    item["VehicleComponent"] = PhysicsYaml::Encode(*change.Vehicle);
                 if (change.MotionCollider)
                     item["MotionColliderComponent"] = PhysicsYaml::Encode(*change.MotionCollider);
                 if (change.SpringBone)
@@ -854,7 +860,10 @@ namespace Kans
                       "SphereColliderComponent",
                       "CapsuleColliderComponent",
                       "MeshColliderComponent",
-                      "GlobalWindComponent",
+                      "WindZoneComponent",
+                      "ForceFieldComponent",
+                      "RagdollComponent",
+                      "VehicleComponent",
                       "MotionColliderComponent",
                       "ClothComponent",
                       "SpringBoneComponent",
@@ -908,11 +917,29 @@ namespace Kans
                     PhysicsYaml::Decode(item["JointComponent"], c);
                     change.Joint = c;
                 }
-                if (item["GlobalWindComponent"])
+                if (item["WindZoneComponent"])
                 {
-                    GlobalWindComponent c;
-                    PhysicsYaml::Decode(item["GlobalWindComponent"], c);
+                    WindZoneComponent c;
+                    PhysicsYaml::Decode(item["WindZoneComponent"], c);
                     change.GlobalWind = c;
+                }
+                if (item["ForceFieldComponent"])
+                {
+                    ForceFieldComponent c;
+                    PhysicsYaml::Decode(item["ForceFieldComponent"], c);
+                    change.ForceField = c;
+                }
+                if (item["RagdollComponent"])
+                {
+                    RagdollComponent c;
+                    PhysicsYaml::Decode(item["RagdollComponent"], c);
+                    change.Ragdoll = c;
+                }
+                if (item["VehicleComponent"])
+                {
+                    VehicleComponent c;
+                    PhysicsYaml::Decode(item["VehicleComponent"], c);
+                    change.Vehicle = c;
                 }
                 if (item["MotionColliderComponent"])
                 {
@@ -1137,8 +1164,14 @@ namespace Kans
                     PhysicsYaml::Encode(entity.GetComponent<CharacterControllerComponent>());
             if (entity.HasComponent<JointComponent>())
                 node["JointComponent"] = PhysicsYaml::Encode(entity.GetComponent<JointComponent>());
-            if (entity.HasComponent<GlobalWindComponent>())
-                node["GlobalWindComponent"] = PhysicsYaml::Encode(entity.GetComponent<GlobalWindComponent>());
+            if (entity.HasComponent<WindZoneComponent>())
+                node["WindZoneComponent"] = PhysicsYaml::Encode(entity.GetComponent<WindZoneComponent>());
+            if (entity.HasComponent<ForceFieldComponent>())
+                node["ForceFieldComponent"] = PhysicsYaml::Encode(entity.GetComponent<ForceFieldComponent>());
+            if (entity.HasComponent<RagdollComponent>())
+                node["RagdollComponent"] = PhysicsYaml::Encode(entity.GetComponent<RagdollComponent>());
+            if (entity.HasComponent<VehicleComponent>())
+                node["VehicleComponent"] = PhysicsYaml::Encode(entity.GetComponent<VehicleComponent>());
             if (entity.HasComponent<MotionColliderComponent>())
                 node["MotionColliderComponent"] = PhysicsYaml::Encode(entity.GetComponent<MotionColliderComponent>());
             if (entity.HasComponent<SpringBoneComponent>())
@@ -1524,7 +1557,10 @@ namespace Kans
                       "SphereColliderComponent",
                       "CapsuleColliderComponent",
                       "MeshColliderComponent",
-                      "GlobalWindComponent",
+                      "WindZoneComponent",
+                      "ForceFieldComponent",
+                      "RagdollComponent",
+                      "VehicleComponent",
                       "MotionColliderComponent",
                       "ClothComponent",
                       "SpringBoneComponent",
@@ -1626,11 +1662,29 @@ namespace Kans
                     PhysicsYaml::Decode(node["JointComponent"], c);
                     entity.AddComponent<JointComponent>(c);
                 }
-                if (node["GlobalWindComponent"])
+                if (node["WindZoneComponent"])
                 {
-                    GlobalWindComponent c;
-                    PhysicsYaml::Decode(node["GlobalWindComponent"], c);
-                    entity.AddComponent<GlobalWindComponent>(c);
+                    WindZoneComponent c;
+                    PhysicsYaml::Decode(node["WindZoneComponent"], c);
+                    entity.AddComponent<WindZoneComponent>(c);
+                }
+                if (node["ForceFieldComponent"])
+                {
+                    ForceFieldComponent c;
+                    PhysicsYaml::Decode(node["ForceFieldComponent"], c);
+                    entity.AddComponent<ForceFieldComponent>(c);
+                }
+                if (node["RagdollComponent"])
+                {
+                    RagdollComponent c;
+                    PhysicsYaml::Decode(node["RagdollComponent"], c);
+                    entity.AddComponent<RagdollComponent>(c);
+                }
+                if (node["VehicleComponent"])
+                {
+                    VehicleComponent c;
+                    PhysicsYaml::Decode(node["VehicleComponent"], c);
+                    entity.AddComponent<VehicleComponent>(c);
                 }
                 if (node["MotionColliderComponent"])
                 {

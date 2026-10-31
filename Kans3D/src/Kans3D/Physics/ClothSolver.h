@@ -29,10 +29,10 @@ namespace Kans
         Ref<DynamicVertexStream>   Stream;
         glm::mat4                  Center {1}, OldCenter {1}, Root {1}, OldRoot {1}, SolvedRoot {1};
         glm::vec3                  Gravity {0, -9.81f, 0};
-        uint64_t                   ResetEpoch = 0;
+        uint64_t                   ResetEpoch = 0, LastImpulseSequence = 0;
         bool                       Active = false, ResetPending = true, BindingValid = false, Warned = false;
         bool                       SourceOverride = false; // Source stays bound instead of the stored asset.
-        uint32_t                   BindingErrors = 0;
+        uint32_t                   BindingErrors  = 0;
         // Set on the main thread before dispatch. Endpoints are retained even if no substep is due.
         void Initialize(Ref<const ClothAsset>, Ref<const MeshAsset>);
         void SetFrame(const SkinningPose*, const glm::mat4& root, const glm::mat4& center);

@@ -5,6 +5,7 @@
 #include <type_traits>
 #include "ClothFields.h"
 #include "PhysicsMechanismFields.h"
+#include "VehicleFields.h"
 namespace Kans::PhysicsYaml
 {
     namespace
@@ -98,6 +99,7 @@ namespace Kans::PhysicsYaml
             f("InitialAngularVelocity", c.InitialAngularVelocity);
             f("StartAwake", c.StartAwake);
             f("AffectedByWind", c.AffectedByWind);
+            f("AffectedByFields", c.AffectedByFields);
             f("WindArea", c.WindArea);
             f("DragCoefficient", c.DragCoefficient);
             f("AirDensity", c.AirDensity);
@@ -141,12 +143,118 @@ namespace Kans::PhysicsYaml
             f("Shape", c.Shape);
         }
         template<class T, class F>
-        void FieldsGlobalWindComponent(T& c, F f)
+        void FieldsWindZoneComponent(T& c, F f)
         {
             f("Direction", c.Direction);
             f("Strength", c.Strength);
             f("TurbulenceAmplitude", c.TurbulenceAmplitude);
             f("TurbulenceFrequency", c.TurbulenceFrequency);
+            f("Shape", c.Shape);
+            f("PulseMagnitude", c.PulseMagnitude);
+            f("PulseFrequency", c.PulseFrequency);
+            f("Radius", c.Radius);
+            f("FalloffBand", c.FalloffBand);
+            f("HalfExtents", c.HalfExtents);
+            f("LayerMask", c.LayerMask);
+            f("AffectMask", c.AffectMask);
+        }
+        template<class T, class F>
+        void FieldsForceFieldComponent(T& c, F f)
+        {
+            f("Type", c.Type);
+            f("Shape", c.Shape);
+            f("Falloff", c.Falloff);
+            f("Direction", c.Direction);
+            f("HalfExtents", c.HalfExtents);
+            f("Scroll", c.Scroll);
+            f("Radius", c.Radius);
+            f("Strength", c.Strength);
+            f("InwardPull", c.InwardPull);
+            f("Frequency", c.Frequency);
+            f("Acceleration", c.Acceleration);
+            f("CurlNoise", c.CurlNoise);
+            f("LayerMask", c.LayerMask);
+            f("AffectMask", c.AffectMask);
+            f("Seed", c.Seed);
+            f("FalloffCurve", c.FalloffCurve);
+        }
+        template<class F>
+        void Fields(ForceFieldComponent& c, F f)
+        {
+            FieldsForceFieldComponent(c, f);
+        }
+        template<class F>
+        void Fields(const ForceFieldComponent& c, F f)
+        {
+            FieldsForceFieldComponent(c, f);
+        }
+        template<class F>
+        void Fields(RagdollComponent& c, F f)
+        {
+            RagdollFields(c, f);
+        }
+        template<class F>
+        void Fields(const RagdollComponent& c, F f)
+        {
+            RagdollFields(c, f);
+        }
+        template<class T, class F>
+        void OverrideFields(T& c, F f)
+        {
+            f("Bone", c.Bone);
+            f("BlendWeight", c.BlendWeight);
+            f("DriveStrength", c.DriveStrength);
+            f("DriveDamping", c.DriveDamping);
+        }
+        template<class F>
+        void Fields(RagdollBodyOverride& c, F f)
+        {
+            OverrideFields(c, f);
+        }
+        template<class F>
+        void Fields(const RagdollBodyOverride& c, F f)
+        {
+            OverrideFields(c, f);
+        }
+        template<class F>
+        void Fields(VehicleMaterialFriction& c, F f)
+        {
+            VehicleMaterialFrictionFields(c, f);
+        }
+        template<class F>
+        void Fields(const VehicleMaterialFriction& c, F f)
+        {
+            VehicleMaterialFrictionFields(c, f);
+        }
+        template<class F>
+        void Fields(VehicleAntiRollBar& c, F f)
+        {
+            VehicleAntiRollBarFields(c, f);
+        }
+        template<class F>
+        void Fields(const VehicleAntiRollBar& c, F f)
+        {
+            VehicleAntiRollBarFields(c, f);
+        }
+        template<class F>
+        void Fields(VehicleWheel& c, F f)
+        {
+            VehicleWheelFields(c, f);
+        }
+        template<class F>
+        void Fields(const VehicleWheel& c, F f)
+        {
+            VehicleWheelFields(c, f);
+        }
+        template<class F>
+        void Fields(VehicleComponent& c, F f)
+        {
+            VehicleComponentFields(c, f);
+        }
+        template<class F>
+        void Fields(const VehicleComponent& c, F f)
+        {
+            VehicleComponentFields(c, f);
         }
         template<class T, class F>
         void FieldsPhysicsSettings(T& c, F f)
@@ -308,14 +416,14 @@ namespace Kans::PhysicsYaml
             FieldsMeshColliderComponent(c, f);
         }
         template<class F>
-        void Fields(GlobalWindComponent& c, F f)
+        void Fields(WindZoneComponent& c, F f)
         {
-            FieldsGlobalWindComponent(c, f);
+            FieldsWindZoneComponent(c, f);
         }
         template<class F>
-        void Fields(const GlobalWindComponent& c, F f)
+        void Fields(const WindZoneComponent& c, F f)
         {
-            FieldsGlobalWindComponent(c, f);
+            FieldsWindZoneComponent(c, f);
         }
         template<class F>
         void Fields(PhysicsSettings& c, F f)
@@ -618,10 +726,19 @@ namespace Kans::PhysicsYaml
                 if constexpr (std::is_same_v<T, PhysicsInterpolation>)
                     max = 1;
                 if constexpr (std::is_same_v<T, PhysicsDebugFlags>)
-                    max = 31;
+                    max = 511;
                 if constexpr (std::is_same_v<T, JointType>)
                     max = 5;
                 if constexpr (std::is_same_v<T, ControllerShape> || std::is_same_v<T, NonWalkableMode>)
+                    max = 1;
+                if constexpr (std::is_same_v<T, FieldType>)
+                    max = 5;
+                if constexpr (std::is_same_v<T, FieldFalloff>)
+                    max = 3;
+                if constexpr (std::is_same_v<T, VehicleDifferential>)
+                    max = 4;
+                if constexpr (std::is_same_v<T, VehicleDriveModel> || std::is_same_v<T, VehicleRoadQuery> ||
+                              std::is_same_v<T, RagdollRootFollowing>)
                     max = 1;
                 Require(v <= max, "Invalid physics enum");
                 value = T(v);
@@ -682,9 +799,54 @@ namespace Kans::PhysicsYaml
                         c.DragCoefficient >= 0 && c.AirDensity >= 0,
                     "Invalid rigid body");
         }
-        void Validate(const GlobalWindComponent& c)
+        void Validate(const VehicleComponent& c)
         {
-            Require(c.TurbulenceFrequency >= 0 && c.TurbulenceAmplitude >= 0, "Invalid wind");
+            Require(uint32_t(c.DriveModel) <= 1 && uint32_t(c.Differential) <= 4 && uint32_t(c.RoadQuery) <= 1 &&
+                        c.Wheels.size() < 20 && !c.Wheels.empty() && c.AntiRollBars.size() <= 20 && c.MaxTorque >= 0 &&
+                        c.MaxRpm > c.IdleRpm && c.IdleRpm >= 0 && c.EngineMomentOfInertia > 0 && c.EngineDamping >= 0 &&
+                        !c.GearRatios.empty() && c.GearRatios.size() <= 28 && c.ReverseRatio < 0 && c.FinalDrive > 0 &&
+                        c.SwitchTime >= 0 && c.DownShiftRatio >= 0 && c.UpShiftRatio > c.DownShiftRatio &&
+                        c.UpShiftRatio <= 1 && c.ClutchStrength >= 0 && c.TorqueBias >= 1 && c.LowSpeedSubsteps > 0 &&
+                        c.LowSpeedSubsteps <= 16 && c.HighSpeedSubsteps > 0 && c.HighSpeedSubsteps <= 16,
+                    "Invalid vehicle parameters");
+            for (float ratio : c.GearRatios)
+                Require(ratio > 0, "Invalid forward gear ratio");
+            for (const auto& w : c.Wheels)
+                Require(w.Radius > 0 && w.Width > 0 && w.Mass > 0 && w.MomentOfInertia > 0 && w.SuspensionTravel > 0 &&
+                            w.SpringStiffness > 0 && w.SpringDamping >= 0 &&
+                            glm::length(w.SuspensionDirection) > 1e-6f && w.LongitudinalStiffness > 0 &&
+                            w.LateralStiffness > 0 && w.BrakeTorque >= 0 && w.HandbrakeTorque >= 0 &&
+                            w.MaxSteerAngle >= 0 && w.TorqueSplit >= 0,
+                        "Invalid wheel parameters");
+            for (const auto& bar : c.AntiRollBars)
+                Require(bar.WheelA < c.Wheels.size() && bar.WheelB < c.Wheels.size() && bar.WheelA != bar.WheelB &&
+                            bar.Stiffness >= 0,
+                        "Invalid anti-roll bar");
+        }
+        void Validate(const RagdollComponent& c)
+        {
+            Require(uint32_t(c.Mode) <= 2 && uint32_t(c.RootFollowing) <= 1 && c.DriveStrength >= 0 &&
+                        c.ImpactThreshold >= 0 && c.TeleportDistance >= 0 && c.TeleportRotation >= 0 &&
+                        c.TeleportRotation <= 180,
+                    "Invalid ragdoll component");
+            for (const auto& b : c.Bodies)
+                Require(!b.Bone.empty() && b.BlendWeight >= 0 && b.BlendWeight <= 1 && b.DriveStrength >= -1 &&
+                            b.DriveDamping >= -1,
+                        "Invalid ragdoll override");
+        }
+        void Validate(const ForceFieldComponent& c)
+        {
+            Require(uint32_t(c.Type) >= 1 && uint32_t(c.Type) <= 5 && uint32_t(c.Shape) <= 2 &&
+                        uint32_t(c.Falloff) <= 3 && c.Radius > 0 && c.Frequency >= 0 && c.HalfExtents.x > 0 &&
+                        c.HalfExtents.y > 0 && c.HalfExtents.z > 0,
+                    "Invalid force field");
+        }
+        void Validate(const WindZoneComponent& c)
+        {
+            Require(c.TurbulenceFrequency >= 0 && c.TurbulenceAmplitude >= 0 && uint32_t(c.Shape) <= 2 &&
+                        c.Radius > 0 && c.FalloffBand >= 0 && c.FalloffBand <= 1 && c.PulseFrequency >= 0 &&
+                        c.HalfExtents.x > 0 && c.HalfExtents.y > 0 && c.HalfExtents.z > 0,
+                    "Invalid wind");
         }
         template<class T>
         void ValidateCollider(const T& c)
@@ -935,14 +1097,50 @@ namespace Kans::PhysicsYaml
         Validate(next);
         c = std::move(next);
     }
-    YAML::Node Encode(const GlobalWindComponent& c)
+    YAML::Node Encode(const VehicleComponent& c)
     {
         Validate(c);
         return Write(c);
     }
-    void Decode(const YAML::Node& n, GlobalWindComponent& c)
+    void Decode(const YAML::Node& n, VehicleComponent& c)
     {
-        GlobalWindComponent next;
+        VehicleComponent next;
+        Read(n, next);
+        Validate(next);
+        c = std::move(next);
+    }
+    YAML::Node Encode(const RagdollComponent& c)
+    {
+        Validate(c);
+        return Write(c);
+    }
+    void Decode(const YAML::Node& n, RagdollComponent& c)
+    {
+        RagdollComponent next;
+        Read(n, next);
+        Validate(next);
+        c = std::move(next);
+    }
+    YAML::Node Encode(const ForceFieldComponent& c)
+    {
+        Validate(c);
+        return Write(c);
+    }
+    void Decode(const YAML::Node& n, ForceFieldComponent& c)
+    {
+        ForceFieldComponent next;
+        Read(n, next);
+        Validate(next);
+        c = std::move(next);
+    }
+    YAML::Node Encode(const WindZoneComponent& c)
+    {
+        Validate(c);
+        return Write(c);
+    }
+    void Decode(const YAML::Node& n, WindZoneComponent& c)
+    {
+        WindZoneComponent next;
         Read(n, next);
         Validate(next);
         c = std::move(next);

@@ -27,7 +27,11 @@ namespace Kans
         CentersOfMass = 2,
         Sleeping      = 4,
         Contacts      = 8,
-        Joints        = 16
+        Joints        = 16,
+        Ragdolls      = 32,
+        Vehicles      = 64,
+        Fields        = 128,
+        FieldArrows   = 256
     };
     inline PhysicsDebugFlags operator|(PhysicsDebugFlags a, PhysicsDebugFlags b)
     {
