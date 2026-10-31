@@ -127,7 +127,10 @@ namespace Kans
                     m_Hierarchy.SetSelected(hit);
             }
         }
+        // Its own gizmo ID, so a gizmo in another panel (the ragdoll editor's) never moves the selection.
+        ImGuizmo::PushID("SceneView");
         DrawGizmo();
+        ImGuizmo::PopID();
         DrawToolbar();
         DrawViewCube();
         DrawStatsOverlay();

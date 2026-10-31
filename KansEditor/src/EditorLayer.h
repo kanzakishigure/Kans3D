@@ -22,6 +22,7 @@
 #include "Panels/ProductImportPanel.h"
 #include "Panels/ProjectSettingsPanel.h"
 #include "Panels/PropertiesPanel.h"
+#include "Panels/RagdollEditorPanel.h"
 #include "Panels/TimelinePanel.h"
 #include "Panels/UIDesignerPanel.h"
 #include "Panels/ViewportPanel.h"
@@ -133,6 +134,26 @@ namespace Kans
         std::optional<std::filesystem::path> m_ClothInfo;
         std::optional<ClothData>             m_ClothInfoData;
         std::string                          m_ClothInfoError;
+        // ---- Ragdolls (EditorLayerRagdoll.cpp) ----
+        // The Ragdoll card's and Content Browser's actions, and the ragdoll editor's preview and save.
+        void BindRagdolls();
+        // A .ragdoll from the Content Browser or the card: the editor with the model it was made for.
+        void OpenRagdollFile(const std::filesystem::path& file, Entity character = {});
+        void OpenRagdollAsset(AssetID ragdoll);
+        // The generation dialog for a skinned entity (assigned to it once imported) or a model file.
+        void CreateRagdollFor(Entity character);
+        void CreateRagdollForModel(const std::filesystem::path& model);
+        void AssignPendingRagdolls();
+        // The preview scene rendered through the ragdoll editor's camera.
+        uintptr_t RenderRagdollPreview(const Ref<Scene>& scene, const EditorCamera& camera, glm::uvec2 size);
+        struct PendingRagdoll
+        {
+            std::filesystem::path File;
+            UUID                  Entity = 0;
+        };
+        std::vector<PendingRagdoll> m_PendingRagdolls;
+        RagdollEditorPanel          m_RagdollEditor;
+        Scope<ViewportClient>       m_RagdollPreview;
         // Published Material of a .material source, or invalid.
         AssetID                                  FindPublishedMaterial(const std::filesystem::path& file);
         // Content-browser thumbnail of a .material file: rendered a few per frame,

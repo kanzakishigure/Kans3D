@@ -173,6 +173,11 @@ namespace Kans
         }
         if (m_ActiveScene)
             m_Play.Discard(*m_ActiveScene);
+        // The ragdoll editor's preview scene and its renderer hold asset leases.
+        m_RagdollEditor.SetPreviewRenderer({});
+        m_RagdollEditor.SetAssetManager(nullptr);
+        m_RagdollEditor.Preview().SetSource({}, nullptr);
+        m_RagdollPreview.reset();
         if (m_Viewport)
         {
             m_ViewportPanel.SetContext({}, nullptr);
@@ -226,6 +231,7 @@ namespace Kans
                 Record(RefreshProductAssets(*snapshot));
                 AssignPendingSlotInstances();
                 AssignPendingCloth();
+                AssignPendingRagdolls();
                 QueueUnimportedShaders(); // Sources were refreshed: new shader files are imported.
             }
             auto completed = m_AssetImports->Poll();
@@ -237,6 +243,7 @@ namespace Kans
                 Record(RefreshProductAssets());
                 AssignPendingSlotInstances();
                 AssignPendingCloth();
+                AssignPendingRagdolls();
                 if (m_PendingPlacement && m_PendingPlacementWaiting)
                     StartPendingPlacementBuild();
                 else

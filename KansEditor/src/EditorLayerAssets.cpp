@@ -94,6 +94,8 @@ namespace Kans
                 OpenPhysicsMaterial(path);
             else if (path.extension() == ".cloth")
                 OpenClothFile(path);
+            else if (path.extension() == ".ragdoll")
+                OpenRagdollFile(path, m_HierarchyPanel.GetSelected());
             else if (path.extension() == ".kui")
             {
                 if (m_UIDesignerPanel.Open(path))
@@ -170,6 +172,7 @@ namespace Kans
         m_AnimatorGraphPanel.SetAssetChoices(choices);
         m_TimelinePanel.SetAssetChoices(choices);
         m_UIDesignerPanel.SetAssetChoices(choices);
+        m_RagdollEditor.SetAssetChoices(choices);
         m_PropertiesPanel.SetAssetChoices(std::move(choices));
         if (m_Assets)
         {

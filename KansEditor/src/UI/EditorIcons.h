@@ -128,3 +128,7 @@
 #define ICON_FA_ARROW_TREND_UP         "\xee\x82\x98" // U+E098
 #define ICON_FA_THUMBTACK              "\xef\x82\x8d" // U+F08D
 #define ICON_FA_BONE                   "\xef\x97\x97" // U+F5D7
+#define ICON_FA_PERSON_FALLING         "\xee\x95\x86" // U+E546
+#define ICON_FA_CAR                    "\xef\x86\xb9" // U+F1B9
+#define ICON_FA_TORNADO                "\xef\x9d\xaf" // U+F76F
+#define ICON_FA_CIRCLE_NODES           "\xee\x93\xa2" // U+E4E2

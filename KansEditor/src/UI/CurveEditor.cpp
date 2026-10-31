@@ -9,7 +9,8 @@
 
 namespace Kans::CurveEditor
 {
-    bool Draw(const char* id, TimelineCurve& curve, int components, glm::vec4 fallback, float speed)
+    bool Draw(const char* id, TimelineCurve& curve, int components, glm::vec4 fallback, float speed, const char* start,
+              const char* end)
     {
         namespace Edit = SecondaryMotionEditing;
         using EditorTheme::Px;
@@ -55,9 +56,8 @@ namespace Kans::CurveEditor
                 last = point;
             }
         }
-        draw->AddText({min.x + Px(3.0f), min.y + Px(1.0f)}, ImGui::GetColorU32(p.TextDim), "Root");
-        const char* tip = "Tip";
-        draw->AddText({max.x - ImGui::CalcTextSize(tip).x - Px(3.0f), min.y + Px(1.0f)}, ImGui::GetColorU32(p.TextDim), tip);
+        draw->AddText({min.x + Px(3.0f), min.y + Px(1.0f)}, ImGui::GetColorU32(p.TextDim), start);
+        draw->AddText({max.x - ImGui::CalcTextSize(end).x - Px(3.0f), min.y + Px(1.0f)}, ImGui::GetColorU32(p.TextDim), end);
 
         // Keys: drag the first channel, double-click to add, right-click to remove.
         static ImGuiID dragging = 0;

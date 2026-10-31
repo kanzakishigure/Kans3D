@@ -82,6 +82,7 @@ namespace Kans
             spec(PanelID::Timeline, "Timeline", ICON_FA_FILM, PanelCategory::Scene, PanelDock::Bottom, false),
             [this] { m_TimelinePanel.Draw(); });
         BindSecondaryMotion();
+        BindRagdolls();
         m_PropertiesPanel.SetOpenTimeline([this](Entity owner) {
             m_TimelinePanel.Open(owner);
             m_Panels.Open(PanelID::Timeline);
@@ -174,6 +175,7 @@ namespace Kans
         }
         m_Panels.Draw();
         DrawClothInfo();
+        m_RagdollEditor.Draw();
         Application::Get().GetImGuiLayer()->BlockEvents(m_ViewportPanel.IsFocused() || m_ViewportPanel.IsHovered());
         TrackSceneEdits();
     }
@@ -233,7 +235,8 @@ namespace Kans
         if (io.WantTextInput)
             return;
         // The material editor has its own undo, redo and save while it has focus.
-        const bool material = m_MaterialEditorPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus();
+        const bool material =
+            m_MaterialEditorPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() || m_RagdollEditor.HasFocus();
         // Cloth painting has its own stroke undo and saves the .cloth file.
         if (io.KeyCtrl && m_ViewportPanel.IsPaintingCloth() && !material && m_ActiveScene)
         {

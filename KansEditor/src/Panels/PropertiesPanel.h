@@ -55,6 +55,13 @@ namespace Kans
             std::function<bool(Entity)>           IsPainting;
         };
         void SetClothActions(ClothActions actions) { m_ClothActions = std::move(actions); }
+        // Ragdolls: open a .ragdoll asset in the ragdoll editor, and generate one for a character.
+        struct RagdollActions
+        {
+            std::function<void(AssetID)> Open;
+            std::function<void(Entity)>  Create;
+        };
+        void SetRagdollActions(RagdollActions actions) { m_RagdollActions = std::move(actions); }
         // Adds the slot rows' hovered, highlighted and isolated parts to the viewport's highlights.
         void AppendSlotHighlights(ViewHighlights& highlights) const;
 
@@ -104,6 +111,25 @@ namespace Kans
             return m_ClothActions.IsPainting && m_ClothActions.IsPainting(entity);
         }
         SecondaryMotionEditing::ChainPicker* GetChainPicker() override { return &m_ChainPicker; }
+        void OpenRagdollEditor(AssetID ragdoll) override
+        {
+            if (m_RagdollActions.Open)
+                m_RagdollActions.Open(ragdoll);
+        }
+        void CreateRagdoll(Entity entity) override
+        {
+            if (m_RagdollActions.Create)
+                m_RagdollActions.Create(entity);
+        }
+        int GetSelectedWheel(Entity vehicle) override
+        {
+            return vehicle && m_WheelOwner == vehicle.GetUUID() ? m_SelectedWheel : -1;
+        }
+        void SelectWheel(Entity vehicle, int wheel) override
+        {
+            m_WheelOwner    = vehicle ? vehicle.GetUUID() : UUID(0);
+            m_SelectedWheel = wheel;
+        }
 
     private:
         // Scene-wide settings, shown when no entity is selected.
@@ -139,6 +165,10 @@ namespace Kans
         std::function<void()>                               m_OpenAnimatorGraph;
         std::function<void(Entity)>                         m_OpenTimeline;
         ClothActions                                        m_ClothActions;
+        RagdollActions                                      m_RagdollActions;
+        // The Vehicle card's selected wheel row (the viewport highlights it).
+        UUID m_WheelOwner    = 0;
+        int  m_SelectedWheel = -1;
         // A spring chain's "Pick from Hierarchy": selections go to it, then the owner is selected again.
         SecondaryMotionEditing::ChainPicker m_ChainPicker;
         // Slot rows' viewport feedback; pinned and isolated rows reset when the selection changes.

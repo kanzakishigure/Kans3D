@@ -69,6 +69,13 @@ namespace Kans
         virtual bool IsPaintingCloth(Entity) { return false; }
         // Spring chains' "Pick from Hierarchy" (null when the panel cannot pick).
         virtual SecondaryMotionEditing::ChainPicker* GetChainPicker() { return nullptr; }
+        // Ragdolls: open a .ragdoll in the ragdoll editor; generate one for a skinned entity (its
+        // Animator's skeleton) and assign it once imported.
+        virtual void OpenRagdollEditor(AssetID /*ragdoll*/) {}
+        virtual void CreateRagdoll(Entity) {}
+        // Vehicles: the wheel row selected in the card, which the viewport highlights (-1: none).
+        virtual int  GetSelectedWheel(Entity) { return -1; }
+        virtual void SelectWheel(Entity, int /*wheel*/) {}
     };
 
     // Everything the editor knows about one component type: how it is named, shown,

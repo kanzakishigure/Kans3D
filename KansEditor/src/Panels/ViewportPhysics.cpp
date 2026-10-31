@@ -6,6 +6,7 @@
 #include "ImGuizmo.h"
 #include "Physics/PhysicsEditing.h"
 #include "Physics/SecondaryMotionEditing.h"
+#include "Physics/VehicleFieldEditing.h"
 #include "UI/EditorIcons.h"
 #include "ViewportPanel.h"
 
@@ -61,6 +62,10 @@ namespace Kans
             {PhysicsDebugFlags::Sleeping, ICON_FA_CIRCLE "  Sleeping bodies (playing)"},
             {PhysicsDebugFlags::Joints, ICON_FA_LINK "  Joints"},
             {PhysicsDebugFlags::CentersOfMass, ICON_FA_WEIGHT_HANGING "  Centers of mass (playing)"},
+            {PhysicsDebugFlags::Ragdolls, ICON_FA_PERSON_FALLING "  Ragdolls (playing)"},
+            {PhysicsDebugFlags::Vehicles, ICON_FA_CAR "  Vehicles"},
+            {PhysicsDebugFlags::Fields, ICON_FA_TORNADO "  Fields"},
+            {PhysicsDebugFlags::FieldArrows, ICON_FA_WIND "  Field arrows"},
         };
         for (const auto& [flag, name] : flags)
         {
@@ -91,6 +96,17 @@ namespace Kans
             // Outside play the toggles draw the authored shapes (the world draws its own while running).
             const bool colliders = uint32_t(m_PhysicsView) & uint32_t(PhysicsDebugFlags::Colliders);
             const bool joints    = uint32_t(m_PhysicsView) & uint32_t(PhysicsDebugFlags::Joints);
+            const bool vehicles  = uint32_t(m_PhysicsView) & uint32_t(PhysicsDebugFlags::Vehicles);
+            const bool fields    = uint32_t(m_PhysicsView) & uint32_t(PhysicsDebugFlags::Fields);
+            if (colliders || joints || vehicles || fields)
+                ForEachEntity(scene, [&](Entity e) {
+                    if (e == selected)
+                        return;
+                    if (vehicles)
+                        VehicleFieldEditing::DrawVehicle(lines, scene, e, -1);
+                    if (fields)
+                        VehicleFieldEditing::DrawField(lines, scene, e);
+                });
             if (colliders || joints)
                 ForEachEntity(scene, [&](Entity e) {
                     if (e == selected)
@@ -113,6 +129,18 @@ namespace Kans
             PhysicsEditing::DrawJoint(lines, scene, selected);
             // Spring chains and every collider their groups use; a motion collider itself.
             SecondaryMotionEditing::DrawSecondaryMotion(lines, scene, selected);
+            // Wheels (the card's selected row highlighted) and field shapes, outside play too.
+            if (!running)
+                VehicleFieldEditing::DrawVehicle(lines, scene, selected, m_SelectedWheel ? m_SelectedWheel(selected) : -1);
+            VehicleFieldEditing::DrawField(lines, scene, selected);
+        }
+        // Field arrows: while playing the world samples around each field; in edit mode a grid
+        // around the selection samples the fields the scene would run with.
+        if (!running && (uint32_t(m_PhysicsView) & uint32_t(PhysicsDebugFlags::FieldArrows)))
+        {
+            const ForceFieldSet fields = VehicleFieldEditing::BuildFieldSet(scene);
+            const glm::vec3     centre = selected ? glm::vec3(scene.GetWorldTransform(selected)[3]) : m_Camera.GetFocus();
+            VehicleFieldEditing::DrawFieldArrows(lines, fields, centre, 7, 0.5f, ImGui::GetTime());
         }
         ImDrawList* draw = ImGui::GetWindowDrawList();
         draw->PushClipRect(m_Min, m_Max, true);
@@ -219,10 +247,12 @@ namespace Kans
                     [&, id = h.ID](const PhysicsDrag& d, float distance) {
                         const auto start = std::visit(
                             [](const auto& s) -> std::optional<Physics::MotionColliderShape> {
-                                if constexpr (std::is_same_v<std::decay_t<decltype(s)>, std::monostate>)
-                                    return std::nullopt;
-                                else
+                                using S = std::decay_t<decltype(s)>;
+                                if constexpr (std::is_same_v<S, Physics::Box> || std::is_same_v<S, Physics::Sphere> ||
+                                              std::is_same_v<S, Physics::Capsule> || std::is_same_v<S, Physics::Plane>)
                                     return Physics::MotionColliderShape(s);
+                                else
+                                    return std::nullopt;
                             },
                             d.Shape);
                         if (!start)
@@ -236,6 +266,67 @@ namespace Kans
                     std::holds_alternative<Physics::Plane>(shape) ? "Drag to move the plane along its normal" :
                                                                     "Drag to resize the collider");
         }
+
+        // Vehicle wheels: the radius on top and the attach position along the chassis axes, for the
+        // card's selected wheel (every wheel while none is selected).
+        if (selected.HasComponent<VehicleComponent>())
+        {
+            const auto&     wheels = selected.GetComponent<VehicleComponent>().Wheels;
+            const glm::mat4 frame  = VehicleFieldEditing::ChassisFrame(scene, selected);
+            const int       chosen = m_SelectedWheel ? m_SelectedWheel(selected) : -1;
+            const char*     tips[] = {"Drag to set the wheel radius", "Drag to move the wheel along X",
+                                      "Drag to move the wheel along Y", "Drag to move the wheel along Z"};
+            for (size_t w = 0; w < wheels.size(); ++w)
+            {
+                if (chosen >= 0 && int(w) != chosen)
+                    continue;
+                for (const auto& h : VehicleFieldEditing::WheelHandles(wheels[w]))
+                    handle(
+                        ImGuiID(1000 + w * 8 + size_t(h.ID)),
+                        glm::vec3(frame * glm::vec4(h.Position, 1.0f)),
+                        glm::vec3(frame * glm::vec4(h.Direction, 0.0f)),
+                        h.ID == 0 ? VehicleFieldEditing::WheelColor : glm::vec4(h.Direction * 0.8f + 0.2f, 1.0f),
+                        [&, w, id = h.ID](const PhysicsDrag& d, float distance) {
+                            const auto* start = std::get_if<VehicleWheel>(&d.Shape);
+                            if (!start)
+                                return;
+                            const auto moved = VehicleFieldEditing::DragWheelHandle(*start, id, distance);
+                            selected.PatchComponent<VehicleComponent>([&](VehicleComponent& c) {
+                                if (w < c.Wheels.size())
+                                    c.Wheels[w] = moved;
+                            });
+                        },
+                        [&, w] { return PhysicsDrag::ShapeVariant(wheels[w]); },
+                        tips[h.ID]);
+            }
+        }
+
+        // Wind zones and force fields: radius or box faces, and a wind zone's falloff band.
+        const auto fieldHandles = [&](auto tag, int kind) {
+            using T = typename decltype(tag)::type;
+            if (!selected.HasComponent<T>())
+                return;
+            const auto      values = VehicleFieldEditing::ShapeOf(selected.GetComponent<T>());
+            const glm::mat4 world  = scene.GetWorldTransform(selected);
+            for (const auto& h : VehicleFieldEditing::FieldHandles(values))
+                handle(
+                    ImGuiID(kind * 16 + h.ID),
+                    glm::vec3(world * glm::vec4(h.Position, 1.0f)),
+                    glm::vec3(world * glm::vec4(h.Direction, 0.0f)),
+                    h.ID == VehicleFieldEditing::BandHandle ? glm::vec4(1.0f, 0.9f, 0.3f, 1.0f) : VehicleFieldEditing::FieldColor,
+                    [&, id = h.ID](const PhysicsDrag& d, float distance) {
+                        const auto* start = std::get_if<VehicleFieldEditing::FieldShapeValues>(&d.Shape);
+                        if (!start)
+                            return;
+                        const auto resized = VehicleFieldEditing::DragFieldHandle(*start, id, distance);
+                        selected.PatchComponent<T>([&](T& c) { VehicleFieldEditing::Apply(c, resized); });
+                    },
+                    [&] { return PhysicsDrag::ShapeVariant(values); },
+                    h.ID == VehicleFieldEditing::BandHandle ? "Drag to set the falloff band (full strength inside)" :
+                                                              "Drag to resize the field");
+        };
+        fieldHandles(std::common_type<WindZoneComponent> {}, 7);
+        fieldHandles(std::common_type<ForceFieldComponent> {}, 8);
 
         // Hinge limits: the arc's two ends follow the pointer around the hinge axis.
         if (selected.HasComponent<JointComponent>() && selected.GetComponent<JointComponent>().Type == JointType::Hinge)

@@ -90,7 +90,8 @@ namespace Kans
             {".ttc", &FontFileIcon},          {".otc", &FontFileIcon},          {".kui", &UIFileIcon},
             {".timeline", &TimelineFileIcon}, {".action", &ActionFileIcon},     {".expression", &ExpressionFileIcon},
             {".physmat", &MaterialFileIcon}, // No physics icon yet: the material one.
-            {".cloth", &MeshFileIcon}};       // A cloth asset simulates a mesh section.
+            {".cloth", &MeshFileIcon},        // A cloth asset simulates a mesh section.
+            {".ragdoll", &ModelFileIcon}};    // A ragdoll asset belongs to a model's skeleton.
         const auto it = icons.find(extension);
         return it != icons.end() && *it->second ? *it->second : FileIcon;
     }

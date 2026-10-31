@@ -240,12 +240,34 @@ namespace Kans
         joint.IconRank = 10;
         joint.Draw     = DrawJoint;
 
-        auto& wind       = registry.Register<WindZoneComponent>("Global Wind", ICON_FA_WIND, "Physics");
+        auto& wind       = registry.Register<WindZoneComponent>("Wind Zone", ICON_FA_WIND, "Physics");
         wind.IconRank    = 9;
-        wind.Draw        = DrawGlobalWind;
-        wind.CreateName  = "Global Wind";
+        wind.Draw        = DrawWindZone;
+        wind.CreateName  = "Wind Zone";
         wind.CreateOrder = 6;
         wind.Create      = [](Entity e) { e.AddComponent<WindZoneComponent>().Strength = 1.0f; };
+
+        auto& field       = registry.Register<ForceFieldComponent>("Force Field", ICON_FA_TORNADO, "Physics");
+        field.IconRank    = 9;
+        field.Draw        = DrawForceField;
+        field.CreateName  = "Force Field";
+        field.CreateOrder = 7;
+        // A radial sphere: pushes bodies out of a 2 m ball.
+        field.Create = [](Entity e) {
+            auto& f  = e.AddComponent<ForceFieldComponent>();
+            f.Type   = FieldType::Radial;
+            f.Shape  = FieldShape::Sphere;
+            f.Radius = 2.0f;
+        };
+
+        // Ragdolls and vehicles go on existing characters and chassis (Add Component).
+        auto& ragdoll    = registry.Register<RagdollComponent>("Ragdoll", ICON_FA_PERSON_FALLING, "Physics");
+        ragdoll.IconRank = 9;
+        ragdoll.Draw     = DrawRagdoll;
+
+        auto& vehicle    = registry.Register<VehicleComponent>("Vehicle", ICON_FA_CAR, "Physics");
+        vehicle.IconRank = 9;
+        vehicle.Draw     = DrawVehicle;
 
         // Secondary motion: spring bones and cloth on characters, and the colliders they share.
         auto& spring    = registry.Register<SpringBoneComponent>("Spring Bone", ICON_FA_BONE, "Physics");
@@ -261,7 +283,7 @@ namespace Kans
         motionCollider.IconRank    = 11;
         motionCollider.Draw        = DrawMotionCollider;
         motionCollider.CreateName  = "Motion Collider";
-        motionCollider.CreateOrder = 7;
+        motionCollider.CreateOrder = 8;
         motionCollider.Create      = [](Entity e) { e.AddComponent<MotionColliderComponent>(); };
 
         auto& script    = registry.Register<ScriptComponent>("Script", ICON_FA_CODE, "Scripting");

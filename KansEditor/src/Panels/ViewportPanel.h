@@ -9,6 +9,7 @@
 #include "ClothPaintTool.h"
 #include "HierarchyPanel.h"
 #include "MeshEditTool.h"
+#include "Physics/VehicleFieldEditing.h"
 #include "ViewportClient.h"
 
 namespace Kans
@@ -50,6 +51,8 @@ namespace Kans
         // While playing, the scene renders through its primary camera unless the
         // editor camera is chosen in the toolbar.
         void SetPlaying(bool playing) { m_Playing = playing; }
+        // The wheel row the Vehicle card has selected (-1: none), highlighted in the view.
+        void SetWheelSelection(std::function<int(Entity)> selected) { m_SelectedWheel = std::move(selected); }
 
         void Draw();
 
@@ -155,7 +158,8 @@ namespace Kans
         // started, the screen offset one shape unit along the handle makes, and the shape then.
         struct PhysicsDrag
         {
-            using ShapeVariant  = std::variant<std::monostate, Physics::Box, Physics::Sphere, Physics::Capsule, Physics::Plane>;
+            using ShapeVariant  = std::variant<std::monostate, Physics::Box, Physics::Sphere, Physics::Capsule, Physics::Plane,
+                                               VehicleWheel, VehicleFieldEditing::FieldShapeValues>;
             ImGuiID      Handle = 0;
             ImVec2       Start {};
             glm::vec2    PixelsPerUnit {0.0f};
@@ -163,6 +167,7 @@ namespace Kans
         };
         std::optional<PhysicsDrag> m_PhysicsDrag;
         bool                       m_PhysicsHandleHot = false; // Hovered or dragged: the transform gizmo waits.
+        std::function<int(Entity)> m_SelectedWheel;
         ClothPaintTool             m_ClothPaint;
     };
 } // namespace Kans

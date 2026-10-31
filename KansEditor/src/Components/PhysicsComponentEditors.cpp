@@ -484,36 +484,6 @@ namespace Kans::ComponentEditors
         });
     }
 
-    void DrawGlobalWind(Entity entity, ComponentUI&)
-    {
-        static const WindZoneComponent defaults;
-        EditComponent<WindZoneComponent>(entity, [](WindZoneComponent& c) {
-            bool changed = false;
-            if (PropertyGrid::BeginGroup("Wind"))
-            {
-                changed |= PropertyGrid::Vec3("Direction", c.Direction, defaults.Direction, 0.01f);
-                changed |=
-                    PropertyGrid::Float("Strength", c.Strength, 0.05f, 0.0f, 1000.0f, "%.2f m/s", &defaults.Strength);
-                PropertyGrid::Text("", "Bodies opt in with Rigid Body > Wind", true);
-                PropertyGrid::EndGroup();
-            }
-            if (PropertyGrid::BeginGroup("Turbulence"))
-            {
-                changed |= PropertyGrid::Float("Amplitude",
-                                               c.TurbulenceAmplitude,
-                                               0.01f,
-                                               0.0f,
-                                               1000.0f,
-                                               "%.2f m/s",
-                                               &defaults.TurbulenceAmplitude);
-                changed |= PropertyGrid::Float(
-                    "Frequency", c.TurbulenceFrequency, 0.01f, 0.0f, 100.0f, "%.2f Hz", &defaults.TurbulenceFrequency);
-                PropertyGrid::EndGroup();
-            }
-            return changed;
-        });
-    }
-
     void DrawCharacterController(Entity entity, ComponentUI&)
     {
         static const CharacterControllerComponent defaults;

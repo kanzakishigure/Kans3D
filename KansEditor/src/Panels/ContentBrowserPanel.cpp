@@ -200,6 +200,7 @@ namespace Kans
                     return p.TypeExpression;
                 case Browser::AssetKind::PhysicsMaterial:
                 case Browser::AssetKind::Cloth:
+                case Browser::AssetKind::Ragdoll:
                     return p.TypePhysics;
                 default:
                     return p.TextDim;
@@ -1478,6 +1479,13 @@ namespace Kans
                                         status && status->Products) &&
                         m_ExtractMaterials)
                         m_ExtractMaterials(targets.front());
+                    // A ragdoll generated from the model's skeleton (opens the ragdoll editor).
+                    if (Browser::KindOf(targets.front(), false) == Browser::AssetKind::Model &&
+                        ImGui::MenuItem(Label(ICON_FA_PERSON_FALLING, "Create Ragdoll").c_str(),
+                                        nullptr,
+                                        false,
+                                        status && status->Products && bool(m_CreateRagdoll)))
+                        m_CreateRagdoll(targets.front());
                 }
                 if (folder && ImGui::MenuItem(Label(ICON_FA_STAR, IsFavorite(targets.front()) ?
                                                                       "Remove from Favorites" :

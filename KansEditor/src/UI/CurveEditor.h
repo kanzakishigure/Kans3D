@@ -7,5 +7,7 @@
 // times and values. Returns true when the curve changed.
 namespace Kans::CurveEditor
 {
-    bool Draw(const char* id, TimelineCurve& curve, int components, glm::vec4 fallback, float speed = 0.01f);
+    // `start` and `end` label the graph's two ends (a chain's root and tip by default).
+    bool Draw(const char* id, TimelineCurve& curve, int components, glm::vec4 fallback, float speed = 0.01f,
+              const char* start = "Root", const char* end = "Tip");
 } // namespace Kans::CurveEditor

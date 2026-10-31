@@ -46,9 +46,13 @@ namespace Kans::ComponentEditors
     void DrawSphereCollider(Entity entity, ComponentUI& ui);
     void DrawCapsuleCollider(Entity entity, ComponentUI& ui);
     void DrawMeshCollider(Entity entity, ComponentUI& ui);
-    void DrawGlobalWind(Entity entity, ComponentUI& ui);
     void DrawCharacterController(Entity entity, ComponentUI& ui);
     void DrawJoint(Entity entity, ComponentUI& ui);
+    // Ragdolls, vehicles and fields (RagdollVehicleFieldEditors.cpp).
+    void DrawRagdoll(Entity entity, ComponentUI& ui);
+    void DrawVehicle(Entity entity, ComponentUI& ui);
+    void DrawWindZone(Entity entity, ComponentUI& ui);
+    void DrawForceField(Entity entity, ComponentUI& ui);
     // Secondary motion (SecondaryMotionEditors.cpp).
     void DrawSpringBone(Entity entity, ComponentUI& ui);
     void DrawMotionCollider(Entity entity, ComponentUI& ui);

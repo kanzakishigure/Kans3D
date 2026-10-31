@@ -494,11 +494,13 @@ namespace Kans
         if (ImGui::MenuItem(Label(ICON_FA_VECTOR_SQUARE, "Empty Entity").c_str()))
             Create("Entity", parent);
         // Components offered by the registry, each creating a named entity with it, in sections:
-        // objects, lights, cameras.
+        // objects, physics (wind zones, force fields, motion colliders), lights, cameras.
         const auto section = [](const ComponentEntry& c) {
-            if (c.Category == "Lighting")
+            if (c.Category == "Physics")
                 return 1;
-            return c.Name == "Camera" ? 2 : 0;
+            if (c.Category == "Lighting")
+                return 2;
+            return c.Name == "Camera" ? 3 : 0;
         };
         std::vector<const ComponentEntry*> creatable;
         for (const auto& component : ComponentRegistry::Get().Entries())
@@ -507,7 +509,7 @@ namespace Kans
         std::stable_sort(creatable.begin(), creatable.end(), [&](const auto* a, const auto* b) {
             return std::make_pair(section(*a), a->CreateOrder) < std::make_pair(section(*b), b->CreateOrder);
         });
-        const char* sections[] = {"Objects", "Lights", "Camera"};
+        const char* sections[] = {"Objects", "Physics", "Lights", "Camera"};
         int         current    = -1;
         for (const auto* component : creatable)
         {
