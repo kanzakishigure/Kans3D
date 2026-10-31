@@ -5,6 +5,7 @@
 #include "Kans3D/Scene/Components.h"
 #include "ImGuizmo.h"
 #include "Physics/PhysicsEditing.h"
+#include "Physics/SecondaryMotionEditing.h"
 #include "UI/EditorIcons.h"
 #include "ViewportPanel.h"
 
@@ -97,6 +98,8 @@ namespace Kans
                     if (colliders)
                     {
                         PhysicsEditing::DrawColliders(lines, scene, e, OtherCollider);
+                        SecondaryMotionEditing::DrawMotionCollider(
+                            lines, scene, e, SecondaryMotionEditing::ColliderColor * glm::vec4(1, 1, 1, 0.45f));
                         PhysicsEditing::DrawController(lines, scene, e, Controller * glm::vec4(1, 1, 1, 0.45f));
                     }
                     if (joints)
@@ -108,6 +111,8 @@ namespace Kans
             PhysicsEditing::DrawColliders(lines, scene, selected, SelectedCollider);
             PhysicsEditing::DrawController(lines, scene, selected, Controller);
             PhysicsEditing::DrawJoint(lines, scene, selected);
+            // Spring chains and every collider their groups use; a motion collider itself.
+            SecondaryMotionEditing::DrawSecondaryMotion(lines, scene, selected);
         }
         ImDrawList* draw = ImGui::GetWindowDrawList();
         draw->PushClipRect(m_Min, m_Max, true);
@@ -115,7 +120,7 @@ namespace Kans
             OverlaySegment(draw, line.A, line.B, Color(line.Color), 1.5f);
         draw->PopClipRect();
         // Handles edit authored data, so not while the scene runs.
-        if (selected && !m_Playing && !m_MeshTool.IsEditing(selected))
+        if (selected && !m_Playing && !m_MeshTool.IsEditing(selected) && !IsPaintingCloth())
             PhysicsHandles(selected);
         else
             m_PhysicsDrag.reset();
@@ -198,6 +203,39 @@ namespace Kans
         shapeHandles(std::common_type<BoxColliderComponent> {}, 1);
         shapeHandles(std::common_type<SphereColliderComponent> {}, 2);
         shapeHandles(std::common_type<CapsuleColliderComponent> {}, 3);
+
+        // Motion colliders (sphere, capsule, box faces and the plane along its normal).
+        if (selected.HasComponent<MotionColliderComponent>())
+        {
+            const auto&     shape  = selected.GetComponent<MotionColliderComponent>().Shape;
+            const auto      offset = std::visit([](const auto& s) { return s.Offset; }, shape);
+            const glm::mat4 matrix = scene.GetWorldTransform(selected) * offset.Matrix();
+            for (const auto& h : SecondaryMotionEditing::Handles(shape))
+                handle(
+                    ImGuiID(5 * 16 + h.ID),
+                    glm::vec3(matrix * glm::vec4(h.Position, 1.0f)),
+                    glm::vec3(matrix * glm::vec4(h.Direction, 0.0f)),
+                    SecondaryMotionEditing::ColliderColor,
+                    [&, id = h.ID](const PhysicsDrag& d, float distance) {
+                        const auto start = std::visit(
+                            [](const auto& s) -> std::optional<Physics::MotionColliderShape> {
+                                if constexpr (std::is_same_v<std::decay_t<decltype(s)>, std::monostate>)
+                                    return std::nullopt;
+                                else
+                                    return Physics::MotionColliderShape(s);
+                            },
+                            d.Shape);
+                        if (!start)
+                            return;
+                        const auto resized = SecondaryMotionEditing::DragHandle(*start, id, distance);
+                        selected.PatchComponent<MotionColliderComponent>([&](auto& c) { c.Shape = resized; });
+                    },
+                    [&] {
+                        return std::visit([](const auto& s) { return PhysicsDrag::ShapeVariant(s); }, shape);
+                    },
+                    std::holds_alternative<Physics::Plane>(shape) ? "Drag to move the plane along its normal" :
+                                                                    "Drag to resize the collider");
+        }
 
         // Hinge limits: the arc's two ends follow the pointer around the hinge axis.
         if (selected.HasComponent<JointComponent>() && selected.GetComponent<JointComponent>().Type == JointType::Hinge)

@@ -225,6 +225,7 @@ namespace Kans
             {
                 Record(RefreshProductAssets(*snapshot));
                 AssignPendingSlotInstances();
+                AssignPendingCloth();
                 QueueUnimportedShaders(); // Sources were refreshed: new shader files are imported.
             }
             auto completed = m_AssetImports->Poll();
@@ -235,6 +236,7 @@ namespace Kans
                 // Dependencies can be published even when the root build fails.
                 Record(RefreshProductAssets());
                 AssignPendingSlotInstances();
+                AssignPendingCloth();
                 if (m_PendingPlacement && m_PendingPlacementWaiting)
                     StartPendingPlacementBuild();
                 else
@@ -261,7 +263,11 @@ namespace Kans
         else
             m_UIInput = {};
         if (!m_Play.Update(*m_ActiveScene, ts) && !m_Play.IsActive())
+        {
             m_ActiveScene->UpdateModelPoses();
+            // Springs and cloth on the edit pose; nothing is written to the scene.
+            SecondaryMotionEditing::StepPreview(*m_ActiveScene, double(ts));
+        }
         // The viewport panel renders the scene during the UI frame.
     }
 

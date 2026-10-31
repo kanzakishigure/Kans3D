@@ -66,6 +66,27 @@ namespace Kans
         r.Warned       = false;
         return true;
     }
+    bool Scene::SetClothSourceOverride(Entity e, Ref<const ClothAsset> asset)
+    {
+        if (!e || !e.HasComponent<ClothComponent>())
+            return false;
+        auto& c = e.GetComponent<ClothComponent>();
+        if (!asset)
+        {
+            if (c.Runtime && c.Runtime->SourceOverride)
+            {
+                c.Runtime->SourceOverride = false;
+                c.Runtime->Source.reset();
+                c.Runtime->BindingValid = false;
+                c.Runtime->Active       = false;
+            }
+            return true;
+        }
+        if (asset->assetID != c.Asset || !BindCloth(e, std::move(asset)))
+            return false;
+        c.Runtime->SourceOverride = true;
+        return true;
+    }
     void Scene::ResetClothMotion(Entity scope)
     {
         for (auto h : m_Registry.view<ClothComponent>())
@@ -205,7 +226,7 @@ namespace Kans
                 r.Active       = false;
                 r.BindingValid = false;
             }
-            if (m_PrefabAssets && c.Asset.IsValid())
+            if (m_PrefabAssets && c.Asset.IsValid() && !(r.SourceOverride && asset))
             {
                 auto status = m_PrefabAssets->Request<ClothAsset>(c.Asset);
                 if (status.IsReady())

@@ -81,6 +81,7 @@ namespace Kans
         m_Panels.Register(
             spec(PanelID::Timeline, "Timeline", ICON_FA_FILM, PanelCategory::Scene, PanelDock::Bottom, false),
             [this] { m_TimelinePanel.Draw(); });
+        BindSecondaryMotion();
         m_PropertiesPanel.SetOpenTimeline([this](Entity owner) {
             m_TimelinePanel.Open(owner);
             m_Panels.Open(PanelID::Timeline);
@@ -172,6 +173,7 @@ namespace Kans
                                                                                GraphCaptureSettings {});
         }
         m_Panels.Draw();
+        DrawClothInfo();
         Application::Get().GetImGuiLayer()->BlockEvents(m_ViewportPanel.IsFocused() || m_ViewportPanel.IsHovered());
         TrackSceneEdits();
     }
@@ -232,6 +234,21 @@ namespace Kans
             return;
         // The material editor has its own undo, redo and save while it has focus.
         const bool material = m_MaterialEditorPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus();
+        // Cloth painting has its own stroke undo and saves the .cloth file.
+        if (io.KeyCtrl && m_ViewportPanel.IsPaintingCloth() && !material && m_ActiveScene)
+        {
+            auto& paint = m_ViewportPanel.GetClothPaint();
+            if (ImGui::IsKeyPressed(ImGuiKey_S, false) && !io.KeyShift)
+                paint.Save();
+            else if (ImGui::IsKeyPressed(ImGuiKey_Z, true))
+                io.KeyShift ? paint.Redo(*m_ActiveScene) : paint.Undo(*m_ActiveScene);
+            else if (ImGui::IsKeyPressed(ImGuiKey_Y, true))
+                paint.Redo(*m_ActiveScene);
+            if (ImGui::IsKeyPressed(ImGuiKey_S, false) || ImGui::IsKeyPressed(ImGuiKey_Z, false) ||
+                ImGui::IsKeyPressed(ImGuiKey_Y, false) || ImGui::IsKeyDown(ImGuiKey_S) || ImGui::IsKeyDown(ImGuiKey_Z) ||
+                ImGui::IsKeyDown(ImGuiKey_Y))
+                return;
+        }
         if (io.KeyCtrl)
         {
             if (ImGui::IsKeyPressed(ImGuiKey_N, false))
@@ -277,6 +294,9 @@ namespace Kans
         m_TimelinePanel.StopPreview(); // Play starts from the scene as saved, not a previewed frame.
         if (!m_Play.IsActive())
         {
+            // Play starts clean: no preview state, and painting ends (its strokes saved).
+            FinishClothPaint();
+            SecondaryMotionEditing::SetPreview(*m_ActiveScene, false);
             // Pending edits become a step first; play itself is not recorded.
             m_History.Record(*m_ActiveScene);
             m_EditPending = false;
@@ -289,6 +309,8 @@ namespace Kans
         if (!m_ActiveScene || m_Play.IsActive())
             return;
         m_TimelinePanel.StopPreview();
+        FinishClothPaint();
+        SecondaryMotionEditing::SetPreview(*m_ActiveScene, false);
         m_History.Record(*m_ActiveScene);
         m_EditPending = false;
         m_Play.Simulate(*m_ActiveScene);

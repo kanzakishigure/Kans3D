@@ -12,6 +12,7 @@
 #include "Kans3D/Project/RecentProjects.h"
 #include "Kans3D/Scene/SceneSerializer.h"
 #include "Kans3D/Timeline/TimelineProduct.h"
+#include "Components/ComponentEditors.h"
 #include "Components/MaterialAssignment.h"
 #include "EditorLayer.h"
 #include "Launcher/LauncherModel.h"
@@ -82,6 +83,8 @@ namespace Kans
         m_PhysicsMaterialPanel.Bind(m_AssetImports.get());
         m_ProjectSettingsPanel.Bind(m_ProjectFile);
         m_UIDesignerPanel.Bind(m_AssetImports.get());
+        ComponentEditors::SetMotionPresetDirectories(SecondaryMotionEditing::BuiltInPresetDirectory(),
+                                                     SecondaryMotionEditing::ProjectPresetDirectory(config.RootDirectory));
         m_ContentBrowserPanel.SetOpenFileCallback([this](const std::filesystem::path& path) {
             if (path.extension() == ".kans")
                 ConfirmDiscard("opening " + path.filename().u8string(), [this, path] { Record(OpenScene(path)); });
@@ -89,6 +92,8 @@ namespace Kans
                 OpenMaterial(path);
             else if (path.extension() == ".physmat")
                 OpenPhysicsMaterial(path);
+            else if (path.extension() == ".cloth")
+                OpenClothFile(path);
             else if (path.extension() == ".kui")
             {
                 if (m_UIDesignerPanel.Open(path))
@@ -584,6 +589,8 @@ namespace Kans
         // Leaving a playing scene drops its runtime state; the edit-time state is not kept.
         if (m_ActiveScene)
             m_Play.Discard(*m_ActiveScene);
+        FinishClothPaint();
+        m_PendingCloth.clear();
         m_ActiveScene = std::move(scene);
         m_Viewport->SetScene(m_ActiveScene);
         m_HierarchyPanel.SetScene(m_ActiveScene);

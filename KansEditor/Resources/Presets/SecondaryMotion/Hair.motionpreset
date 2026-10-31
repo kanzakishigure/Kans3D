@@ -1,0 +1,38 @@
+# Built-in secondary-motion preset: light strands that settle quickly and stay stiff at the root.
+Order: 0
+SpringChain:
+  Stiffness: 100
+  Drag: 0.15
+  GravityPower: 2
+  GravityDirection: [0, -1, 0]
+  HitRadius: 0.01
+  RotationAxis: 0
+  AngleLimit: 180
+  StiffnessCurve:
+    Keys:
+      - {Time: 0, Value: [200, 200, 200, 200]}
+      - {Time: 1, Value: [60, 60, 60, 60]}
+SpringComponent:
+  InertiaScale: 0.8
+  WindScale: 1
+  SubstepRate: 60
+  MaxSubsteps: 8
+Cloth:
+  StretchCompliance: 1.0e-7
+  BendCompliance: 2.0e-5
+  TetherScale: 1.02
+  Damping: 0.04
+  VelocityDrag: 0.1
+  ParticleMass: 0.004
+  AreaDensity: 0
+  GravityScale: 1
+  WindScale: 0.5
+  Lift: 0.05
+  Drag: 1
+  InertiaScale: 0.8
+  LinearInertiaLimit: 10
+  AngularInertiaLimit: 360
+  SubstepRate: 120
+  MaxSubsteps: 16
+  Iterations: 2
+  Thickness: 0.003

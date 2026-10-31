@@ -119,3 +119,12 @@
 #define ICON_FA_BASEBALL "\xef\x90\xb3"       // U+F433
 #define ICON_FA_BOX "\xef\x91\xa6"            // U+F466
 #define ICON_FA_GAMEPAD "\xef\x84\x9b"        // U+F11B
+#define ICON_FA_WAND_MAGIC_SPARKLES    "\xee\x8b\x8a" // U+E2CA
+#define ICON_FA_CARET_DOWN             "\xef\x83\x97" // U+F0D7
+#define ICON_FA_TRASH_CAN              "\xef\x8b\xad" // U+F2ED
+#define ICON_FA_PAINTBRUSH             "\xef\x87\xbc" // U+F1FC
+#define ICON_FA_SHIRT                  "\xef\x95\x93" // U+F553
+#define ICON_FA_FILL_DRIP              "\xef\x95\xb6" // U+F576
+#define ICON_FA_ARROW_TREND_UP         "\xee\x82\x98" // U+E098
+#define ICON_FA_THUMBTACK              "\xef\x82\x8d" // U+F08D
+#define ICON_FA_BONE                   "\xef\x97\x97" // U+F5D7

@@ -6,6 +6,7 @@
 #include <variant>
 #include "Kans3D/Editor/EditorCamera.h"
 #include "Kans3D/UI/UIInput.h"
+#include "ClothPaintTool.h"
 #include "HierarchyPanel.h"
 #include "MeshEditTool.h"
 #include "ViewportClient.h"
@@ -56,6 +57,10 @@ namespace Kans
         bool          IsNavigating() const { return m_Navigation != Navigation::None; }
         EditorCamera& GetCamera() { return m_Camera; }
         void          FocusSelection();
+        // Cloth painting (ClothPaintTool): the editor starts it from the Cloth card and routes
+        // Ctrl+S / Ctrl+Z / Ctrl+Y to it while it runs.
+        ClothPaintTool& GetClothPaint() { return m_ClothPaint; }
+        bool            IsPaintingCloth() const { return m_ClothPaint.IsActive(); }
 
     private:
         enum class Navigation
@@ -150,7 +155,7 @@ namespace Kans
         // started, the screen offset one shape unit along the handle makes, and the shape then.
         struct PhysicsDrag
         {
-            using ShapeVariant  = std::variant<std::monostate, Physics::Box, Physics::Sphere, Physics::Capsule>;
+            using ShapeVariant  = std::variant<std::monostate, Physics::Box, Physics::Sphere, Physics::Capsule, Physics::Plane>;
             ImGuiID      Handle = 0;
             ImVec2       Start {};
             glm::vec2    PixelsPerUnit {0.0f};
@@ -158,5 +163,6 @@ namespace Kans
         };
         std::optional<PhysicsDrag> m_PhysicsDrag;
         bool                       m_PhysicsHandleHot = false; // Hovered or dragged: the transform gizmo waits.
+        ClothPaintTool             m_ClothPaint;
     };
 } // namespace Kans

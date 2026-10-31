@@ -105,6 +105,34 @@ namespace Kans
         // .material, or the model holding it) and replaces the material on `parts` once imported.
         void CreateSlotInstance(AssetID parent, const std::filesystem::path& source, const SlotParts& parts);
         void AssignPendingSlotInstances();
+        // ---- Secondary motion (EditorLayerSecondaryMotion.cpp) ----
+        // Cloth card actions, the painting session's save hook and the preset folders.
+        void BindSecondaryMotion();
+        // Writes a .cloth for `section` of the entity's mesh (beside the mesh's source, or in the
+        // Content Browser's folder), imports it and assigns it once published.
+        void CreateClothAsset(Entity entity, uint32_t section, bool browserFolder);
+        void AssignPendingCloth();
+        // Paints the entity's cloth asset in the viewport (its .cloth source file).
+        void BeginClothPaint(Entity entity);
+        // Leaves painting; unsaved strokes are saved first (switching scenes, Play).
+        void FinishClothPaint();
+        // A .cloth file opened in the Content Browser: paint it on the selected entity when that
+        // uses it, else show what it is bound to.
+        void OpenClothFile(const std::filesystem::path& file);
+        void DrawClothInfo();
+        // The source file of an asset, or empty.
+        std::filesystem::path SourceFileOf(AssetID asset);
+        AssetID               FindPublished(const std::filesystem::path& file, AssetType type);
+        struct PendingCloth
+        {
+            std::filesystem::path File;
+            UUID                  Entity  = 0;
+            uint32_t              Section = 0;
+        };
+        std::vector<PendingCloth>            m_PendingCloth;
+        std::optional<std::filesystem::path> m_ClothInfo;
+        std::optional<ClothData>             m_ClothInfoData;
+        std::string                          m_ClothInfoError;
         // Published Material of a .material source, or invalid.
         AssetID                                  FindPublishedMaterial(const std::filesystem::path& file);
         // Content-browser thumbnail of a .material file: rendered a few per frame,

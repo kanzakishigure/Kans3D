@@ -1,5 +1,7 @@
 #pragma once
 #include <imgui.h>
+#include <filesystem>
+#include <functional>
 #include "ComponentRegistry.h"
 #include "Kans3D/Geometry/Shapes.h"
 #include "Kans3D/Scene/Components.h"
@@ -7,7 +9,11 @@
 namespace Kans
 {
     struct SkeletonData;
-}
+    namespace SecondaryMotionEditing
+    {
+        struct MotionPreset;
+    }
+} // namespace Kans
 
 // Drawers of the built-in components, registered in ComponentEditors.cpp.
 namespace Kans::ComponentEditors
@@ -43,6 +49,17 @@ namespace Kans::ComponentEditors
     void DrawGlobalWind(Entity entity, ComponentUI& ui);
     void DrawCharacterController(Entity entity, ComponentUI& ui);
     void DrawJoint(Entity entity, ComponentUI& ui);
+    // Secondary motion (SecondaryMotionEditors.cpp).
+    void DrawSpringBone(Entity entity, ComponentUI& ui);
+    void DrawMotionCollider(Entity entity, ComponentUI& ui);
+    void DrawCloth(Entity entity, ComponentUI& ui);
+    // Where the preset menus look: the editor's built-in presets and the project's own (empty: none).
+    void SetMotionPresetDirectories(std::filesystem::path builtIn, std::filesystem::path project);
+    // The preset menu's items for spring (or cloth) values: apply one, Save as preset (from `capture`),
+    // and the project presets' Rename and Delete. True when one was applied.
+    bool MotionPresetMenuItems(bool                                                                  spring,
+                               const std::function<SecondaryMotionEditing::MotionPreset()>&           capture,
+                               const std::function<void(const SecondaryMotionEditing::MotionPreset&)>& apply);
     // Friction, bounciness and their combine modes as grid rows; true when changed.
     bool PhysicsMaterialRows(PhysicsMaterialValues& values);
     // A joint of `skeleton` (empty = none) as a grid row; true when changed.

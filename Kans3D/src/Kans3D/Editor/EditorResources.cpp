@@ -89,7 +89,8 @@ namespace Kans
             {".m4a", &AudioFileIcon},         {".ttf", &FontFileIcon},          {".otf", &FontFileIcon},
             {".ttc", &FontFileIcon},          {".otc", &FontFileIcon},          {".kui", &UIFileIcon},
             {".timeline", &TimelineFileIcon}, {".action", &ActionFileIcon},     {".expression", &ExpressionFileIcon},
-            {".physmat", &MaterialFileIcon}}; // No physics icon yet: the material one.
+            {".physmat", &MaterialFileIcon}, // No physics icon yet: the material one.
+            {".cloth", &MeshFileIcon}};       // A cloth asset simulates a mesh section.
         const auto it = icons.find(extension);
         return it != icons.end() && *it->second ? *it->second : FileIcon;
     }

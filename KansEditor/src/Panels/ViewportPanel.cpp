@@ -109,6 +109,13 @@ namespace Kans
         AcceptDrop();
         DrawSceneOverlays();
         DrawPhysicsOverlay();
+        // Cloth painting takes the left button over the cloth (selection and the gizmo wait).
+        if (m_ClothPaint.IsActive() && !UsesSceneCamera() && !m_Playing)
+        {
+            const ClothPaintTool::View view {m_Min, m_Max, &m_Camera, m_Scene.get()};
+            m_ClothPaint.DrawOverlay(view);
+            m_ClothPaint.Update(view, m_ImageHovered && !ImGui::IsAnyItemHovered());
+        }
         if (editing)
         {
             m_MeshTool.DrawOverlay(selected, EditView());
@@ -351,7 +358,7 @@ namespace Kans
             {
                 if (m_MeshTool.IsEditing(m_Hierarchy.GetSelected()) && !UsesSceneCamera())
                     m_MeshTool.Press(io.MousePos);
-                else
+                else if (!IsPaintingCloth())
                     PickAt(io.MousePos);
             }
         }
@@ -610,7 +617,8 @@ namespace Kans
     void ViewportPanel::DrawGizmo()
     {
         Entity selected = m_Hierarchy.GetSelected();
-        if (!selected || m_GizmoType < 0 || (m_Playing && !m_UseEditorCameraInPlay && m_Scene->GetCameraEntity()))
+        if (!selected || m_GizmoType < 0 || (m_Playing && !m_UseEditorCameraInPlay && m_Scene->GetCameraEntity()) ||
+            IsPaintingCloth())
             return;
         // A physics handle under the pointer (or being dragged) takes the click.
         if (m_PhysicsHandleHot)
@@ -740,9 +748,28 @@ namespace Kans
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Snap step for the current tool");
         }) + gap;
-        OverlayGroup({x, top}, [&] { m_MeshTool.DrawModeButtons(m_Hierarchy.GetSelected()); });
+        x = OverlayGroup({x, top}, [&] { m_MeshTool.DrawModeButtons(m_Hierarchy.GetSelected()); }) + gap;
+        // Secondary motion: spring bones and cloth run on the edit scene's animated pose.
+        OverlayGroup({x, top}, [&] {
+            const bool previewing = m_Scene->IsSecondaryMotionPreviewEnabled();
+            if (ToolButton(ICON_FA_WIND,
+                           previewing ? "Preview secondary motion (on): springs and cloth follow the animated pose" :
+                                        "Preview secondary motion: run springs and cloth on the edit scene",
+                           previewing,
+                           !m_Playing))
+                SecondaryMotionEditing::SetPreview(*m_Scene, !previewing);
+            ImGui::SameLine();
+            if (ToolButton(ICON_FA_ROTATE_LEFT, "Reset the secondary-motion preview", false, previewing && !m_Playing))
+                m_Scene->ResetSecondaryMotion();
+        });
         if (!UsesSceneCamera())
-            m_MeshTool.DrawPanel(m_Hierarchy.GetSelected(), {m_Min.x + Px(10.0f), m_Min.y + Px(48.0f)});
+        {
+            if (IsPaintingCloth())
+                m_ClothPaint.DrawPanel({m_Min.x + Px(10.0f), m_Min.y + Px(48.0f)},
+                                       ClothPaintTool::View {m_Min, m_Max, &m_Camera, m_Scene.get()});
+            else
+                m_MeshTool.DrawPanel(m_Hierarchy.GetSelected(), {m_Min.x + Px(10.0f), m_Min.y + Px(48.0f)});
+        }
 
         // Right: camera view, framing and fly speed, display options. Right-aligned with
         // last frame's width, since the labels change.

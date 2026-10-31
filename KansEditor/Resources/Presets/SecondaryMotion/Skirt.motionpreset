@@ -1,0 +1,34 @@
+# Built-in secondary-motion preset: heavier fabric that hangs, keeps its length and folds moderately.
+Order: 1
+SpringChain:
+  Stiffness: 25
+  Drag: 0.25
+  GravityPower: 9.81
+  GravityDirection: [0, -1, 0]
+  HitRadius: 0.03
+  RotationAxis: 0
+  AngleLimit: 75
+SpringComponent:
+  InertiaScale: 1
+  WindScale: 0.8
+  SubstepRate: 60
+  MaxSubsteps: 8
+Cloth:
+  StretchCompliance: 1.0e-7
+  BendCompliance: 5.0e-5
+  TetherScale: 1.02
+  Damping: 0.03
+  VelocityDrag: 0.1
+  ParticleMass: 0.02
+  AreaDensity: 0
+  GravityScale: 1.2
+  WindScale: 0.8
+  Lift: 0.1
+  Drag: 1
+  InertiaScale: 1
+  LinearInertiaLimit: 8
+  AngularInertiaLimit: 360
+  SubstepRate: 120
+  MaxSubsteps: 16
+  Iterations: 2
+  Thickness: 0.006

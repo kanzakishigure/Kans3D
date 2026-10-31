@@ -199,6 +199,7 @@ namespace Kans
                 case Browser::AssetKind::Expression:
                     return p.TypeExpression;
                 case Browser::AssetKind::PhysicsMaterial:
+                case Browser::AssetKind::Cloth:
                     return p.TypePhysics;
                 default:
                     return p.TextDim;

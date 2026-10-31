@@ -11,6 +11,7 @@
 #include "Kans3D/Scene/Components.h"
 #include "Components/ComponentRegistry.h"
 #include "HierarchyPanel.h"
+#include "Physics/SecondaryMotionEditing.h"
 
 namespace Kans
 {
@@ -46,6 +47,14 @@ namespace Kans
         void SetMaterialActions(MaterialActions actions) { m_MaterialActions = std::move(actions); }
         void SetOpenAnimatorGraph(std::function<void()> open) { m_OpenAnimatorGraph = std::move(open); }
         void SetOpenTimeline(std::function<void(Entity)> open) { m_OpenTimeline = std::move(open); }
+        // Cloth: create a .cloth asset for a section, enter painting, and whether an entity is painted.
+        struct ClothActions
+        {
+            std::function<void(Entity, uint32_t, bool)> CreateAsset;
+            std::function<void(Entity)>           Paint;
+            std::function<bool(Entity)>           IsPainting;
+        };
+        void SetClothActions(ClothActions actions) { m_ClothActions = std::move(actions); }
         // Adds the slot rows' hovered, highlighted and isolated parts to the viewport's highlights.
         void AppendSlotHighlights(ViewHighlights& highlights) const;
 
@@ -80,6 +89,22 @@ namespace Kans
                 m_OpenTimeline(owner);
         }
 
+        void CreateClothAsset(Entity entity, uint32_t section, bool browserFolder) override
+        {
+            if (m_ClothActions.CreateAsset)
+                m_ClothActions.CreateAsset(entity, section, browserFolder);
+        }
+        void PaintCloth(Entity entity) override
+        {
+            if (m_ClothActions.Paint)
+                m_ClothActions.Paint(entity);
+        }
+        bool IsPaintingCloth(Entity entity) override
+        {
+            return m_ClothActions.IsPainting && m_ClothActions.IsPainting(entity);
+        }
+        SecondaryMotionEditing::ChainPicker* GetChainPicker() override { return &m_ChainPicker; }
+
     private:
         // Scene-wide settings, shown when no entity is selected.
         void DrawContents();
@@ -113,6 +138,9 @@ namespace Kans
         MaterialActions                                     m_MaterialActions;
         std::function<void()>                               m_OpenAnimatorGraph;
         std::function<void(Entity)>                         m_OpenTimeline;
+        ClothActions                                        m_ClothActions;
+        // A spring chain's "Pick from Hierarchy": selections go to it, then the owner is selected again.
+        SecondaryMotionEditing::ChainPicker m_ChainPicker;
         // Slot rows' viewport feedback; pinned and isolated rows reset when the selection changes.
         SlotParts              m_HoveredSlot, m_IsolatedSlot;
         std::vector<SlotParts> m_HighlightedSlots;

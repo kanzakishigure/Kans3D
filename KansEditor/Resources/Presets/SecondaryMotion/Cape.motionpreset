@@ -1,0 +1,34 @@
+# Built-in secondary-motion preset: soft, loosely bending fabric that catches the wind.
+Order: 2
+SpringChain:
+  Stiffness: 8
+  Drag: 0.1
+  GravityPower: 9.81
+  GravityDirection: [0, -1, 0]
+  HitRadius: 0.04
+  RotationAxis: 0
+  AngleLimit: 180
+SpringComponent:
+  InertiaScale: 1
+  WindScale: 1.8
+  SubstepRate: 60
+  MaxSubsteps: 8
+Cloth:
+  StretchCompliance: 1.0e-7
+  BendCompliance: 1.0e-3
+  TetherScale: 1.1
+  Damping: 0.015
+  VelocityDrag: 0.05
+  ParticleMass: 0.01
+  AreaDensity: 0
+  GravityScale: 1
+  WindScale: 1.8
+  Lift: 0.3
+  Drag: 1.4
+  InertiaScale: 1
+  LinearInertiaLimit: 10
+  AngularInertiaLimit: 360
+  SubstepRate: 120
+  MaxSubsteps: 16
+  Iterations: 1
+  Thickness: 0.005

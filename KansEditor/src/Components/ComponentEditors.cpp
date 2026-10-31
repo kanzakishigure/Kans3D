@@ -247,6 +247,23 @@ namespace Kans
         wind.CreateOrder = 6;
         wind.Create      = [](Entity e) { e.AddComponent<GlobalWindComponent>().Strength = 1.0f; };
 
+        // Secondary motion: spring bones and cloth on characters, and the colliders they share.
+        auto& spring    = registry.Register<SpringBoneComponent>("Spring Bone", ICON_FA_BONE, "Physics");
+        spring.IconRank = 9;
+        spring.Draw     = DrawSpringBone;
+
+        auto& cloth    = registry.Register<ClothComponent>("Cloth", ICON_FA_SHIRT, "Physics");
+        cloth.IconRank = 9;
+        cloth.Draw     = DrawCloth;
+
+        auto& motionCollider =
+            registry.Register<MotionColliderComponent>("Motion Collider", ICON_FA_BASEBALL, "Physics");
+        motionCollider.IconRank    = 11;
+        motionCollider.Draw        = DrawMotionCollider;
+        motionCollider.CreateName  = "Motion Collider";
+        motionCollider.CreateOrder = 7;
+        motionCollider.Create      = [](Entity e) { e.AddComponent<MotionColliderComponent>(); };
+
         auto& script    = registry.Register<ScriptComponent>("Script", ICON_FA_CODE, "Scripting");
         script.IconRank = 7;
         script.Reset    = {};

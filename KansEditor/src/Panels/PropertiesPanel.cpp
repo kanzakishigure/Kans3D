@@ -75,6 +75,9 @@ namespace Kans
     {
         // Rows set the hover again while drawn; pinned and isolated rows belong to one entity.
         m_HoveredSlot.clear();
+        if (Scene* scene = m_Hierarchy.GetScene(); scene && m_ChainPicker.IsActive())
+            if (Entity owner = SecondaryMotionEditing::FeedChainPicker(m_ChainPicker, *scene, m_Hierarchy.GetSelected()))
+                m_Hierarchy.SetSelected(owner);
         const Entity selected = m_Hierarchy.GetSelected();
         const UUID   owner    = selected ? selected.GetUUID() : UUID(0);
         if (owner != m_SlotsOwner)

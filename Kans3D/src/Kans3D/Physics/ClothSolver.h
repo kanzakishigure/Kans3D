@@ -31,6 +31,7 @@ namespace Kans
         glm::vec3                  Gravity {0, -9.81f, 0};
         uint64_t                   ResetEpoch = 0;
         bool                       Active = false, ResetPending = true, BindingValid = false, Warned = false;
+        bool                       SourceOverride = false; // Source stays bound instead of the stored asset.
         uint32_t                   BindingErrors = 0;
         // Set on the main thread before dispatch. Endpoints are retained even if no substep is due.
         void Initialize(Ref<const ClothAsset>, Ref<const MeshAsset>);

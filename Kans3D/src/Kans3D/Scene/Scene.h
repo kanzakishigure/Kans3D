@@ -126,6 +126,9 @@ namespace Kans
         void                           UpdateSpringBones(double seconds);
         void                           UpdateCloth(double seconds);
         bool                           BindCloth(Entity, Ref<const class ClothAsset>, Ref<const MeshAsset> mesh = {});
+        // Binds `asset` in place of the component's stored asset until cleared (null), e.g. unsaved
+        // painted maps; the asset must carry the component's AssetID. False when it does not bind.
+        bool SetClothSourceOverride(Entity, Ref<const class ClothAsset>);
         void                SetSecondaryMotionPreviewEnabled(bool enabled) { SetSpringBonePreviewEnabled(enabled); }
         bool                IsSecondaryMotionPreviewEnabled() const { return IsSpringBonePreviewEnabled(); }
         const ClothRuntime* GetClothState(Entity) const;

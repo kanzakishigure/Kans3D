@@ -14,6 +14,10 @@ namespace Kans
     class AssetManager;
     class Scene;
     class Texture2D;
+    namespace SecondaryMotionEditing
+    {
+        class ChainPicker;
+    }
 
     // The parts a material slot row stands for: each entity's subtree sections using that slot.
     using SlotParts = std::vector<std::pair<UUID, uint32_t>>;
@@ -57,6 +61,14 @@ namespace Kans
         virtual void OpenAnimatorGraph() {}
         // Shows the Timeline window for this Timeline Player.
         virtual void OpenTimeline(Entity) {}
+        // Cloth: writes a .cloth asset for `section` of the entity's mesh (beside the mesh's source, or
+        // in the Content Browser's open folder) and assigns it once imported; enters or reports the
+        // viewport's painting mode.
+        virtual void CreateClothAsset(Entity, uint32_t /*section*/, bool /*browserFolder*/) {}
+        virtual void PaintCloth(Entity) {}
+        virtual bool IsPaintingCloth(Entity) { return false; }
+        // Spring chains' "Pick from Hierarchy" (null when the panel cannot pick).
+        virtual SecondaryMotionEditing::ChainPicker* GetChainPicker() { return nullptr; }
     };
 
     // Everything the editor knows about one component type: how it is named, shown,
