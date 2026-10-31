@@ -31,6 +31,8 @@ namespace Kans
     class PhysicsWorld;
     struct SpringBoneJointState;
     struct SpringBoneUpdateCache;
+    struct ClothRuntime;
+    struct ClothUpdateCache;
     class DebugDraw;
     struct PhysicsSettings;
     struct SceneSnapshot;
@@ -122,6 +124,11 @@ namespace Kans
                                                       bool      writeTransforms = true);
         void                           ResetAnimator(Entity root);
         void                           UpdateSpringBones(double seconds);
+        void                           UpdateCloth(double seconds);
+        bool                           BindCloth(Entity, Ref<const class ClothAsset>, Ref<const MeshAsset> mesh = {});
+        void                SetSecondaryMotionPreviewEnabled(bool enabled) { SetSpringBonePreviewEnabled(enabled); }
+        bool                IsSecondaryMotionPreviewEnabled() const { return IsSpringBonePreviewEnabled(); }
+        const ClothRuntime* GetClothState(Entity) const;
         void                           ResetSecondaryMotion(Entity scope);
         void                        ResetSecondaryMotion(); // Shared discontinuity hook for secondary-motion solvers.
         void                        SetSpringBonePreviewEnabled(bool);
@@ -276,6 +283,13 @@ namespace Kans
         glm::mat4                               SpringBoneRenderLocal(Entity) const;
         void                                    OnSpringBoneRemoved(entt::registry&, entt::entity);
         Ref<SpringBoneUpdateCache>              m_SpringBoneUpdate;
+        Ref<ClothUpdateCache>                   m_ClothUpdate;
+        bool                                    m_MotionSnapshotReady = false;
+        void                                    PrepareMotionSnapshot();
+        void                                    ResetClothMotion(Entity);
+        void                                    OnClothRemoved(entt::registry&, entt::entity);
+        void                                    ClearClothStreams();
+        void                                    PublishClothStreams();
         uint64_t                                m_SecondaryMotionResetEpoch = 1;
         std::unique_ptr<PhysicsWorld>           m_PhysicsWorld;
         double                                  m_PhysicsAccumulator = 0;

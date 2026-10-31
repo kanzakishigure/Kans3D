@@ -1,13 +1,16 @@
 #pragma once
 #include <yaml-cpp/yaml.h>
 #include "Kans3D/Animation/SpringBoneComponent.h"
+#include "ClothComponent.h"
 #include "PhysicsComponents.h"
 namespace Kans::PhysicsYaml
 {
+    YAML::Node Encode(const ClothComponent&);
+    void       Decode(const YAML::Node&, ClothComponent&);
     YAML::Node Encode(const SpringBoneComponent&);
     void       Decode(const YAML::Node&, SpringBoneComponent&);
-    YAML::Node Encode(const SpringBoneColliderComponent&);
-    void       Decode(const YAML::Node&, SpringBoneColliderComponent&);
+    YAML::Node Encode(const MotionColliderComponent&);
+    void       Decode(const YAML::Node&, MotionColliderComponent&);
     YAML::Node Encode(const CharacterControllerComponent&);
     void       Decode(const YAML::Node&, CharacterControllerComponent&);
     YAML::Node Encode(const JointComponent&);

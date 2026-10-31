@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "RenderWorld.h"
 #include <stdexcept>
+#include "Kans3D/Physics/ClothSolver.h"
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Scene/Scene.h"
 
@@ -113,6 +114,21 @@ namespace Kans
                                             component.CustomStencil});
                 }
             }
+        }
+        if (entity.HasComponent<ClothComponent>())
+        {
+            const auto& c = entity.GetComponent<ClothComponent>();
+            const auto  r = c.Runtime;
+            if (c.Enabled && r && r->Active && r->BindingValid && r->Stream)
+                for (auto& draw : record.Draws)
+                    if (draw.Section == c.Section)
+                    {
+                        draw.Mesh = MeshKey(Ref<const DynamicVertexStream>(r->Stream));
+                        draw.SkinPose.reset();
+                        draw.Transform   = r->Root;
+                        draw.LocalBounds = r->Stream->Data.LocalBounds;
+                        draw.WorldBounds = draw.LocalBounds.Transformed(draw.Transform);
+                    }
         }
         if (entity.HasComponent<DirLightComponent>())
         {
@@ -613,33 +629,67 @@ namespace Kans
                     output.Draws[i].Parameters = found == drivers.SlotValues.end() ? drivers.Values : found->second;
                 }
             const auto& mesh = submission.Mesh;
-            if (state.EnableStencil)
-                output.Geometry.push_back(
-                    {record.OutlineTransform,
-                     "StencilShader",
-                     ModelGeometryMode::StencilOutline,
-                     record.Key,
-                     mesh.Section,
-                     submission.EntityID,
-                     record.Draws.empty() ? Ref<const SkinningPose>() : record.Draws.front().SkinPose});
-            if (state.EnableOutline)
-                output.Geometry.push_back(
-                    {submission.Transform,
-                     "OutLineShader",
-                     ModelGeometryMode::BackFaces,
-                     record.Key,
-                     mesh.Section,
-                     submission.EntityID,
-                     record.Draws.empty() ? Ref<const SkinningPose>() : record.Draws.front().SkinPose});
-            if (state.EnableDebugNormal)
-                output.Geometry.push_back(
-                    {submission.Transform,
-                     "DebugNormalShader",
-                     ModelGeometryMode::Default,
-                     record.Key,
-                     mesh.Section,
-                     submission.EntityID,
-                     record.Draws.empty() ? Ref<const SkinningPose>() : record.Draws.front().SkinPose});
+            if (std::any_of(
+                    record.Draws.begin(), record.Draws.end(), [](const auto& draw) { return bool(draw.Mesh.Stream); }))
+            {
+                for (const auto& proxy : record.Draws)
+                {
+                    if (state.EnableStencil)
+                        output.Geometry.push_back({proxy.Transform * glm::scale(glm::mat4(1), glm::vec3(1.007f)),
+                                                   "StencilShader",
+                                                   ModelGeometryMode::StencilOutline,
+                                                   proxy.Mesh,
+                                                   proxy.Section,
+                                                   submission.EntityID,
+                                                   proxy.SkinPose});
+                    if (state.EnableOutline)
+                        output.Geometry.push_back({proxy.Transform,
+                                                   "OutLineShader",
+                                                   ModelGeometryMode::BackFaces,
+                                                   proxy.Mesh,
+                                                   proxy.Section,
+                                                   submission.EntityID,
+                                                   proxy.SkinPose});
+                    if (state.EnableDebugNormal)
+                        output.Geometry.push_back({proxy.Transform,
+                                                   "DebugNormalShader",
+                                                   ModelGeometryMode::Default,
+                                                   proxy.Mesh,
+                                                   proxy.Section,
+                                                   submission.EntityID,
+                                                   proxy.SkinPose});
+                }
+            }
+            else
+            {
+                if (state.EnableStencil)
+                    output.Geometry.push_back(
+                        {record.OutlineTransform,
+                         "StencilShader",
+                         ModelGeometryMode::StencilOutline,
+                         record.Key,
+                         mesh.Section,
+                         submission.EntityID,
+                         record.Draws.empty() ? Ref<const SkinningPose>() : record.Draws.front().SkinPose});
+                if (state.EnableOutline)
+                    output.Geometry.push_back(
+                        {submission.Transform,
+                         "OutLineShader",
+                         ModelGeometryMode::BackFaces,
+                         record.Key,
+                         mesh.Section,
+                         submission.EntityID,
+                         record.Draws.empty() ? Ref<const SkinningPose>() : record.Draws.front().SkinPose});
+                if (state.EnableDebugNormal)
+                    output.Geometry.push_back(
+                        {submission.Transform,
+                         "DebugNormalShader",
+                         ModelGeometryMode::Default,
+                         record.Key,
+                         mesh.Section,
+                         submission.EntityID,
+                         record.Draws.empty() ? Ref<const SkinningPose>() : record.Draws.front().SkinPose});
+            }
         }
         // Phase 3 groups shell kinds across parts sharing the same submission order.
         std::unordered_map<UUID, uint64_t> submissions;

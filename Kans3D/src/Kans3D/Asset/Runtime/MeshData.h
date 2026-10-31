@@ -79,6 +79,7 @@ namespace Kans
         Bounds                        LocalBounds;
         AssetID                       Skeleton;
         std::vector<MeshSkinVertex>   Skin;
+        std::vector<float>            ImportedClothMaxDistance; // Optional, metres, one per render vertex.
         // Each box contains model-space bind vertices with a nonzero influence from that joint.
         std::vector<Bounds> JointBounds;
         // Source mesh -> skeleton model space. Applied once during GPU upload; base vertex bytes stay unchanged.

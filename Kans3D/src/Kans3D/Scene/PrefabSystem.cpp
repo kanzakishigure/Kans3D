@@ -4,6 +4,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Core/Math/Math.h"
+#include "Kans3D/Physics/ClothSolver.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Renderer/Resource/Skinning.h"
 #include "Entity.h"
@@ -32,7 +33,7 @@ namespace Kans
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
                     x->second.CharacterController != y->second.CharacterController ||
                     x->second.Joint != y->second.Joint || x->second.SpringBone != y->second.SpringBone ||
-                    x->second.SpringBoneCollider != y->second.SpringBoneCollider ||
+                    x->second.Cloth != y->second.Cloth || x->second.MotionCollider != y->second.MotionCollider ||
 
                     x->second.RenderCustomDepth != y->second.RenderCustomDepth ||
                     x->second.CustomStencil != y->second.CustomStencil ||
@@ -173,12 +174,15 @@ namespace Kans
             change.GlobalWind = part.HasComponent<GlobalWindComponent>() ?
                                     std::optional<GlobalWindComponent>(part.GetComponent<GlobalWindComponent>()) :
                                     std::nullopt;
-            change.SpringBoneCollider =
-                part.HasComponent<SpringBoneColliderComponent>() ?
-                    std::optional<SpringBoneColliderComponent>(part.GetComponent<SpringBoneColliderComponent>()) :
+            change.MotionCollider =
+                part.HasComponent<MotionColliderComponent>() ?
+                    std::optional<MotionColliderComponent>(part.GetComponent<MotionColliderComponent>()) :
                     std::nullopt;
             change.SpringBone = part.HasComponent<SpringBoneComponent>() ?
                                     std::optional<SpringBoneComponent>(part.GetComponent<SpringBoneComponent>()) :
+                                    std::nullopt;
+            change.Cloth      = part.HasComponent<ClothComponent>() ?
+                                    std::optional<ClothComponent>(part.GetComponent<ClothComponent>()) :
                                     std::nullopt;
             change.UIScreen   = part.HasComponent<UIScreenComponent>() ?
                                     std::optional<UIScreenComponent>(part.GetComponent<UIScreenComponent>()) :
@@ -426,15 +430,24 @@ namespace Kans
             }
             else if (entity.HasComponent<SpringBoneComponent>())
                 entity.RemoveComponent<SpringBoneComponent>();
-            if (change != instance.Overrides.end() && change->second.SpringBoneCollider)
+            if (change != instance.Overrides.end() && change->second.Cloth)
             {
-                if (!entity.HasComponent<SpringBoneColliderComponent>())
-                    entity.AddComponent<SpringBoneColliderComponent>(*change->second.SpringBoneCollider);
-                else if (entity.GetComponent<SpringBoneColliderComponent>() != *change->second.SpringBoneCollider)
-                    entity.SetComponent<SpringBoneColliderComponent>(*change->second.SpringBoneCollider);
+                if (!entity.HasComponent<ClothComponent>())
+                    entity.AddComponent<ClothComponent>(*change->second.Cloth);
+                else if (entity.GetComponent<ClothComponent>() != *change->second.Cloth)
+                    entity.SetComponent<ClothComponent>(*change->second.Cloth);
             }
-            else if (entity.HasComponent<SpringBoneColliderComponent>())
-                entity.RemoveComponent<SpringBoneColliderComponent>();
+            else if (entity.HasComponent<ClothComponent>())
+                entity.RemoveComponent<ClothComponent>();
+            if (change != instance.Overrides.end() && change->second.MotionCollider)
+            {
+                if (!entity.HasComponent<MotionColliderComponent>())
+                    entity.AddComponent<MotionColliderComponent>(*change->second.MotionCollider);
+                else if (entity.GetComponent<MotionColliderComponent>() != *change->second.MotionCollider)
+                    entity.SetComponent<MotionColliderComponent>(*change->second.MotionCollider);
+            }
+            else if (entity.HasComponent<MotionColliderComponent>())
+                entity.RemoveComponent<MotionColliderComponent>();
             if (change != instance.Overrides.end() && change->second.UIScreen)
             {
                 if (!entity.HasComponent<UIScreenComponent>())
@@ -696,7 +709,17 @@ namespace Kans
                 const auto& sections = mesh->GetData().Sections;
                 for (size_t i = 0; i < sections.size(); ++i)
                     if (!selected || *selected == i)
-                        bounds.Expand((animated.IsValid() ? animated : sections[i].LocalBounds).Transformed(world));
+                    {
+                        const auto runtime = entity.HasComponent<ClothComponent>() ?
+                                                 entity.GetComponent<ClothComponent>().Runtime :
+                                                 Ref<ClothRuntime>();
+                        if (runtime && runtime->Active && runtime->BindingValid && runtime->Stream &&
+                            entity.GetComponent<ClothComponent>().Enabled &&
+                            entity.GetComponent<ClothComponent>().Section == i)
+                            bounds.Expand(runtime->Stream->Data.LocalBounds.Transformed(runtime->Root));
+                        else
+                            bounds.Expand((animated.IsValid() ? animated : sections[i].LocalBounds).Transformed(world));
+                    }
             }
             if (entity.HasComponent<TextComponent>())
             {

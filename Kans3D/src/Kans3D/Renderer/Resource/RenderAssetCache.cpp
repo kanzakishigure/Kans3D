@@ -560,6 +560,62 @@ namespace Kans
 
     const GpuMesh* RenderAssetCache::GetMesh(const MeshKey& id)
     {
+        if (id.Stream)
+        {
+            auto& e = m_Streams[id.Stream.get()];
+            if (e.Source.lock() != id.Stream)
+            {
+                e        = {};
+                e.Source = id.Stream;
+            }
+            if (e.Version == id.Stream->Version)
+                return e.Current;
+            const auto& d = id.Stream->Data;
+            e.Current     = nullptr;
+            for (auto& mesh : e.Pool)
+                if (mesh->Vertices.use_count() == 1 && (!mesh->SmoothNormals || mesh->SmoothNormals.use_count() == 1) &&
+                    mesh->NormalLines.use_count() == 1)
+                {
+                    e.Current = mesh.get();
+                    break;
+                }
+            if (!e.Current)
+            {
+                auto built = UploadMesh(d, GetDevice());
+                if (auto error = std::get_if<AssetError>(&built))
+                {
+                    CORE_ERROR("Cloth stream upload: {}", error->Message);
+                    return nullptr;
+                }
+                e.Pool.push_back(CreateScope<GpuMesh>(std::get<GpuMesh>(std::move(built))));
+                e.Current = e.Pool.back().get();
+            }
+            else
+            {
+                e.Current->Vertices->Write(0, d.Vertices.data(), d.Vertices.size() * sizeof(MeshVertexData));
+                if (e.Current->SmoothNormals)
+                    e.Current->SmoothNormals->Write(
+                        0, d.SmoothNormals.data(), d.SmoothNormals.size() * sizeof(d.SmoothNormals[0]));
+                e.Lines.resize(d.Indices.size() * 14);
+                size_t cursor = 0;
+                for (auto index : d.Indices)
+                    for (float end : {0.f, 1.f})
+                    {
+                        const auto& v = d.Vertices[index];
+                        for (float x : v.Position)
+                            e.Lines[cursor++] = x;
+                        for (float x : v.Normal)
+                            e.Lines[cursor++] = x;
+                        e.Lines[cursor++] = end;
+                    }
+                e.Current->NormalLines->Write(0, e.Lines.data(), e.Lines.size() * sizeof(float));
+            }
+            e.Current->LocalBounds = d.LocalBounds;
+            e.Current->Sections.resize(id.Stream->Section + 1);
+            e.Current->Sections[id.Stream->Section] = d.Sections[0];
+            e.Version                               = id.Stream->Version;
+            return e.Current;
+        }
         if (!id.Runtime)
             return Resolve(
                 m_Meshes, id.Asset, [&](const MeshAsset& asset) { return UploadMesh(asset.GetData(), GetDevice()); });
@@ -861,6 +917,11 @@ namespace Kans
                 it = m_Palettes.erase(it);
             else
                 ++it;
+        for (auto it = m_Streams.begin(); it != m_Streams.end();)
+            if (it->second.Source.expired())
+                it = m_Streams.erase(it);
+            else
+                ++it;
         for (auto it = m_EditableMeshes.begin(); it != m_EditableMeshes.end();)
             if (it->second.Source.expired())
             {
@@ -891,6 +952,7 @@ namespace Kans
         m_Meshes.clear();
         m_EditableStats.Releases += m_EditableMeshes.size();
         m_EditableMeshes.clear();
+        m_Streams.clear();
         m_Materials.clear();
         m_Textures.clear();
         m_Shaders.clear();

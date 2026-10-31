@@ -3,6 +3,7 @@
 #include <set>
 #include <stdexcept>
 #include <type_traits>
+#include "ClothFields.h"
 #include "PhysicsMechanismFields.h"
 namespace Kans::PhysicsYaml
 {
@@ -381,6 +382,16 @@ namespace Kans::PhysicsYaml
         {
             FieldsSpringBoneChain(c, f);
         }
+        template<class F>
+        void Fields(ClothComponent& c, F f)
+        {
+            ClothFields(c, f);
+        }
+        template<class F>
+        void Fields(const ClothComponent& c, F f)
+        {
+            ClothFields(c, f);
+        }
         template<class T, class F>
         void FieldsSpringBoneComponent(T& c, F f)
         {
@@ -406,20 +417,20 @@ namespace Kans::PhysicsYaml
             FieldsSpringBoneComponent(c, f);
         }
         template<class T, class F>
-        void FieldsSpringBoneColliderComponent(T& c, F f)
+        void FieldsMotionColliderComponent(T& c, F f)
         {
             f("Shape", c.Shape);
             f("Inside", c.Inside);
         }
         template<class F>
-        void Fields(SpringBoneColliderComponent& c, F f)
+        void Fields(MotionColliderComponent& c, F f)
         {
-            FieldsSpringBoneColliderComponent(c, f);
+            FieldsMotionColliderComponent(c, f);
         }
         template<class F>
-        void Fields(const SpringBoneColliderComponent& c, F f)
+        void Fields(const MotionColliderComponent& c, F f)
         {
-            FieldsSpringBoneColliderComponent(c, f);
+            FieldsMotionColliderComponent(c, f);
         }
         template<class T, class F>
         void FieldsPhysicsPlane(T& c, F f)
@@ -570,7 +581,13 @@ namespace Kans::PhysicsYaml
             {
                 Require(n.IsMap() && n.size() == 2 && n["Type"] && n["Data"], "Invalid motion collider shape");
                 const auto type = n["Type"].as<uint32_t>();
-                Require(type <= 2, "Invalid motion collider type");
+                Require(type <= 3, "Invalid motion collider type");
+                if (type == 3)
+                {
+                    Physics::Box s;
+                    Read(n["Data"], s);
+                    value = s;
+                }
                 if (type == 0)
                 {
                     Physics::Sphere s;
@@ -735,6 +752,19 @@ namespace Kans::PhysicsYaml
                 last = key.Time;
             }
         }
+        void Validate(const ClothComponent& c)
+        {
+            Require(c.SubstepRate >= 1 && c.SubstepRate <= 1000 && c.MaxSubsteps > 0 && c.MaxSubsteps <= 1024 &&
+                        c.Iterations > 0 && c.Iterations <= 128,
+                    "Invalid cloth solver settings");
+            Require(c.StretchCompliance >= 0 && c.BendCompliance >= 0 && c.TetherScale >= 1 && c.Damping >= 0 &&
+                        c.Damping <= 1 && c.VelocityDrag >= 0 && c.ParticleMass > 0 && c.AreaDensity >= 0 &&
+                        c.Lift >= 0 && c.Drag >= 0 && c.InertiaScale >= 0 && c.InertiaScale <= 1 &&
+                        c.LinearInertiaLimit >= 0 && c.AngularInertiaLimit >= 0 && c.TeleportDistance >= 0 &&
+                        c.TeleportRotation >= 0 && c.TeleportRotation <= 180 && c.Thickness >= 0 &&
+                        c.DisableDistance >= 0 && c.MaxDistanceScale >= 0,
+                    "Invalid cloth material or motion settings");
+        }
         void Validate(const SpringBoneComponent& c)
         {
             Require(c.InertiaScale >= 0 && c.InertiaScale <= 1 && c.SubstepRate >= 1 && c.SubstepRate <= 1000 &&
@@ -758,7 +788,7 @@ namespace Kans::PhysicsYaml
                     ValidateCurve(*curve);
             }
         }
-        void Validate(const SpringBoneColliderComponent& c)
+        void Validate(const MotionColliderComponent& c)
         {
             std::visit(
                 [&](const auto& s) {
@@ -768,6 +798,9 @@ namespace Kans::PhysicsYaml
                             "Invalid motion collider offset");
                     if constexpr (std::is_same_v<T, Physics::Plane>)
                         Require(glm::dot(s.Normal, s.Normal) > 1e-12f, "Invalid plane normal");
+                    else if constexpr (std::is_same_v<T, Physics::Box>)
+                        Require(s.HalfExtents.x > 0 && s.HalfExtents.y > 0 && s.HalfExtents.z > 0,
+                                "Invalid motion box");
                     else
                         Require(s.Radius > 0, "Invalid motion collider radius");
                     if constexpr (std::is_same_v<T, Physics::Capsule>)
@@ -782,6 +815,18 @@ namespace Kans::PhysicsYaml
             Validate(c.DefaultMaterial);
         }
     } // namespace
+    YAML::Node Encode(const ClothComponent& c)
+    {
+        Validate(c);
+        return Write(c);
+    }
+    void Decode(const YAML::Node& n, ClothComponent& c)
+    {
+        ClothComponent next;
+        Read(n, next);
+        Validate(next);
+        c = std::move(next);
+    }
     YAML::Node Encode(const SpringBoneComponent& c)
     {
         Validate(c);
@@ -794,14 +839,14 @@ namespace Kans::PhysicsYaml
         Validate(next);
         c = std::move(next);
     }
-    YAML::Node Encode(const SpringBoneColliderComponent& c)
+    YAML::Node Encode(const MotionColliderComponent& c)
     {
         Validate(c);
         return Write(c);
     }
-    void Decode(const YAML::Node& n, SpringBoneColliderComponent& c)
+    void Decode(const YAML::Node& n, MotionColliderComponent& c)
     {
-        SpringBoneColliderComponent next;
+        MotionColliderComponent next;
         Read(n, next);
         Validate(next);
         c = std::move(next);

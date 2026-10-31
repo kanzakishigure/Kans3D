@@ -1,6 +1,6 @@
 #pragma once
 #include <functional>
-#include "Kans3D/Physics/SecondaryMotion.h"
+#include "Kans3D/Physics/MotionColliderComponent.h"
 #include "Kans3D/Timeline/Timeline.h"
 namespace Kans
 {
@@ -56,19 +56,9 @@ namespace Kans
         void                 Reset();
         void                 RemapEntities(const std::function<uint64_t(uint64_t)>&);
     };
-    struct SpringBoneColliderComponent
-    {
-        Physics::MotionColliderShape Shape  = Physics::Sphere {};
-        bool                         Inside = false;
-    };
     bool        operator==(const SpringBoneChain&, const SpringBoneChain&);
     bool        operator==(const SpringBoneComponent&, const SpringBoneComponent&);
-    bool        operator==(const SpringBoneColliderComponent&, const SpringBoneColliderComponent&);
     inline bool operator!=(const SpringBoneComponent& a, const SpringBoneComponent& b) { return !(a == b); }
-    inline bool operator!=(const SpringBoneColliderComponent& a, const SpringBoneColliderComponent& b)
-    {
-        return !(a == b);
-    }
     // Read-only diagnostics use center-space positions. RenderRotation is local, after interpolation.
     struct SpringBoneJointState
     {

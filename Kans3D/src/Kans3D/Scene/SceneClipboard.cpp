@@ -318,7 +318,8 @@ namespace Kans::SceneClipboard
                     reference(spring["Center"]);
                     for (auto id : spring["ColliderGroups"])
                         reference(id);
-                    for (auto chain : spring["Chains"])
+                    // Cloth shares center/groups, but has no chain field. Const lookup must not add it to YAML.
+                    for (auto chain : std::as_const(spring)["Chains"])
                     {
                         reference(chain["RootBone"]);
                         reference(chain["EndBone"]);
@@ -327,9 +328,13 @@ namespace Kans::SceneClipboard
                     }
                 };
                 springReferences(node["SpringBoneComponent"]);
+                springReferences(node["ClothComponent"]);
                 if (auto prefab = node["PrefabInstanceComponent"])
                     for (auto change : prefab["Overrides"])
+                    {
                         springReferences(change["SpringBoneComponent"]);
+                        springReferences(change["ClothComponent"]);
+                    }
                 jointReferences(node["JointComponent"]);
                 if (auto prefab = node["PrefabInstanceComponent"])
                     for (auto change : prefab["Overrides"])

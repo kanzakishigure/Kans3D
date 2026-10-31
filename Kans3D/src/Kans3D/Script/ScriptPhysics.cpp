@@ -361,18 +361,86 @@ namespace Kans::ScriptPhysics
                         v->X = *field;
                     return 1;
                 }
-                if (op == 73)
+                if (op == 74 || op == 75)
                 {
-                    if (!e.HasComponent<SpringBoneColliderComponent>())
+                    if (!e.HasComponent<ClothComponent>())
                         return 0;
-                    auto       c        = e.GetComponent<SpringBoneColliderComponent>();
+                    auto& c = e.GetComponent<ClothComponent>();
+                    if (op == 75)
+                    {
+                        c.Reset();
+                        return 1;
+                    }
                     const bool write    = mode & 1024;
                     const int  property = mode & 1023;
                     if (property == 0)
                     {
                         if (write)
                         {
-                            if (v->Integer < 0 || v->Integer > 2)
+                            const bool enable = v->Integer != 0;
+                            if (enable != c.Enabled)
+                            {
+                                c.Enabled = enable;
+                                c.Reset();
+                            }
+                        }
+                        else
+                            v->Integer = c.Enabled;
+                        return 1;
+                    }
+                    float* target = nullptr;
+                    switch (property)
+                    {
+                        case 1:
+                            target = &c.GravityScale;
+                            break;
+                        case 2:
+                            target = &c.WindScale;
+                            break;
+                        case 3:
+                            target = &c.InertiaScale;
+                            break;
+                        case 4:
+                            target = &c.StretchCompliance;
+                            break;
+                        case 5:
+                            target = &c.BendCompliance;
+                            break;
+                        case 6:
+                            target = &c.Damping;
+                            break;
+                        case 7:
+                            target = &c.VelocityDrag;
+                            break;
+                        case 8:
+                            target = &c.MaxDistanceScale;
+                            break;
+                        default:
+                            return -1;
+                    }
+                    if (write)
+                    {
+                        if (!std::isfinite(v->X) || (property >= 3 && v->X < 0) ||
+                            ((property == 3 || property == 6) && v->X > 1))
+                            return -1;
+                        *target = v->X;
+                    }
+                    else
+                        v->X = *target;
+                    return 1;
+                }
+                if (op == 73)
+                {
+                    if (!e.HasComponent<MotionColliderComponent>())
+                        return 0;
+                    auto       c        = e.GetComponent<MotionColliderComponent>();
+                    const bool write    = mode & 1024;
+                    const int  property = mode & 1023;
+                    if (property == 0)
+                    {
+                        if (write)
+                        {
+                            if (v->Integer < 0 || v->Integer > 3)
                                 return -1;
                             if (size_t(v->Integer) != c.Shape.index())
                             {
@@ -382,6 +450,8 @@ namespace Kans::ScriptPhysics
                                     c.Shape = Physics::Capsule {};
                                 if (v->Integer == 2)
                                     c.Shape = Physics::Plane {};
+                                if (v->Integer == 3)
+                                    c.Shape = Physics::Box {};
                             }
                         }
                         else
@@ -438,6 +508,18 @@ namespace Kans::ScriptPhysics
                                     else
                                         found = false;
                                 }
+                                else if constexpr (std::is_same_v<T, Physics::Box>)
+                                {
+                                    if (property == 9)
+                                    {
+                                        if (write)
+                                            shape.HalfExtents = Vector(*v);
+                                        else
+                                            Vector(*v, shape.HalfExtents);
+                                    }
+                                    else
+                                        found = false;
+                                }
                                 else if (property == 5)
                                 {
                                     if (write)
@@ -478,7 +560,7 @@ namespace Kans::ScriptPhysics
                     if (write)
                     {
                         PhysicsYaml::Encode(c);
-                        e.SetComponent<SpringBoneColliderComponent>(c);
+                        e.SetComponent<MotionColliderComponent>(c);
                     }
                     return 1;
                 }

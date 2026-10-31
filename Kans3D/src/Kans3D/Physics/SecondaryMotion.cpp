@@ -15,6 +15,8 @@ namespace Kans::Physics
     }
     glm::mat4 InterpolateMotionTransform(const glm::mat4& a, const glm::mat4& b, float t)
     {
+        if (a == b)
+            return a; // Preserve identical inputs exactly across different frame/substep phases.
         const auto     x = JointTransform::FromMatrix(a), y = JointTransform::FromMatrix(b);
         JointTransform out;
         out.Translation = glm::mix(x.Translation, y.Translation, t);
@@ -41,8 +43,9 @@ namespace Kans::Physics
                 else
                 {
                     const auto c = ClosestPoint(s, world, point);
-                    const auto d = inside ? c.SignedDistance + radius : radius - c.SignedDistance;
-                    return point + (inside ? -1.f : 1.f) * std::max(d, 0.f) * c.Normal;
+                    const bool containment = inside && !std::is_same_v<T, Box>;
+                    const auto d           = containment ? c.SignedDistance + radius : radius - c.SignedDistance;
+                    return point + (containment ? -1.f : 1.f) * std::max(d, 0.f) * c.Normal;
                 }
             },
             shape);

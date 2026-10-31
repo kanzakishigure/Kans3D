@@ -130,8 +130,10 @@ namespace Kans::ScriptUI
                         return Add<CharacterControllerComponent>(e);
                     case Scripting::ComponentType::SpringBoneComponent:
                         return Add<SpringBoneComponent>(e);
-                    case Scripting::ComponentType::SpringBoneColliderComponent:
-                        return Add<SpringBoneColliderComponent>(e);
+                    case Scripting::ComponentType::ClothComponent:
+                        return Add<ClothComponent>(e);
+                    case Scripting::ComponentType::MotionColliderComponent:
+                        return Add<MotionColliderComponent>(e);
                     case Scripting::ComponentType::JointComponent:
                         return Add<JointComponent>(e);
                     case Scripting::ComponentType::RigidBodyComponent:

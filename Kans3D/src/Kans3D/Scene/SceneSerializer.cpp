@@ -804,10 +804,12 @@ namespace Kans
                     item["JointComponent"] = PhysicsYaml::Encode(*change.Joint);
                 if (change.GlobalWind)
                     item["GlobalWindComponent"] = PhysicsYaml::Encode(*change.GlobalWind);
-                if (change.SpringBoneCollider)
-                    item["SpringBoneColliderComponent"] = PhysicsYaml::Encode(*change.SpringBoneCollider);
+                if (change.MotionCollider)
+                    item["MotionColliderComponent"] = PhysicsYaml::Encode(*change.MotionCollider);
                 if (change.SpringBone)
                     item["SpringBoneComponent"] = PhysicsYaml::Encode(*change.SpringBone);
+                if (change.Cloth)
+                    item["ClothComponent"] = PhysicsYaml::Encode(*change.Cloth);
                 if (change.UIScreen)
                     item["UIScreen"] = EncodeUIScreen(*change.UIScreen);
                 if (change.UIWorld)
@@ -853,7 +855,8 @@ namespace Kans
                       "CapsuleColliderComponent",
                       "MeshColliderComponent",
                       "GlobalWindComponent",
-                      "SpringBoneColliderComponent",
+                      "MotionColliderComponent",
+                      "ClothComponent",
                       "SpringBoneComponent",
                       "CharacterControllerComponent",
                       "JointComponent",
@@ -911,17 +914,23 @@ namespace Kans
                     PhysicsYaml::Decode(item["GlobalWindComponent"], c);
                     change.GlobalWind = c;
                 }
-                if (item["SpringBoneColliderComponent"])
+                if (item["MotionColliderComponent"])
                 {
-                    SpringBoneColliderComponent c;
-                    PhysicsYaml::Decode(item["SpringBoneColliderComponent"], c);
-                    change.SpringBoneCollider = c;
+                    MotionColliderComponent c;
+                    PhysicsYaml::Decode(item["MotionColliderComponent"], c);
+                    change.MotionCollider = c;
                 }
                 if (item["SpringBoneComponent"])
                 {
                     SpringBoneComponent c;
                     PhysicsYaml::Decode(item["SpringBoneComponent"], c);
                     change.SpringBone = c;
+                }
+                if (item["ClothComponent"])
+                {
+                    ClothComponent c;
+                    PhysicsYaml::Decode(item["ClothComponent"], c);
+                    change.Cloth = c;
                 }
                 if (item["UIScreen"])
                     change.UIScreen = DecodeUIScreen(item["UIScreen"]);
@@ -1130,11 +1139,12 @@ namespace Kans
                 node["JointComponent"] = PhysicsYaml::Encode(entity.GetComponent<JointComponent>());
             if (entity.HasComponent<GlobalWindComponent>())
                 node["GlobalWindComponent"] = PhysicsYaml::Encode(entity.GetComponent<GlobalWindComponent>());
-            if (entity.HasComponent<SpringBoneColliderComponent>())
-                node["SpringBoneColliderComponent"] =
-                    PhysicsYaml::Encode(entity.GetComponent<SpringBoneColliderComponent>());
+            if (entity.HasComponent<MotionColliderComponent>())
+                node["MotionColliderComponent"] = PhysicsYaml::Encode(entity.GetComponent<MotionColliderComponent>());
             if (entity.HasComponent<SpringBoneComponent>())
                 node["SpringBoneComponent"] = PhysicsYaml::Encode(entity.GetComponent<SpringBoneComponent>());
+            if (entity.HasComponent<ClothComponent>())
+                node["ClothComponent"] = PhysicsYaml::Encode(entity.GetComponent<ClothComponent>());
             if (entity.HasComponent<AudioSourceComponent>())
             {
                 const auto& c       = entity.GetComponent<AudioSourceComponent>();
@@ -1515,7 +1525,8 @@ namespace Kans
                       "CapsuleColliderComponent",
                       "MeshColliderComponent",
                       "GlobalWindComponent",
-                      "SpringBoneColliderComponent",
+                      "MotionColliderComponent",
+                      "ClothComponent",
                       "SpringBoneComponent",
                       "CharacterControllerComponent",
                       "JointComponent",
@@ -1621,17 +1632,23 @@ namespace Kans
                     PhysicsYaml::Decode(node["GlobalWindComponent"], c);
                     entity.AddComponent<GlobalWindComponent>(c);
                 }
-                if (node["SpringBoneColliderComponent"])
+                if (node["MotionColliderComponent"])
                 {
-                    SpringBoneColliderComponent c;
-                    PhysicsYaml::Decode(node["SpringBoneColliderComponent"], c);
-                    entity.AddComponent<SpringBoneColliderComponent>(c);
+                    MotionColliderComponent c;
+                    PhysicsYaml::Decode(node["MotionColliderComponent"], c);
+                    entity.AddComponent<MotionColliderComponent>(c);
                 }
                 if (node["SpringBoneComponent"])
                 {
                     SpringBoneComponent c;
                     PhysicsYaml::Decode(node["SpringBoneComponent"], c);
                     entity.AddComponent<SpringBoneComponent>(c);
+                }
+                if (node["ClothComponent"])
+                {
+                    ClothComponent c;
+                    PhysicsYaml::Decode(node["ClothComponent"], c);
+                    entity.AddComponent<ClothComponent>(c);
                 }
                 if (node["AudioSourceComponent"])
                     entity.AddComponent<AudioSourceComponent>(DecodeAudioSource(node["AudioSourceComponent"]));

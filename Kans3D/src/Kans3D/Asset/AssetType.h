@@ -31,5 +31,6 @@ namespace Kans
         Action              = 17,
         Timeline            = 18,
         PhysicsMaterial     = 19,
+        Cloth               = 20,
     };
 } // namespace Kans

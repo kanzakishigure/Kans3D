@@ -604,6 +604,18 @@ namespace Kans
             data.ColorChannels  = colorChannels;
             data.Name          = mesh->mName.C_Str();
             data.MaterialIndex = mesh->mMaterialIndex;
+            data.ColorSets.resize(AI_MAX_NUMBER_OF_COLOR_SETS);
+            for (unsigned set = 0; set < AI_MAX_NUMBER_OF_COLOR_SETS; ++set)
+                if (mesh->HasVertexColors(set) && int(set) != sourceChannel)
+                {
+                    auto& colors = data.ColorSets[set];
+                    colors.reserve(mesh->mNumVertices);
+                    for (unsigned v = 0; v < mesh->mNumVertices; ++v)
+                    {
+                        const auto c = mesh->mColors[set][v];
+                        colors.push_back({c.r, c.g, c.b, c.a});
+                    }
+                }
             data.Vertices.reserve(mesh->mNumVertices);
             for (uint32_t vertex = 0; vertex < mesh->mNumVertices; ++vertex)
             {

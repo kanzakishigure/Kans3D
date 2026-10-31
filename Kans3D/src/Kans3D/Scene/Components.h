@@ -10,6 +10,7 @@
 #include "Kans3D/Asset/Runtime/MeshData.h"
 #include "Kans3D/Asset/Runtime/ModelData.h"
 #include "Kans3D/Audio/AudioComponents.h"
+#include "Kans3D/Physics/ClothComponent.h"
 #include "Kans3D/Physics/PhysicsComponents.h"
 #include "Kans3D/Physics/PhysicsEquality.h"
 #include "Kans3D/Timeline/Timeline.h"
@@ -193,8 +194,9 @@ namespace Kans
         std::optional<MeshColliderComponent>        MeshCollider;
         std::optional<GlobalWindComponent>          GlobalWind;
         std::optional<CharacterControllerComponent> CharacterController;
+        std::optional<ClothComponent>               Cloth;
         std::optional<SpringBoneComponent>          SpringBone;
-        std::optional<SpringBoneColliderComponent>  SpringBoneCollider;
+        std::optional<MotionColliderComponent>      MotionCollider;
         std::optional<JointComponent>               Joint;
         std::optional<UIScreenComponent>            UIScreen;
         std::optional<UIWorldComponent>             UIWorld;
@@ -207,7 +209,8 @@ namespace Kans
         {
             return !LocalTransform && Materials.empty() && !Removed && !RenderCustomDepth && !CustomStencil &&
                    !UIScreen && !UIWorld && !RigidBody && !BoxCollider && !SphereCollider && !CapsuleCollider &&
-                   !MeshCollider && !GlobalWind && !CharacterController && !Joint && !SpringBone && !SpringBoneCollider;
+                   !MeshCollider && !GlobalWind && !CharacterController && !Joint && !Cloth && !SpringBone &&
+                   !MotionCollider;
         }
     };
     struct PrefabNodeState
@@ -310,8 +313,9 @@ namespace Kans
     template<typename... Component>
     struct ComponentGroup
     {};
-    using AllComponents = ComponentGroup<SpringBoneComponent,
-                                         SpringBoneColliderComponent,
+    using AllComponents = ComponentGroup<ClothComponent,
+                                         SpringBoneComponent,
+                                         MotionColliderComponent,
                                          RigidBodyComponent,
                                          BoxColliderComponent,
                                          SphereColliderComponent,

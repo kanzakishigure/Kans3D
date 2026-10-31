@@ -194,6 +194,15 @@ namespace Kans
             Scope<GpuMesh>                   Value;
             std::optional<AssetError>        ReportedError;
         };
+        struct StreamEntry
+        {
+            std::weak_ptr<const DynamicVertexStream> Source;
+            std::vector<Scope<GpuMesh>>              Pool;
+            GpuMesh*                                 Current = nullptr;
+            uint64_t                                 Version = UINT64_MAX;
+            std::vector<float>                       Lines;
+        };
+        std::map<const DynamicVertexStream*, StreamEntry>                  m_Streams;
         std::unordered_map<uint64_t, EditableEntry>                        m_EditableMeshes;
         EditableMeshStatistics                                             m_EditableStats;
         struct PaletteEntry

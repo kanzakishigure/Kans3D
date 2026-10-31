@@ -156,6 +156,15 @@ namespace Kans
 
     std::variant<std::monostate, AssetError> ValidateMeshData(const MeshData& mesh)
     {
+        if (!mesh.ImportedClothMaxDistance.empty())
+        {
+            if (mesh.ImportedClothMaxDistance.size() != mesh.Vertices.size())
+                return AssetError {AssetErrorCode::InvalidData, "Invalid cloth colour map size"};
+            for (float v : mesh.ImportedClothMaxDistance)
+                if (!std::isfinite(v) || v < 0)
+                    return AssetError {AssetErrorCode::InvalidData, "Invalid cloth colour map value"};
+        }
+
         const auto vertices = mesh.Vertices.size(), indices = mesh.Indices.size();
         if (!vertices || !indices || indices % 3 || vertices > std::numeric_limits<uint32_t>::max() ||
             indices > std::numeric_limits<uint32_t>::max())

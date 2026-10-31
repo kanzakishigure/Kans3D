@@ -20,6 +20,7 @@ namespace Kans
         std::string                 Name;
         uint32_t                    MaterialIndex = 0;
         std::vector<ImportedVertex> Vertices;
+        std::vector<std::vector<std::array<float, 4>>> ColorSets;
         std::vector<uint32_t>       Indices;
         std::vector<MeshSkinVertex> Skin;
         std::vector<MeshMorphTarget> MorphTargets;

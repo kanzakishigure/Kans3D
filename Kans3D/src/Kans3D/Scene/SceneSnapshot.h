@@ -43,8 +43,9 @@ namespace Kans
         std::optional<MeshColliderComponent>             MeshCollider;
         std::optional<GlobalWindComponent>               GlobalWind;
         std::optional<CharacterControllerComponent>      CharacterController;
+        std::optional<ClothComponent>                    Cloth;
         std::optional<SpringBoneComponent>               SpringBone;
-        std::optional<SpringBoneColliderComponent>       SpringBoneCollider;
+        std::optional<MotionColliderComponent>           MotionCollider;
         std::optional<JointComponent>                    Joint;
     };
 

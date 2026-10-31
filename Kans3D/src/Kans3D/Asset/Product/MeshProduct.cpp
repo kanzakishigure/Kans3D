@@ -12,7 +12,7 @@ namespace Kans
     namespace
     {
         constexpr uint32_t kMagic        = 0x48534d4b; // KMSH, little endian
-        constexpr uint32_t kVersion      = 7;
+        constexpr uint32_t kVersion      = 8;
         constexpr size_t   kMaximumBytes = 512 * 1024 * 1024;
         static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559,
                       "Mesh Products require IEEE 754 binary32");
@@ -122,7 +122,8 @@ namespace Kans
         bytes.reserve(size);
         Write(bytes, kMagic);
         Write(bytes,
-              mesh.HasSmoothNormals()                        ? kVersion :
+              !mesh.ImportedClothMaxDistance.empty()         ? kVersion :
+              mesh.HasSmoothNormals()                        ? 7u :
               !mesh.MorphTargets.empty()                     ? 6u :
               mesh.VertexFormat == MeshVertexFormat::Skinned ? 5u :
                                                                3u);
@@ -177,7 +178,7 @@ namespace Kans
                     WriteBounds(bytes, b);
             }
         }
-        if (!mesh.MorphTargets.empty() || mesh.HasSmoothNormals())
+        if (!mesh.MorphTargets.empty() || mesh.HasSmoothNormals() || !mesh.ImportedClothMaxDistance.empty())
         {
             Write(bytes, uint32_t(mesh.MorphTargets.size()));
             for (const auto& t : mesh.MorphTargets)
@@ -195,11 +196,16 @@ namespace Kans
                 }
             }
         }
-        if (mesh.HasSmoothNormals())
+        if (mesh.HasSmoothNormals() || !mesh.ImportedClothMaxDistance.empty())
         {
             Write(bytes, uint32_t(mesh.SmoothNormals.size()));
             for (const auto& n : mesh.SmoothNormals)
                 WriteFloats(bytes, n);
+        }
+        if (!mesh.ImportedClothMaxDistance.empty())
+        {
+            Write(bytes, uint32_t(mesh.ImportedClothMaxDistance.size()));
+            WriteFloats(bytes, mesh.ImportedClothMaxDistance);
         }
         return bytes;
     }
@@ -214,7 +220,7 @@ namespace Kans
             if (reader.Read<uint32_t>() != kMagic)
                 return AssetError {AssetErrorCode::InvalidData, "Invalid Mesh Product magic"};
             const auto version = reader.Read<uint32_t>();
-            if (version != kVersion && version != 3 && version != 5 && version != 6)
+            if (version != kVersion && version != 3 && version != 5 && version != 6 && version != 7)
                 return AssetError {AssetErrorCode::UnsupportedVersion, "Unsupported Mesh Product version"};
             if (reader.Read<uint32_t>() != static_cast<uint32_t>(AssetType::StaticMesh))
                 return AssetError {AssetErrorCode::InvalidData, "Invalid Mesh Product type"};
@@ -316,6 +322,14 @@ namespace Kans
                 mesh.SmoothNormals.resize(count);
                 for (auto& n : mesh.SmoothNormals)
                     reader.Floats(n);
+            }
+            if (version >= 8)
+            {
+                const auto count = reader.Read<uint32_t>();
+                if (count != vertices || count * 4ull > reader.Remaining)
+                    throw std::runtime_error("Invalid cloth distance stream count");
+                mesh.ImportedClothMaxDistance.resize(count);
+                reader.Floats(mesh.ImportedClothMaxDistance);
             }
             if (reader.Remaining)
                 return AssetError {AssetErrorCode::InvalidData, "Trailing Mesh Product bytes"};

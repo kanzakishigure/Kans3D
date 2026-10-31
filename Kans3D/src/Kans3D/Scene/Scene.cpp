@@ -1,4 +1,5 @@
 #include "kspch.h"
+#include "Kans3D/Physics/ClothSolver.h"
 
 #include <set>
 #include <glm/glm.hpp>
@@ -72,9 +73,13 @@ namespace Kans
         m_Registry.on_update<SpringBoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_construct<SpringBoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_destroy<SpringBoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
-        m_Registry.on_update<SpringBoneColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
-        m_Registry.on_construct<SpringBoneColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
-        m_Registry.on_destroy<SpringBoneColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_destroy<ClothComponent>().connect<&Scene::OnClothRemoved>(this);
+        m_Registry.on_update<ClothComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_construct<ClothComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_destroy<ClothComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_update<MotionColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_construct<MotionColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_destroy<MotionColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_update<TransformComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
         m_Registry.on_update<RelationshipComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
 
@@ -239,11 +244,15 @@ namespace Kans
         for (auto handle : m_Registry.view<PrefabInstanceComponent>())
             for (const auto& [key, change] : m_Registry.get<PrefabInstanceComponent>(handle).Overrides)
             {
+                if (change.Cloth)
+                    add(change.Cloth->Asset);
                 if (change.UIScreen)
                     add(change.UIScreen->UI);
                 if (change.UIWorld)
                     add(change.UIWorld->UI);
             }
+        for (auto h : m_Registry.view<ClothComponent>())
+            add(m_Registry.get<ClothComponent>(h).Asset);
         for (auto handle : m_Registry.view<UIScreenComponent>())
             add(m_Registry.get<UIScreenComponent>(handle).UI);
         for (auto handle : m_Registry.view<UIWorldComponent>())
@@ -377,6 +386,10 @@ namespace Kans
             if (found != sources.end())
                 return found->second;
         }
+        // Explicit code binding retains ready CPU metadata too (procedural tools need no asset-manager round trip).
+        if (const auto* cloth = GetClothState(entity);
+            cloth && cloth->Mesh && cloth->Source && cloth->Source->GetData().Mesh == id)
+            return cloth->Mesh;
         const auto previous = m_RenderWorld->m_Records.find(entt::entity(entity));
         if (previous != m_RenderWorld->m_Records.end() && previous->second.Mesh &&
             previous->second.Mesh->Mesh.Mesh == id)
@@ -393,6 +406,7 @@ namespace Kans
         UpdateTimelines(m_PhysicsPaused && !m_PhysicsSingleStep ? 0 : double(ts));
         UpdatePhysics(double(ts));
         UpdateSpringBones(double(ts));
+        UpdateCloth(double(ts));
 
         // update ScripteableEntity
         {
@@ -761,7 +775,8 @@ namespace Kans
         CopyComponent<CharacterControllerComponent>(source, copy);
         CopyComponent<JointComponent>(source, copy);
         CopyComponent<SpringBoneComponent>(source, copy);
-        CopyComponent<SpringBoneColliderComponent>(source, copy);
+        CopyComponent<ClothComponent>(source, copy);
+        CopyComponent<MotionColliderComponent>(source, copy);
         CopyComponent<GlobalWindComponent>(source, copy);
 
         CopyComponent<AudioSourceComponent>(source, copy);
@@ -867,12 +882,18 @@ namespace Kans
         for (const auto& [source, target] : remap)
         {
             auto e = GetEntityByUUID(target);
+            if (e.HasComponent<ClothComponent>())
+                e.PatchComponent<ClothComponent>([&](auto& c) { c.RemapEntities(springRemap); });
             if (e.HasComponent<SpringBoneComponent>())
                 e.PatchComponent<SpringBoneComponent>([&](auto& c) { c.RemapEntities(springRemap); });
             if (e.HasComponent<PrefabInstanceComponent>())
                 for (auto& [key, change] : e.GetComponent<PrefabInstanceComponent>().Overrides)
+                {
+                    if (change.Cloth)
+                        change.Cloth->RemapEntities(springRemap);
                     if (change.SpringBone)
                         change.SpringBone->RemapEntities(springRemap);
+                }
         }
         return copy;
     }
@@ -900,7 +921,8 @@ namespace Kans
         StartAudio();
         if (m_RuntimeOptions.RunScripts && ScriptEngine::IsInitialized())
             ScriptEngine::OnRuntimeStart(this);
-        const bool springBones = !m_Registry.view<SpringBoneComponent>().empty();
+        const bool springBones =
+            !m_Registry.view<SpringBoneComponent>().empty() || !m_Registry.view<ClothComponent>().empty();
         if (springBones)
             UpdateAnimations(0);
         std::vector<UUID> timelines;
@@ -914,7 +936,10 @@ namespace Kans
                 player->Play();
             }
         if (springBones)
+        {
             UpdateSpringBones(0);
+            UpdateCloth(0);
+        }
     }
 
     void Scene::DestroyNativeScriptInstances()
@@ -948,7 +973,7 @@ namespace Kans
         DestroyNativeScriptInstances();
         if (ScriptEngine::GetSceneContext() == this)
             ScriptEngine::OnRuntimeEnd();
-        if (!m_Registry.view<SpringBoneComponent>().empty())
+        if (!m_Registry.view<SpringBoneComponent>().empty() || !m_Registry.view<ClothComponent>().empty())
         {
             const bool preview = m_SpringBonePreview;
             SetSpringBonePreviewEnabled(false);
@@ -999,7 +1024,10 @@ namespace Kans
     void Scene::OnComponentAdd<SpringBoneComponent>(Entity, SpringBoneComponent&)
     {}
     template<>
-    void Scene::OnComponentAdd<SpringBoneColliderComponent>(Entity, SpringBoneColliderComponent&)
+    void Scene::OnComponentAdd<ClothComponent>(Entity, ClothComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<MotionColliderComponent>(Entity, MotionColliderComponent&)
     {}
     template<>
     void Scene::OnComponentAdd<JointComponent>(Entity, JointComponent&)

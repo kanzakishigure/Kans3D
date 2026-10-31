@@ -8,8 +8,8 @@ namespace Kans::Physics
         glm::vec3   Normal {0, 1, 0};
         ShapeOffset Offset;
     };
-    using MotionColliderShape = std::variant<Sphere, Capsule, Plane>;
-    // Shared point/sphere projection for bone and future mesh solvers. Plane's Inside is ignored.
+    using MotionColliderShape = std::variant<Sphere, Capsule, Plane, Box>;
+    // Shared point/sphere projection for bone and future mesh solvers. Plane and box Inside is ignored.
     glm::vec3 ProjectMotionParticle(const MotionColliderShape&,
                                     const glm::mat4& world,
                                     bool             inside,

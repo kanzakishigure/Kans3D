@@ -84,6 +84,8 @@ namespace Kans
         {
             AnimationNameMapping           Mapping;
             float                          Scale = 1;
+            int                            ClothColorSet = -1, ClothColorChannel = 0;
+            float                          ClothColorScale = 1;
             SmoothNormalMode               SmoothNormals = SmoothNormalMode::Off;
             std::optional<bool>            RecomputeMorphNormals;
             std::map<std::string, AssetID> Materials;
@@ -160,6 +162,33 @@ namespace Kans
                         return AssetError {AssetErrorCode::InvalidArgument, "Empty animation mapping name"};
                     if (!value.empty())
                         parsed.Mapping.Names[key.substr(14)] = value;
+                    continue;
+                }
+                if (key == "cloth.max_distance.color_set")
+                {
+                    char*      end = nullptr;
+                    const auto n   = std::strtol(value.c_str(), &end, 10);
+                    if (value.empty() || *end || n < -1 || n > 7)
+                        return AssetError {AssetErrorCode::InvalidArgument,
+                                           "Cloth colour set must be -1 (off) or 0..7"};
+                    parsed.ClothColorSet = int(n);
+                    continue;
+                }
+                if (key == "cloth.max_distance.channel")
+                {
+                    const auto channel = std::string("RGBA").find(value);
+                    if (value.size() != 1 || channel == std::string::npos)
+                        return AssetError {AssetErrorCode::InvalidArgument, "Cloth colour channel must be R/G/B/A"};
+                    parsed.ClothColorChannel = int(channel);
+                    continue;
+                }
+                if (key == "cloth.max_distance.scale")
+                {
+                    char*       end = nullptr;
+                    const float n   = std::strtof(value.c_str(), &end);
+                    if (value.empty() || *end || !std::isfinite(n) || n < 0)
+                        return AssetError {AssetErrorCode::InvalidArgument, "Invalid cloth distance scale"};
+                    parsed.ClothColorScale = n;
                     continue;
                 }
                 if (key == "mesh.smooth_normals")
@@ -681,6 +710,20 @@ namespace Kans
                         }
                         BuildMorphBounds(*found);
                     }
+                if (options.ClothColorSet >= 0)
+                {
+                    if (size_t(options.ClothColorSet) >= input.ColorSets.size() ||
+                        input.ColorSets[options.ClothColorSet].size() != vertices->size())
+                        return AssetError {AssetErrorCode::InvalidData,
+                                           "Cloth Max Distance colour set is missing on mesh " + input.Name};
+                    for (const auto& color : input.ColorSets[options.ClothColorSet])
+                    {
+                        const float distance = color[options.ClothColorChannel] * options.ClothColorScale;
+                        if (!std::isfinite(distance) || distance < 0)
+                            return AssetError {AssetErrorCode::InvalidData, "Invalid imported cloth Max Distance"};
+                        data.ImportedClothMaxDistance.push_back(distance);
+                    }
+                }
                 data.Vertices.insert(data.Vertices.end(), vertices->begin(), vertices->end());
                 if (std::get<ModelSettings>(scale).SmoothNormals == SmoothNormalMode::Source)
                     data.SmoothNormals.insert(

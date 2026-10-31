@@ -38,6 +38,21 @@ namespace Kans
         s.push_back(Setting("scale", T::Float, "1", "Scale", "Mesh", "Positive uniform model scale."));
         s.back().Min  = 0;
         s.back().Step = .1;
+        s.push_back(Setting("cloth.max_distance.color_set",
+                            T::Int,
+                            "-1",
+                            "Max Distance colour set",
+                            "Cloth",
+                            "-1 disables import; 0..7 selects a vertex colour set."));
+        s.push_back(Setting("cloth.max_distance.channel",
+                            T::Enum,
+                            "R",
+                            "Max Distance channel",
+                            "Cloth",
+                            "Colour channel containing the baked weight.",
+                            {{"R", "R", ""}, {"G", "G", ""}, {"B", "B", ""}, {"A", "A", ""}}));
+        s.push_back(Setting(
+            "cloth.max_distance.scale", T::Float, "1", "Max Distance scale", "Cloth", "Metres per colour unit."));
         s.push_back(Setting("mesh.smooth_normals",
                             T::Enum,
                             "false",

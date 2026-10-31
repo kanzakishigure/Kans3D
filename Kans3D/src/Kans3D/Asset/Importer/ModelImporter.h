@@ -12,7 +12,7 @@ namespace Kans
         std::variant<std::monostate, AssetError>
         ValidateSettings(const std::map<std::string, std::string>&) const override;
         std::variant<SourceInventory, AssetError> Inspect(const ImportContext&) const override;
-        uint32_t                                  GetVersion() const override { return 21; }
+        uint32_t                                  GetVersion() const override { return 22; }
         bool     RequiresProductBytes() const override { return true; }
         [[nodiscard]] std::variant<ImportInputs, AssetError>
         DiscoverInputs(const ImportContext& context) const override;

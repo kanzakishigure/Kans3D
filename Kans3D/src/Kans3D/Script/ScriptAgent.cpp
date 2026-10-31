@@ -64,8 +64,10 @@ namespace Kans
                         return entity.HasComponent<JointComponent>();
                     case Scripting::ComponentType::SpringBoneComponent:
                         return entity.HasComponent<SpringBoneComponent>();
-                    case Scripting::ComponentType::SpringBoneColliderComponent:
-                        return entity.HasComponent<SpringBoneColliderComponent>();
+                    case Scripting::ComponentType::ClothComponent:
+                        return entity.HasComponent<ClothComponent>();
+                    case Scripting::ComponentType::MotionColliderComponent:
+                        return entity.HasComponent<MotionColliderComponent>();
                     case Scripting::ComponentType::GlobalWindComponent:
                         return entity.HasComponent<GlobalWindComponent>();
                     case Scripting::ComponentType::TimelinePlayerComponent:
