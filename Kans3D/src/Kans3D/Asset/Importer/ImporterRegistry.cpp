@@ -14,6 +14,7 @@
 #include "TextureImporter.h"
 #include "TimelineImporter.h"
 #include "UIImporter.h"
+#include "VfxImporter.h"
 
 namespace Kans
 {
@@ -114,6 +115,7 @@ namespace Kans
                 {"ShaderImporter", {{".vert", ".frag", ".comp", ".shaderprog"}, std::make_shared<ShaderImporter>()}},
                 {"MaterialImporter", {{".material"}, std::make_shared<MaterialImporter>()}},
                 {"ActionImporter", {{".action"}, std::make_shared<ActionImporter>()}},
+                {"VfxImporter", {{".vfxsystem", ".vfxemitter", ".vfxmodule"}, std::make_shared<VfxImporter>()}},
                 {"RagdollImporter", {{".ragdoll"}, std::make_shared<RagdollImporter>()}},
                 {"ClothImporter", {{".cloth"}, std::make_shared<ClothImporter>()}},
                 {"PhysicsMaterialImporter", {{".physmat"}, std::make_shared<PhysicsMaterialImporter>()}},

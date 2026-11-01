@@ -48,18 +48,27 @@ namespace Kans
 
     enum class MaterialAlphaMode : uint32_t
     {
-        Opaque = 0,
-        Mask   = 1,
-        Blend  = 2,
+        Opaque   = 0,
+        Mask     = 1,
+        Blend    = 2,
         Dithered = 3,
+        // 4 and 5 are the published shader-only alpha-to-coverage modes.
+        Additive      = 6,
+        Premultiplied = 7,
     };
+
+    inline bool IsTransparentMaterial(MaterialAlphaMode mode)
+    {
+        return mode == MaterialAlphaMode::Blend || mode == MaterialAlphaMode::Additive ||
+               mode == MaterialAlphaMode::Premultiplied;
+    }
 
     // Render state belongs to the material, independently of its Shader.
     struct MaterialRenderState
     {
-        MaterialAlphaMode AlphaMode   = MaterialAlphaMode::Opaque;
-        float             AlphaCutoff = 0.5f;
-        bool              DoubleSided = false;
+        MaterialAlphaMode AlphaMode      = MaterialAlphaMode::Opaque;
+        float             AlphaCutoff    = 0.5f;
+        bool              DoubleSided    = false;
         bool              ReceiveShadows = true;
     };
 
@@ -121,7 +130,7 @@ namespace Kans
 
     struct ModelData
     {
-        std::vector<ModelNodeData> Nodes;
+        std::vector<ModelNodeData>        Nodes;
         std::vector<ModelSectionIdentity> SectionIdentities;
         std::vector<PrefabNodeData>       Entities;
         AssetID                           Skeleton;
@@ -140,7 +149,7 @@ namespace Kans
         // Compatibility view for the unchanged editor Parts list: old part IDs.
         const ModelData& GetData() const { return m_EditorData; }
         // Canonical product: nodes reference shared meshes, identities name sections.
-        const ModelData& GetMeshData() const { return m_Data; }
+        const ModelData&                   GetMeshData() const { return m_Data; }
         const std::vector<PrefabNodeData>& GetEntities() const { return m_Data.Entities; }
 
     private:

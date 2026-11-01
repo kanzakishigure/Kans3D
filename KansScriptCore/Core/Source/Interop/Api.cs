@@ -67,7 +67,7 @@ namespace Kans.Interop
     [StructLayout(LayoutKind.Sequential)]
     public unsafe struct NativeApi
     {
-        public const uint ApiVersion = 10;
+        public const uint ApiVersion = 11;
         public uint Version, Size;
         public delegate* unmanaged[Cdecl]<int, byte*, void> Log;
         public delegate* unmanaged[Cdecl]<ulong, uint, int> HasComponent;
@@ -91,6 +91,7 @@ namespace Kans.Interop
         internal delegate* unmanaged[Cdecl]<int, TimelineEventData*, int, byte*, int, int> ReadTimelineEvent;
         internal delegate* unmanaged[Cdecl]<ulong, int, int, PropertyValue*, Vector3*, byte*, int> PhysicsCommand;
         internal delegate* unmanaged[Cdecl]<PhysicsQueryData*, RaycastHit*, int, int, int> PhysicsQuery;
+        internal delegate* unmanaged[Cdecl]<ulong, int, int, byte*, PropertyValue*, PropertyValue*, int> VfxCommand;
     }
     [StructLayout(LayoutKind.Sequential)]
     public unsafe struct ManagedApi

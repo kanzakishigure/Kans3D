@@ -22,8 +22,8 @@ namespace Kans
             return true;
         }
         using namespace RenderHardware;
-        auto       device      = cache.GetDevice();
-        const bool skinned     = bool(mesh.Skin && data.Palette);
+        auto       device         = cache.GetDevice();
+        const bool skinned        = bool(mesh.Skin && data.Palette);
         const bool smoothNormals  = extraPass ? extraPass->UsesSmoothNormals : shader.UsesSmoothNormals;
         const bool smoothStream   = smoothNormals && bool(mesh.SmoothNormals);
         const bool smoothFallback = smoothNormals && !smoothStream;
@@ -31,7 +31,7 @@ namespace Kans
             return false;
         const bool coverage    = data.Samples > 1 && (data.Render.AlphaMode == MaterialAlphaMode::Mask ||
                                                       data.Render.AlphaMode == MaterialAlphaMode::Dithered);
-        const bool transparent = data.Render.AlphaMode == MaterialAlphaMode::Blend;
+        const bool transparent = IsTransparentMaterial(data.Render.AlphaMode);
         // Include attachment formats as well as count: display and HDR share a shader cache.
         uint32_t key = (uint32_t(skinned) << 7) | uint32_t(transparent) | (uint32_t(data.Render.DoubleSided) << 1) |
                        (uint32_t(data.Wireframe) << 2) | (uint32_t(data.WriteStencil) << 3) |
@@ -45,6 +45,9 @@ namespace Kans
         for (size_t i = 0; i < data.ColorFormats.size(); ++i)
             key |= uint32_t(data.ColorFormats[i]) << (12 + i * 6);
         key |= uint32_t(smoothStream) << 31;
+        key |= uint32_t(data.Render.AlphaMode == MaterialAlphaMode::Additive) << 28;
+        key |= uint32_t(data.Render.AlphaMode == MaterialAlphaMode::Premultiplied) << 29;
+        key |= uint32_t(bool(data.VertexSource)) << 30;
         Handle<Pipeline> shadowPipeline;
         auto&            pipeline = (data.ShadowDepth || data.CustomDepth) ? shadowPipeline :
                                     extraPass                              ? extraPass->Pipelines[key] :
@@ -54,16 +57,21 @@ namespace Kans
             PipelineDesc desc;
             desc.Samples         = data.Samples;
             desc.AlphaToCoverage = coverage;
-            desc.Program = data.DepthProgram ? data.DepthProgram : extraPass ? extraPass->Program : shader.Program;
+            desc.Program         = data.VertexSource ? data.VertexSource :
+                                   data.DepthProgram ? data.DepthProgram :
+                                   extraPass         ? extraPass->Program :
+                                                       shader.Program;
             if (skinned && !data.DepthProgram)
                 desc.Program = smoothFallback ? (extraPass ? extraPass->SkinnedNormalFallbackProgram :
                                                              shader.SkinnedNormalFallbackProgram) :
                                                 (extraPass ? extraPass->SkinnedProgram : shader.SkinnedProgram);
-            desc.GroupLayouts                 = {shader.EngineLayout, shader.MaterialLayout};
+            desc.GroupLayouts = {shader.EngineLayout, shader.MaterialLayout};
             if (skinned)
                 desc.GroupLayouts.push_back(shader.SkinLayout);
-            desc.VertexBindings               = mesh.VertexBindings;
-            desc.Attributes                   = mesh.Attributes;
+            if (data.VertexLayout)
+                desc.GroupLayouts.push_back(data.VertexLayout);
+            desc.VertexBindings = mesh.VertexBindings;
+            desc.Attributes     = mesh.Attributes;
             if (!skinned && mesh.Skin)
             {
                 desc.VertexBindings.resize(1);
@@ -82,6 +90,11 @@ namespace Kans
                 else
                     // Alias the existing normal: no allocation, upload, or retained CPU copy.
                     desc.Attributes.push_back({7, 0, 12, VertexFormat::Float3});
+            }
+            if (data.VertexSource)
+            {
+                desc.VertexBindings.clear();
+                desc.Attributes.clear();
             }
             desc.ColorFormats                 = data.ColorFormats;
             desc.HasDepthStencil              = true;
@@ -103,6 +116,10 @@ namespace Kans
             blend.DestinationColor = BlendFactor::OneMinusSourceAlpha;
             blend.SourceAlpha      = BlendFactor::Zero;
             blend.DestinationAlpha = BlendFactor::One;
+            if (data.Render.AlphaMode == MaterialAlphaMode::Additive)
+                blend.DestinationColor = BlendFactor::One;
+            if (data.Render.AlphaMode == MaterialAlphaMode::Premultiplied)
+                blend.SourceColor = BlendFactor::One;
             if (extraPass)
             {
                 const auto& state              = extraPass->State;
@@ -178,7 +195,7 @@ namespace Kans
             }
             engine.Entries.push_back(std::move(entry));
         }
-        bool complete = true;
+        bool        complete = true;
         const auto* instance =
             data.MaterialGroup ? &bindings : cache.GetInstanceMaterialBindings(bindings, data.Parameters);
         auto material = data.MaterialGroup ? data.MaterialGroup : cache.GetMaterialGroup(shader, *instance, &complete);
@@ -187,6 +204,14 @@ namespace Kans
         commands.BindPipeline(pipeline);
         commands.BindGroup(device->CreateBindGroup(engine));
         commands.BindGroup(material);
+        if (data.VertexSource)
+        {
+            commands.BindGroup(data.VertexGroup);
+            commands.DrawIndirect(data.IndirectArguments);
+            if (recorded)
+                *recorded = true;
+            return complete;
+        }
         if (skinned)
         {
             BindSkinning(

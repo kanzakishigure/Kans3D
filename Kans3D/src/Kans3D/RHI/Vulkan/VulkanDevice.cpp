@@ -33,6 +33,7 @@ namespace Kans::RenderHardware
             std::vector<VkDescriptorPool>                         DescriptorPools;
             std::unordered_map<std::string, std::weak_ptr<VKSet>> DescriptorCache;
             uint64_t        PipelineCreations = 0, DescriptorAllocations = 0, GroupCreationNanoseconds = 0;
+            uint64_t        WaitIdleCalls = 0;
             VulkanTestProbes::BufferWriteObserver BufferWrites;
             VulkanTestProbes::BarrierObserver     Barriers;
             DeviceStats     Stats;
@@ -2049,6 +2050,7 @@ namespace Kans::RenderHardware
             void WaitIdle() override
             {
                 Owner->CheckThread();
+                ++Owner->WaitIdleCalls;
                 Check(vkDeviceWaitIdle(Owner->Native.Logical));
                 Owner->Retire();
             }
@@ -2338,7 +2340,8 @@ namespace Kans::RenderHardware::VulkanTestProbes
                 state.PipelineCreations,
                 state.DescriptorAllocations,
                 state.DescriptorPools.size(),
-                state.GroupCreationNanoseconds};
+                state.GroupCreationNanoseconds,
+                state.WaitIdleCalls};
     }
     void EmitValidationError(const Device& device, const char* message)
     {

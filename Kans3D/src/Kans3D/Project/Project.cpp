@@ -444,6 +444,7 @@ namespace Kans
                 Stack.pop_back();
             }
         } guard {session.Active, id, session.Stack};
+        inputs.SourceInputs.insert(found.BuiltinSourceFiles.begin(), found.BuiltinSourceFiles.end());
         for (const auto& input : found.SourceFiles)
         {
             auto source = FindSourceByFile(input);

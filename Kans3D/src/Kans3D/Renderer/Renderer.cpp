@@ -6,6 +6,7 @@
 #include <glm/gtc/packing.hpp>
 #include "Kans3D/Asset/Importer/TextureSource.h"
 #include "Kans3D/RHI/PipelineKey.h"
+#include "Features/ParticleRenderFeature.h"
 #include "RenderFeature.h"
 #include "RenderFrame.h"
 #include "RenderPipeline.h"
@@ -613,6 +614,8 @@ namespace Kans
         std::shared_ptr<GraphCapture> capture;
         try
         {
+            ParticleRenderFeature particles;
+            particles.Prepare(view, frame);
             if (view.Features)
                 view.Features->Prepare(view, frame);
             frame.PrepareDrawLists();

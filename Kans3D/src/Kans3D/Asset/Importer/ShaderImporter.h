@@ -13,7 +13,7 @@ namespace Kans
     {
     public:
         // Dithered/MSAA alpha modes and per-draw pass dispatch.
-        uint32_t GetVersion() const override { return 16; }
+        uint32_t GetVersion() const override { return 17; }
         [[nodiscard]] std::variant<ImportInputs, AssetError>
         DiscoverInputs(const ImportContext& context) const override;
         [[nodiscard]] std::variant<ImportResult, AssetError> Import(const ImportContext& context) const override;

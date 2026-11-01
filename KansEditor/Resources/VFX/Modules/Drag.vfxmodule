@@ -1,0 +1,115 @@
+Version: 1
+AssetID: 8f387eeb2a327e78:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: Drag
+Inputs:
+- Name: Module.Drag
+  Type: float
+  Default:
+    Type: float
+    Value: 0.1
+Nodes:
+- Guid: 5e8db540-7717-5199-9a91-e28339ba12b0
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Drag
+- Guid: c73e3747-2676-58c9-a297-6298a989a0ff
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: a9baac5b-ae8c-5384-b897-44bae727b71f
+  Op: Make
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 77cd8079-6ed7-58ff-bfe9-3c45d886f3ec
+  Op: Mul
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  - Name: B
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: fbdd953d-5db2-56c2-96e9-68f9f4c7e0d6
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.PhysicsForce
+- Guid: 2b230609-c15c-54fe-b053-277873aaad63
+  Op: Sub
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  - Name: B
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: a88a23b1-56a1-5274-978d-c4a3d144e697
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.PhysicsForce
+Links:
+- From: 5e8db540-7717-5199-9a91-e28339ba12b0
+  Output: Value
+  To: a9baac5b-ae8c-5384-b897-44bae727b71f
+  Input: A
+- From: 5e8db540-7717-5199-9a91-e28339ba12b0
+  Output: Value
+  To: a9baac5b-ae8c-5384-b897-44bae727b71f
+  Input: B
+- From: 5e8db540-7717-5199-9a91-e28339ba12b0
+  Output: Value
+  To: a9baac5b-ae8c-5384-b897-44bae727b71f
+  Input: C
+- From: c73e3747-2676-58c9-a297-6298a989a0ff
+  Output: Value
+  To: 77cd8079-6ed7-58ff-bfe9-3c45d886f3ec
+  Input: A
+- From: a9baac5b-ae8c-5384-b897-44bae727b71f
+  Output: Value
+  To: 77cd8079-6ed7-58ff-bfe9-3c45d886f3ec
+  Input: B
+- From: fbdd953d-5db2-56c2-96e9-68f9f4c7e0d6
+  Output: Value
+  To: 2b230609-c15c-54fe-b053-277873aaad63
+  Input: A
+- From: 77cd8079-6ed7-58ff-bfe9-3c45d886f3ec
+  Output: Value
+  To: 2b230609-c15c-54fe-b053-277873aaad63
+  Input: B
+- From: 2b230609-c15c-54fe-b053-277873aaad63
+  Output: Value
+  To: a88a23b1-56a1-5274-978d-c4a3d144e697
+  Input: A

@@ -1,0 +1,90 @@
+Version: 1
+AssetID: 9b1416630f7f29ba:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: SpriteRotationRate
+Inputs:
+- Name: Module.Rate
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+Nodes:
+- Guid: ce15b574-88ad-5960-9783-7a59a304ff91
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Rate
+- Guid: 42a5a112-9b19-59ff-a717-874a552a300d
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.SpriteRotation
+- Guid: 008e5cce-4c76-5d87-9a8a-ca9643143400
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: f76630f2-df6e-596e-8aa3-ffb43719618b
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: ce8717e9-fbda-5853-96d8-916158198c95
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: c31ebf92-fa8a-5a71-948f-7c9c2003e086
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.SpriteRotation
+Links:
+- From: ce15b574-88ad-5960-9783-7a59a304ff91
+  Output: Value
+  To: f76630f2-df6e-596e-8aa3-ffb43719618b
+  Input: A
+- From: 008e5cce-4c76-5d87-9a8a-ca9643143400
+  Output: Value
+  To: f76630f2-df6e-596e-8aa3-ffb43719618b
+  Input: B
+- From: 42a5a112-9b19-59ff-a717-874a552a300d
+  Output: Value
+  To: ce8717e9-fbda-5853-96d8-916158198c95
+  Input: A
+- From: f76630f2-df6e-596e-8aa3-ffb43719618b
+  Output: Value
+  To: ce8717e9-fbda-5853-96d8-916158198c95
+  Input: B
+- From: ce8717e9-fbda-5853-96d8-916158198c95
+  Output: Value
+  To: c31ebf92-fa8a-5a71-948f-7c9c2003e086
+  Input: A

@@ -20,6 +20,13 @@ namespace Kans
 
     template<typename T>
     class Loader;
+    class VfxSystemAsset;
+    template<>
+    class Loader<VfxSystemAsset>
+    {
+    public:
+        std::variant<Ref<VfxSystemAsset>, AssetError> Load(const AssetLoadContext&) const;
+    };
     class RagdollAsset;
     template<>
     class Loader<RagdollAsset>

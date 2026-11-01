@@ -1,0 +1,18 @@
+Version: 1
+AssetID: a634fcd47b2ee6c6:0000000000000001
+Usage: DynamicInput
+AllowedStages: 63
+Category: Built-in
+Description: RandomUnitVector
+Inputs: []
+Nodes:
+- Guid: 0ae11278-9c20-5f71-8aeb-180a01c99c93
+  Op: RandomUnitVector
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+Links: []
+ResultNode: 0ae11278-9c20-5f71-8aeb-180a01c99c93
+ResultPin: Value

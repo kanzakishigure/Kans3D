@@ -9,7 +9,8 @@
 
 namespace Kans::Scripting
 {
-    constexpr uint32_t ApiVersion = 10;
+    // ABI 11 appends VfxCommand; native and managed tables must change together.
+    constexpr uint32_t ApiVersion = 11;
     enum class ComponentType : uint32_t
     {
 #define KANS_COMPONENT(id, name) name = id,
@@ -128,6 +129,7 @@ namespace Kans::Scripting
         int32_t(KANS_SCRIPT_CALL* ReadTimelineEvent)(int32_t, TimelineEventData*, int32_t, char*, int32_t)   = nullptr;
         int32_t(KANS_SCRIPT_CALL* PhysicsCommand)(uint64_t, int32_t, int32_t, Value*, Vector3*, const char*) = nullptr;
         int32_t(KANS_SCRIPT_CALL* PhysicsQuery)(const PhysicsQueryData*, PhysicsHitData*, int32_t, int32_t)  = nullptr;
+        int32_t(KANS_SCRIPT_CALL* VfxCommand)(uint64_t, int32_t, int32_t, const char*, Value*, const Value*) = nullptr;
     };
     struct ManagedApi
     {
@@ -154,6 +156,6 @@ namespace Kans::Scripting
     static_assert(sizeof(Vector3) == 12);
     static_assert(sizeof(Value) == 24);
     static_assert(sizeof(UIEventData) == 64);
-    static_assert(sizeof(NativeApi) == 8 + 22 * sizeof(void*));
+    static_assert(sizeof(NativeApi) == 8 + 23 * sizeof(void*));
     static_assert(sizeof(ManagedApi) == 8 + 17 * sizeof(void*));
 } // namespace Kans::Scripting

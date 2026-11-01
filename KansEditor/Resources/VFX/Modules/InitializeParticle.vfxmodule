@@ -1,0 +1,150 @@
+Version: 1
+AssetID: 82f92b6d396e781e:0000000000000001
+Usage: Module
+AllowedStages: 16
+Category: Built-in
+Description: InitializeParticle
+Inputs:
+- Name: Module.Lifetime
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+- Name: Module.Color
+  Type: color
+  Default:
+    Type: color
+    Value:
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+- Name: Module.SpriteSize
+  Type: vec2
+  Default:
+    Type: vec2
+    Value:
+    - 1.0
+    - 1.0
+- Name: Module.Mass
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+- Name: Module.SpriteRotation
+  Type: float
+  Default:
+    Type: float
+    Value: 0.0
+Nodes:
+- Guid: 0c355750-71ce-58ae-b59a-c6ddfd1a5f08
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Lifetime
+- Guid: 0e34544e-0198-560c-a1ee-3625198e384d
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Lifetime
+- Guid: f72127f8-a3f7-5315-b885-38e4ab071ae0
+  Op: Input
+  Type: color
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Module.Color
+- Guid: 8e7e6c5e-6477-5f01-9b0f-fae19a3eeacc
+  Op: Set
+  Type: color
+  Inputs:
+  - Name: A
+    Type: color
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Particles.Color
+- Guid: e1f7bcc3-75aa-5a70-b678-a4bc7e6c4b28
+  Op: Input
+  Type: vec2
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec2
+  Parameter: Module.SpriteSize
+- Guid: 0b3d0747-6dbf-526e-a70d-bb566615b327
+  Op: Set
+  Type: vec2
+  Inputs:
+  - Name: A
+    Type: vec2
+  Outputs:
+  - Name: Value
+    Type: vec2
+  Parameter: Particles.SpriteSize
+- Guid: 2a003274-8ea1-5bb2-aed2-9a36e89ae7d8
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Mass
+- Guid: 281ebf82-2925-5ad9-a76b-08162ba796a5
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Mass
+- Guid: b2a668b9-4060-5e50-a9ad-2840ed2c1a15
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.SpriteRotation
+- Guid: 9e6e7dcb-6b81-55de-b42b-e5050a717a38
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.SpriteRotation
+Links:
+- From: 0c355750-71ce-58ae-b59a-c6ddfd1a5f08
+  Output: Value
+  To: 0e34544e-0198-560c-a1ee-3625198e384d
+  Input: A
+- From: f72127f8-a3f7-5315-b885-38e4ab071ae0
+  Output: Value
+  To: 8e7e6c5e-6477-5f01-9b0f-fae19a3eeacc
+  Input: A
+- From: e1f7bcc3-75aa-5a70-b678-a4bc7e6c4b28
+  Output: Value
+  To: 0b3d0747-6dbf-526e-a70d-bb566615b327
+  Input: A
+- From: 2a003274-8ea1-5bb2-aed2-9a36e89ae7d8
+  Output: Value
+  To: 281ebf82-2925-5ad9-a76b-08162ba796a5
+  Input: A
+- From: b2a668b9-4060-5e50-a9ad-2840ed2c1a15
+  Output: Value
+  To: 9e6e7dcb-6b81-55de-b42b-e5050a717a38
+  Input: A

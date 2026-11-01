@@ -32,7 +32,7 @@
 #include "Kans3D/Scene/ScriptableEntity.h"
 
 //------渲染效果---------------
-#include "Kans3D/Physics/ParticleSystem.h"
+#include "Kans3D/VFX/VfxWorld.h"
 //------辅助工具---------------
 #include "Kans3D/Debug/Instrumentor.h"
 //------程序入口点--------------

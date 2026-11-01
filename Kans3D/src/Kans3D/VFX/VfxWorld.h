@@ -1,0 +1,103 @@
+#pragma once
+#include <memory>
+#include "Kans3D/Core/UUID.h"
+#include "ParticleSystemComponent.h"
+#include "VfxSystemAsset.h"
+namespace Kans
+{
+    class Scene;
+    class Entity;
+} // namespace Kans
+namespace Kans::Vfx
+{
+    class GpuEmitter;
+    struct GpuTick
+    {
+        ParameterMap     Parameters;
+        ExecutionContext Context;
+        uint32_t         SpawnCount = 0;
+    };
+    struct EmitterInstance
+    {
+        explicit EmitterInstance(const CompiledEmitter&);
+        ~EmitterInstance();
+        EmitterInstance(EmitterInstance&&) noexcept;
+        EmitterInstance&                operator=(EmitterInstance&&) noexcept;
+        const CompiledEmitter*          Compiled;
+        ParameterMap                    Parameters;
+        std::vector<std::vector<Value>> Attributes;
+        std::vector<uint32_t>           Alive, Free;
+        std::vector<GpuTick>            Pending;
+        std::unique_ptr<GpuEmitter>     GPU;
+        uint32_t                        NextID = 0, PendingBurst = 0, ParticleCount = 0;
+        uint64_t                        Dropped = 0, TotalSpawned = 0;
+        uint64_t                        SpawnRevision = 0, ReadbackSpawnRevision = 0;
+        bool                            HasReadback = false;
+        Bounds                          DynamicBounds;
+        float                           SpriteRadius     = 0;
+        bool                            HiddenByDistance = false;
+        Value                           Read(const std::string& name, uint32_t slot) const;
+        glm::vec3                       WorldPosition(uint32_t slot, const glm::mat4& owner) const;
+    };
+    class SystemInstance
+    {
+    public:
+        SystemInstance(Ref<const VfxSystemAsset>,
+                       const ParticleSystemComponent&,
+                       const glm::mat4& initialOwner = glm::mat4(1));
+        ~SystemInstance();
+        void     Activate(bool reset = true);
+        void     Deactivate() { m_Spawning = false; }
+        void     DeactivateImmediate();
+        void     Pause() { m_Paused = true; }
+        void     Resume() { m_Paused = false; }
+        bool     IsActive() const { return m_Spawning && !m_Paused && !IsComplete(); }
+        bool     IsComplete() const;
+        void     Emit(const std::string& emitter, uint32_t count);
+        void     Set(const std::string& name, const Value&);
+        Value    Get(const std::string& name, Type) const;
+        uint32_t ParticleCount() const;
+        void     Tick(float delta, const glm::mat4& owner = glm::mat4(1), glm::vec3 camera = {});
+        const Ref<const VfxSystemAsset>&    Asset() const { return m_Asset; }
+        std::vector<EmitterInstance>&       Emitters() { return m_Emitters; }
+        const std::vector<EmitterInstance>& Emitters() const { return m_Emitters; }
+        const glm::mat4&                    OwnerTransform() const { return m_Owner; }
+        std::optional<Bounds>               FixedBounds;
+        float                               TimeScale   = 1;
+        bool                                AutoDestroy = false;
+
+    private:
+        void                         Reset();
+        void                         Step(float, const glm::mat4&, glm::vec3);
+        Ref<const VfxSystemAsset>    m_Asset;
+        std::vector<EmitterInstance> m_Emitters;
+        ParameterMap                 m_Parameters;
+        uint32_t                     m_Seed, m_Entropy = 0;
+        double                       m_Time     = 0;
+        bool                         m_Spawning = false, m_Paused = false;
+        glm::mat4                    m_Owner {1};
+    };
+    class VfxWorld
+    {
+    public:
+        explicit VfxWorld(Scene& scene) : m_Scene(scene) {}
+        void            Tick(float delta, bool preview = false, glm::vec3 camera = {});
+        bool            Bind(Entity, Ref<const VfxSystemAsset>);
+        SystemInstance* Find(UUID);
+        const std::map<UUID, std::unique_ptr<SystemInstance>>& Instances() const { return m_Instances; }
+        void                                                   Remove(UUID);
+        void                                                   Clear();
+        void                                                   Reset(UUID);
+        void                                                   NotifyAssetChanged(AssetID);
+        void                                                   Start();
+        Entity                                                 Spawn(AssetID, glm::vec3, glm::quat, bool);
+
+    private:
+        Scene&                                          m_Scene;
+        std::map<UUID, std::unique_ptr<SystemInstance>> m_Instances;
+        std::map<UUID, ParticleSystemComponent>         m_Configurations;
+        std::map<UUID, Ref<const VfxSystemAsset>>       m_Overrides;
+        std::set<UUID>                                  m_AutoDestroy;
+        bool                                            m_Playing = false;
+    };
+} // namespace Kans::Vfx

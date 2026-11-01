@@ -83,8 +83,10 @@ namespace Kans
 
     bool IsValidMaterialRenderState(const MaterialRenderState& state)
     {
-        return uint32_t(state.AlphaMode) <= uint32_t(MaterialAlphaMode::Dithered) && std::isfinite(state.AlphaCutoff) &&
-               state.AlphaCutoff >= 0;
+        return (uint32_t(state.AlphaMode) <= uint32_t(MaterialAlphaMode::Dithered) ||
+                state.AlphaMode == MaterialAlphaMode::Additive ||
+                state.AlphaMode == MaterialAlphaMode::Premultiplied) &&
+               std::isfinite(state.AlphaCutoff) && state.AlphaCutoff >= 0;
     }
 
     std::variant<std::monostate, AssetError> ValidateMaterialData(const MaterialData& data)

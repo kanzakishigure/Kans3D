@@ -8,6 +8,10 @@
 namespace Kans
 {
     class Entity;
+    namespace Vfx
+    {
+        class VfxWorld;
+    }
     // Persistent CPU data, owned by Scene. No device, camera or frame resources.
     class RenderWorld
     {
@@ -40,6 +44,7 @@ namespace Kans
             m_ProceduralPointLights = std::move(points);
             m_ProceduralDirectional = std::move(directional);
         }
+        Vfx::VfxWorld*                   GetVfxWorld() const;
         AssetManager*                 GetAssetManager() const;
         void                          SetAssetManager(AssetManager* assets);
         void                          Synchronize();

@@ -1,0 +1,193 @@
+Version: 1
+AssetID: 880ed147ec438c44:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: ScaleColor
+Inputs:
+- Name: Module.Curve
+  Type: color
+  Default:
+    Type: color
+    Value:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+Nodes:
+- Guid: 4ad2f340-ffaf-5dd2-a686-2212ef311f61
+  Op: Input
+  Type: color
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Module.Curve
+- Guid: 0f6c0a5a-babf-5dbc-80c9-99bafe9e5967
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.NormalizedAge
+- Guid: 97ce7e2a-758b-5093-9e92-40f24707a402
+  Op: Sample
+  Type: color
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Module.Curve
+  Interface:
+    Kind: Gradient
+    Times:
+    - 0.0
+    - 1.0
+    Values:
+    - - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+    - - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+- Guid: 4535a6af-8021-5181-bd5a-0939c1d3cc6f
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Age
+- Guid: f13266d6-1e65-5e24-b3f2-f684251574fc
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: d9037fec-bac0-5c84-9965-4dde8067a4a6
+  Op: LessEqual
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: da321bff-0218-5868-a286-4a9e1f879870
+  Op: Get
+  Type: color
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Particles.Color
+- Guid: 1ee0ad31-303a-51c5-8e93-2c7765ebb541
+  Op: Get
+  Type: color
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Particles.InitialColor
+- Guid: 37f8aed9-c102-5bf8-9f03-988de1125a4e
+  Op: Select
+  Type: color
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: color
+  - Name: C
+    Type: color
+  Outputs:
+  - Name: Value
+    Type: color
+- Guid: 269606c8-1a46-5b51-9075-c003e0106ffa
+  Op: Set
+  Type: color
+  Inputs:
+  - Name: A
+    Type: color
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Particles.InitialColor
+- Guid: a6e19b30-0794-53fe-9fe2-6a8c4c6a0f9f
+  Op: Get
+  Type: color
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Particles.InitialColor
+- Guid: 76abc6bf-8bb3-5648-9f50-9c35ed7e4e93
+  Op: Mul
+  Type: color
+  Inputs:
+  - Name: A
+    Type: color
+  - Name: B
+    Type: color
+  Outputs:
+  - Name: Value
+    Type: color
+- Guid: d5c8f740-c5a0-55f5-b053-be783c97874c
+  Op: Set
+  Type: color
+  Inputs:
+  - Name: A
+    Type: color
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Particles.Color
+Links:
+- From: 0f6c0a5a-babf-5dbc-80c9-99bafe9e5967
+  Output: Value
+  To: 97ce7e2a-758b-5093-9e92-40f24707a402
+  Input: A
+- From: 4535a6af-8021-5181-bd5a-0939c1d3cc6f
+  Output: Value
+  To: d9037fec-bac0-5c84-9965-4dde8067a4a6
+  Input: A
+- From: f13266d6-1e65-5e24-b3f2-f684251574fc
+  Output: Value
+  To: d9037fec-bac0-5c84-9965-4dde8067a4a6
+  Input: B
+- From: d9037fec-bac0-5c84-9965-4dde8067a4a6
+  Output: Value
+  To: 37f8aed9-c102-5bf8-9f03-988de1125a4e
+  Input: A
+- From: da321bff-0218-5868-a286-4a9e1f879870
+  Output: Value
+  To: 37f8aed9-c102-5bf8-9f03-988de1125a4e
+  Input: B
+- From: 1ee0ad31-303a-51c5-8e93-2c7765ebb541
+  Output: Value
+  To: 37f8aed9-c102-5bf8-9f03-988de1125a4e
+  Input: C
+- From: 37f8aed9-c102-5bf8-9f03-988de1125a4e
+  Output: Value
+  To: 269606c8-1a46-5b51-9075-c003e0106ffa
+  Input: A
+- From: a6e19b30-0794-53fe-9fe2-6a8c4c6a0f9f
+  Output: Value
+  To: 76abc6bf-8bb3-5648-9f50-9c35ed7e4e93
+  Input: A
+- From: 97ce7e2a-758b-5093-9e92-40f24707a402
+  Output: Value
+  To: 76abc6bf-8bb3-5648-9f50-9c35ed7e4e93
+  Input: B
+- From: 76abc6bf-8bb3-5648-9f50-9c35ed7e4e93
+  Output: Value
+  To: d5c8f740-c5a0-55f5-b053-be783c97874c
+  Input: A

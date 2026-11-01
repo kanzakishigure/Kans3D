@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "GpuShader.h"
 #include "Kans3D/RHI/Backend.h"
+#include "ParticleSprite.h"
 #include "Skinning.h"
 namespace Kans
 {
@@ -134,6 +135,22 @@ namespace Kans
 
         return shader;
     }
+    bool GpuShader::PrepareParticleSprite() const
+    {
+        if (SpriteProgram)
+            return true;
+        if (!m_Source)
+            return false;
+        auto converted = MakeParticleSpriteShader(*m_Source);
+        if (auto e = std::get_if<AssetError>(&converted))
+        {
+            CORE_ERROR("Particle sprite shader: {0}", e->Message);
+            return false;
+        }
+        SpriteProgram = m_Device->CreateShader(std::get<ShaderData>(converted));
+        SpriteLayout  = ParticleSpriteLayout(*m_Device);
+        return true;
+    }
     bool GpuShader::PrepareSkinning(bool smoothNormalFallback) const
     {
         auto& program = smoothNormalFallback ? SkinnedNormalFallbackProgram : SkinnedProgram;
@@ -173,6 +190,8 @@ namespace Kans
         GpuShader copy;
         copy.m_Device           = m_Device;
         copy.Program            = Program;
+        copy.SpriteProgram                = SpriteProgram;
+        copy.SpriteLayout                 = SpriteLayout;
         copy.m_Source           = m_Source;
         copy.SkinnedNormalFallbackProgram = SkinnedNormalFallbackProgram;
         copy.SkinnedProgram     = SkinnedProgram;

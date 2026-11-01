@@ -32,7 +32,7 @@ namespace Kans
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
                     x->second.ForceField != y->second.ForceField || x->second.Ragdoll != y->second.Ragdoll ||
-                    x->second.Vehicle != y->second.Vehicle ||
+                    x->second.Particles != y->second.Particles || x->second.Vehicle != y->second.Vehicle ||
                     x->second.CharacterController != y->second.CharacterController ||
                     x->second.Joint != y->second.Joint || x->second.SpringBone != y->second.SpringBone ||
                     x->second.Cloth != y->second.Cloth || x->second.MotionCollider != y->second.MotionCollider ||
@@ -182,6 +182,10 @@ namespace Kans
             change.Ragdoll    = part.HasComponent<RagdollComponent>() ?
                                     std::optional<RagdollComponent>(part.GetComponent<RagdollComponent>()) :
                                     std::nullopt;
+            change.Particles =
+                part.HasComponent<ParticleSystemComponent>() ?
+                    std::optional<ParticleSystemComponent>(part.GetComponent<ParticleSystemComponent>()) :
+                    std::nullopt;
             change.Vehicle    = part.HasComponent<VehicleComponent>() ?
                                     std::optional<VehicleComponent>(part.GetComponent<VehicleComponent>()) :
                                     std::nullopt;
@@ -450,6 +454,15 @@ namespace Kans
             }
             else if (entity.HasComponent<RagdollComponent>())
                 entity.RemoveComponent<RagdollComponent>();
+            if (change != instance.Overrides.end() && change->second.Particles)
+            {
+                if (!entity.HasComponent<ParticleSystemComponent>())
+                    entity.AddComponent<ParticleSystemComponent>(*change->second.Particles);
+                else if (entity.GetComponent<ParticleSystemComponent>() != *change->second.Particles)
+                    entity.SetComponent<ParticleSystemComponent>(*change->second.Particles);
+            }
+            else if (entity.HasComponent<ParticleSystemComponent>())
+                entity.RemoveComponent<ParticleSystemComponent>();
             if (change != instance.Overrides.end() && change->second.Vehicle)
             {
                 if (!entity.HasComponent<VehicleComponent>())

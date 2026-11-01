@@ -970,6 +970,8 @@ namespace Kans
             {MaterialAlphaMode::Blend,
              "Transparent",
              "Blended over what is behind, drawn after opaque parts from far to near (glass, fades)."},
+            {MaterialAlphaMode::Additive, "Additive", "Adds color weighted by alpha."},
+            {MaterialAlphaMode::Premultiplied, "Premultiplied", "Uses color already multiplied by alpha."},
             {MaterialAlphaMode::Dithered,
              "Dithered",
              "Order-independent transparency: alpha becomes coverage (MSAA) or a fixed dither pattern, and "

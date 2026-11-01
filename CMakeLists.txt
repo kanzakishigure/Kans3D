@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.21)
 project(Kans3D LANGUAGES C CXX)
 
+# Keep large Debug links serial while compilation can use the requested parallelism.
+set_property(GLOBAL APPEND PROPERTY JOB_POOLS kans_link_pool=1)
+set(CMAKE_JOB_POOL_LINK kans_link_pool)
+
 if(POLICY CMP0112)
     cmake_policy(SET CMP0112 NEW)
 endif()

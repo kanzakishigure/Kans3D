@@ -1,0 +1,56 @@
+Version: 1
+AssetID: b78f776a39cdf4e4:0000000000000001
+Usage: DynamicInput
+AllowedStages: 63
+Category: Built-in
+Description: RandomRangeFloat
+Inputs:
+- Name: Module.Min
+  Type: float
+  Default:
+    Type: float
+    Value: 0.0
+- Name: Module.Max
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+Nodes:
+- Guid: d0d39ec7-66bd-5b31-93a0-9a98e08a8829
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Min
+- Guid: f63cf332-43c3-544d-9980-32cd0381f19d
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Max
+- Guid: 42117160-03a4-50fb-93d0-e3e0b1109420
+  Op: RandomRange
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+Links:
+- From: d0d39ec7-66bd-5b31-93a0-9a98e08a8829
+  Output: Value
+  To: 42117160-03a4-50fb-93d0-e3e0b1109420
+  Input: A
+- From: f63cf332-43c3-544d-9980-32cd0381f19d
+  Output: Value
+  To: 42117160-03a4-50fb-93d0-e3e0b1109420
+  Input: B
+ResultNode: 42117160-03a4-50fb-93d0-e3e0b1109420
+ResultPin: Value

@@ -808,6 +808,8 @@ namespace Kans
                     item["ForceFieldComponent"] = PhysicsYaml::Encode(*change.ForceField);
                 if (change.Ragdoll)
                     item["RagdollComponent"] = PhysicsYaml::Encode(*change.Ragdoll);
+                if (change.Particles)
+                    item["ParticleSystemComponent"] = EncodeParticleSystem(*change.Particles);
                 if (change.Vehicle)
                     item["VehicleComponent"] = PhysicsYaml::Encode(*change.Vehicle);
                 if (change.MotionCollider)
@@ -863,6 +865,7 @@ namespace Kans
                       "WindZoneComponent",
                       "ForceFieldComponent",
                       "RagdollComponent",
+                      "ParticleSystemComponent",
                       "VehicleComponent",
                       "MotionColliderComponent",
                       "ClothComponent",
@@ -935,6 +938,8 @@ namespace Kans
                     PhysicsYaml::Decode(item["RagdollComponent"], c);
                     change.Ragdoll = c;
                 }
+                if (item["ParticleSystemComponent"])
+                    change.Particles = DecodeParticleSystem(item["ParticleSystemComponent"]);
                 if (item["VehicleComponent"])
                 {
                     VehicleComponent c;
@@ -1170,6 +1175,8 @@ namespace Kans
                 node["ForceFieldComponent"] = PhysicsYaml::Encode(entity.GetComponent<ForceFieldComponent>());
             if (entity.HasComponent<RagdollComponent>())
                 node["RagdollComponent"] = PhysicsYaml::Encode(entity.GetComponent<RagdollComponent>());
+            if (entity.HasComponent<ParticleSystemComponent>())
+                node["ParticleSystemComponent"] = EncodeParticleSystem(entity.GetComponent<ParticleSystemComponent>());
             if (entity.HasComponent<VehicleComponent>())
                 node["VehicleComponent"] = PhysicsYaml::Encode(entity.GetComponent<VehicleComponent>());
             if (entity.HasComponent<MotionColliderComponent>())
@@ -1560,6 +1567,7 @@ namespace Kans
                       "WindZoneComponent",
                       "ForceFieldComponent",
                       "RagdollComponent",
+                      "ParticleSystemComponent",
                       "VehicleComponent",
                       "MotionColliderComponent",
                       "ClothComponent",
@@ -1680,6 +1688,8 @@ namespace Kans
                     PhysicsYaml::Decode(node["RagdollComponent"], c);
                     entity.AddComponent<RagdollComponent>(c);
                 }
+                if (node["ParticleSystemComponent"])
+                    entity.AddComponent<ParticleSystemComponent>(DecodeParticleSystem(node["ParticleSystemComponent"]));
                 if (node["VehicleComponent"])
                 {
                     VehicleComponent c;

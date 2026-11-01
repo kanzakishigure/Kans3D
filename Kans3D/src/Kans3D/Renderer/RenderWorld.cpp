@@ -7,6 +7,7 @@
 
 namespace Kans
 {
+    Vfx::VfxWorld* RenderWorld::GetVfxWorld() const { return m_Scene ? &m_Scene->GetVfxWorld() : nullptr; }
     AssetManager* RenderWorld::GetAssetManager() const { return m_Scene ? m_Scene->m_PrefabAssets : nullptr; }
     void          RenderWorld::SetAssetManager(AssetManager* assets)
     {

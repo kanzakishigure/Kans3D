@@ -1,0 +1,350 @@
+Version: 1
+AssetID: b86ec98ca2055941:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: SolveForcesAndVelocity
+Inputs: []
+Nodes:
+- Guid: 211686b6-f282-5f82-b6ed-70e2a8977afb
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: 2e8155ad-618e-52d7-abbd-135d16b8a118
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Mass
+- Guid: 857be52c-20fa-5a75-af52-a0f2d9548189
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 1.0e-06
+- Guid: 0bb18b11-8c73-5e6f-a18d-83ed295d801a
+  Op: Max
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 6084ae86-302c-5692-8721-c2e091126aec
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: e5bebb00-158d-5b89-8069-55eb6396d85a
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.PhysicsForce
+- Guid: 8746b0d3-adb6-5e32-865b-d205c423808d
+  Op: Div
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: ca91db6d-8d42-5347-8097-ddee8f094dc0
+  Op: Make
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: b67d0608-e89b-5cae-98e7-a3aa455a6b18
+  Op: Mul
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  - Name: B
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: c38623a8-e846-5301-ba57-d47d0a497a9e
+  Op: Add
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  - Name: B
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: c30677d5-f6d5-5f15-8214-67f77ef73090
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: 82bf75db-f60c-5473-861f-023d53f96a6f
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: ac83f4c5-c19b-52f1-92b8-9bc4d079bf47
+  Op: Make
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: dd4d6550-da2d-5d2b-a056-4077192dc830
+  Op: Mul
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  - Name: B
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: dd48169a-fd44-530e-99af-fbc41895d93d
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 67d6c9c7-c09f-5613-b137-0d176de580cf
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: X
+    Type: float
+  - Name: Y
+    Type: float
+  - Name: Z
+    Type: float
+- Guid: 01b66579-61b1-5654-9592-ba23e5c3b8b5
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: X
+    Type: float
+  - Name: Y
+    Type: float
+  - Name: Z
+    Type: float
+- Guid: 9c620cb1-b200-5f34-8509-04edfb52c2cb
+  Op: Make
+  Type: position
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: position
+- Guid: c4e3ce78-ce79-5ea8-87e6-449e1c9cb61f
+  Op: Add
+  Type: position
+  Inputs:
+  - Name: A
+    Type: position
+  - Name: B
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: position
+- Guid: 6da52b12-9724-5fcd-88eb-de0c2e1f0b0c
+  Op: Set
+  Type: position
+  Inputs:
+  - Name: A
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: 02cd5de4-a95d-54df-85dd-f3aad9c67c33
+  Op: Constant
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Constant:
+    Type: vec3
+    Value:
+    - 0.0
+    - 0.0
+    - 0.0
+- Guid: 0f3ae40f-e3ec-5b2a-a2b3-9c8fd61eacd7
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.PhysicsForce
+Links:
+- From: 2e8155ad-618e-52d7-abbd-135d16b8a118
+  Output: Value
+  To: 0bb18b11-8c73-5e6f-a18d-83ed295d801a
+  Input: A
+- From: 857be52c-20fa-5a75-af52-a0f2d9548189
+  Output: Value
+  To: 0bb18b11-8c73-5e6f-a18d-83ed295d801a
+  Input: B
+- From: 211686b6-f282-5f82-b6ed-70e2a8977afb
+  Output: Value
+  To: 8746b0d3-adb6-5e32-865b-d205c423808d
+  Input: A
+- From: 0bb18b11-8c73-5e6f-a18d-83ed295d801a
+  Output: Value
+  To: 8746b0d3-adb6-5e32-865b-d205c423808d
+  Input: B
+- From: 8746b0d3-adb6-5e32-865b-d205c423808d
+  Output: Value
+  To: ca91db6d-8d42-5347-8097-ddee8f094dc0
+  Input: A
+- From: 8746b0d3-adb6-5e32-865b-d205c423808d
+  Output: Value
+  To: ca91db6d-8d42-5347-8097-ddee8f094dc0
+  Input: B
+- From: 8746b0d3-adb6-5e32-865b-d205c423808d
+  Output: Value
+  To: ca91db6d-8d42-5347-8097-ddee8f094dc0
+  Input: C
+- From: e5bebb00-158d-5b89-8069-55eb6396d85a
+  Output: Value
+  To: b67d0608-e89b-5cae-98e7-a3aa455a6b18
+  Input: A
+- From: ca91db6d-8d42-5347-8097-ddee8f094dc0
+  Output: Value
+  To: b67d0608-e89b-5cae-98e7-a3aa455a6b18
+  Input: B
+- From: 6084ae86-302c-5692-8721-c2e091126aec
+  Output: Value
+  To: c38623a8-e846-5301-ba57-d47d0a497a9e
+  Input: A
+- From: b67d0608-e89b-5cae-98e7-a3aa455a6b18
+  Output: Value
+  To: c38623a8-e846-5301-ba57-d47d0a497a9e
+  Input: B
+- From: c38623a8-e846-5301-ba57-d47d0a497a9e
+  Output: Value
+  To: c30677d5-f6d5-5f15-8214-67f77ef73090
+  Input: A
+- From: 211686b6-f282-5f82-b6ed-70e2a8977afb
+  Output: Value
+  To: ac83f4c5-c19b-52f1-92b8-9bc4d079bf47
+  Input: A
+- From: 211686b6-f282-5f82-b6ed-70e2a8977afb
+  Output: Value
+  To: ac83f4c5-c19b-52f1-92b8-9bc4d079bf47
+  Input: B
+- From: 211686b6-f282-5f82-b6ed-70e2a8977afb
+  Output: Value
+  To: ac83f4c5-c19b-52f1-92b8-9bc4d079bf47
+  Input: C
+- From: c38623a8-e846-5301-ba57-d47d0a497a9e
+  Output: Value
+  To: dd4d6550-da2d-5d2b-a056-4077192dc830
+  Input: A
+- From: ac83f4c5-c19b-52f1-92b8-9bc4d079bf47
+  Output: Value
+  To: dd4d6550-da2d-5d2b-a056-4077192dc830
+  Input: B
+- From: dd4d6550-da2d-5d2b-a056-4077192dc830
+  Output: Value
+  To: dd48169a-fd44-530e-99af-fbc41895d93d
+  Input: A
+- From: dd4d6550-da2d-5d2b-a056-4077192dc830
+  Output: Value
+  To: 67d6c9c7-c09f-5613-b137-0d176de580cf
+  Input: A
+- From: dd4d6550-da2d-5d2b-a056-4077192dc830
+  Output: Value
+  To: 01b66579-61b1-5654-9592-ba23e5c3b8b5
+  Input: A
+- From: dd48169a-fd44-530e-99af-fbc41895d93d
+  Output: Value
+  To: 9c620cb1-b200-5f34-8509-04edfb52c2cb
+  Input: A
+- From: 67d6c9c7-c09f-5613-b137-0d176de580cf
+  Output: Y
+  To: 9c620cb1-b200-5f34-8509-04edfb52c2cb
+  Input: B
+- From: 01b66579-61b1-5654-9592-ba23e5c3b8b5
+  Output: Z
+  To: 9c620cb1-b200-5f34-8509-04edfb52c2cb
+  Input: C
+- From: 82bf75db-f60c-5473-861f-023d53f96a6f
+  Output: Value
+  To: c4e3ce78-ce79-5ea8-87e6-449e1c9cb61f
+  Input: A
+- From: 9c620cb1-b200-5f34-8509-04edfb52c2cb
+  Output: Value
+  To: c4e3ce78-ce79-5ea8-87e6-449e1c9cb61f
+  Input: B
+- From: c4e3ce78-ce79-5ea8-87e6-449e1c9cb61f
+  Output: Value
+  To: 6da52b12-9724-5fcd-88eb-de0c2e1f0b0c
+  Input: A
+- From: 02cd5de4-a95d-54df-85dd-f3aad9c67c33
+  Output: Value
+  To: 0f3ae40f-e3ec-5b2a-a2b3-9c8fd61eacd7
+  Input: A

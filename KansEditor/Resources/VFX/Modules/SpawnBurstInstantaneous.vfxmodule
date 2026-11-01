@@ -1,0 +1,744 @@
+Version: 1
+AssetID: 877abe2146b99ea0:0000000000000001
+Usage: Module
+AllowedStages: 8
+Category: Built-in
+Description: SpawnBurstInstantaneous
+Inputs:
+- Name: Module.Time
+  Type: float
+  Default:
+    Type: float
+    Value: 0.0
+- Name: Module.Count
+  Type: int
+  Default:
+    Type: int
+    Value: 10
+- Name: Module.Interval
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+- Name: Module.Loop
+  Type: bool
+  Default:
+    Type: bool
+    Value: false
+Nodes:
+- Guid: 3d0fe872-d87f-50fd-a9c0-9ef037f15763
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Time
+- Guid: 68a5d765-79a3-5e56-8b33-09cbfd0f962d
+  Op: Input
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Count
+- Guid: 5c9066b7-df53-5697-88c8-dee17167e920
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Interval
+- Guid: 69c2910b-abbc-50f5-ac68-87427bb2e818
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 1.0e-05
+- Guid: 7d4f6983-d12d-585f-a7d9-d834df30c849
+  Op: Max
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: c37dec5c-de5f-5da1-a386-6313e343c351
+  Op: Input
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Module.Loop
+- Guid: 8f3aabf6-480d-5523-86d7-2c8518825f5f
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Emitter.LoopAge
+- Guid: 05801aba-c483-5b44-9915-c12162e509f5
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Emitter.BurstPrevious$Usage
+- Guid: cbfc86b5-843f-5085-930d-2d60bc105f11
+  Op: Get
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Emitter.BurstStarted$Usage
+- Guid: cca5ca4e-c98a-5391-96fc-ada433518c1b
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Emitter.ExecutionState
+- Guid: 65599489-3250-5582-a661-fe3f8ba7702b
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 0
+- Guid: 8842847a-d4d0-542b-9434-246897925804
+  Op: Equal
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: int
+  - Name: B
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 4bcc53f0-70da-5e09-8912-59984127be0b
+  Op: Less
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 233d6594-aa10-5c2e-82bb-d857cf6dc3b0
+  Op: Not
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: abcc9ddb-ee12-587f-9718-c368330f032e
+  Op: And
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 4cbf9af4-6ad0-50db-b7ea-16503717d5a9
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 0.0
+- Guid: c159d3f5-f99b-5e63-8e6f-aeed546127cf
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: 5a6bc7c8-9ce3-5c39-8c19-792a864f18e8
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 9cd9072a-1272-52c2-bf07-c013d0b6638c
+  Op: Select
+  Type: float
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 70b69120-d9a9-528f-ab7f-bb297ca5483a
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: c9d32f48-eea2-55fd-86ea-6043d90a08c4
+  Op: Div
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 793f3f59-a547-5577-8a10-fc0825c2c75a
+  Op: Floor
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: c14f6b47-79ef-59e1-8916-2b6ec5939467
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: -1.0
+- Guid: 662fada0-e341-5572-b70e-6608f677ca48
+  Op: Max
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 275ea8e5-fca3-59ed-bb44-4b98736a3139
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 2aae8a12-ab50-5fa0-8d74-d0da25a18822
+  Op: Div
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: c54e2e3c-3a1f-5464-8942-91e75c77dfde
+  Op: Floor
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 44cfb046-5142-5875-be7c-4a4d46a7631f
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: -1.0
+- Guid: 034acae3-e7b4-5ab1-8139-2339b94dfd4e
+  Op: Max
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 202cee18-cc21-59fd-9ee5-8691059951ac
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 0554761e-8c03-59d8-9c32-25207237085d
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 0.0
+- Guid: c5639b53-8083-5203-84b5-d544a8e23989
+  Op: Max
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 206cafad-7b3b-5fe5-a3dc-f0a439dc3023
+  Op: Less
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: fb379ce2-2248-5382-b6b3-139e2c2a552e
+  Op: LessEqual
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 08e70c27-471b-5583-b485-751184552021
+  Op: And
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 266d315c-98de-57fd-ab1f-c394bf8aefe6
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 1.0
+- Guid: 2ab63c1f-c0dd-5471-8f62-be1b5d3523ba
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 0.0
+- Guid: 41630053-c481-5b4c-aa41-046c6a949303
+  Op: Select
+  Type: float
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 2c0ecabd-39ec-5a2f-986d-0e413d357b9d
+  Op: Select
+  Type: float
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 831c0546-c4a6-51e9-8d2f-94fab282f796
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Emitter.SpawnCountThisFrame
+- Guid: b60def27-fe72-5dc5-8110-f7068643e9a5
+  Op: ToInt
+  Type: int
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: 936bef85-c903-50d7-af24-abf8fd21e0f0
+  Op: Mul
+  Type: int
+  Inputs:
+  - Name: A
+    Type: int
+  - Name: B
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: d20e5e80-da73-5c9e-8bae-c409eb9306fc
+  Op: Add
+  Type: int
+  Inputs:
+  - Name: A
+    Type: int
+  - Name: B
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: a14473cd-01bb-594a-9020-8e5b5e164adc
+  Op: Set
+  Type: int
+  Inputs:
+  - Name: A
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Emitter.SpawnCountThisFrame
+- Guid: e6c77ce4-7ef1-5536-8082-494ebe1aa9e1
+  Op: Select
+  Type: float
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 6ea409df-4fa1-55af-afd8-0cff2849c519
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Emitter.BurstPrevious$Usage
+- Guid: cb8a75b6-40e1-59e5-9ac3-e524d9aeae4e
+  Op: Or
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 54395304-80dc-56df-81d5-c8b4909c7d56
+  Op: Set
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Emitter.BurstStarted$Usage
+Links:
+- From: 5c9066b7-df53-5697-88c8-dee17167e920
+  Output: Value
+  To: 7d4f6983-d12d-585f-a7d9-d834df30c849
+  Input: A
+- From: 69c2910b-abbc-50f5-ac68-87427bb2e818
+  Output: Value
+  To: 7d4f6983-d12d-585f-a7d9-d834df30c849
+  Input: B
+- From: cca5ca4e-c98a-5391-96fc-ada433518c1b
+  Output: Value
+  To: 8842847a-d4d0-542b-9434-246897925804
+  Input: A
+- From: 65599489-3250-5582-a661-fe3f8ba7702b
+  Output: Value
+  To: 8842847a-d4d0-542b-9434-246897925804
+  Input: B
+- From: 8f3aabf6-480d-5523-86d7-2c8518825f5f
+  Output: Value
+  To: 4bcc53f0-70da-5e09-8912-59984127be0b
+  Input: A
+- From: 05801aba-c483-5b44-9915-c12162e509f5
+  Output: Value
+  To: 4bcc53f0-70da-5e09-8912-59984127be0b
+  Input: B
+- From: 4bcc53f0-70da-5e09-8912-59984127be0b
+  Output: Value
+  To: 233d6594-aa10-5c2e-82bb-d857cf6dc3b0
+  Input: A
+- From: cbfc86b5-843f-5085-930d-2d60bc105f11
+  Output: Value
+  To: abcc9ddb-ee12-587f-9718-c368330f032e
+  Input: A
+- From: 233d6594-aa10-5c2e-82bb-d857cf6dc3b0
+  Output: Value
+  To: abcc9ddb-ee12-587f-9718-c368330f032e
+  Input: B
+- From: 4cbf9af4-6ad0-50db-b7ea-16503717d5a9
+  Output: Value
+  To: 5a6bc7c8-9ce3-5c39-8c19-792a864f18e8
+  Input: A
+- From: c159d3f5-f99b-5e63-8e6f-aeed546127cf
+  Output: Value
+  To: 5a6bc7c8-9ce3-5c39-8c19-792a864f18e8
+  Input: B
+- From: abcc9ddb-ee12-587f-9718-c368330f032e
+  Output: Value
+  To: 9cd9072a-1272-52c2-bf07-c013d0b6638c
+  Input: A
+- From: 05801aba-c483-5b44-9915-c12162e509f5
+  Output: Value
+  To: 9cd9072a-1272-52c2-bf07-c013d0b6638c
+  Input: B
+- From: 5a6bc7c8-9ce3-5c39-8c19-792a864f18e8
+  Output: Value
+  To: 9cd9072a-1272-52c2-bf07-c013d0b6638c
+  Input: C
+- From: 8f3aabf6-480d-5523-86d7-2c8518825f5f
+  Output: Value
+  To: 70b69120-d9a9-528f-ab7f-bb297ca5483a
+  Input: A
+- From: 3d0fe872-d87f-50fd-a9c0-9ef037f15763
+  Output: Value
+  To: 70b69120-d9a9-528f-ab7f-bb297ca5483a
+  Input: B
+- From: 70b69120-d9a9-528f-ab7f-bb297ca5483a
+  Output: Value
+  To: c9d32f48-eea2-55fd-86ea-6043d90a08c4
+  Input: A
+- From: 7d4f6983-d12d-585f-a7d9-d834df30c849
+  Output: Value
+  To: c9d32f48-eea2-55fd-86ea-6043d90a08c4
+  Input: B
+- From: c9d32f48-eea2-55fd-86ea-6043d90a08c4
+  Output: Value
+  To: 793f3f59-a547-5577-8a10-fc0825c2c75a
+  Input: A
+- From: 793f3f59-a547-5577-8a10-fc0825c2c75a
+  Output: Value
+  To: 662fada0-e341-5572-b70e-6608f677ca48
+  Input: A
+- From: c14f6b47-79ef-59e1-8916-2b6ec5939467
+  Output: Value
+  To: 662fada0-e341-5572-b70e-6608f677ca48
+  Input: B
+- From: 9cd9072a-1272-52c2-bf07-c013d0b6638c
+  Output: Value
+  To: 275ea8e5-fca3-59ed-bb44-4b98736a3139
+  Input: A
+- From: 3d0fe872-d87f-50fd-a9c0-9ef037f15763
+  Output: Value
+  To: 275ea8e5-fca3-59ed-bb44-4b98736a3139
+  Input: B
+- From: 275ea8e5-fca3-59ed-bb44-4b98736a3139
+  Output: Value
+  To: 2aae8a12-ab50-5fa0-8d74-d0da25a18822
+  Input: A
+- From: 7d4f6983-d12d-585f-a7d9-d834df30c849
+  Output: Value
+  To: 2aae8a12-ab50-5fa0-8d74-d0da25a18822
+  Input: B
+- From: 2aae8a12-ab50-5fa0-8d74-d0da25a18822
+  Output: Value
+  To: c54e2e3c-3a1f-5464-8942-91e75c77dfde
+  Input: A
+- From: c54e2e3c-3a1f-5464-8942-91e75c77dfde
+  Output: Value
+  To: 034acae3-e7b4-5ab1-8139-2339b94dfd4e
+  Input: A
+- From: 44cfb046-5142-5875-be7c-4a4d46a7631f
+  Output: Value
+  To: 034acae3-e7b4-5ab1-8139-2339b94dfd4e
+  Input: B
+- From: 662fada0-e341-5572-b70e-6608f677ca48
+  Output: Value
+  To: 202cee18-cc21-59fd-9ee5-8691059951ac
+  Input: A
+- From: 034acae3-e7b4-5ab1-8139-2339b94dfd4e
+  Output: Value
+  To: 202cee18-cc21-59fd-9ee5-8691059951ac
+  Input: B
+- From: 202cee18-cc21-59fd-9ee5-8691059951ac
+  Output: Value
+  To: c5639b53-8083-5203-84b5-d544a8e23989
+  Input: A
+- From: 0554761e-8c03-59d8-9c32-25207237085d
+  Output: Value
+  To: c5639b53-8083-5203-84b5-d544a8e23989
+  Input: B
+- From: 9cd9072a-1272-52c2-bf07-c013d0b6638c
+  Output: Value
+  To: 206cafad-7b3b-5fe5-a3dc-f0a439dc3023
+  Input: A
+- From: 3d0fe872-d87f-50fd-a9c0-9ef037f15763
+  Output: Value
+  To: 206cafad-7b3b-5fe5-a3dc-f0a439dc3023
+  Input: B
+- From: 3d0fe872-d87f-50fd-a9c0-9ef037f15763
+  Output: Value
+  To: fb379ce2-2248-5382-b6b3-139e2c2a552e
+  Input: A
+- From: 8f3aabf6-480d-5523-86d7-2c8518825f5f
+  Output: Value
+  To: fb379ce2-2248-5382-b6b3-139e2c2a552e
+  Input: B
+- From: 206cafad-7b3b-5fe5-a3dc-f0a439dc3023
+  Output: Value
+  To: 08e70c27-471b-5583-b485-751184552021
+  Input: A
+- From: fb379ce2-2248-5382-b6b3-139e2c2a552e
+  Output: Value
+  To: 08e70c27-471b-5583-b485-751184552021
+  Input: B
+- From: 08e70c27-471b-5583-b485-751184552021
+  Output: Value
+  To: 41630053-c481-5b4c-aa41-046c6a949303
+  Input: A
+- From: 266d315c-98de-57fd-ab1f-c394bf8aefe6
+  Output: Value
+  To: 41630053-c481-5b4c-aa41-046c6a949303
+  Input: B
+- From: 2ab63c1f-c0dd-5471-8f62-be1b5d3523ba
+  Output: Value
+  To: 41630053-c481-5b4c-aa41-046c6a949303
+  Input: C
+- From: c37dec5c-de5f-5da1-a386-6313e343c351
+  Output: Value
+  To: 2c0ecabd-39ec-5a2f-986d-0e413d357b9d
+  Input: A
+- From: c5639b53-8083-5203-84b5-d544a8e23989
+  Output: Value
+  To: 2c0ecabd-39ec-5a2f-986d-0e413d357b9d
+  Input: B
+- From: 41630053-c481-5b4c-aa41-046c6a949303
+  Output: Value
+  To: 2c0ecabd-39ec-5a2f-986d-0e413d357b9d
+  Input: C
+- From: 2c0ecabd-39ec-5a2f-986d-0e413d357b9d
+  Output: Value
+  To: b60def27-fe72-5dc5-8110-f7068643e9a5
+  Input: A
+- From: 68a5d765-79a3-5e56-8b33-09cbfd0f962d
+  Output: Value
+  To: 936bef85-c903-50d7-af24-abf8fd21e0f0
+  Input: A
+- From: b60def27-fe72-5dc5-8110-f7068643e9a5
+  Output: Value
+  To: 936bef85-c903-50d7-af24-abf8fd21e0f0
+  Input: B
+- From: 831c0546-c4a6-51e9-8d2f-94fab282f796
+  Output: Value
+  To: d20e5e80-da73-5c9e-8bae-c409eb9306fc
+  Input: A
+- From: 936bef85-c903-50d7-af24-abf8fd21e0f0
+  Output: Value
+  To: d20e5e80-da73-5c9e-8bae-c409eb9306fc
+  Input: B
+- From: d20e5e80-da73-5c9e-8bae-c409eb9306fc
+  Output: Value
+  To: a14473cd-01bb-594a-9020-8e5b5e164adc
+  Input: A
+- From: 8842847a-d4d0-542b-9434-246897925804
+  Output: Value
+  To: e6c77ce4-7ef1-5536-8082-494ebe1aa9e1
+  Input: A
+- From: 8f3aabf6-480d-5523-86d7-2c8518825f5f
+  Output: Value
+  To: e6c77ce4-7ef1-5536-8082-494ebe1aa9e1
+  Input: B
+- From: 05801aba-c483-5b44-9915-c12162e509f5
+  Output: Value
+  To: e6c77ce4-7ef1-5536-8082-494ebe1aa9e1
+  Input: C
+- From: e6c77ce4-7ef1-5536-8082-494ebe1aa9e1
+  Output: Value
+  To: 6ea409df-4fa1-55af-afd8-0cff2849c519
+  Input: A
+- From: 8842847a-d4d0-542b-9434-246897925804
+  Output: Value
+  To: cb8a75b6-40e1-59e5-9ac3-e524d9aeae4e
+  Input: A
+- From: cbfc86b5-843f-5085-930d-2d60bc105f11
+  Output: Value
+  To: cb8a75b6-40e1-59e5-9ac3-e524d9aeae4e
+  Input: B
+- From: cb8a75b6-40e1-59e5-9ac3-e524d9aeae4e
+  Output: Value
+  To: 54395304-80dc-56df-81d5-c8b4909c7d56
+  Input: A

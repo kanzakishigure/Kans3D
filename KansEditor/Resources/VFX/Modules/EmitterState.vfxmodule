@@ -1,0 +1,599 @@
+Version: 1
+AssetID: 8893c8ae689a2ea1:0000000000000001
+Usage: Module
+AllowedStages: 8
+Category: Built-in
+Description: EmitterState
+Inputs:
+- Name: Module.Duration
+  Type: float
+  Default:
+    Type: float
+    Value: 5.0
+- Name: Module.Delay
+  Type: float
+  Default:
+    Type: float
+    Value: 0.0
+- Name: Module.LoopCount
+  Type: int
+  Default:
+    Type: int
+    Value: 0
+- Name: Module.InactiveResponse
+  Type: int
+  Default:
+    Type: int
+    Value: 0
+Nodes:
+- Guid: 16c66647-8489-5927-87ea-24cee423b360
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: 4fc7da76-9a9d-57ec-aff7-e79efe75fa4c
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Emitter.Age
+- Guid: 16e7daa6-1eab-50d8-9e48-2ddbf668ae67
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 87b8ca1e-afe8-5f37-93ab-64aa166d3871
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Emitter.Age
+- Guid: 3a6ee2ac-d4ff-5c53-b528-13d3035d1aa1
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Duration
+- Guid: c6fed727-0f90-57c5-89f7-444b8be75253
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 1.0e-05
+- Guid: 118a8c1f-5dee-55e6-ba57-afb0f42317f8
+  Op: Max
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: bc193834-046f-5427-8054-478f1767b488
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Delay
+- Guid: e9f2896b-fbfe-5844-86ed-1ce2404af289
+  Op: Input
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.LoopCount
+- Guid: 65ab2f61-45ad-5a8a-8c66-fb40c84758f9
+  Op: Input
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.InactiveResponse
+- Guid: 4a617845-8526-58a2-ab96-65cc1171db4c
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 49109602-901b-53c8-90ff-5a1cf5676d81
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 0.0
+- Guid: 8a9272bf-577e-570f-8431-dc69d70159aa
+  Op: Max
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 8ae04fdd-8c96-55dd-9a9f-31ce71f315d1
+  Op: Div
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: d31eb06e-43f5-5573-a8a1-4c1ff1128390
+  Op: Floor
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: e1dd855e-d09e-5f6c-ae95-f9285e0cb3c2
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 5d50d7a4-4f4d-5752-b6b2-6116a9f07e9d
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: ef517b4d-6158-5136-8f72-c1501bc72130
+  Op: Div
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 56a76b83-54fc-5603-8a9a-88954d608908
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Emitter.NormalizedLoopAge
+- Guid: d0306ca5-8076-516e-8e4f-83f84b0788b7
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Emitter.LoopAge
+- Guid: f9362591-8336-5574-a7ed-0847a4489ad9
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 0
+- Guid: 21cf7781-b7a0-5978-b281-a194220c19d2
+  Op: Greater
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: int
+  - Name: B
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 31a964a9-83fd-5f8c-a404-e71b2d767f59
+  Op: ToFloat
+  Type: float
+  Inputs:
+  - Name: A
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: cbd6b1b5-7717-51d6-8aa8-b497ae47f669
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 022d2f81-74c3-52d0-9d9e-80f75f779c2e
+  Op: LessEqual
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 2666631d-ab07-52e9-925b-51a5722e6a99
+  Op: And
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 5dc840df-11e7-5d05-80fe-2dd109b79677
+  Op: Less
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 0a20d0a3-d9fa-5716-a86c-1bb75703e6c5
+  Op: Or
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: f33e17e6-4590-58b4-aca4-5bd72786ac2f
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 1
+- Guid: 9bde161a-0e8d-53c2-8b02-597fe01bfaee
+  Op: Equal
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: int
+  - Name: B
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 49c87a53-e647-5f16-b1da-49cb483c2cf6
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 3
+- Guid: 4669c4c4-6b54-5c06-8f0c-3f511f65419f
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 2
+- Guid: b28ac92f-6c37-52f4-a2be-10aa599624da
+  Op: Select
+  Type: int
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: int
+  - Name: C
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: 8005d743-8e82-5a63-bc9f-9a78ef1a9c66
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 1
+- Guid: 69ee8c74-cdcb-5b47-8640-17f712402f53
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 0
+- Guid: c18efdfb-7b29-575d-8e5f-c0e710dbb304
+  Op: Select
+  Type: int
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: int
+  - Name: C
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: 7c8c91bf-1cc4-5d37-8a5f-d2732f002f7e
+  Op: Select
+  Type: int
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: int
+  - Name: C
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: e03eabf4-7509-5443-af46-334633317841
+  Op: Set
+  Type: int
+  Inputs:
+  - Name: A
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Emitter.ExecutionState
+Links:
+- From: 4fc7da76-9a9d-57ec-aff7-e79efe75fa4c
+  Output: Value
+  To: 16e7daa6-1eab-50d8-9e48-2ddbf668ae67
+  Input: A
+- From: 16c66647-8489-5927-87ea-24cee423b360
+  Output: Value
+  To: 16e7daa6-1eab-50d8-9e48-2ddbf668ae67
+  Input: B
+- From: 16e7daa6-1eab-50d8-9e48-2ddbf668ae67
+  Output: Value
+  To: 87b8ca1e-afe8-5f37-93ab-64aa166d3871
+  Input: A
+- From: 3a6ee2ac-d4ff-5c53-b528-13d3035d1aa1
+  Output: Value
+  To: 118a8c1f-5dee-55e6-ba57-afb0f42317f8
+  Input: A
+- From: c6fed727-0f90-57c5-89f7-444b8be75253
+  Output: Value
+  To: 118a8c1f-5dee-55e6-ba57-afb0f42317f8
+  Input: B
+- From: 16e7daa6-1eab-50d8-9e48-2ddbf668ae67
+  Output: Value
+  To: 4a617845-8526-58a2-ab96-65cc1171db4c
+  Input: A
+- From: bc193834-046f-5427-8054-478f1767b488
+  Output: Value
+  To: 4a617845-8526-58a2-ab96-65cc1171db4c
+  Input: B
+- From: 4a617845-8526-58a2-ab96-65cc1171db4c
+  Output: Value
+  To: 8a9272bf-577e-570f-8431-dc69d70159aa
+  Input: A
+- From: 49109602-901b-53c8-90ff-5a1cf5676d81
+  Output: Value
+  To: 8a9272bf-577e-570f-8431-dc69d70159aa
+  Input: B
+- From: 8a9272bf-577e-570f-8431-dc69d70159aa
+  Output: Value
+  To: 8ae04fdd-8c96-55dd-9a9f-31ce71f315d1
+  Input: A
+- From: 118a8c1f-5dee-55e6-ba57-afb0f42317f8
+  Output: Value
+  To: 8ae04fdd-8c96-55dd-9a9f-31ce71f315d1
+  Input: B
+- From: 8ae04fdd-8c96-55dd-9a9f-31ce71f315d1
+  Output: Value
+  To: d31eb06e-43f5-5573-a8a1-4c1ff1128390
+  Input: A
+- From: d31eb06e-43f5-5573-a8a1-4c1ff1128390
+  Output: Value
+  To: e1dd855e-d09e-5f6c-ae95-f9285e0cb3c2
+  Input: A
+- From: 118a8c1f-5dee-55e6-ba57-afb0f42317f8
+  Output: Value
+  To: e1dd855e-d09e-5f6c-ae95-f9285e0cb3c2
+  Input: B
+- From: 8a9272bf-577e-570f-8431-dc69d70159aa
+  Output: Value
+  To: 5d50d7a4-4f4d-5752-b6b2-6116a9f07e9d
+  Input: A
+- From: e1dd855e-d09e-5f6c-ae95-f9285e0cb3c2
+  Output: Value
+  To: 5d50d7a4-4f4d-5752-b6b2-6116a9f07e9d
+  Input: B
+- From: 5d50d7a4-4f4d-5752-b6b2-6116a9f07e9d
+  Output: Value
+  To: ef517b4d-6158-5136-8f72-c1501bc72130
+  Input: A
+- From: 118a8c1f-5dee-55e6-ba57-afb0f42317f8
+  Output: Value
+  To: ef517b4d-6158-5136-8f72-c1501bc72130
+  Input: B
+- From: ef517b4d-6158-5136-8f72-c1501bc72130
+  Output: Value
+  To: 56a76b83-54fc-5603-8a9a-88954d608908
+  Input: A
+- From: 5d50d7a4-4f4d-5752-b6b2-6116a9f07e9d
+  Output: Value
+  To: d0306ca5-8076-516e-8e4f-83f84b0788b7
+  Input: A
+- From: e9f2896b-fbfe-5844-86ed-1ce2404af289
+  Output: Value
+  To: 21cf7781-b7a0-5978-b281-a194220c19d2
+  Input: A
+- From: f9362591-8336-5574-a7ed-0847a4489ad9
+  Output: Value
+  To: 21cf7781-b7a0-5978-b281-a194220c19d2
+  Input: B
+- From: e9f2896b-fbfe-5844-86ed-1ce2404af289
+  Output: Value
+  To: 31a964a9-83fd-5f8c-a404-e71b2d767f59
+  Input: A
+- From: 118a8c1f-5dee-55e6-ba57-afb0f42317f8
+  Output: Value
+  To: cbd6b1b5-7717-51d6-8aa8-b497ae47f669
+  Input: A
+- From: 31a964a9-83fd-5f8c-a404-e71b2d767f59
+  Output: Value
+  To: cbd6b1b5-7717-51d6-8aa8-b497ae47f669
+  Input: B
+- From: cbd6b1b5-7717-51d6-8aa8-b497ae47f669
+  Output: Value
+  To: 022d2f81-74c3-52d0-9d9e-80f75f779c2e
+  Input: A
+- From: 8a9272bf-577e-570f-8431-dc69d70159aa
+  Output: Value
+  To: 022d2f81-74c3-52d0-9d9e-80f75f779c2e
+  Input: B
+- From: 21cf7781-b7a0-5978-b281-a194220c19d2
+  Output: Value
+  To: 2666631d-ab07-52e9-925b-51a5722e6a99
+  Input: A
+- From: 022d2f81-74c3-52d0-9d9e-80f75f779c2e
+  Output: Value
+  To: 2666631d-ab07-52e9-925b-51a5722e6a99
+  Input: B
+- From: 16e7daa6-1eab-50d8-9e48-2ddbf668ae67
+  Output: Value
+  To: 5dc840df-11e7-5d05-80fe-2dd109b79677
+  Input: A
+- From: bc193834-046f-5427-8054-478f1767b488
+  Output: Value
+  To: 5dc840df-11e7-5d05-80fe-2dd109b79677
+  Input: B
+- From: 2666631d-ab07-52e9-925b-51a5722e6a99
+  Output: Value
+  To: 0a20d0a3-d9fa-5716-a86c-1bb75703e6c5
+  Input: A
+- From: 5dc840df-11e7-5d05-80fe-2dd109b79677
+  Output: Value
+  To: 0a20d0a3-d9fa-5716-a86c-1bb75703e6c5
+  Input: B
+- From: 65ab2f61-45ad-5a8a-8c66-fb40c84758f9
+  Output: Value
+  To: 9bde161a-0e8d-53c2-8b02-597fe01bfaee
+  Input: A
+- From: f33e17e6-4590-58b4-aca4-5bd72786ac2f
+  Output: Value
+  To: 9bde161a-0e8d-53c2-8b02-597fe01bfaee
+  Input: B
+- From: 9bde161a-0e8d-53c2-8b02-597fe01bfaee
+  Output: Value
+  To: b28ac92f-6c37-52f4-a2be-10aa599624da
+  Input: A
+- From: 49c87a53-e647-5f16-b1da-49cb483c2cf6
+  Output: Value
+  To: b28ac92f-6c37-52f4-a2be-10aa599624da
+  Input: B
+- From: 4669c4c4-6b54-5c06-8f0c-3f511f65419f
+  Output: Value
+  To: b28ac92f-6c37-52f4-a2be-10aa599624da
+  Input: C
+- From: 5dc840df-11e7-5d05-80fe-2dd109b79677
+  Output: Value
+  To: c18efdfb-7b29-575d-8e5f-c0e710dbb304
+  Input: A
+- From: 8005d743-8e82-5a63-bc9f-9a78ef1a9c66
+  Output: Value
+  To: c18efdfb-7b29-575d-8e5f-c0e710dbb304
+  Input: B
+- From: 69ee8c74-cdcb-5b47-8640-17f712402f53
+  Output: Value
+  To: c18efdfb-7b29-575d-8e5f-c0e710dbb304
+  Input: C
+- From: 2666631d-ab07-52e9-925b-51a5722e6a99
+  Output: Value
+  To: 7c8c91bf-1cc4-5d37-8a5f-d2732f002f7e
+  Input: A
+- From: b28ac92f-6c37-52f4-a2be-10aa599624da
+  Output: Value
+  To: 7c8c91bf-1cc4-5d37-8a5f-d2732f002f7e
+  Input: B
+- From: c18efdfb-7b29-575d-8e5f-c0e710dbb304
+  Output: Value
+  To: 7c8c91bf-1cc4-5d37-8a5f-d2732f002f7e
+  Input: C
+- From: 7c8c91bf-1cc4-5d37-8a5f-d2732f002f7e
+  Output: Value
+  To: e03eabf4-7509-5443-af46-334633317841
+  Input: A

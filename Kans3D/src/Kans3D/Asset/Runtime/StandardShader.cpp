@@ -136,11 +136,13 @@ void main()
     if (u_Frame.DebugView == 1)
     {
         o_Color = vec4(pow(albedo, vec3(1.0 / 2.2)), alpha);
+        if(u_Object.MaterialRender.x==7.0)o_Color.rgb*=alpha;
         return;
     }
     if (u_Frame.DebugView == 2)
     {
         o_Color = vec4(N * 0.5 + 0.5, alpha);
+        if(u_Object.MaterialRender.x==7.0)o_Color.rgb*=alpha;
         return;
     }
     if (u_Frame.DebugView == 4)
@@ -148,6 +150,7 @@ void main()
         int cascade = KansShadowCascade(v_WorldPosition);
         vec3 colors[4] = vec3[](vec3(1,.2,.2), vec3(.2,1,.2), vec3(.2,.4,1), vec3(1,1,.2));
         o_Color = vec4(cascade < 0 ? vec3(.2) : colors[cascade] * (.3 + .7 * KansShadow(v_WorldPosition,N)), alpha);
+        if(u_Object.MaterialRender.x==7.0)o_Color.rgb*=alpha;
         return;
     }
     vec4 mr = texture(MetallicRoughnessMap, uv);
@@ -156,6 +159,7 @@ void main()
     color += p.EmissiveColor * p.EmissiveIntensity * texture(EmissiveMap, uv).rgb;
     o_Color = u_Frame.DebugView == 3 ? KansToneMap(color) : vec4(color, alpha);
     o_Color.a = alpha;
+    if(u_Object.MaterialRender.x==7.0)o_Color.rgb*=alpha;
 }
 )"}});
             if (auto* error = std::get_if<AssetError>(&compiled))

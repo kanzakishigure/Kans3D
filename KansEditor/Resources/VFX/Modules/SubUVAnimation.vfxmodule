@@ -1,0 +1,189 @@
+Version: 1
+AssetID: b16fadc2cbc67910:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: SubUVAnimation
+Inputs:
+- Name: Module.Frames
+  Type: float
+  Default:
+    Type: float
+    Value: 4.0
+- Name: Module.Rate
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+- Name: Module.ByAge
+  Type: bool
+  Default:
+    Type: bool
+    Value: true
+Nodes:
+- Guid: cda8bf08-6ec0-50a4-8041-41f56da00cd5
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Frames
+- Guid: ae2dc1d1-422a-5284-b3ac-2390d71c0fbb
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Rate
+- Guid: 0b745e50-d8cf-5227-b615-f2adb7227723
+  Op: Input
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Module.ByAge
+- Guid: 2dff5d59-7471-5149-93c9-c434e41d9247
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.NormalizedAge
+- Guid: 309ef6e1-5ede-5f9e-a727-6c9467464d15
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 75b37d30-5942-5b4c-a42c-8aaddd2ccb79
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Age
+- Guid: 295604c1-4fbe-5c00-8237-889cb9a3e155
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: d76b877e-0c47-50b6-8b49-19d067c2f93a
+  Op: Select
+  Type: float
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: c2ba5a61-c028-5f26-89b7-c10e235c7611
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 1.0e-05
+- Guid: 4cee58fc-b67a-5d76-bb30-5d0d43290290
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 14b6c7e0-0480-566d-9b5f-b71b0ca1efba
+  Op: Min
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: dd43f36c-ca25-53f2-928e-f72ad3c154d8
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.SubImageIndex
+Links:
+- From: 2dff5d59-7471-5149-93c9-c434e41d9247
+  Output: Value
+  To: 309ef6e1-5ede-5f9e-a727-6c9467464d15
+  Input: A
+- From: cda8bf08-6ec0-50a4-8041-41f56da00cd5
+  Output: Value
+  To: 309ef6e1-5ede-5f9e-a727-6c9467464d15
+  Input: B
+- From: 75b37d30-5942-5b4c-a42c-8aaddd2ccb79
+  Output: Value
+  To: 295604c1-4fbe-5c00-8237-889cb9a3e155
+  Input: A
+- From: ae2dc1d1-422a-5284-b3ac-2390d71c0fbb
+  Output: Value
+  To: 295604c1-4fbe-5c00-8237-889cb9a3e155
+  Input: B
+- From: 0b745e50-d8cf-5227-b615-f2adb7227723
+  Output: Value
+  To: d76b877e-0c47-50b6-8b49-19d067c2f93a
+  Input: A
+- From: 309ef6e1-5ede-5f9e-a727-6c9467464d15
+  Output: Value
+  To: d76b877e-0c47-50b6-8b49-19d067c2f93a
+  Input: B
+- From: 295604c1-4fbe-5c00-8237-889cb9a3e155
+  Output: Value
+  To: d76b877e-0c47-50b6-8b49-19d067c2f93a
+  Input: C
+- From: cda8bf08-6ec0-50a4-8041-41f56da00cd5
+  Output: Value
+  To: 4cee58fc-b67a-5d76-bb30-5d0d43290290
+  Input: A
+- From: c2ba5a61-c028-5f26-89b7-c10e235c7611
+  Output: Value
+  To: 4cee58fc-b67a-5d76-bb30-5d0d43290290
+  Input: B
+- From: d76b877e-0c47-50b6-8b49-19d067c2f93a
+  Output: Value
+  To: 14b6c7e0-0480-566d-9b5f-b71b0ca1efba
+  Input: A
+- From: 4cee58fc-b67a-5d76-bb30-5d0d43290290
+  Output: Value
+  To: 14b6c7e0-0480-566d-9b5f-b71b0ca1efba
+  Input: B
+- From: 14b6c7e0-0480-566d-9b5f-b71b0ca1efba
+  Output: Value
+  To: dd43f36c-ca25-53f2-928e-f72ad3c154d8
+  Input: A

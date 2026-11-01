@@ -40,6 +40,7 @@ namespace Kans
     {
         uint32_t DrawCalls = 0;
         uint64_t Triangles = 0;
+        uint64_t SimulatedParticles = 0, ParticleDraws = 0;
     };
     struct ShadowStatistics
     {

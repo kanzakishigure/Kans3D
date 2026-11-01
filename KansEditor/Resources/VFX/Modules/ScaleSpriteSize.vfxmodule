@@ -1,0 +1,208 @@
+Version: 1
+AssetID: 9e5969f97d0a73b7:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: ScaleSpriteSize
+Inputs:
+- Name: Module.Curve
+  Type: float
+  Default:
+    Type: float
+    Value: 0.0
+Nodes:
+- Guid: 34231a03-764b-5469-9b1a-3a552d196ea4
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Curve
+- Guid: 5edb9104-7f92-5acd-8497-1e70898e7161
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.NormalizedAge
+- Guid: 8930064c-0381-5283-b655-4e21aeb9cfaf
+  Op: Sample
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Curve
+  Interface:
+    Kind: Curve
+    Times:
+    - 0.0
+    - 1.0
+    Values:
+    - - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+    - - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+- Guid: f76e773e-9e28-5a68-8608-e4a7d41715dd
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Age
+- Guid: a46ba462-c4d6-54a2-a91b-7a9e051c63b3
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: e530a09d-bea4-59bc-b3a9-a2cc4c1abaeb
+  Op: LessEqual
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 61844880-fb21-598e-b89a-708ee7fe5e00
+  Op: Get
+  Type: vec2
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec2
+  Parameter: Particles.SpriteSize
+- Guid: 88fe2dd7-4884-5ace-b1af-255c045a9696
+  Op: Get
+  Type: vec2
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec2
+  Parameter: Particles.InitialSpriteSize
+- Guid: e9fe6ae1-410f-5201-9b5f-3f19c73a8ca9
+  Op: Select
+  Type: vec2
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: vec2
+  - Name: C
+    Type: vec2
+  Outputs:
+  - Name: Value
+    Type: vec2
+- Guid: d3f7f86a-a4b0-5169-93c9-e3ceaf8bae6c
+  Op: Set
+  Type: vec2
+  Inputs:
+  - Name: A
+    Type: vec2
+  Outputs:
+  - Name: Value
+    Type: vec2
+  Parameter: Particles.InitialSpriteSize
+- Guid: d99fca15-0f33-565d-97ee-e449c9995d49
+  Op: Get
+  Type: vec2
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec2
+  Parameter: Particles.InitialSpriteSize
+- Guid: 8d37682f-db29-55a5-8da5-d6ca8623c68d
+  Op: Make
+  Type: vec2
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec2
+- Guid: 914a76b7-0add-5f6e-bb61-e6f3add7deb6
+  Op: Mul
+  Type: vec2
+  Inputs:
+  - Name: A
+    Type: vec2
+  - Name: B
+    Type: vec2
+  Outputs:
+  - Name: Value
+    Type: vec2
+- Guid: ec465206-25d1-5c77-a0ca-f99ef420f19b
+  Op: Set
+  Type: vec2
+  Inputs:
+  - Name: A
+    Type: vec2
+  Outputs:
+  - Name: Value
+    Type: vec2
+  Parameter: Particles.SpriteSize
+Links:
+- From: 5edb9104-7f92-5acd-8497-1e70898e7161
+  Output: Value
+  To: 8930064c-0381-5283-b655-4e21aeb9cfaf
+  Input: A
+- From: f76e773e-9e28-5a68-8608-e4a7d41715dd
+  Output: Value
+  To: e530a09d-bea4-59bc-b3a9-a2cc4c1abaeb
+  Input: A
+- From: a46ba462-c4d6-54a2-a91b-7a9e051c63b3
+  Output: Value
+  To: e530a09d-bea4-59bc-b3a9-a2cc4c1abaeb
+  Input: B
+- From: e530a09d-bea4-59bc-b3a9-a2cc4c1abaeb
+  Output: Value
+  To: e9fe6ae1-410f-5201-9b5f-3f19c73a8ca9
+  Input: A
+- From: 61844880-fb21-598e-b89a-708ee7fe5e00
+  Output: Value
+  To: e9fe6ae1-410f-5201-9b5f-3f19c73a8ca9
+  Input: B
+- From: 88fe2dd7-4884-5ace-b1af-255c045a9696
+  Output: Value
+  To: e9fe6ae1-410f-5201-9b5f-3f19c73a8ca9
+  Input: C
+- From: e9fe6ae1-410f-5201-9b5f-3f19c73a8ca9
+  Output: Value
+  To: d3f7f86a-a4b0-5169-93c9-e3ceaf8bae6c
+  Input: A
+- From: 8930064c-0381-5283-b655-4e21aeb9cfaf
+  Output: Value
+  To: 8d37682f-db29-55a5-8da5-d6ca8623c68d
+  Input: A
+- From: 8930064c-0381-5283-b655-4e21aeb9cfaf
+  Output: Value
+  To: 8d37682f-db29-55a5-8da5-d6ca8623c68d
+  Input: B
+- From: d99fca15-0f33-565d-97ee-e449c9995d49
+  Output: Value
+  To: 914a76b7-0add-5f6e-bb61-e6f3add7deb6
+  Input: A
+- From: 8d37682f-db29-55a5-8da5-d6ca8623c68d
+  Output: Value
+  To: 914a76b7-0add-5f6e-bb61-e6f3add7deb6
+  Input: B
+- From: 914a76b7-0add-5f6e-bb61-e6f3add7deb6
+  Output: Value
+  To: ec465206-25d1-5c77-a0ca-f99ef420f19b
+  Input: A

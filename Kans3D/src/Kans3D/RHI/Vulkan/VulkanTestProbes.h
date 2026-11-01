@@ -10,6 +10,7 @@ namespace Kans::RenderHardware::VulkanTestProbes
         uint32_t             ApiVersion;
         bool                 Validation, SynchronizationValidation;
         uint64_t             PipelineCreations, DescriptorAllocations, DescriptorPools, GroupCreationNanoseconds;
+        uint64_t             WaitIdleCalls;
     };
     using BarrierObserver =
         std::function<void(const std::vector<VkBufferMemoryBarrier2>&, const std::vector<VkImageMemoryBarrier2>&)>;

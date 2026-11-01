@@ -54,6 +54,10 @@ namespace Kans
         Create(const ShaderData& data, std::shared_ptr<RenderHardware::Device> device = {});
 
         GpuShader Snapshot() const;
+        std::shared_ptr<const ShaderData>                               Source() const { return m_Source; }
+        bool                                                            PrepareParticleSprite() const;
+        mutable RenderHardware::Handle<RenderHardware::Shader>          SpriteProgram;
+        mutable RenderHardware::Handle<RenderHardware::BindGroupLayout> SpriteLayout;
         bool      PrepareSkinning(bool smoothNormalFallback = false) const;
         ~GpuShader();
         GpuShader(GpuShader&& other) noexcept;

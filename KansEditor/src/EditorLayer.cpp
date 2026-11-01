@@ -274,6 +274,7 @@ namespace Kans
             m_ActiveScene->UpdateModelPoses();
             // Springs and cloth on the edit pose; nothing is written to the scene.
             SecondaryMotionEditing::StepPreview(*m_ActiveScene, double(ts));
+            m_ActiveScene->UpdateVfxPreview(float(ts), m_ViewportPanel.GetCamera().GetPosition());
         }
         // The viewport panel renders the scene during the UI frame.
     }

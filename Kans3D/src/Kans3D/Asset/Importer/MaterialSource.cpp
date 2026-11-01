@@ -345,10 +345,12 @@ namespace Kans
                 out << YAML::Key << "render" << YAML::Value << YAML::Flow << YAML::BeginMap;
                 if (render.AlphaMode)
                     out << YAML::Key << "alpha_mode" << YAML::Value
-                        << (state.AlphaMode == MaterialAlphaMode::Mask     ? "mask" :
-                            state.AlphaMode == MaterialAlphaMode::Blend    ? "blend" :
-                            state.AlphaMode == MaterialAlphaMode::Dithered ? "dithered" :
-                                                                             "opaque");
+                        << (state.AlphaMode == MaterialAlphaMode::Mask          ? "mask" :
+                            state.AlphaMode == MaterialAlphaMode::Blend         ? "blend" :
+                            state.AlphaMode == MaterialAlphaMode::Dithered      ? "dithered" :
+                            state.AlphaMode == MaterialAlphaMode::Additive      ? "additive" :
+                            state.AlphaMode == MaterialAlphaMode::Premultiplied ? "premultiplied" :
+                                                                                  "opaque");
                 if (render.AlphaCutoff)
                     out << YAML::Key << "alpha_cutoff" << YAML::Value << *render.AlphaCutoff;
                 if (render.ReceiveShadows)

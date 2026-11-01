@@ -1,0 +1,60 @@
+Version: 1
+AssetID: a9b6d2cfca47acd3:0000000000000001
+Usage: DynamicInput
+AllowedStages: 63
+Category: Built-in
+Description: CurveFloatByNormalizedAge
+Inputs:
+- Name: Module.Curve
+  Type: float
+  Default:
+    Type: float
+    Value: 0.0
+Nodes:
+- Guid: 60227a1c-94ae-5696-bc40-8f439f458b31
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Curve
+- Guid: 150caa03-7548-56b6-a8cf-b095dd4b48bf
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.NormalizedAge
+- Guid: 5029e7a1-7364-5320-be97-c9b219ed12e1
+  Op: Sample
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Curve
+  Interface:
+    Kind: Curve
+    Times:
+    - 0.0
+    - 1.0
+    Values:
+    - - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+    - - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+Links:
+- From: 150caa03-7548-56b6-a8cf-b095dd4b48bf
+  Output: Value
+  To: 5029e7a1-7364-5320-be97-c9b219ed12e1
+  Input: A
+ResultNode: 5029e7a1-7364-5320-be97-c9b219ed12e1
+ResultPin: Value

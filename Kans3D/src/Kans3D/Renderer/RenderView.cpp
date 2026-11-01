@@ -115,8 +115,8 @@ namespace Kans
         std::stable_sort(view.MaterialOrder.begin(), view.MaterialOrder.end(), [](const auto& a, const auto& b) {
             if (a.AlwaysOnTop != b.AlwaysOnTop)
                 return !a.AlwaysOnTop;
-            bool aBlend = a.Render.AlphaMode == MaterialAlphaMode::Blend;
-            bool bBlend = b.Render.AlphaMode == MaterialAlphaMode::Blend;
+            bool aBlend = IsTransparentMaterial(a.Render.AlphaMode);
+            bool bBlend = IsTransparentMaterial(b.Render.AlphaMode);
             if (aBlend != bBlend)
                 return !aBlend;
             return aBlend && a.DistanceSquared > b.DistanceSquared;
@@ -125,9 +125,9 @@ namespace Kans
         {
             if (draw.Text || draw.UI)
                 continue;
-            auto& list = draw.Render.AlphaMode == MaterialAlphaMode::Blend ? view.Blend :
-                         draw.Render.AlphaMode == MaterialAlphaMode::Mask  ? view.Mask :
-                                                                             view.Opaque;
+            auto& list = IsTransparentMaterial(draw.Render.AlphaMode)     ? view.Blend :
+                         draw.Render.AlphaMode == MaterialAlphaMode::Mask ? view.Mask :
+                                                                            view.Opaque;
             list.push_back(draw.DrawIndex);
         }
     }

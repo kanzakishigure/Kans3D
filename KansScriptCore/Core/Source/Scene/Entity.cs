@@ -13,6 +13,7 @@ namespace Kans
         private CharacterControllerComponent m_CharacterController;
         private JointComponent m_Joint;
         private RagdollComponent m_Ragdoll;
+        private ParticleSystemComponent m_Particles;
         private VehicleComponent m_Vehicle;
         private ForceFieldComponent m_ForceField;
         private WindZoneComponent m_WindZone;
@@ -32,6 +33,7 @@ namespace Kans
             m_CharacterController = new CharacterControllerComponent { Entity = this };
             m_Joint = new JointComponent { Entity = this };
             m_Ragdoll = new RagdollComponent { Entity = this };
+            m_Particles = new ParticleSystemComponent { Entity = this };
             m_Vehicle = new VehicleComponent { Entity = this };
             m_ForceField = new ForceFieldComponent { Entity = this };
             m_WindZone = new WindZoneComponent { Entity = this };
@@ -124,6 +126,7 @@ namespace Kans
             if (typeof(T) == typeof(ScriptComponent)) return (T)(Component)m_Script;
             if (typeof(T) == typeof(CharacterController) || typeof(T) == typeof(CharacterControllerComponent)) return (T)(Component)m_CharacterController;
             if (typeof(T) == typeof(Joint) || typeof(T) == typeof(JointComponent)) return (T)(Component)m_Joint;
+            if (typeof(T) == typeof(ParticleSystem) || typeof(T) == typeof(ParticleSystemComponent)) return (T)(Component)m_Particles;
             if (typeof(T) == typeof(Ragdoll) || typeof(T) == typeof(RagdollComponent)) return (T)(Component)m_Ragdoll;
             if (typeof(T) == typeof(Vehicle) || typeof(T) == typeof(VehicleComponent)) return (T)(Component)m_Vehicle;
             if (typeof(T) == typeof(ForceField) || typeof(T) == typeof(ForceFieldComponent)) return (T)(Component)m_ForceField;
@@ -157,6 +160,7 @@ namespace Kans
             (typeof(T) == typeof(SphereCollider) || typeof(T) == typeof(SphereColliderComponent)) ? ComponentIds.SphereColliderComponent :
             (typeof(T) == typeof(CapsuleCollider) || typeof(T) == typeof(CapsuleColliderComponent)) ? ComponentIds.CapsuleColliderComponent :
             (typeof(T) == typeof(MeshCollider) || typeof(T) == typeof(MeshColliderComponent)) ? ComponentIds.MeshColliderComponent :
+            (typeof(T) == typeof(ParticleSystem) || typeof(T) == typeof(ParticleSystemComponent)) ? ComponentIds.ParticleSystemComponent :
             (typeof(T) == typeof(Ragdoll) || typeof(T) == typeof(RagdollComponent)) ? ComponentIds.RagdollComponent :
             (typeof(T) == typeof(Vehicle) || typeof(T) == typeof(VehicleComponent)) ? ComponentIds.VehicleComponent :
             (typeof(T) == typeof(ForceField) || typeof(T) == typeof(ForceFieldComponent)) ? ComponentIds.ForceFieldComponent :

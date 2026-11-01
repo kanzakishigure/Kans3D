@@ -1,0 +1,56 @@
+Version: 1
+AssetID: 8e29a138a725290a:0000000000000001
+Usage: DynamicInput
+AllowedStages: 63
+Category: Built-in
+Description: MultiplyFloat
+Inputs:
+- Name: Module.A
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+- Name: Module.B
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+Nodes:
+- Guid: 5f1164e9-3a01-5653-8479-514f646508cd
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.A
+- Guid: 6e128bda-331b-514f-8ab3-1bf74da7bfe8
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.B
+- Guid: 4168c9a2-d945-502e-b94b-1fc31760f798
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+Links:
+- From: 5f1164e9-3a01-5653-8479-514f646508cd
+  Output: Value
+  To: 4168c9a2-d945-502e-b94b-1fc31760f798
+  Input: A
+- From: 6e128bda-331b-514f-8ab3-1bf74da7bfe8
+  Output: Value
+  To: 4168c9a2-d945-502e-b94b-1fc31760f798
+  Input: B
+ResultNode: 4168c9a2-d945-502e-b94b-1fc31760f798
+ResultPin: Value

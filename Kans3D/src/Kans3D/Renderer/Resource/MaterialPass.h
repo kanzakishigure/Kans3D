@@ -14,6 +14,10 @@ namespace Kans
         bool                                Wireframe = false, WriteStencil = false;
         uint32_t                                                       Samples = 1;
         MaterialRenderState                 Render;
+        RenderHardware::Handle<RenderHardware::Shader>                 VertexSource;
+        RenderHardware::Handle<RenderHardware::BindGroupLayout>        VertexLayout;
+        RenderHardware::Handle<RenderHardware::BindGroup>              VertexGroup;
+        RenderHardware::Handle<RenderHardware::Buffer>                 IndirectArguments;
         Ref<const InstanceMaterialParameters>                          Parameters;
         uint32_t                                                       Section = 0;
         std::shared_ptr<ShadowResources>                               Shadows;

@@ -84,7 +84,8 @@ namespace Kans
     {
         glm::mat4 Transform {1.0f};
         glm::mat4 NormalMatrix {1.0f};
-        // x: MaterialAlphaMode (0 opaque, 1 mask, 2 blend), y: cutoff, z: double-sided.
+        // x: MaterialAlphaMode (0 opaque, 1 mask, 2 blend, 3 dithered, 6 additive, 7 premultiplied).
+        // y: cutoff; z: double-sided. Shader-only coverage states occupy 4 and 5.
         glm::vec4 MaterialRender {0.0f, 0.5f, 0.0f, 0.0f};
     };
     static_assert(sizeof(EngineObjectUniforms) == 144, "KansObject std140 layout");

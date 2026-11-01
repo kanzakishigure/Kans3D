@@ -1,0 +1,64 @@
+Version: 1
+AssetID: 995fbf48c3346054:0000000000000001
+Usage: DynamicInput
+AllowedStages: 63
+Category: Built-in
+Description: GradientColorByNormalizedAge
+Inputs:
+- Name: Module.Curve
+  Type: color
+  Default:
+    Type: color
+    Value:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+Nodes:
+- Guid: 5ee86046-df86-5c19-b57e-bbf46778f11d
+  Op: Input
+  Type: color
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Module.Curve
+- Guid: 8f4f607b-846c-58cf-a8a0-b3c2abf4ed3a
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.NormalizedAge
+- Guid: b541b56c-77ee-5b95-a610-1eef823d3dc3
+  Op: Sample
+  Type: color
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Module.Curve
+  Interface:
+    Kind: Gradient
+    Times:
+    - 0.0
+    - 1.0
+    Values:
+    - - 1.0
+      - 1.0
+      - 1.0
+      - 1.0
+    - - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+Links:
+- From: 8f4f607b-846c-58cf-a8a0-b3c2abf4ed3a
+  Output: Value
+  To: b541b56c-77ee-5b95-a610-1eef823d3dc3
+  Input: A
+ResultNode: b541b56c-77ee-5b95-a610-1eef823d3dc3
+ResultPin: Value

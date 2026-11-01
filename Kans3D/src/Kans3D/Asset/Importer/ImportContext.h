@@ -38,6 +38,8 @@ namespace Kans
     {
         // Other source files read while importing (.mtl, glTF buffers, shader includes).
         std::vector<std::filesystem::path> SourceFiles;
+        // Engine-owned source roots carry stable IDs and participate in source fingerprints.
+        std::map<std::filesystem::path, SourceAssetID> BuiltinSourceFiles;
         // Source files whose Products are referenced by path (model textures).
         std::vector<std::filesystem::path> ProductSources;
         // Subset of ProductSources: build failures warn and resolve to an invalid

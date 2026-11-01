@@ -10,6 +10,7 @@
 #include "Kans3D/Physics/RagdollAsset.h"
 #include "Kans3D/Text/FontAsset.h"
 #include "Kans3D/UI/UIAsset.h"
+#include "Kans3D/VFX/VfxSystemAsset.h"
 
 namespace Kans
 {
@@ -43,6 +44,7 @@ namespace Kans
     AssetLoaderRegistry AssetLoaderRegistry::CreateDefault()
     {
         AssetLoaderRegistry registry;
+        registry.m_Decoders.emplace(VfxSystemAsset::GetStaticType(), Decode<VfxSystemAsset>);
         registry.m_Decoders.emplace(MeshAsset::GetStaticType(), Decode<MeshAsset>);
         registry.m_Decoders.emplace(MaterialDataAsset::GetStaticType(), Decode<MaterialDataAsset>);
         registry.m_Decoders.emplace(ModelAsset::GetStaticType(), Decode<ModelAsset>);

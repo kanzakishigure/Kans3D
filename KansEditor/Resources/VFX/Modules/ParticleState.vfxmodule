@@ -1,0 +1,246 @@
+Version: 1
+AssetID: 81ec57d7f6b9dad0:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: ParticleState
+Inputs:
+- Name: Module.KillAtLifetime
+  Type: bool
+  Default:
+    Type: bool
+    Value: true
+Nodes:
+- Guid: f12a5d26-38f2-511d-a3cc-e963fe013c37
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Age
+- Guid: ab08d23a-7022-5963-9d2e-76d13e6020de
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: 78dfce67-f64f-513c-a700-48774a498890
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: be3108b2-25e4-573f-ac49-0f1e7ad7b6e0
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Age
+- Guid: 3789920f-428f-5b01-8d4b-5af2f8444713
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Lifetime
+- Guid: 0d98b6c5-6333-5acd-ba00-aef65b77177a
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 1.0e-06
+- Guid: 52b0f467-f169-5620-ab22-2b0a14e8d133
+  Op: Max
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: a576359a-c2d4-5c99-b83c-1a1bb61da8b6
+  Op: Div
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: dbe5f987-b0a9-5361-b0b4-a4f59df21789
+  Op: Saturate
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 4da921b1-3419-5669-91c3-372a50635eb0
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.NormalizedAge
+- Guid: 178747ae-22b0-5ec9-8114-25564f52762e
+  Op: Input
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Module.KillAtLifetime
+- Guid: 3a649ba0-2561-5992-8432-908ed3fae58e
+  Op: Get
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Particles.Alive
+- Guid: 7304f819-6de6-52ea-9662-3a8a8412d159
+  Op: Not
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 7f1ca4ba-b750-50a5-b071-7111381ecfab
+  Op: Less
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: e0291a49-e0d7-5f56-9263-cca68ab7f9b9
+  Op: Or
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 7a113002-5634-5928-bfae-ba8710fce19e
+  Op: And
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: f3c9ed74-0efb-5e52-b626-992641c712a2
+  Op: Set
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Particles.Alive
+Links:
+- From: f12a5d26-38f2-511d-a3cc-e963fe013c37
+  Output: Value
+  To: 78dfce67-f64f-513c-a700-48774a498890
+  Input: A
+- From: ab08d23a-7022-5963-9d2e-76d13e6020de
+  Output: Value
+  To: 78dfce67-f64f-513c-a700-48774a498890
+  Input: B
+- From: 78dfce67-f64f-513c-a700-48774a498890
+  Output: Value
+  To: be3108b2-25e4-573f-ac49-0f1e7ad7b6e0
+  Input: A
+- From: 3789920f-428f-5b01-8d4b-5af2f8444713
+  Output: Value
+  To: 52b0f467-f169-5620-ab22-2b0a14e8d133
+  Input: A
+- From: 0d98b6c5-6333-5acd-ba00-aef65b77177a
+  Output: Value
+  To: 52b0f467-f169-5620-ab22-2b0a14e8d133
+  Input: B
+- From: 78dfce67-f64f-513c-a700-48774a498890
+  Output: Value
+  To: a576359a-c2d4-5c99-b83c-1a1bb61da8b6
+  Input: A
+- From: 52b0f467-f169-5620-ab22-2b0a14e8d133
+  Output: Value
+  To: a576359a-c2d4-5c99-b83c-1a1bb61da8b6
+  Input: B
+- From: a576359a-c2d4-5c99-b83c-1a1bb61da8b6
+  Output: Value
+  To: dbe5f987-b0a9-5361-b0b4-a4f59df21789
+  Input: A
+- From: dbe5f987-b0a9-5361-b0b4-a4f59df21789
+  Output: Value
+  To: 4da921b1-3419-5669-91c3-372a50635eb0
+  Input: A
+- From: 178747ae-22b0-5ec9-8114-25564f52762e
+  Output: Value
+  To: 7304f819-6de6-52ea-9662-3a8a8412d159
+  Input: A
+- From: 78dfce67-f64f-513c-a700-48774a498890
+  Output: Value
+  To: 7f1ca4ba-b750-50a5-b071-7111381ecfab
+  Input: A
+- From: 52b0f467-f169-5620-ab22-2b0a14e8d133
+  Output: Value
+  To: 7f1ca4ba-b750-50a5-b071-7111381ecfab
+  Input: B
+- From: 7304f819-6de6-52ea-9662-3a8a8412d159
+  Output: Value
+  To: e0291a49-e0d7-5f56-9263-cca68ab7f9b9
+  Input: A
+- From: 7f1ca4ba-b750-50a5-b071-7111381ecfab
+  Output: Value
+  To: e0291a49-e0d7-5f56-9263-cca68ab7f9b9
+  Input: B
+- From: 3a649ba0-2561-5992-8432-908ed3fae58e
+  Output: Value
+  To: 7a113002-5634-5928-bfae-ba8710fce19e
+  Input: A
+- From: e0291a49-e0d7-5f56-9263-cca68ab7f9b9
+  Output: Value
+  To: 7a113002-5634-5928-bfae-ba8710fce19e
+  Input: B
+- From: 7a113002-5634-5928-bfae-ba8710fce19e
+  Output: Value
+  To: f3c9ed74-0efb-5e52-b626-992641c712a2
+  Input: A

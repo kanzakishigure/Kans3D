@@ -16,6 +16,7 @@
 #include "Kans3D/Physics/RagdollComponent.h"
 #include "Kans3D/Physics/VehicleComponent.h"
 #include "Kans3D/Timeline/Timeline.h"
+#include "Kans3D/VFX/ParticleSystemComponent.h"
 
 #include "Kans3D/Core/UUID.h"
 #include "Kans3D/Geometry/Shapes.h"
@@ -196,6 +197,7 @@ namespace Kans
         std::optional<MeshColliderComponent>        MeshCollider;
         std::optional<ForceFieldComponent>          ForceField;
         std::optional<RagdollComponent>             Ragdoll;
+        std::optional<ParticleSystemComponent>      Particles;
         std::optional<VehicleComponent>             Vehicle;
         std::optional<WindZoneComponent>            GlobalWind;
         std::optional<CharacterControllerComponent> CharacterController;
@@ -214,8 +216,8 @@ namespace Kans
         {
             return !LocalTransform && Materials.empty() && !Removed && !RenderCustomDepth && !CustomStencil &&
                    !UIScreen && !UIWorld && !RigidBody && !BoxCollider && !SphereCollider && !CapsuleCollider &&
-                   !MeshCollider && !ForceField && !Ragdoll && !Vehicle && !GlobalWind && !CharacterController &&
-                   !Joint && !Cloth && !SpringBone && !MotionCollider;
+                   !MeshCollider && !ForceField && !Ragdoll && !Particles && !Vehicle && !GlobalWind &&
+                   !CharacterController && !Joint && !Cloth && !SpringBone && !MotionCollider;
         }
     };
     struct PrefabNodeState
@@ -318,7 +320,8 @@ namespace Kans
     template<typename... Component>
     struct ComponentGroup
     {};
-    using AllComponents = ComponentGroup<ClothComponent,
+    using AllComponents = ComponentGroup<ParticleSystemComponent,
+                                         ClothComponent,
                                          SpringBoneComponent,
                                          MotionColliderComponent,
                                          RigidBodyComponent,

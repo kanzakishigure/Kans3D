@@ -9,6 +9,7 @@
 #include "ScriptPhysics.h"
 #include "ScriptTimeline.h"
 #include "ScriptUI.h"
+#include "ScriptVfx.h"
 
 namespace Kans
 {
@@ -68,6 +69,8 @@ namespace Kans
                         return entity.HasComponent<ClothComponent>();
                     case Scripting::ComponentType::MotionColliderComponent:
                         return entity.HasComponent<MotionColliderComponent>();
+                    case Scripting::ComponentType::ParticleSystemComponent:
+                        return entity.HasComponent<ParticleSystemComponent>();
                     case Scripting::ComponentType::RagdollComponent:
                         return entity.HasComponent<RagdollComponent>();
                     case Scripting::ComponentType::VehicleComponent:
@@ -250,6 +253,7 @@ namespace Kans
         ScriptAnimation::Install(api);
         ScriptTimeline::Install(api);
         ScriptPhysics::Install(api);
+        ScriptVfx::Install(api);
         return api;
     }
 } // namespace Kans

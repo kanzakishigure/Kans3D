@@ -29,3 +29,5 @@ KANS_COMPONENT(22, RagdollComponent)
 KANS_COMPONENT(24, ForceFieldComponent)
 
 KANS_COMPONENT(23, VehicleComponent)
+
+KANS_COMPONENT(25, ParticleSystemComponent)

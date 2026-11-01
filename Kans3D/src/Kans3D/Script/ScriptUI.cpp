@@ -130,6 +130,8 @@ namespace Kans::ScriptUI
                         return Add<CharacterControllerComponent>(e);
                     case Scripting::ComponentType::SpringBoneComponent:
                         return Add<SpringBoneComponent>(e);
+                    case Scripting::ComponentType::ParticleSystemComponent:
+                        return Add<ParticleSystemComponent>(e);
                     case Scripting::ComponentType::RagdollComponent:
                         return Add<RagdollComponent>(e);
                     case Scripting::ComponentType::VehicleComponent:

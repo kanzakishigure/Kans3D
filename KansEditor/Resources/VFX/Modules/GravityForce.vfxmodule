@@ -1,0 +1,118 @@
+Version: 1
+AssetID: af3530c171414ce2:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: GravityForce
+Inputs:
+- Name: Module.Gravity
+  Type: vec3
+  Default:
+    Type: vec3
+    Value:
+    - 0.0
+    - -9.81
+    - 0.0
+Nodes:
+- Guid: 8e52179a-7a12-56a8-94a3-a4281dc175a8
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Gravity
+- Guid: 74326295-1e2c-573f-b383-4f34b6f01cfb
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Mass
+- Guid: 19c31c1c-ee07-5018-ac57-3b53b6a4ea58
+  Op: Make
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 9eabaf10-7689-59e6-b990-c4bee2a98828
+  Op: Mul
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  - Name: B
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: b7f7549c-8a39-50e7-8ac5-4aeeab26cedc
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.PhysicsForce
+- Guid: 195b0490-a069-543b-a169-1b7a842f5dbe
+  Op: Add
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  - Name: B
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: bd3fe02b-1487-5a85-99f1-7881f080863a
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.PhysicsForce
+Links:
+- From: 74326295-1e2c-573f-b383-4f34b6f01cfb
+  Output: Value
+  To: 19c31c1c-ee07-5018-ac57-3b53b6a4ea58
+  Input: A
+- From: 74326295-1e2c-573f-b383-4f34b6f01cfb
+  Output: Value
+  To: 19c31c1c-ee07-5018-ac57-3b53b6a4ea58
+  Input: B
+- From: 74326295-1e2c-573f-b383-4f34b6f01cfb
+  Output: Value
+  To: 19c31c1c-ee07-5018-ac57-3b53b6a4ea58
+  Input: C
+- From: 8e52179a-7a12-56a8-94a3-a4281dc175a8
+  Output: Value
+  To: 9eabaf10-7689-59e6-b990-c4bee2a98828
+  Input: A
+- From: 19c31c1c-ee07-5018-ac57-3b53b6a4ea58
+  Output: Value
+  To: 9eabaf10-7689-59e6-b990-c4bee2a98828
+  Input: B
+- From: b7f7549c-8a39-50e7-8ac5-4aeeab26cedc
+  Output: Value
+  To: 195b0490-a069-543b-a169-1b7a842f5dbe
+  Input: A
+- From: 9eabaf10-7689-59e6-b990-c4bee2a98828
+  Output: Value
+  To: 195b0490-a069-543b-a169-1b7a842f5dbe
+  Input: B
+- From: 195b0490-a069-543b-a169-1b7a842f5dbe
+  Output: Value
+  To: bd3fe02b-1487-5a85-99f1-7881f080863a
+  Input: A

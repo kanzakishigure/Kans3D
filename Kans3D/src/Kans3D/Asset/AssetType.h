@@ -33,5 +33,8 @@ namespace Kans
         PhysicsMaterial     = 19,
         Cloth               = 20,
         Ragdoll             = 21,
+        VfxSystem           = 22,
+        VfxEmitter          = 23,
+        VfxModule           = 24,
     };
 } // namespace Kans

@@ -73,7 +73,7 @@ namespace Kans
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
                     x->second.ForceField != y->second.ForceField || x->second.Ragdoll != y->second.Ragdoll ||
-                    x->second.Vehicle != y->second.Vehicle ||
+                    x->second.Particles != y->second.Particles || x->second.Vehicle != y->second.Vehicle ||
                     x->second.CharacterController != y->second.CharacterController ||
                     x->second.Joint != y->second.Joint || x->second.SpringBone != y->second.SpringBone ||
                     x->second.Cloth != y->second.Cloth || x->second.MotionCollider != y->second.MotionCollider ||
@@ -118,6 +118,7 @@ namespace Kans
         bool Same(const MeshColliderComponent& a, const MeshColliderComponent& b) { return a == b; }
         bool Same(const ForceFieldComponent& a, const ForceFieldComponent& b) { return a == b; }
         bool Same(const RagdollComponent& a, const RagdollComponent& b) { return a == b; }
+        bool Same(const ParticleSystemComponent& a, const ParticleSystemComponent& b) { return a == b; }
         bool Same(const VehicleComponent& a, const VehicleComponent& b) { return a == b; }
         bool Same(const WindZoneComponent& a, const WindZoneComponent& b) { return a == b; }
         bool Same(const CharacterControllerComponent& a, const CharacterControllerComponent& b) { return a == b; }
@@ -168,10 +169,10 @@ namespace Kans
                Same(a.AudioListener, b.AudioListener) && Same(a.RigidBody, b.RigidBody) &&
                Same(a.BoxCollider, b.BoxCollider) && Same(a.SphereCollider, b.SphereCollider) &&
                Same(a.CapsuleCollider, b.CapsuleCollider) && Same(a.MeshCollider, b.MeshCollider) &&
-               Same(a.Vehicle, b.Vehicle) && Same(a.Ragdoll, b.Ragdoll) && Same(a.ForceField, b.ForceField) &&
-               Same(a.GlobalWind, b.GlobalWind) && Same(a.CharacterController, b.CharacterController) &&
-               Same(a.Joint, b.Joint) && Same(a.SpringBone, b.SpringBone) && Same(a.Cloth, b.Cloth) &&
-               Same(a.MotionCollider, b.MotionCollider);
+               Same(a.Vehicle, b.Vehicle) && Same(a.Ragdoll, b.Ragdoll) && Same(a.Particles, b.Particles) &&
+               Same(a.ForceField, b.ForceField) && Same(a.GlobalWind, b.GlobalWind) &&
+               Same(a.CharacterController, b.CharacterController) && Same(a.Joint, b.Joint) &&
+               Same(a.SpringBone, b.SpringBone) && Same(a.Cloth, b.Cloth) && Same(a.MotionCollider, b.MotionCollider);
     }
 
     bool operator==(const SceneSnapshot& a, const SceneSnapshot& b)
@@ -246,6 +247,7 @@ namespace Kans
             Kans::Capture(entity, item.GlobalWind);
             Kans::Capture(entity, item.ForceField);
             Kans::Capture(entity, item.Ragdoll);
+            Kans::Capture(entity, item.Particles);
             Kans::Capture(entity, item.Vehicle);
             Kans::Capture(entity, item.CharacterController);
             Kans::Capture(entity, item.Joint);
@@ -325,6 +327,7 @@ namespace Kans
             Kans::Restore(entity, item.GlobalWind);
             Kans::Restore(entity, item.ForceField);
             Kans::Restore(entity, item.Ragdoll);
+            Kans::Restore(entity, item.Particles);
             Kans::Restore(entity, item.Vehicle);
             Kans::Restore(entity, item.CharacterController);
             Kans::Restore(entity, item.Joint);

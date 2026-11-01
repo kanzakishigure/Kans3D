@@ -1,0 +1,567 @@
+Version: 1
+AssetID: b4aac6a0fa041351:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: KillParticlesInVolume
+Inputs:
+- Name: Module.Shape
+  Type: int
+  Default:
+    Type: int
+    Value: 0
+- Name: Module.Center
+  Type: vec3
+  Default:
+    Type: vec3
+    Value:
+    - 0.0
+    - 0.0
+    - 0.0
+- Name: Module.Radius
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+- Name: Module.BoxExtents
+  Type: vec3
+  Default:
+    Type: vec3
+    Value:
+    - 1.0
+    - 1.0
+    - 1.0
+- Name: Module.KillOutside
+  Type: bool
+  Default:
+    Type: bool
+    Value: false
+Nodes:
+- Guid: 096cf6dc-7b30-5ee2-be5e-27369f70ffd2
+  Op: Input
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Shape
+- Guid: 050019b4-9e83-589d-9be3-d9fc249c6a60
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Center
+- Guid: 1711ea8b-6c36-56aa-890b-e5cb13d1c0de
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Radius
+- Guid: 372e49a9-35f9-53df-bfbb-7b184c9b4b6a
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.BoxExtents
+- Guid: 49b3395e-f334-5d97-a6fb-38da542e927b
+  Op: Input
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Module.KillOutside
+- Guid: 958273a2-9227-5bb5-9115-697c8b2b511f
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: cd0e4c6c-b6e8-5d20-b9f0-a4c0a3b8c148
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 9e125ecc-593b-5ee4-944a-839915b9008d
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: position
+  Outputs:
+  - Name: X
+    Type: float
+  - Name: Y
+    Type: float
+  - Name: Z
+    Type: float
+- Guid: 7ff5e797-9f5d-5e17-a093-10078488339c
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: position
+  Outputs:
+  - Name: X
+    Type: float
+  - Name: Y
+    Type: float
+  - Name: Z
+    Type: float
+- Guid: b26794fe-ebd3-551b-87f5-91dd96855bda
+  Op: Make
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: d457d8ab-0b68-554b-ab3f-ed6da1e3e3aa
+  Op: Sub
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  - Name: B
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: da0746e8-d4c5-525e-9320-87a0275f17bb
+  Op: Length
+  Type: float
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 461bcfa2-227c-57b7-9331-b573baed3a64
+  Op: Less
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: c7cf72a9-6918-5bb8-b2d4-f2f9c64606c0
+  Op: Abs
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: f28d5bb2-cd76-5fac-9860-a3c9ef190128
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: X
+    Type: float
+  - Name: Y
+    Type: float
+  - Name: Z
+    Type: float
+- Guid: 3bc80914-6eb6-5979-82c7-a08152c290d5
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: X
+    Type: float
+  - Name: Y
+    Type: float
+  - Name: Z
+    Type: float
+- Guid: 4e75f8db-eba1-5239-a40a-2a11314495b3
+  Op: Less
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 3815a5d7-aed3-5801-a74f-e1e6b9d356ee
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: X
+    Type: float
+  - Name: Y
+    Type: float
+  - Name: Z
+    Type: float
+- Guid: 25cfa7b4-8316-58ab-8bcb-7ba5dc76a8ce
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: X
+    Type: float
+  - Name: Y
+    Type: float
+  - Name: Z
+    Type: float
+- Guid: 9f97e460-afba-56be-992e-77a7294a6aa1
+  Op: Less
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 75a835a3-0676-504e-94b2-b7f9159a0d7d
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: X
+    Type: float
+  - Name: Y
+    Type: float
+  - Name: Z
+    Type: float
+- Guid: e499dcba-d5e8-54b4-8a58-f73a6b24a863
+  Op: Break
+  Type: float
+  Inputs:
+  - Name: A
+    Type: vec3
+  Outputs:
+  - Name: X
+    Type: float
+  - Name: Y
+    Type: float
+  - Name: Z
+    Type: float
+- Guid: ab80415a-a38c-59a3-831d-b7aa927d4e97
+  Op: Less
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 76b61226-6eda-54e6-84ad-4f01b89884ac
+  Op: And
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 41ca6bfb-2481-50fe-b70d-ddc44c454d1c
+  Op: And
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 9a9cef91-6790-58ed-a295-6543cf6c2831
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 1
+- Guid: f6038076-f43c-5c01-80b0-6baae68bae7a
+  Op: Equal
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: int
+  - Name: B
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: be2be346-a054-5b09-94bf-bd657d0108d4
+  Op: Select
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  - Name: C
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: e56a582a-2d7e-5622-acd6-c18a81f6d4cb
+  Op: Not
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: a4e24f04-f434-5880-ab75-cac8b595fbef
+  Op: Select
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  - Name: C
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: bac4c719-0558-50b3-856b-9ba8ca612ff6
+  Op: Get
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Particles.Alive
+- Guid: c5d8b826-fdf3-5e49-9c0e-6e62ea627da1
+  Op: Not
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 67891016-e1c5-5961-ba23-697f2c7fda49
+  Op: And
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: f7d574ac-0bf2-59ca-a913-46fc38ed452f
+  Op: Set
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Particles.Alive
+Links:
+- From: 958273a2-9227-5bb5-9115-697c8b2b511f
+  Output: Value
+  To: cd0e4c6c-b6e8-5d20-b9f0-a4c0a3b8c148
+  Input: A
+- From: 958273a2-9227-5bb5-9115-697c8b2b511f
+  Output: Value
+  To: 9e125ecc-593b-5ee4-944a-839915b9008d
+  Input: A
+- From: 958273a2-9227-5bb5-9115-697c8b2b511f
+  Output: Value
+  To: 7ff5e797-9f5d-5e17-a093-10078488339c
+  Input: A
+- From: cd0e4c6c-b6e8-5d20-b9f0-a4c0a3b8c148
+  Output: Value
+  To: b26794fe-ebd3-551b-87f5-91dd96855bda
+  Input: A
+- From: 9e125ecc-593b-5ee4-944a-839915b9008d
+  Output: Y
+  To: b26794fe-ebd3-551b-87f5-91dd96855bda
+  Input: B
+- From: 7ff5e797-9f5d-5e17-a093-10078488339c
+  Output: Z
+  To: b26794fe-ebd3-551b-87f5-91dd96855bda
+  Input: C
+- From: b26794fe-ebd3-551b-87f5-91dd96855bda
+  Output: Value
+  To: d457d8ab-0b68-554b-ab3f-ed6da1e3e3aa
+  Input: A
+- From: 050019b4-9e83-589d-9be3-d9fc249c6a60
+  Output: Value
+  To: d457d8ab-0b68-554b-ab3f-ed6da1e3e3aa
+  Input: B
+- From: d457d8ab-0b68-554b-ab3f-ed6da1e3e3aa
+  Output: Value
+  To: da0746e8-d4c5-525e-9320-87a0275f17bb
+  Input: A
+- From: da0746e8-d4c5-525e-9320-87a0275f17bb
+  Output: Value
+  To: 461bcfa2-227c-57b7-9331-b573baed3a64
+  Input: A
+- From: 1711ea8b-6c36-56aa-890b-e5cb13d1c0de
+  Output: Value
+  To: 461bcfa2-227c-57b7-9331-b573baed3a64
+  Input: B
+- From: d457d8ab-0b68-554b-ab3f-ed6da1e3e3aa
+  Output: Value
+  To: c7cf72a9-6918-5bb8-b2d4-f2f9c64606c0
+  Input: A
+- From: c7cf72a9-6918-5bb8-b2d4-f2f9c64606c0
+  Output: Value
+  To: f28d5bb2-cd76-5fac-9860-a3c9ef190128
+  Input: A
+- From: 372e49a9-35f9-53df-bfbb-7b184c9b4b6a
+  Output: Value
+  To: 3bc80914-6eb6-5979-82c7-a08152c290d5
+  Input: A
+- From: f28d5bb2-cd76-5fac-9860-a3c9ef190128
+  Output: X
+  To: 4e75f8db-eba1-5239-a40a-2a11314495b3
+  Input: A
+- From: 3bc80914-6eb6-5979-82c7-a08152c290d5
+  Output: X
+  To: 4e75f8db-eba1-5239-a40a-2a11314495b3
+  Input: B
+- From: c7cf72a9-6918-5bb8-b2d4-f2f9c64606c0
+  Output: Value
+  To: 3815a5d7-aed3-5801-a74f-e1e6b9d356ee
+  Input: A
+- From: 372e49a9-35f9-53df-bfbb-7b184c9b4b6a
+  Output: Value
+  To: 25cfa7b4-8316-58ab-8bcb-7ba5dc76a8ce
+  Input: A
+- From: 3815a5d7-aed3-5801-a74f-e1e6b9d356ee
+  Output: Y
+  To: 9f97e460-afba-56be-992e-77a7294a6aa1
+  Input: A
+- From: 25cfa7b4-8316-58ab-8bcb-7ba5dc76a8ce
+  Output: Y
+  To: 9f97e460-afba-56be-992e-77a7294a6aa1
+  Input: B
+- From: c7cf72a9-6918-5bb8-b2d4-f2f9c64606c0
+  Output: Value
+  To: 75a835a3-0676-504e-94b2-b7f9159a0d7d
+  Input: A
+- From: 372e49a9-35f9-53df-bfbb-7b184c9b4b6a
+  Output: Value
+  To: e499dcba-d5e8-54b4-8a58-f73a6b24a863
+  Input: A
+- From: 75a835a3-0676-504e-94b2-b7f9159a0d7d
+  Output: Z
+  To: ab80415a-a38c-59a3-831d-b7aa927d4e97
+  Input: A
+- From: e499dcba-d5e8-54b4-8a58-f73a6b24a863
+  Output: Z
+  To: ab80415a-a38c-59a3-831d-b7aa927d4e97
+  Input: B
+- From: 9f97e460-afba-56be-992e-77a7294a6aa1
+  Output: Value
+  To: 76b61226-6eda-54e6-84ad-4f01b89884ac
+  Input: A
+- From: ab80415a-a38c-59a3-831d-b7aa927d4e97
+  Output: Value
+  To: 76b61226-6eda-54e6-84ad-4f01b89884ac
+  Input: B
+- From: 4e75f8db-eba1-5239-a40a-2a11314495b3
+  Output: Value
+  To: 41ca6bfb-2481-50fe-b70d-ddc44c454d1c
+  Input: A
+- From: 76b61226-6eda-54e6-84ad-4f01b89884ac
+  Output: Value
+  To: 41ca6bfb-2481-50fe-b70d-ddc44c454d1c
+  Input: B
+- From: 096cf6dc-7b30-5ee2-be5e-27369f70ffd2
+  Output: Value
+  To: f6038076-f43c-5c01-80b0-6baae68bae7a
+  Input: A
+- From: 9a9cef91-6790-58ed-a295-6543cf6c2831
+  Output: Value
+  To: f6038076-f43c-5c01-80b0-6baae68bae7a
+  Input: B
+- From: f6038076-f43c-5c01-80b0-6baae68bae7a
+  Output: Value
+  To: be2be346-a054-5b09-94bf-bd657d0108d4
+  Input: A
+- From: 41ca6bfb-2481-50fe-b70d-ddc44c454d1c
+  Output: Value
+  To: be2be346-a054-5b09-94bf-bd657d0108d4
+  Input: B
+- From: 461bcfa2-227c-57b7-9331-b573baed3a64
+  Output: Value
+  To: be2be346-a054-5b09-94bf-bd657d0108d4
+  Input: C
+- From: be2be346-a054-5b09-94bf-bd657d0108d4
+  Output: Value
+  To: e56a582a-2d7e-5622-acd6-c18a81f6d4cb
+  Input: A
+- From: 49b3395e-f334-5d97-a6fb-38da542e927b
+  Output: Value
+  To: a4e24f04-f434-5880-ab75-cac8b595fbef
+  Input: A
+- From: e56a582a-2d7e-5622-acd6-c18a81f6d4cb
+  Output: Value
+  To: a4e24f04-f434-5880-ab75-cac8b595fbef
+  Input: B
+- From: be2be346-a054-5b09-94bf-bd657d0108d4
+  Output: Value
+  To: a4e24f04-f434-5880-ab75-cac8b595fbef
+  Input: C
+- From: a4e24f04-f434-5880-ab75-cac8b595fbef
+  Output: Value
+  To: c5d8b826-fdf3-5e49-9c0e-6e62ea627da1
+  Input: A
+- From: bac4c719-0558-50b3-856b-9ba8ca612ff6
+  Output: Value
+  To: 67891016-e1c5-5961-ba23-697f2c7fda49
+  Input: A
+- From: c5d8b826-fdf3-5e49-9c0e-6e62ea627da1
+  Output: Value
+  To: 67891016-e1c5-5961-ba23-697f2c7fda49
+  Input: B
+- From: 67891016-e1c5-5961-ba23-697f2c7fda49
+  Output: Value
+  To: f7d574ac-0bf2-59ca-a913-46fc38ed452f
+  Input: A

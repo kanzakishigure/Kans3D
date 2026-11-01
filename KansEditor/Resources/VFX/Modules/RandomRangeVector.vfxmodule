@@ -1,0 +1,62 @@
+Version: 1
+AssetID: 947389bea4f735b9:0000000000000001
+Usage: DynamicInput
+AllowedStages: 63
+Category: Built-in
+Description: RandomRangeVector
+Inputs:
+- Name: Module.Min
+  Type: vec3
+  Default:
+    Type: vec3
+    Value:
+    - 0.0
+    - 0.0
+    - 0.0
+- Name: Module.Max
+  Type: vec3
+  Default:
+    Type: vec3
+    Value:
+    - 1.0
+    - 1.0
+    - 1.0
+Nodes:
+- Guid: c541d00e-7890-5226-9798-98a9fa64cb86
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Min
+- Guid: d19552f2-9045-5b2e-a341-4d3c1b7ac7ad
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Max
+- Guid: 5ea0f442-8f35-5c62-87c3-9a4bb8ba4f31
+  Op: RandomRange
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  - Name: B
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+Links:
+- From: c541d00e-7890-5226-9798-98a9fa64cb86
+  Output: Value
+  To: 5ea0f442-8f35-5c62-87c3-9a4bb8ba4f31
+  Input: A
+- From: d19552f2-9045-5b2e-a341-4d3c1b7ac7ad
+  Output: Value
+  To: 5ea0f442-8f35-5c62-87c3-9a4bb8ba4f31
+  Input: B
+ResultNode: 5ea0f442-8f35-5c62-87c3-9a4bb8ba4f31
+ResultPin: Value

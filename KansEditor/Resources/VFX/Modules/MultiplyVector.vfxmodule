@@ -1,0 +1,59 @@
+Version: 1
+AssetID: 96ee20b458b20685:0000000000000001
+Usage: DynamicInput
+AllowedStages: 63
+Category: Built-in
+Description: MultiplyVector
+Inputs:
+- Name: Module.A
+  Type: vec3
+  Default:
+    Type: vec3
+    Value: &id001
+    - 1.0
+    - 1.0
+    - 1.0
+- Name: Module.B
+  Type: vec3
+  Default:
+    Type: vec3
+    Value: *id001
+Nodes:
+- Guid: bf20a95a-9649-55f6-97f8-2b0c1172489a
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.A
+- Guid: a89732db-0a59-525f-8203-4fe1de65c838
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.B
+- Guid: 7dcc42f6-dd9e-5ac5-80f1-e9f0bd7f393c
+  Op: Mul
+  Type: vec3
+  Inputs:
+  - Name: A
+    Type: vec3
+  - Name: B
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+Links:
+- From: bf20a95a-9649-55f6-97f8-2b0c1172489a
+  Output: Value
+  To: 7dcc42f6-dd9e-5ac5-80f1-e9f0bd7f393c
+  Input: A
+- From: a89732db-0a59-525f-8203-4fe1de65c838
+  Output: Value
+  To: 7dcc42f6-dd9e-5ac5-80f1-e9f0bd7f393c
+  Input: B
+ResultNode: 7dcc42f6-dd9e-5ac5-80f1-e9f0bd7f393c
+ResultPin: Value

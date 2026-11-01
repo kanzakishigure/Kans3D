@@ -145,7 +145,7 @@ float KansOutputAlpha(float alpha)
 {
     if (u_Object.MaterialRender.x == 4.0)
         return clamp((alpha-u_Object.MaterialRender.y)/max(fwidth(alpha), 1e-4)+0.5, 0.0, 1.0);
-    return (u_Object.MaterialRender.x == 2.0 || u_Object.MaterialRender.x == 5.0) ? alpha : 1.0;
+    return (u_Object.MaterialRender.x == 2.0 || u_Object.MaterialRender.x == 5.0 || u_Object.MaterialRender.x == 6.0 || u_Object.MaterialRender.x == 7.0) ? alpha : 1.0;
 }
 #endif
 )"},
@@ -170,6 +170,14 @@ void KansWriteShadowDepth(vec3 worldPos)
 layout(location = 7) in vec3 a_SmoothNormal;
 // Mesh-space normal, rotated by the engine skinning prologue; morphs leave it unchanged.
 vec3 KansSmoothNormal() { return a_SmoothNormal; }
+#endif
+)"},
+                {"Kans3D/VertexSource.glsl", R"(#ifndef KANS3D_VERTEX_SOURCE_GLSL
+#define KANS3D_VERTEX_SOURCE_GLSL
+// Generic values supplied by a procedural vertex source; defaults support ordinary meshes.
+vec4 KansVertexColor = vec4(1);
+vec4 KansVertexDynamicMaterialParameter = vec4(0);
+vec3 KansVertexSubUV = vec3(0);
 #endif
 )"},
                 {"Kans3D/VertexInput.glsl", R"(#ifndef KANS3D_VERTEX_INPUT_GLSL

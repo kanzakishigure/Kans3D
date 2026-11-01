@@ -17,6 +17,10 @@
 
 namespace Kans
 {
+    namespace Vfx
+    {
+        class VfxWorld;
+    }
     class AssetManager;
     class AssetChangeObserver;
     class RenderWorld;
@@ -58,6 +62,8 @@ namespace Kans
         ~Scene();
 
         void              OnUpdate(TimeStep ts);
+        Vfx::VfxWorld&    GetVfxWorld() const { return *m_VfxWorld; }
+        void              UpdateVfxPreview(float delta, glm::vec3 camera = {});
         UIContext&        UI() { return m_UI; }
         const UIContext&  UI() const { return m_UI; }
         const UIViewport& GetUIViewport() const { return m_UIViewport; }
@@ -339,6 +345,8 @@ namespace Kans
         uint64_t                                      m_NextDrawOrder     = 1;
         bool                                          m_ReconcilingPrefab = false;
         void                                          ExpandPrefab(Entity root);
+        friend class Vfx::VfxWorld;
+        std::unique_ptr<Vfx::VfxWorld>                m_VfxWorld;
         entt::registry                                m_Registry;
         uint32_t                                      m_ViewportWidth = 0, m_ViewportHeight = 0;
         std::string                                   m_Name;

@@ -43,6 +43,7 @@ namespace Kans
         std::optional<MeshColliderComponent>             MeshCollider;
         std::optional<ForceFieldComponent>               ForceField;
         std::optional<RagdollComponent>                  Ragdoll;
+        std::optional<ParticleSystemComponent>           Particles;
         std::optional<VehicleComponent>                  Vehicle;
         std::optional<WindZoneComponent>                 GlobalWind;
         std::optional<CharacterControllerComponent>      CharacterController;

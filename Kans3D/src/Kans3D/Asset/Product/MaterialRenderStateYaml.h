@@ -31,6 +31,10 @@ namespace Kans
                 state.AlphaMode = MaterialAlphaMode::Blend;
             else if (mode == "dithered")
                 state.AlphaMode = MaterialAlphaMode::Dithered;
+            else if (mode == "additive")
+                state.AlphaMode = MaterialAlphaMode::Additive;
+            else if (mode == "premultiplied")
+                state.AlphaMode = MaterialAlphaMode::Premultiplied;
             else if (mode != "opaque")
                 throw std::runtime_error("invalid material alpha_mode '" + mode + "'");
         }
@@ -49,10 +53,12 @@ namespace Kans
     {
         if (!IsValidMaterialRenderState(state))
             throw std::runtime_error("invalid material render state");
-        const char* mode = state.AlphaMode == MaterialAlphaMode::Mask     ? "mask" :
-                           state.AlphaMode == MaterialAlphaMode::Blend    ? "blend" :
-                           state.AlphaMode == MaterialAlphaMode::Dithered ? "dithered" :
-                                                                            "opaque";
+        const char* mode = state.AlphaMode == MaterialAlphaMode::Mask          ? "mask" :
+                           state.AlphaMode == MaterialAlphaMode::Blend         ? "blend" :
+                           state.AlphaMode == MaterialAlphaMode::Dithered      ? "dithered" :
+                           state.AlphaMode == MaterialAlphaMode::Additive      ? "additive" :
+                           state.AlphaMode == MaterialAlphaMode::Premultiplied ? "premultiplied" :
+                                                                                 "opaque";
         out << YAML::Key << "render" << YAML::Value << YAML::Flow << YAML::BeginMap << YAML::Key << "alpha_mode"
             << YAML::Value << mode << YAML::Key << "alpha_cutoff" << YAML::Value << state.AlphaCutoff << YAML::Key
             << "double_sided" << YAML::Value << state.DoubleSided;

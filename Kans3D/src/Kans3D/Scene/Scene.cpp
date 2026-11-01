@@ -8,6 +8,7 @@
 #include "Kans3D/Physics/PhysicsWorld.h"
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Renderer/RenderWorld.h"
+#include "Kans3D/VFX/VfxWorld.h"
 #include "Components.h"
 #include "Entity.h"
 #include "Scene.h"
@@ -21,6 +22,7 @@ namespace Kans
     Scene::Scene(const std::string& name) : m_Name(name)
     {
         m_RenderWorld = std::make_unique<RenderWorld>(*this);
+        m_VfxWorld    = std::make_unique<Vfx::VfxWorld>(*this);
         auto physics  = [&](auto* type) {
             using T = std::remove_pointer_t<decltype(type)>;
             if constexpr (std::is_same_v<T, BoxColliderComponent> || std::is_same_v<T, SphereColliderComponent> ||
@@ -113,6 +115,7 @@ namespace Kans
         m_Registry.on_update<EditableMeshComponent>().connect<&Scene::OnEditableMeshChanged>(this);
         m_Registry.on_destroy<EditableMeshComponent>().connect<&Scene::OnEditableMeshRemoved>(this);
         connect(static_cast<SpriteRendererComponent*>(nullptr));
+        connect(static_cast<ParticleSystemComponent*>(nullptr));
         connect(static_cast<DirLightComponent*>(nullptr));
         connect(static_cast<PointLightComponent*>(nullptr));
         connect(static_cast<PrefabOwnedComponent*>(nullptr));
@@ -251,6 +254,8 @@ namespace Kans
                     add(change.Cloth->Asset);
                 if (change.Ragdoll)
                     add(change.Ragdoll->Asset);
+                if (change.Particles)
+                    add(change.Particles->System);
                 if (change.Vehicle)
                     for (const auto& w : change.Vehicle->Wheels)
                         for (const auto& f : w.MaterialFriction)
@@ -262,6 +267,8 @@ namespace Kans
             }
         for (auto h : m_Registry.view<ClothComponent>())
             add(m_Registry.get<ClothComponent>(h).Asset);
+        for (auto h : m_Registry.view<ParticleSystemComponent>())
+            add(m_Registry.get<ParticleSystemComponent>(h).System);
         for (auto h : m_Registry.view<RagdollComponent>())
             add(m_Registry.get<RagdollComponent>(h).Asset);
         for (auto h : m_Registry.view<VehicleComponent>())
@@ -373,6 +380,7 @@ namespace Kans
         for (auto id : m_AssetChanges->Drain())
         {
             m_RenderWorld->AssetChanged(id);
+            m_VfxWorld->NotifyAssetChanged(id);
             if (m_PhysicsWorld)
                 m_PhysicsWorld->NotifyAssetChanged(id);
             const auto found = m_PrefabAssetUsers.find(id);
@@ -446,6 +454,8 @@ namespace Kans
         }
         if (ScriptEngine::GetSceneContext() == this)
             ScriptEngine::OnUpdate(ts);
+        auto vfxCamera = GetCameraEntity();
+        m_VfxWorld->Tick(float(ts), false, vfxCamera ? glm::vec3(GetWorldTransform(vfxCamera)[3]) : glm::vec3(0));
         UpdateAudio(double(ts));
     }
 
@@ -488,6 +498,8 @@ namespace Kans
     }
     void Scene::DestroyEntity(Entity entity)
     {
+        if (entity)
+            m_VfxWorld->Remove(entity.GetUUID());
         if (!entity || !m_Registry.valid(entt::entity(entity)))
             return;
         if (m_PhysicsWorld && m_PhysicsWorld->DeferMutation([this, id = entity.GetUUID()] {
@@ -798,6 +810,7 @@ namespace Kans
         CopyComponent<WindZoneComponent>(source, copy);
         CopyComponent<ForceFieldComponent>(source, copy);
         CopyComponent<RagdollComponent>(source, copy);
+        CopyComponent<ParticleSystemComponent>(source, copy);
         CopyComponent<VehicleComponent>(source, copy);
 
         CopyComponent<AudioSourceComponent>(source, copy);
@@ -944,6 +957,7 @@ namespace Kans
         m_PhysicsPaused = m_PhysicsSingleStep = false;
         m_PhysicsWorld                        = std::make_unique<PhysicsWorld>(*this, GetPhysicsSettings());
         StartAudio();
+        m_VfxWorld->Start();
         if (m_RuntimeOptions.RunScripts && ScriptEngine::IsInitialized())
             ScriptEngine::OnRuntimeStart(this);
         const bool springBones = !m_Registry.view<SpringBoneComponent>().empty() ||
@@ -983,6 +997,7 @@ namespace Kans
 
     void Scene::OnRuntimeStop()
     {
+        m_VfxWorld->Clear();
         RestoreSpringBoneTransforms();
         ResetSecondaryMotion();
         m_RuntimeOptions = {};
@@ -1062,6 +1077,14 @@ namespace Kans
     {}
     template<>
     void Scene::OnComponentAdd<ForceFieldComponent>(Entity, ForceFieldComponent&)
+    {}
+    void Scene::UpdateVfxPreview(float delta, glm::vec3 camera)
+    {
+        UpdatePrefabs();
+        m_VfxWorld->Tick(delta, true, camera);
+    }
+    template<>
+    void Scene::OnComponentAdd<ParticleSystemComponent>(Entity, ParticleSystemComponent&)
     {}
     template<>
     void Scene::OnComponentAdd<RagdollComponent>(Entity, RagdollComponent&)
