@@ -151,6 +151,22 @@ namespace Kans
         SpriteLayout  = ParticleSpriteLayout(*m_Device);
         return true;
     }
+    bool GpuShader::PrepareParticleMesh() const
+    {
+        if (MeshProgram)
+            return true;
+        if (!m_Source)
+            return false;
+        auto converted = MakeParticleSpriteShader(*m_Source, true);
+        if (auto e = std::get_if<AssetError>(&converted))
+        {
+            CORE_ERROR("Particle mesh shader: {0}", e->Message);
+            return false;
+        }
+        MeshProgram = m_Device->CreateShader(std::get<ShaderData>(converted));
+        MeshLayout  = ParticleSpriteLayout(*m_Device);
+        return true;
+    }
     bool GpuShader::PrepareSkinning(bool smoothNormalFallback) const
     {
         auto& program = smoothNormalFallback ? SkinnedNormalFallbackProgram : SkinnedProgram;
@@ -190,6 +206,9 @@ namespace Kans
         GpuShader copy;
         copy.m_Device           = m_Device;
         copy.Program            = Program;
+        copy.MeshDepthProgram             = MeshDepthProgram;
+        copy.MeshProgram                  = MeshProgram;
+        copy.MeshLayout                   = MeshLayout;
         copy.SpriteProgram                = SpriteProgram;
         copy.SpriteLayout                 = SpriteLayout;
         copy.m_Source           = m_Source;

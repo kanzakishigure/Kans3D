@@ -13,22 +13,52 @@ namespace Kans::Vfx
         static void AddSystemPasses(RenderGraph&, SystemInstance&, RenderHardware::Device&);
         std::map<std::string, RenderHardware::Handle<RenderHardware::Buffer>> EventBuffers;
         RenderHardware::Handle<RenderHardware::Buffer>                        EventDispatchArgs;
-        void UploadCpu(RenderGraph&, const EmitterInstance&);
+        void                                           UploadCpu(RenderGraph&, const EmitterInstance&);
+        RenderHardware::Handle<RenderHardware::Buffer> SortForView(RenderGraph&,
+                                                                   const EmitterInstance&,
+                                                                   const Renderer&,
+                                                                   const glm::mat4& view,
+                                                                   const glm::mat4& owner,
+                                                                   bool             transparent);
+        struct MeshBin
+        {
+            RenderHardware::Handle<RenderHardware::Buffer> Indices, Arguments;
+        };
+        MeshBin BinMesh(RenderGraph&,
+                        const Renderer&,
+                        uint32_t entry,
+                        const std::vector<MeshSection>&,
+                        RenderHardware::Handle<RenderHardware::Buffer> indices);
+        static std::vector<uint32_t>
+             SortCpu(const EmitterInstance&, const Renderer&, const glm::mat4& view, const glm::mat4& owner);
         bool HasPendingReadback() const { return Pending[0] || Pending[1] || Pending[2]; }
         RenderHardware::Handle<RenderHardware::Buffer> Attributes, Alive, DrawArgs, DispatchArgs, Counters;
         RenderHardware::Handle<RenderHardware::Buffer> Flags, Free;
         RenderHardware::Device&                        Device;
 
     private:
+        struct Workspace
+        {
+            std::weak_ptr<const void>                      Graph;
+            RenderHardware::Handle<RenderHardware::Buffer> Output, Pairs, Dispatch, Uniform;
+            RenderHardware::Handle<RenderHardware::Buffer> Counts, Scan, Gather;
+            const Renderer*                                RendererKey = nullptr;
+            RenderHardware::Buffer*                        Input       = nullptr;
+            std::vector<MeshBin>                           Bins;
+        };
+        std::vector<Workspace>                         SortWorkspaces, BinWorkspaces;
+        RenderHardware::Handle<RenderHardware::Buffer> BoundsPartials;
+        Workspace&                                     Acquire(std::vector<Workspace>&, RenderGraph&);
         struct Kernel
         {
             RenderHardware::Handle<RenderHardware::ComputePipeline> Pipeline;
             RenderHardware::Handle<RenderHardware::BindGroupLayout> Layout;
         };
-        Kernel                                           Spawn, Update, Prepare, PrepareEvent, Compact, BoundsKernel;
-        std::map<Stage, Kernel>                          StageKernels;
-        std::vector<Kernel>                              HandlerKernels;
-        std::map<const Program*, std::vector<glm::vec4>> InterfaceData;
+        Kernel SortPrepare, SortKeys, SortStep, SortOutput, BinCount, BinScan, BinScatter, BinArguments;
+        Kernel Spawn, Update, Prepare, PrepareEvent, Compact, BoundsKernel, BoundsFinish;
+        std::map<Stage, Kernel>                                                  StageKernels;
+        std::vector<Kernel>                                                      HandlerKernels;
+        std::map<const Program*, std::vector<glm::vec4>>                         InterfaceData;
         std::map<const Program*, RenderHardware::Handle<RenderHardware::Buffer>> InterfaceBuffers;
         RenderHardware::Handle<RenderHardware::Buffer>                           Count;
         std::array<RenderHardware::Handle<RenderHardware::Buffer>, 3>            Readbacks;

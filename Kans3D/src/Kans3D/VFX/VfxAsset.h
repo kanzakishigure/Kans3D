@@ -64,14 +64,17 @@ namespace Kans::Vfx
         ViewPlane,
         CameraPosition,
         Velocity,
-        Custom
+        Custom,
+        Default,
+        CameraPlane
     };
     enum class Sort
     {
         None,
         EmitterOrder,
         ParticleDepth,
-        ParticleDistance
+        ParticleDistance,
+        Custom
     };
     enum class CullPolicy
     {
@@ -189,11 +192,21 @@ namespace Kans::Vfx
         std::string              ResultNode, ResultPin = "Value";
         std::vector<EventLayout> EventLayouts;
     };
+    struct MeshEntry
+    {
+        AssetID                     Mesh;
+        glm::vec3                   Scale {1}, PivotOffset {0};
+        std::map<uint32_t, AssetID> MaterialOverrides;
+    };
     struct Renderer
     {
         std::string                        Guid;
         RendererKind                       Kind = RendererKind::Sprite;
         AssetID                            Material;
+        std::vector<MeshEntry>             Meshes;
+        bool                               CastShadows = true, SortAscending = false;
+        bool                               LockedAxisEnable = false;
+        glm::vec3                          LockedAxis {0, 0, 1};
         Facing                             FacingMode = Facing::ViewPlane;
         Sort                               Sorting    = Sort::EmitterOrder;
         glm::vec2                          Pivot {0.5f};

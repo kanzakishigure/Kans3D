@@ -48,6 +48,7 @@ namespace Kans
         key |= uint32_t(data.Render.AlphaMode == MaterialAlphaMode::Additive) << 28;
         key |= uint32_t(data.Render.AlphaMode == MaterialAlphaMode::Premultiplied) << 29;
         key |= uint32_t(bool(data.VertexSource)) << 30;
+        key |= uint32_t(data.ParticleMesh) << 27;
         Handle<Pipeline> shadowPipeline;
         auto&            pipeline = (data.ShadowDepth || data.CustomDepth) ? shadowPipeline :
                                     extraPass                              ? extraPass->Pipelines[key] :
@@ -91,7 +92,7 @@ namespace Kans
                     // Alias the existing normal: no allocation, upload, or retained CPU copy.
                     desc.Attributes.push_back({7, 0, 12, VertexFormat::Float3});
             }
-            if (data.VertexSource)
+            if (data.VertexSource && !data.ParticleMesh)
             {
                 desc.VertexBindings.clear();
                 desc.Attributes.clear();
@@ -207,7 +208,17 @@ namespace Kans
         if (data.VertexSource)
         {
             commands.BindGroup(data.VertexGroup);
-            commands.DrawIndirect(data.IndirectArguments);
+            if (data.ParticleMesh)
+            {
+                commands.BindVertexBuffers({{0, mesh.BindVertices ? mesh.BindVertices : mesh.Vertices, 0}});
+                if (smoothStream)
+                    commands.BindVertexBuffers(
+                        {{2, mesh.BindSmoothNormals ? mesh.BindSmoothNormals : mesh.SmoothNormals, 0}});
+                commands.BindIndexBuffer(mesh.Indices, IndexType::Uint32);
+                commands.DrawIndexedIndirect(data.IndirectArguments, data.IndirectOffset);
+            }
+            else
+                commands.DrawIndirect(data.IndirectArguments);
             if (recorded)
                 *recorded = true;
             return complete;

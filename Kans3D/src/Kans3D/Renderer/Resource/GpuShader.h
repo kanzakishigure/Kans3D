@@ -56,6 +56,9 @@ namespace Kans
         GpuShader Snapshot() const;
         std::shared_ptr<const ShaderData>                               Source() const { return m_Source; }
         bool                                                            PrepareParticleSprite() const;
+        bool                                                            PrepareParticleMesh() const;
+        mutable RenderHardware::Handle<RenderHardware::Shader>          MeshProgram, MeshDepthProgram;
+        mutable RenderHardware::Handle<RenderHardware::BindGroupLayout> MeshLayout;
         mutable RenderHardware::Handle<RenderHardware::Shader>          SpriteProgram;
         mutable RenderHardware::Handle<RenderHardware::BindGroupLayout> SpriteLayout;
         bool      PrepareSkinning(bool smoothNormalFallback = false) const;

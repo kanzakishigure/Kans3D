@@ -34,6 +34,7 @@ namespace Kans::RenderHardware
             std::unordered_map<std::string, std::weak_ptr<VKSet>> DescriptorCache;
             uint64_t        PipelineCreations = 0, DescriptorAllocations = 0, GroupCreationNanoseconds = 0;
             uint64_t        WaitIdleCalls = 0;
+            uint64_t        BufferCreations = 0;
             VulkanTestProbes::BufferWriteObserver BufferWrites;
             VulkanTestProbes::BarrierObserver     Barriers;
             DeviceStats     Stats;
@@ -198,7 +199,7 @@ namespace Kans::RenderHardware
             VkBuffer      Native = VK_NULL_HANDLE;
             VmaAllocation Alloc  = VK_NULL_HANDLE;
             void*         Mapped = nullptr;
-            Access        Last;
+            Access        Last, Writer, Visible;
             size_t        PendingWrites = 0;
             VKBuffer(std::shared_ptr<State> owner, BufferDesc desc) : Memory(std::move(owner)), Desc(desc)
             {
@@ -231,6 +232,7 @@ namespace Kans::RenderHardware
                 VmaAllocationInfo info {};
                 auto              allocator = Memory.Owner->Native.Allocator;
                 Check(vmaCreateBuffer(allocator, &buffer, &allocation, &Native, &Alloc, &info));
+                ++Memory.Owner->BufferCreations;
                 Mapped        = info.pMappedData;
                 Memory.Owner->Native.BufferAllocationBytes += info.size;
                 Memory.Delete =
@@ -255,7 +257,8 @@ namespace Kans::RenderHardware
                 Check(vmaFlushAllocation(Memory.Owner->Native.Allocator, Alloc, offset, bytes));
                 // Host writes precede submission; the next inferred use includes
                 // the host access in its dependency (also for noncoherent memory).
-                Last = {VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_WRITE_BIT};
+                Last = Writer = {VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_WRITE_BIT};
+                Visible       = {};
                 if (Memory.Owner->BufferWrites)
                     Memory.Owner->BufferWrites(Desc, offset, data, bytes);
             }
@@ -435,7 +438,7 @@ namespace Kans::RenderHardware
                 SampleViews->push_back({sub, aspect, result});
                 return result;
             }
-            std::vector<Access>      Last;
+            std::vector<Access>      Last, Writer, Visible;
             size_t                   Index(TextureSubresource sub) const { return sub.Face * Desc.MipLevels + sub.Mip; }
             VKTexture(std::shared_ptr<State> owner, TextureDesc desc) : Memory(std::move(owner)), Desc(desc)
             {
@@ -515,6 +518,8 @@ namespace Kans::RenderHardware
                 try
                 {
                     Last.resize(size_t(image.arrayLayers) * image.mipLevels);
+                    Writer.resize(Last.size());
+                    Visible.resize(Last.size());
                     if (image.usage & (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT))
                     {
@@ -711,37 +716,64 @@ namespace Kans::RenderHardware
             }
             void Use(VKBuffer& buffer, Access next)
             {
-                // Whole-buffer tracking is conservative across subranges. Each command unions
-                // all aliased bindings before Use, so a slot cannot hide another slot's write.
-                if (!Writes(buffer.Last.Mask) && !Writes(next.Mask))
+                // Keep the producer until the next write. Visibility at one consumer stage
+                // does not publish its contents to a different stage or access class.
+                const bool write = Writes(next.Mask);
+                if (!write && (next.Stage & ~buffer.Visible.Stage) == 0 && (next.Mask & ~buffer.Visible.Mask) == 0)
                 {
                     buffer.Last.Stage |= next.Stage;
                     buffer.Last.Mask |= next.Mask;
                     return;
                 }
-                VkBufferMemoryBarrier2 barrier {VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
-                barrier.srcStageMask        = buffer.Last.Stage;
-                barrier.srcAccessMask       = buffer.Last.Mask;
-                barrier.dstStageMask        = next.Stage;
-                barrier.dstAccessMask       = next.Mask;
-                barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.buffer                                            = buffer.Native;
-                barrier.size                                              = VK_WHOLE_SIZE;
-                BufferBarriers.push_back(barrier);
-                buffer.Last = next;
+                auto barrierFrom = [&](Access source) {
+                    if (!source.Stage)
+                        return;
+                    VkBufferMemoryBarrier2 barrier {VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
+                    barrier.srcStageMask        = source.Stage;
+                    barrier.srcAccessMask       = source.Mask;
+                    barrier.dstStageMask        = next.Stage;
+                    barrier.dstAccessMask       = next.Mask;
+                    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.buffer                                            = buffer.Native;
+                    barrier.size                                              = VK_WHOLE_SIZE;
+                    BufferBarriers.push_back(barrier);
+                };
+                // Separate WAR execution and WAW memory dependencies retain every reader
+                // without discarding the original producer's availability dependency.
+                if (write && !Writes(buffer.Last.Mask))
+                    barrierFrom(buffer.Last);
+                barrierFrom(buffer.Writer);
+                if (write)
+                {
+                    buffer.Writer = buffer.Last = next;
+                    buffer.Visible              = {};
+                }
+                else
+                {
+                    if (Writes(buffer.Last.Mask))
+                        buffer.Last = {};
+                    buffer.Last.Stage |= next.Stage;
+                    buffer.Last.Mask |= next.Mask;
+                    buffer.Visible.Stage |= next.Stage;
+                    buffer.Visible.Mask |= next.Mask;
+                }
             }
             void Use(VKTexture& texture, TextureSubresource sub, Access next)
             {
-                auto&                 last = texture.Last.at(texture.Index(sub));
-                if (last.Layout == next.Layout && !Writes(last.Mask) && !Writes(next.Mask))
+                const auto index   = texture.Index(sub);
+                auto&      last    = texture.Last.at(index);
+                auto&      writer  = texture.Writer.at(index);
+                auto&      visible = texture.Visible.at(index);
+                const bool write = Writes(next.Mask), layout = last.Layout != next.Layout;
+                if (!layout && !write && (next.Stage & ~visible.Stage) == 0 && (next.Mask & ~visible.Mask) == 0)
                 {
                     last.Stage |= next.Stage;
                     last.Mask |= next.Mask;
                     return;
                 }
                 VkImageMemoryBarrier2 barrier {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-                barrier.srcStageMask        = last.Stage;
-                barrier.srcAccessMask       = last.Mask;
+                barrier.srcStageMask        = writer.Stage | ((write || layout) ? last.Stage : 0);
+                barrier.srcAccessMask       = writer.Mask | ((write || layout) ? last.Mask : 0);
                 barrier.dstStageMask        = next.Stage;
                 barrier.dstAccessMask       = next.Mask;
                 barrier.oldLayout           = last.Layout;
@@ -749,8 +781,24 @@ namespace Kans::RenderHardware
                 barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 barrier.image                                             = texture.Native;
                 barrier.subresourceRange = {Info(texture.Desc.PixelFormat).Aspects, sub.Mip, 1, sub.Face, 1};
-                ImageBarriers.push_back(barrier);
-                last = next;
+                if (layout || barrier.srcStageMask)
+                    ImageBarriers.push_back(barrier);
+                if (write)
+                {
+                    writer = last = next;
+                    visible       = {};
+                }
+                else
+                {
+                    if (layout || Writes(last.Mask))
+                        last = {0, 0, next.Layout};
+                    if (layout)
+                        visible = {};
+                    last.Stage |= next.Stage;
+                    last.Mask |= next.Mask;
+                    visible.Stage |= next.Stage;
+                    visible.Mask |= next.Mask;
+                }
             }
             void Copy(VKBuffer& source, size_t from, VKBuffer& destination, size_t to, size_t bytes)
             {
@@ -771,7 +819,6 @@ namespace Kans::RenderHardware
                     FlushBarriers();
                     // Host visibility is an export, not the last GPU access.
                     // Preserve the producer for later queue dependencies.
-                    destination.Last = TransferWrite;
                 }
             }
             void ImageCopy(VKBuffer&          buffer,
@@ -800,7 +847,6 @@ namespace Kans::RenderHardware
                     {
                         Use(buffer, HostRead);
                         FlushBarriers();
-                        buffer.Last = TransferWrite;
                     }
                 }
             }
@@ -2341,7 +2387,8 @@ namespace Kans::RenderHardware::VulkanTestProbes
                 state.DescriptorAllocations,
                 state.DescriptorPools.size(),
                 state.GroupCreationNanoseconds,
-                state.WaitIdleCalls};
+                state.WaitIdleCalls,
+                state.BufferCreations};
     }
     void EmitValidationError(const Device& device, const char* message)
     {

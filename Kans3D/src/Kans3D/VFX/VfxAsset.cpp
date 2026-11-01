@@ -241,8 +241,9 @@ namespace Kans::Vfx
             return stages;
         }
         constexpr const char* RenderKinds[] = {"Sprite", "Mesh", "Ribbon", "Light"};
-        constexpr const char* FacingModes[] = {"ViewPlane", "CameraPosition", "Velocity", "Custom"};
-        constexpr const char* SortModes[]   = {"None", "EmitterOrder", "ParticleDepth", "ParticleDistance"};
+        constexpr const char* FacingModes[] =
+            {"ViewPlane", "CameraPosition", "Velocity", "Custom", "Default", "CameraPlane"};
+        constexpr const char* SortModes[] = {"None", "EmitterOrder", "ParticleDepth", "ParticleDistance", "Custom"};
         YAML::Node            RendererNode(const Renderer& x)
         {
             YAML::Node n;
@@ -251,6 +252,27 @@ namespace Kans::Vfx
             n["Material"]          = ID(x.Material);
             n["Facing"]            = FacingModes[int(x.FacingMode)];
             n["Sort"]              = SortModes[int(x.Sorting)];
+            n["SortAscending"]     = x.SortAscending;
+            n["CastShadows"]       = x.CastShadows;
+            n["LockedAxisEnable"]  = x.LockedAxisEnable;
+            n["LockedAxis"]        = Vec(glm::vec4(x.LockedAxis, 0), 3);
+            n["Meshes"]            = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& entry : x.Meshes)
+            {
+                YAML::Node m;
+                m["Mesh"]              = ID(entry.Mesh);
+                m["Scale"]             = Vec(glm::vec4(entry.Scale, 0), 3);
+                m["PivotOffset"]       = Vec(glm::vec4(entry.PivotOffset, 0), 3);
+                m["MaterialOverrides"] = YAML::Node(YAML::NodeType::Sequence);
+                for (const auto& [slot, material] : entry.MaterialOverrides)
+                {
+                    YAML::Node o;
+                    o["Slot"]     = slot;
+                    o["Material"] = ID(material);
+                    m["MaterialOverrides"].push_back(o);
+                }
+                n["Meshes"].push_back(m);
+            }
             n["Pivot"]             = Vec(glm::vec4(x.Pivot, 0, 0), 2);
             n["FacingVector"]      = Vec(glm::vec4(x.FacingVector, 0), 3);
             n["AlignmentVector"]   = Vec(glm::vec4(x.AlignmentVector, 0), 3);
@@ -268,7 +290,26 @@ namespace Kans::Vfx
             x.Guid = n["Guid"].as<std::string>();
             Check(!x.Guid.empty(), "Missing VFX renderer GUID");
             x.Kind     = Parse<RendererKind>(n["Kind"], RenderKinds);
-            x.Material = ReadID(n["Material"]);
+            x.Material = n["Material"] ? ReadID(n["Material"]) : AssetID {};
+            if (x.Kind == RendererKind::Mesh)
+                x.FacingMode = Facing::Default;
+            x.SortAscending    = n["SortAscending"].as<bool>(false);
+            x.CastShadows      = n["CastShadows"].as<bool>(true);
+            x.LockedAxisEnable = n["LockedAxisEnable"].as<bool>(false);
+            if (n["LockedAxis"])
+                x.LockedAxis = ReadVec(n["LockedAxis"], 3);
+            for (const auto& m : n["Meshes"])
+            {
+                MeshEntry entry;
+                entry.Mesh = ReadID(m["Mesh"]);
+                if (m["Scale"])
+                    entry.Scale = ReadVec(m["Scale"], 3);
+                if (m["PivotOffset"])
+                    entry.PivotOffset = ReadVec(m["PivotOffset"], 3);
+                for (const auto& o : m["MaterialOverrides"])
+                    entry.MaterialOverrides[o["Slot"].as<uint32_t>()] = ReadID(o["Material"]);
+                x.Meshes.push_back(entry);
+            }
             if (n["Facing"])
                 x.FacingMode = Parse<Facing>(n["Facing"], FacingModes);
             if (n["Sort"])
@@ -1037,6 +1078,9 @@ namespace Kans::Vfx
         add("Particles.Color", Type::Color, glm::vec4(1));
         add("Particles.SpriteSize", Type::Vec2, glm::vec4(1));
         add("Particles.SpriteRotation", Type::Float);
+        add("Particles.MeshOrientation", Type::Quat, {0, 0, 0, 1});
+        add("Particles.Scale", Type::Vec3, glm::vec4(1));
+        r["Particles.MeshIndex"] = {"Particles.MeshIndex", Type::Int, Value::Int(0), {}};
         add("Particles.Mass", Type::Float, glm::vec4(1));
         add("Particles.Age", Type::Float);
         add("Particles.Lifetime", Type::Float, glm::vec4(1));

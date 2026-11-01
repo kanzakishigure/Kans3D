@@ -12,6 +12,8 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Sampler>                EnvironmentSampler;
         std::vector<RenderHardware::Format> ColorFormats {RenderHardware::Format::RGBA8Unorm};
         bool                                Wireframe = false, WriteStencil = false;
+        bool                                                           ParticleMesh   = false;
+        size_t                                                         IndirectOffset = 0;
         uint32_t                                                       Samples = 1;
         MaterialRenderState                 Render;
         RenderHardware::Handle<RenderHardware::Shader>                 VertexSource;

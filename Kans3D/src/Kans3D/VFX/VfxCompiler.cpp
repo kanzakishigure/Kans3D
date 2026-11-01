@@ -808,8 +808,11 @@ namespace Kans::Vfx
             return s + ")";
         }
     } // namespace
-    CompileResult
-    Compile(const System& system, const EmitterResolver& emitters, const ModuleResolver& modules, AssetID asset)
+    CompileResult Compile(const System&          system,
+                          const EmitterResolver& emitters,
+                          const ModuleResolver&  modules,
+                          AssetID                asset,
+                          const MeshResolver&    meshes)
     {
         CompileResult r;
         r.Product.Settings            = system;
@@ -931,39 +934,97 @@ namespace Kans::Vfx
                         if (a.rfind("Particles.", 0) == 0)
                             attributes.insert(a);
                 }
-                for (const auto& renderer : ce.Settings.Renderers)
+                for (auto& renderer : ce.Settings.Renderers)
                 {
-                    if (renderer.Kind != RendererKind::Sprite)
-                        r.Errors.push_back({asset, renderer.Guid, "", "Renderer kind not implemented in V1a"});
-                    if (renderer.Sorting > Sort::EmitterOrder)
-                        r.Errors.push_back({asset, renderer.Guid, "Sort", "GPU sorting not implemented in V1a"});
-                    const std::map<std::string, Type> bindingTypes = {{"Position", Type::Position},
-                                                                      {"Color", Type::Color},
-                                                                      {"SpriteSize", Type::Vec2},
-                                                                      {"SpriteRotation", Type::Float},
-                                                                      {"Velocity", Type::Vec3},
-                                                                      {"SubImageIndex", Type::Float},
-                                                                      {"DynamicMaterialParameter", Type::Vec4}};
+                    const bool mesh = renderer.Kind == RendererKind::Mesh;
+                    if (renderer.Kind == RendererKind::Ribbon || renderer.Kind == RendererKind::Light)
+                        r.Errors.push_back({asset, renderer.Guid, "", "Ribbon or Light renderer not implemented"});
+                    if (mesh)
+                    {
+                        if (renderer.FacingMode == Facing::ViewPlane)
+                            renderer.FacingMode = Facing::Default;
+                        if (renderer.Meshes.empty())
+                            r.Errors.push_back({asset, renderer.Guid, "Meshes", "Empty mesh list"});
+                        for (const auto& entry : renderer.Meshes)
+                        {
+                            try
+                            {
+                                if (!entry.Mesh.IsValid() || !meshes)
+                                    throw std::invalid_argument("mesh unavailable");
+                                auto data = meshes(entry.Mesh);
+                                for (const auto& [slot, material] : entry.MaterialOverrides)
+                                    if (slot >= data.MaterialSlots.size())
+                                        r.Errors.push_back({asset,
+                                                            renderer.Guid,
+                                                            "MaterialOverrides",
+                                                            "Material override slot does not exist on mesh"});
+                                auto extent =
+                                    glm::max(glm::abs(data.LocalBounds.Min * entry.Scale + entry.PivotOffset),
+                                             glm::abs(data.LocalBounds.Max * entry.Scale + entry.PivotOffset));
+                                ce.MeshRadii[renderer.Guid] =
+                                    std::max(ce.MeshRadii[renderer.Guid], glm::length(extent));
+                            }
+                            catch (const std::exception&)
+                            {
+                                r.Errors.push_back(
+                                    {asset, renderer.Guid, "Meshes", "Missing mesh asset: " + entry.Mesh.ToString()});
+                            }
+                        }
+                    }
+                    std::map<std::string, Type> bindingTypes = {{"Position", Type::Position},
+                                                                {"Color", Type::Color},
+                                                                {"Velocity", Type::Vec3},
+                                                                {"DynamicMaterialParameter", Type::Vec4}};
+                    if (mesh)
+                    {
+                        bindingTypes.insert(
+                            {{"MeshOrientation", Type::Quat}, {"Scale", Type::Vec3}, {"MeshIndex", Type::Int}});
+                        // Missing mesh bindings use the built-in default stream, also retained for rendering only.
+                        for (const auto& [binding, type] : bindingTypes)
+                            if (!renderer.Bindings.count(binding) || renderer.Bindings.at(binding).empty())
+                                renderer.Bindings[binding] = "Particles." + binding;
+                    }
+                    else
+                        bindingTypes.insert({{"SpriteSize", Type::Vec2},
+                                             {"SpriteRotation", Type::Float},
+                                             {"SubImageIndex", Type::Float}});
+                    if (renderer.Bindings.count("SortKey"))
+                        bindingTypes["SortKey"] = Type::Float;
+                    if (renderer.Sorting == Sort::Custom)
+                    {
+                        bindingTypes["SortKey"] = Type::Float;
+                        if (!renderer.Bindings.count("SortKey") || renderer.Bindings.at("SortKey").empty())
+                            r.Errors.push_back(
+                                {asset, renderer.Guid, "SortKey", "Custom sort requires a SortKey binding"});
+                    }
                     for (const auto& [binding, type] : bindingTypes)
                     {
                         auto name = renderer.Bindings.find(binding);
                         if (name == renderer.Bindings.end())
-                            r.Errors.push_back({asset, renderer.Guid, binding, "Missing sprite renderer binding"});
+                        {
+                            if (binding != "SortKey")
+                                r.Errors.push_back({asset, renderer.Guid, binding, "Missing sprite renderer binding"});
+                        }
                         else if (auto parameter = k.find(name->second);
                                  parameter != k.end() &&
                                  (parameter->second.Kind != type || name->second.rfind("Particles.", 0) != 0))
                             r.Errors.push_back(
-                                {asset, renderer.Guid, binding, "Sprite renderer binding type or namespace mismatch"});
+                                {asset, renderer.Guid, binding, "Renderer binding type or namespace mismatch"});
                     }
                     for (const auto& [binding, name] : renderer.Bindings)
                     {
+                        if (name.empty() && mesh)
+                            continue;
                         auto at = k.find(name);
                         if (at == k.end())
                             r.Errors.push_back({asset, renderer.Guid, binding, "Unknown renderer parameter: " + name});
+                        else if (name.rfind("Particles.", 0) != 0)
+                            r.Errors.push_back(
+                                {asset, renderer.Guid, binding, "Renderer binding type or namespace mismatch"});
                         else if (!at->second.Default)
                             r.Errors.push_back(
                                 {asset, renderer.Guid, binding, "Read of unset renderer parameter: " + name});
-                        else if (name.rfind("Particles.", 0) == 0)
+                        else
                             attributes.insert(name);
                     }
                 }
@@ -2187,6 +2248,8 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
             YAML::Node a;
             a["Settings"]     = EncodeEmitter(e.Settings);
             a["Handle"]       = e.Handle;
+            for (const auto& [guid, radius] : e.MeshRadii)
+                a["MeshRadii"][guid] = radius;
             a["EventLayouts"] = YAML::Node(YAML::NodeType::Sequence);
             for (const auto& [name, layout] : e.EventLayouts)
                 a["EventLayouts"].push_back(EncodeEventLayout(layout));
@@ -2226,6 +2289,8 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
             CompiledEmitter e;
             e.Settings = DecodeEmitter(a["Settings"]);
             e.Handle   = a["Handle"].as<std::string>();
+            for (const auto& b : a["MeshRadii"])
+                e.MeshRadii[b.first.as<std::string>()] = b.second.as<float>();
             for (const auto& l : a["EventLayouts"])
             {
                 auto layout                 = DecodeEventLayout(l);

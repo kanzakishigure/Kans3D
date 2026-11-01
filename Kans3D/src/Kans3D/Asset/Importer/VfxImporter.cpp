@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "VfxImporter.h"
 #include <cstring>
+#include "Kans3D/Asset/Product/MeshProduct.h"
 #include "Kans3D/Asset/Product/TextureProduct.h"
 #include "Kans3D/Asset/Storage/ProductFiles.h"
 #include "Kans3D/VFX/VfxCompiler.h"
@@ -24,8 +25,9 @@ namespace Kans
                 for (const auto& p : n)
                 {
                     auto key = p.first.as<std::string>();
-                    if (p.second.IsScalar() && (key == "Script" || key == "Function" || key == "Reference" ||
-                                                key == "Parent" || key == "Material" || key == "Asset"))
+                    if (p.second.IsScalar() &&
+                        (key == "Script" || key == "Function" || key == "Reference" || key == "Parent" ||
+                         key == "Material" || key == "Mesh" || key == "Asset"))
                     {
                         auto id = AssetID::FromString(p.second.as<std::string>());
                         if (!id.IsValid())
@@ -40,9 +42,10 @@ namespace Kans
                                 key == "Script" || key == "Function"  ? AssetType::VfxModule :
                                 key == "Reference" || key == "Parent" ? AssetType::VfxEmitter :
                                 key == "Material"                     ? AssetType::Material :
-                                                    (n["Kind"] && n["Kind"].as<std::string>() != "Texture2D" ?
-                                                         AssetType::VfxModule :
-                                                         AssetType::Texture);
+                                key == "Mesh"                         ? AssetType::StaticMesh :
+                                                (n["Kind"] && n["Kind"].as<std::string>() != "Texture2D" ?
+                                                     AssetType::VfxModule :
+                                                     AssetType::Texture);
                     }
                     else
                         Dependencies(p.second, inputs, builtins);
@@ -210,7 +213,16 @@ namespace Kans
                     s,
                     [&](AssetID id) { return Vfx::DecodeEmitter(lookup(id)); },
                     [&](AssetID id) { return Vfx::DecodeModule(lookup(id)); },
-                    AssetID(c.SourceID, 1));
+                    AssetID(c.SourceID, 1),
+                    [&](AssetID id) {
+                        auto at = c.ProductBytes.find(id);
+                        if (at == c.ProductBytes.end())
+                            throw std::invalid_argument("Missing mesh asset");
+                        auto decoded = DecodeMeshProduct(at->second.data(), at->second.size());
+                        if (auto error = std::get_if<AssetError>(&decoded))
+                            throw std::invalid_argument(error->Message);
+                        return std::get<MeshData>(std::move(decoded));
+                    });
                 if (!compiled)
                     return AssetError {AssetErrorCode::InvalidData, Vfx::FormatDiagnostics(compiled.Errors)};
                 n    = Vfx::EncodeProduct(compiled.Product);

@@ -408,7 +408,17 @@ namespace Kans::Vfx
                         if (compiled.Attributes[a].Kind == Type::Position)
                             e.DynamicBounds.Expand(glm::vec3(e.Attributes[a][slot].Data));
                     for (const auto& renderer : compiled.Settings.Renderers)
-                        if (renderer.Kind == RendererKind::Sprite)
+                        if (renderer.Kind == RendererKind::Mesh)
+                        {
+                            auto radius = compiled.MeshRadii.find(renderer.Guid);
+                            if (radius != compiled.MeshRadii.end())
+                            {
+                                auto scale = glm::abs(glm::vec3(e.Read(renderer.Bindings.at("Scale"), slot).Data));
+                                e.SpriteRadius =
+                                    std::max(e.SpriteRadius, radius->second * std::max({scale.x, scale.y, scale.z}));
+                            }
+                        }
+                        else if (renderer.Kind == RendererKind::Sprite)
                         {
                             auto size   = glm::vec2(e.Read(renderer.Bindings.at("SpriteSize"), slot).Data);
                             auto corner = glm::max(glm::abs(renderer.Pivot), glm::abs(glm::vec2(1) - renderer.Pivot));
@@ -497,7 +507,17 @@ namespace Kans::Vfx
                             if (compiled.Attributes[a].Kind == Type::Position)
                                 e.DynamicBounds.Expand(glm::vec3(e.Attributes[a][slot].Data));
                         for (const auto& renderer : settings.Renderers)
-                            if (renderer.Kind == RendererKind::Sprite)
+                            if (renderer.Kind == RendererKind::Mesh)
+                            {
+                                auto radius = compiled.MeshRadii.find(renderer.Guid);
+                                if (radius != compiled.MeshRadii.end())
+                                {
+                                    auto scale = glm::abs(glm::vec3(e.Read(renderer.Bindings.at("Scale"), slot).Data));
+                                    e.SpriteRadius = std::max(e.SpriteRadius,
+                                                              radius->second * std::max({scale.x, scale.y, scale.z}));
+                                }
+                            }
+                            else if (renderer.Kind == RendererKind::Sprite)
                             {
                                 auto size = glm::vec2(e.Read(renderer.Bindings.at("SpriteSize"), slot).Data);
                                 auto corner =

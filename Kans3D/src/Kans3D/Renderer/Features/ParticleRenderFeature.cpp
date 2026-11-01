@@ -4,6 +4,7 @@
 #include "Kans3D/Renderer/Resource/InternalShader.h"
 #include "Kans3D/Renderer/Resource/MaterialPass.h"
 #include "Kans3D/Renderer/Resource/ParticleSprite.h"
+#include "Kans3D/Renderer/Resource/ShadowMaps.h"
 #include "Kans3D/VFX/VfxGpu.h"
 namespace Kans
 {
@@ -13,6 +14,188 @@ namespace Kans
         if (!world || world->Instances().empty())
             return;
         frame.Output.EnsureSampledDepth();
+    }
+    void ParticleRenderFeature::Simulate(RenderGraph& graph, RenderFrame& frame)
+    {
+        auto world = frame.World.GetVfxWorld();
+        if (!world)
+            return;
+        for (const auto& [id, instance] : world->Instances())
+        {
+            Vfx::GpuEmitter::AddSystemPasses(graph, *instance, *frame.GetDevice());
+            for (const auto& e : instance->Emitters())
+                frame.Stats.SimulatedParticles += e.ParticleCount;
+        }
+    }
+    void ParticleRenderFeature::RecordMeshShadows(RenderGraph&                 graph,
+                                                  RenderFrame&                 frame,
+                                                  RenderHardware::CommandList& commands,
+                                                  const EngineFrameUniforms&   lighting,
+                                                  const ShaderData&            depthSource,
+                                                  std::vector<GraphUse>&       uses,
+                                                  bool                         point,
+                                                  float                        constantBias,
+                                                  float                        slopeBias)
+    {
+        using namespace RenderHardware;
+        auto world = frame.World.GetVfxWorld();
+        if (!world || !frame.Assets())
+            return;
+        auto device = frame.GetDevice();
+        auto upload = [&](const void* data, size_t bytes) {
+            auto b = device->CreateBuffer({bytes, BufferUsage::Uniform, MemoryUsage::Upload});
+            b->Write(0, data, bytes);
+            return b;
+        };
+        auto       frameBuffer = upload(&lighting, sizeof(lighting));
+        const auto use         = [&](GraphUse u) {
+            if (std::none_of(uses.begin(), uses.end(), [&](const auto& v) {
+                    return u.IsBuffer == v.IsBuffer && u.Texture == v.Texture;
+                }))
+                uses.push_back(u);
+        };
+        for (const auto& [id, instance] : world->Instances())
+            for (auto& e : instance->Emitters())
+            {
+                if (!e.GPU || e.HiddenByDistance)
+                    continue;
+                auto gpu = e.GPU.get();
+                for (const auto& renderer : e.Compiled->Settings.Renderers)
+                {
+                    if (renderer.Kind != Vfx::RendererKind::Mesh || !renderer.CastShadows)
+                        continue;
+                    const auto offset = [&](const char* name) {
+                        for (const auto& a : e.Compiled->Attributes)
+                            if (a.Name == renderer.Bindings.at(name))
+                                return a.Offset;
+                        return 0u;
+                    };
+                    for (uint32_t entry = 0; entry < renderer.Meshes.size(); ++entry)
+                    {
+                        const auto& item = renderer.Meshes[entry];
+                        auto        mesh = frame.GetMesh(item.Mesh);
+                        if (!mesh)
+                            continue;
+                        auto bin = gpu->BinMesh(graph, renderer, entry, mesh->Sections, gpu->Alive);
+                        for (uint32_t section = 0; section < mesh->Sections.size(); ++section)
+                        {
+                            auto    slot     = mesh->Sections[section].MaterialSlot;
+                            auto    override = item.MaterialOverrides.find(slot);
+                            AssetID material =
+                                override != item.MaterialOverrides.end() ? override->second :
+                                slot < mesh->MaterialSlots.size()        ? mesh->MaterialSlots[slot].DefaultMaterial :
+                                                                           mesh->Material;
+                            auto bindings = frame.GetBindings(material, false);
+                            auto shader   = bindings ? frame.GetShader(material, bindings->Shader) : nullptr;
+                            if (!bindings || !shader || IsTransparentMaterial(bindings->Render.AlphaMode))
+                                continue;
+                            const GpuShaderPass* caster    = nullptr;
+                            bool                 hasCaster = false;
+                            for (const auto& pass : shader->Passes)
+                                if (pass.Tag == "ShadowCaster")
+                                {
+                                    hasCaster = true;
+                                    if (bindings->PassEnabled(pass.Name))
+                                    {
+                                        caster = &pass;
+                                        break;
+                                    }
+                                }
+                            if (hasCaster && !caster)
+                                continue;
+                            if (!caster)
+                            {
+                                bindings = frame.GetBindings(material, true);
+                                shader   = bindings ? frame.GetShader(material, bindings->Shader) : nullptr;
+                            }
+                            if (!bindings || !shader)
+                                continue;
+                            if (!shader->MeshDepthProgram)
+                            {
+                                auto source = depthSource;
+                                if (caster && shader->Source())
+                                    for (const auto& pass : shader->Source()->Passes)
+                                        if (pass.Name == caster->Name)
+                                            source.Code = pass.Code;
+                                source.Passes.clear();
+                                auto converted = MakeParticleSpriteShader(source, true);
+                                if (auto error = std::get_if<AssetError>(&converted))
+                                    throw std::invalid_argument(error->Message);
+                                shader->MeshDepthProgram = device->CreateShader(std::get<ShaderData>(converted));
+                            }
+                            ParticleSpriteUniforms uniform;
+                            uniform.Owner       = instance->OwnerTransform();
+                            uniform.InverseView = glm::inverse(frame.View.Scene.sceneCamera.viewMatrix);
+                            uniform.Attributes0 = {
+                                offset("Position"), offset("Color"), offset("Scale"), offset("MeshOrientation")};
+                            uniform.Attributes1 = {offset("Velocity"),
+                                                   0,
+                                                   offset("DynamicMaterialParameter"),
+                                                   e.Compiled->Settings.Capacity};
+                            uniform.MeshScale   = glm::vec4(item.Scale, 0);
+                            uniform.MeshPivot   = glm::vec4(item.PivotOffset, 0);
+                            uniform.LockedAxis  = glm::vec4(renderer.LockedAxis, float(renderer.LockedAxisEnable));
+                            uniform.Options     = {float(renderer.FacingMode),
+                                                   0,
+                                                   0,
+                                                   float(e.Compiled->Settings.SimulationSpace == Vfx::Space::Local)};
+                            auto                 uniforms = upload(&uniform, sizeof(uniform));
+                            EngineObjectUniforms object;
+                            object.MaterialRender = {float(bindings->Render.AlphaMode),
+                                                     bindings->Render.AlphaCutoff,
+                                                     float(bindings->Render.DoubleSided),
+                                                     0};
+                            MaterialPassData pass;
+                            pass.Frame             = frameBuffer;
+                            pass.Object            = upload(&object, sizeof(object));
+                            pass.Render            = bindings->Render;
+                            pass.ParticleMesh      = true;
+                            pass.VertexSource      = shader->MeshDepthProgram;
+                            pass.VertexLayout      = ParticleSpriteLayout(*device);
+                            pass.IndirectArguments = bin.Arguments;
+                            pass.IndirectOffset    = section * 20;
+                            pass.Section           = section;
+                            pass.ShadowDepth       = true;
+                            pass.Shadows           = frame.Assets()->GetShadowFallback();
+                            pass.ColorFormats.clear();
+                            pass.DepthFront         = point ? FrontFace::Clockwise : FrontFace::CounterClockwise;
+                            pass.ConstantBias       = constantBias;
+                            pass.SlopeBias          = slopeBias;
+                            pass.Environment        = frame.GetMaterialEnvironment();
+                            pass.EnvironmentSampler = frame.Services.GetMaterialEnvironmentSampler();
+                            BindGroupDesc group;
+                            group.Layout  = pass.VertexLayout;
+                            group.Entries = {{0, gpu->Attributes, 0, gpu->Attributes->GetDesc().Bytes},
+                                             {1, bin.Indices, 0, bin.Indices->GetDesc().Bytes},
+                                             {2, uniforms, 0, sizeof(uniform)}};
+                            BindGroupEntry image;
+                            image.Slot            = 3;
+                            image.TextureResource = pass.Shadows->Directional;
+                            image.SamplerResource = pass.Shadows->Raw;
+                            group.Entries.push_back(image);
+                            pass.VertexGroup = device->CreateBindGroup(group);
+                            use({graph.ImportBuffer("VFX shadow attributes", gpu->Attributes),
+                                 GraphAccess::StorageRead});
+                            use({graph.ImportBuffer("VFX shadow alive", bin.Indices), GraphAccess::StorageRead});
+                            use({graph.ImportBuffer("VFX shadow arguments", bin.Arguments), GraphAccess::IndirectRead});
+                            use({graph.ImportBuffer("VFX shadow vertices", mesh->Vertices), GraphAccess::VertexRead});
+                            use({graph.ImportBuffer("VFX shadow indices", mesh->Indices), GraphAccess::IndexRead});
+                            for (auto image : bindings->Images)
+                                use({graph.ImportTexture("VFX shadow material", image), GraphAccess::SampledRead});
+                            use({graph.ImportTexture("VFX shadow fallback", pass.Shadows->Directional),
+                                 GraphAccess::SampledRead});
+                            bool recorded = false;
+                            RecordMaterialDraw(
+                                *frame.Assets(), commands, *shader, *bindings, *mesh, pass, caster, &recorded);
+                            if (recorded)
+                            {
+                                ++frame.Stats.DrawCalls;
+                                ++frame.View.ShadowStats.DrawCalls;
+                            }
+                        }
+                    }
+                }
+            }
     }
     void ParticleRenderFeature::AddPasses(RenderExtensionPoint point, const RenderFeatureContext& context)
     {
@@ -24,17 +207,8 @@ namespace Kans
         if (!world || world->Instances().empty())
             return;
         auto& graph = context.Graph;
-        if (point == RenderExtensionPoint::BeforeOpaque)
-        {
-            for (const auto& [id, instance] : world->Instances())
-            {
-                Vfx::GpuEmitter::AddSystemPasses(graph, *instance, *frame->GetDevice());
-                for (const auto& e : instance->Emitters())
-                    frame->Stats.SimulatedParticles += e.ParticleCount;
-            }
-            return;
-        }
-        if (point != RenderExtensionPoint::AfterTransparent || !frame->Assets())
+        if ((point != RenderExtensionPoint::BeforeOpaque && point != RenderExtensionPoint::AfterTransparent) ||
+            !frame->Assets())
             return;
         struct Draw
         {
@@ -42,6 +216,9 @@ namespace Kans
             Vfx::EmitterInstance* Emitter;
             const Vfx::Renderer*  Renderer;
             float                 Distance;
+            const GpuMesh*        Mesh  = nullptr;
+            uint32_t              Entry = 0, Section = 0;
+            AssetID               Material;
         };
         std::vector<Draw> draws;
         const auto        camera = context.View.Scene.sceneCamera;
@@ -59,8 +236,16 @@ namespace Kans
                     bounds = bounds.Transformed(instance->OwnerTransform());
                 if (!settings.FixedBounds && !instance->FixedBounds && bounds.IsValid())
                 {
-                    bounds.Min -= glm::vec3(e.SpriteRadius);
-                    bounds.Max += glm::vec3(e.SpriteRadius);
+                    float radius = e.SpriteRadius;
+                    if (settings.SimulationSpace == Vfx::Space::Local)
+                    {
+                        auto owner = instance->OwnerTransform();
+                        radius *= std::max({glm::length(glm::vec3(owner[0])),
+                                            glm::length(glm::vec3(owner[1])),
+                                            glm::length(glm::vec3(owner[2]))});
+                    }
+                    bounds.Min -= glm::vec3(radius);
+                    bounds.Max += glm::vec3(radius);
                 }
                 if (instance->FixedBounds)
                     bounds = instance->FixedBounds->Transformed(instance->OwnerTransform());
@@ -69,7 +254,37 @@ namespace Kans
                 float distance = glm::distance(
                     camera.Position, bounds.IsValid() ? bounds.Center() : glm::vec3(instance->OwnerTransform()[3]));
                 for (const auto& renderer : settings.Renderers)
-                    draws.push_back({instance.get(), &e, &renderer, distance});
+                {
+                    if (renderer.Kind == Vfx::RendererKind::Sprite)
+                    {
+                        if (point == RenderExtensionPoint::AfterTransparent)
+                            draws.push_back(
+                                {instance.get(), &e, &renderer, distance, nullptr, 0, 0, renderer.Material});
+                    }
+                    else if (renderer.Kind == Vfx::RendererKind::Mesh)
+                        for (uint32_t entry = 0; entry < renderer.Meshes.size(); ++entry)
+                        {
+                            const auto& item = renderer.Meshes[entry];
+                            auto        mesh = frame->GetMesh(item.Mesh);
+                            if (!mesh)
+                                continue;
+                            for (uint32_t section = 0; section < mesh->Sections.size(); ++section)
+                            {
+                                auto    slot     = mesh->Sections[section].MaterialSlot;
+                                auto    override = item.MaterialOverrides.find(slot);
+                                AssetID material =
+                                    override != item.MaterialOverrides.end() ? override->second :
+                                    slot < mesh->MaterialSlots.size() ? mesh->MaterialSlots[slot].DefaultMaterial :
+                                                                        mesh->Material;
+                                auto bindings = frame->GetBindings(material, false);
+                                if (!bindings || IsTransparentMaterial(bindings->Render.AlphaMode) !=
+                                                     (point == RenderExtensionPoint::AfterTransparent))
+                                    continue;
+                                draws.push_back(
+                                    {instance.get(), &e, &renderer, distance, mesh, entry, section, material});
+                            }
+                        }
+                }
             }
         if (draws.empty())
             return;
@@ -100,14 +315,16 @@ namespace Kans
             {{sourceDepth, GraphAccess::TransferRead}, {depth, GraphAccess::TransferWrite}},
             [sourceDepth, depth](auto& c) { c.Commands.CopyTexture(c.Texture(sourceDepth), {}, c.Texture(depth)); });
         bool workingHDR = frame->PostProcessHDR;
+        std::map<std::pair<Vfx::EmitterInstance*, const Vfx::Renderer*>, Handle<RenderHardware::Buffer>>      sorted;
+        std::map<std::tuple<Vfx::EmitterInstance*, const Vfx::Renderer*, uint32_t>, Vfx::GpuEmitter::MeshBin> bins;
         for (const auto& draw : draws)
         {
             const auto& r        = *draw.Renderer;
-            auto        bindings = frame->GetBindings(r.Material, false);
+            auto        bindings = frame->GetBindings(draw.Material, false);
             if (!bindings)
                 continue;
-            auto shader = frame->GetShader(r.Material, bindings->Shader);
-            if (!shader || !shader->PrepareParticleSprite())
+            auto shader = frame->GetShader(draw.Material, bindings->Shader);
+            if (!shader || !(draw.Mesh ? shader->PrepareParticleMesh() : shader->PrepareParticleSprite()))
                 continue;
             auto                   gpu = draw.Emitter->GPU.get();
             ParticleSpriteUniforms uniforms;
@@ -123,12 +340,20 @@ namespace Kans
                         return a.Offset;
                 throw std::invalid_argument("Particle renderer binding has no attribute: " + name);
             };
-            uniforms.Attributes0 = {
-                offset("Position"), offset("Color"), offset("SpriteSize"), offset("SpriteRotation")};
+            uniforms.Attributes0 = {offset("Position"),
+                                    offset("Color"),
+                                    offset(draw.Mesh ? "Scale" : "SpriteSize"),
+                                    offset(draw.Mesh ? "MeshOrientation" : "SpriteRotation")};
             uniforms.Attributes1 = {offset("Velocity"),
-                                    offset("SubImageIndex"),
+                                    draw.Mesh ? 0 : offset("SubImageIndex"),
                                     offset("DynamicMaterialParameter"),
                                     draw.Emitter->Compiled->Settings.Capacity};
+            if (draw.Mesh)
+            {
+                uniforms.MeshScale  = glm::vec4(r.Meshes[draw.Entry].Scale, 0);
+                uniforms.MeshPivot  = glm::vec4(r.Meshes[draw.Entry].PivotOffset, 0);
+                uniforms.LockedAxis = glm::vec4(r.LockedAxis, float(r.LockedAxisEnable));
+            }
             uniforms.PivotGrid   = {r.Pivot.x, r.Pivot.y, float(r.Columns), float(r.Rows)};
             uniforms.Facing =
                 glm::vec4(r.FacingVector, float(bindings->Render.AlphaMode == MaterialAlphaMode::Premultiplied));
@@ -166,9 +391,28 @@ namespace Kans
             pass.Object             = upload(&object, sizeof(object));
             auto sprite             = upload(&uniforms, sizeof(uniforms));
             pass.Render             = bindings->Render;
-            pass.VertexSource       = shader->SpriteProgram;
-            pass.VertexLayout       = shader->SpriteLayout;
-            pass.IndirectArguments  = gpu->DrawArgs;
+            auto& indices           = sorted[{draw.Emitter, &r}];
+            if (!indices)
+                indices = gpu->SortForView(graph,
+                                           *draw.Emitter,
+                                           r,
+                                           camera.viewMatrix,
+                                           draw.System->OwnerTransform(),
+                                           IsTransparentMaterial(bindings->Render.AlphaMode));
+            pass.VertexSource      = draw.Mesh ? shader->MeshProgram : shader->SpriteProgram;
+            pass.VertexLayout      = draw.Mesh ? shader->MeshLayout : shader->SpriteLayout;
+            pass.IndirectArguments = gpu->DrawArgs;
+            pass.ParticleMesh      = bool(draw.Mesh);
+            pass.Section           = draw.Section;
+            if (draw.Mesh)
+            {
+                auto& bin = bins[{draw.Emitter, &r, draw.Entry}];
+                if (!bin.Indices)
+                    bin = gpu->BinMesh(graph, r, draw.Entry, draw.Mesh->Sections, indices);
+                pass.IndirectArguments = bin.Arguments;
+                pass.IndirectOffset    = draw.Section * 20;
+            }
+            auto drawIndices        = draw.Mesh ? bins.at({draw.Emitter, &r, draw.Entry}).Indices : indices;
             pass.Environment        = frame->GetMaterialEnvironment();
             pass.EnvironmentSampler = frame->Services.GetMaterialEnvironmentSampler();
             pass.Samples            = frame->Samples;
@@ -195,8 +439,20 @@ namespace Kans
                            graph.ImportTexture("SceneHDR", frame->Output.GetHDR());
             use({hdr, GraphAccess::ColorReadWrite});
             use({graph.ImportBuffer("VFX attributes", gpu->Attributes), GraphAccess::StorageRead});
-            use({graph.ImportBuffer("VFX alive", gpu->Alive), GraphAccess::StorageRead});
-            use({graph.ImportBuffer("VFX draw indirect", gpu->DrawArgs), GraphAccess::IndirectRead});
+            use({graph.ImportBuffer("VFX draw indices", drawIndices), GraphAccess::StorageRead});
+            use({graph.ImportBuffer("VFX draw indirect", pass.IndirectArguments), GraphAccess::IndirectRead});
+            if (draw.Mesh)
+            {
+                use({graph.ImportBuffer("VFX mesh vertices", draw.Mesh->Vertices), GraphAccess::VertexRead});
+                use({graph.ImportBuffer("VFX mesh indices", draw.Mesh->Indices), GraphAccess::IndexRead});
+            }
+            if (pass.Shadows)
+            {
+                use({graph.ImportTexture("VFX directional shadows", pass.Shadows->Directional),
+                     GraphAccess::SampledRead});
+                for (const auto& image : pass.Shadows->Points)
+                    use({graph.ImportTexture("VFX point shadows", image), GraphAccess::SampledRead});
+            }
             use({depth, GraphAccess::SampledRead});
             auto material = frame->Assets()->GetMaterialGroup(*shader, *bindings);
             if (!material)
@@ -207,16 +463,26 @@ namespace Kans
             for (auto image : pass.Environment)
                 if (image)
                     use({graph.ImportTexture("VFX environment", image), GraphAccess::SampledRead});
-            auto a = gpu->Attributes, al = gpu->Alive;
+            auto a = gpu->Attributes, al = drawIndices;
             auto sampler = frame->GetDevice()->CreateSampler({Filter::Nearest,
                                                               Filter::Nearest,
                                                               Filter::Nearest,
                                                               AddressMode::ClampToEdge,
                                                               AddressMode::ClampToEdge});
-            graph.AddPass("VFX sprite " + draw.Emitter->Compiled->Settings.Name,
+            graph.AddPass(std::string(draw.Mesh ? "VFX mesh " : "VFX sprite ") + draw.Emitter->Compiled->Settings.Name,
                           std::move(uses),
-                          [frame, shader, bindings, pass, sprite, a, al, sampler, depth, materialHDR, previousHDR](
-                              auto& c) mutable {
+                          [frame,
+                           mesh = draw.Mesh,
+                           shader,
+                           bindings,
+                           pass,
+                           sprite,
+                           a,
+                           al,
+                           sampler,
+                           depth,
+                           materialHDR,
+                           previousHDR](auto& c) mutable {
                               BindGroupDesc group;
                               group.Layout  = pass.VertexLayout;
                               group.Entries = {{0, a, 0, a->GetDesc().Bytes},
@@ -248,8 +514,14 @@ namespace Kans
                               c.Commands.BeginRendering(frame->SceneTarget(LoadOp::Load, materialHDR));
                               GpuMesh empty;
                               bool    recorded = false;
-                              RecordMaterialDraw(
-                                  *frame->Assets(), c.Commands, *shader, *bindings, empty, pass, nullptr, &recorded);
+                              RecordMaterialDraw(*frame->Assets(),
+                                                 c.Commands,
+                                                 *shader,
+                                                 *bindings,
+                                                 mesh ? *mesh : empty,
+                                                 pass,
+                                                 nullptr,
+                                                 &recorded);
                               c.Commands.EndRendering();
                               if (!materialHDR)
                                   tone(true);

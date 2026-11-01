@@ -2,6 +2,7 @@
 #include "ShadowMaps.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include "Kans3D/Asset/Runtime/StandardShader.h"
+#include "Kans3D/Renderer/Features/ParticleRenderFeature.h"
 #include "Kans3D/Renderer/RenderFrame.h"
 #include "Kans3D/Renderer/TextRenderer.h"
 #include "InternalShader.h"
@@ -520,6 +521,14 @@ namespace Kans
                 ++stats.CastersDrawn;
                 ++frame.Stats.DrawCalls;
                 frame.Stats.Triangles += text.Layout->Get().Glyphs.size() * 2;
+            }
+            const auto& particleDepth = GetInternalShaderData("ShadowDepth", DepthVertex, DepthFragment);
+            if (auto source = std::get_if<ShaderData>(&particleDepth))
+            {
+                const auto before = view.ShadowStats.DrawCalls;
+                ParticleRenderFeature::RecordMeshShadows(
+                    graph, frame, *commands, data, *source, uses, point, settings.ConstantBias, settings.SlopeBias);
+                stats.CastersDrawn += view.ShadowStats.DrawCalls - before;
             }
             commands->EndRendering();
             auto pass = graph.AddRecordedPass(

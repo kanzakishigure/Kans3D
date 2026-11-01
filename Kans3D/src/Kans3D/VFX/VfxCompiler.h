@@ -1,4 +1,5 @@
 #pragma once
+#include "Kans3D/Asset/Runtime/MeshData.h"
 #include "Kans3D/Asset/Runtime/ShaderData.h"
 #include "VfxAsset.h"
 namespace Kans::Vfx
@@ -62,6 +63,7 @@ namespace Kans::Vfx
     struct CompiledEmitter
     {
         Emitter                            Settings;
+        std::map<std::string, float>       MeshRadii;
         std::string                        Handle;
         std::vector<CompiledHandler>       Handlers;
         std::map<std::string, EventLayout> EventLayouts;
@@ -81,7 +83,12 @@ namespace Kans::Vfx
         std::vector<Diagnostic> Errors;
         explicit                operator bool() const { return Errors.empty(); }
     };
-    CompileResult Compile(const System&, const EmitterResolver&, const ModuleResolver&, AssetID asset = {});
+    using MeshResolver = std::function<MeshData(AssetID)>;
+    CompileResult Compile(const System&,
+                          const EmitterResolver&,
+                          const ModuleResolver&,
+                          AssetID             asset  = {},
+                          const MeshResolver& meshes = {});
     std::string   FormatDiagnostics(const std::vector<Diagnostic>&);
     struct ExecutionContext
     {

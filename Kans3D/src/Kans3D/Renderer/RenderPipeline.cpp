@@ -286,6 +286,7 @@ namespace Kans
             });
             renderer.PostProcessHDR = true;
         }
+        ParticleRenderFeature::Simulate(graph, renderer);
         BuildShadowPasses(graph, renderer);
         std::vector<GraphUse> target;
         for (size_t i = 0; i < renderer.Output.GetColors().size(); ++i)
@@ -638,6 +639,7 @@ namespace Kans
                 frame.PostProcessHDR = true;
             }
         });
+        ParticleRenderFeature::Simulate(graph, frame);
         BuildShadowPasses(graph, frame);
         RenderFeatureContext features {graph, view, scene, &frame};
         for (const auto& immediate : view.ImmediateOrder)

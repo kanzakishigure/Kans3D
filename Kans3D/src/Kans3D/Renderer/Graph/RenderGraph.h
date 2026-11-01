@@ -170,6 +170,7 @@ namespace Kans
             m_Profiler = nullptr;
             m_Capture  = nullptr;
         }
+        std::weak_ptr<const void>                       Lifetime() const { return m_Lifetime; }
         size_t                                    PassCount() const { return m_Passes.size(); }
         const std::vector<GraphPass>&             ExecutionOrder() const { return m_Order; }
         const std::vector<CompiledGraphResource>& Resources() const { return m_CompiledResources; }
@@ -221,6 +222,7 @@ namespace Kans
         uint64_t                                 m_Frame     = 0;
         uint32_t                                 m_QueryBase = 0;
         void                                     BeginQueries(RenderHardware::Device& device);
+        std::shared_ptr<const void>              m_Lifetime = std::make_shared<char>();
         bool                                     m_Compiled = false;
     };
 } // namespace Kans

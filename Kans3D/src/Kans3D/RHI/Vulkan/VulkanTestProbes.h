@@ -11,6 +11,8 @@ namespace Kans::RenderHardware::VulkanTestProbes
         bool                 Validation, SynchronizationValidation;
         uint64_t             PipelineCreations, DescriptorAllocations, DescriptorPools, GroupCreationNanoseconds;
         uint64_t             WaitIdleCalls;
+        // Monotonic native buffer allocation count, including buffers already retired.
+        uint64_t BufferCreations;
     };
     using BarrierObserver =
         std::function<void(const std::vector<VkBufferMemoryBarrier2>&, const std::vector<VkImageMemoryBarrier2>&)>;

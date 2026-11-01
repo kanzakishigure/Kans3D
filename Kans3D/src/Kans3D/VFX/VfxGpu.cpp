@@ -164,16 +164,18 @@ args[0]=(n+63u)/64u;args[1]=1u;args[2]=1u;}
                                                       {4, BindingType::StorageBuffer}}});
         Compact      = {device.CreateComputePipeline({program, {layout}, 4}), layout};
         auto source  = std::string(R"(#version 450
-layout(local_size_x=1) in;
-layout(set=0,binding=0,std430) buffer Counters{uint c[];};
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) readonly buffer Counters{uint c[];};
 layout(set=0,binding=1,std430) readonly buffer Attributes{uvec4 a[];};
 layout(set=0,binding=2,std430) readonly buffer Alive{uint alive[];};
+layout(set=0,binding=3,std430) buffer Partials{vec4 partials[];};
 layout(push_constant) uniform P{uint capacity;}p;
-void main(){vec3 lo=vec3(3.402823e38),hi=-lo;float radius=0.0;
+shared vec4 lower[64],upper[64];
+void main(){uint i=gl_GlobalInvocationID.x,lane=gl_LocalInvocationID.x;vec3 lo=vec3(3.402823e38),hi=-lo;float radius=0.0;
 )");
         for (const auto& attribute : compiled.Attributes)
             if (attribute.Kind == Type::Position)
-                source += "for(uint i=0;i<c[1];++i){vec3 pos=uintBitsToFloat(a[" + std::to_string(attribute.Offset) +
+                source += "if(i<c[1]){vec3 pos=uintBitsToFloat(a[" + std::to_string(attribute.Offset) +
                           "u*p.capacity+alive[i]]).xyz;lo=min(lo,pos);hi=max(hi,pos);}";
         for (const auto& renderer : compiled.Settings.Renderers)
             if (renderer.Kind == RendererKind::Sprite)
@@ -185,18 +187,46 @@ void main(){vec3 lo=vec3(3.402823e38),hi=-lo;float radius=0.0;
                 if (at == compiled.Attributes.end())
                     continue;
                 auto pivot = glm::max(glm::abs(renderer.Pivot), glm::abs(glm::vec2(1) - renderer.Pivot));
-                source += "for(uint i=0;i<c[1];++i){vec2 size=uintBitsToFloat(a[" + std::to_string(at->Offset) +
+                source += "if(i<c[1]){vec2 size=uintBitsToFloat(a[" + std::to_string(at->Offset) +
                           "u*p.capacity+alive[i]]).xy;radius=max(radius,length(size*vec2(" + std::to_string(pivot.x) +
                           "," + std::to_string(pivot.y) + ")));}";
             }
-        source += "for(uint "
-                  "k=0;k<3;++k){c[8+k]=floatBitsToUint(lo[k]);c[11+k]=floatBitsToUint(hi[k]);}c[14]=floatBitsToUint("
-                  "radius);}";
-        BoundsKernel = Make(source,
-                            {{0, BindingType::StorageBuffer},
-                             {1, BindingType::ReadOnlyStorageBuffer},
-                             {2, BindingType::ReadOnlyStorageBuffer}},
-                            4);
+        for (const auto& renderer : compiled.Settings.Renderers)
+            if (renderer.Kind == RendererKind::Mesh)
+            {
+                auto radius = compiled.MeshRadii.find(renderer.Guid);
+                if (radius == compiled.MeshRadii.end())
+                    continue;
+                for (const auto& a : compiled.Attributes)
+                    if (a.Name == renderer.Bindings.at("Scale"))
+                        source += "if(i<c[1]){vec3 scale=abs(uintBitsToFloat(a[" + std::to_string(a.Offset) +
+                                  "u*p.capacity+alive[i]]).xyz);radius=max(radius," + std::to_string(radius->second) +
+                                  "*max(scale.x,max(scale.y,scale.z)));}";
+            }
+        source += R"(
+lower[lane]=vec4(lo,radius);upper[lane]=vec4(hi,0);barrier();
+for(uint stride=32;stride>0;stride/=2){if(lane<stride){lower[lane].xyz=min(lower[lane].xyz,lower[lane+stride].xyz);lower[lane].w=max(lower[lane].w,lower[lane+stride].w);upper[lane].xyz=max(upper[lane].xyz,upper[lane+stride].xyz);}barrier();}
+if(lane==0){partials[gl_WorkGroupID.x*2]=lower[0];partials[gl_WorkGroupID.x*2+1]=upper[0];}})";
+        BoundsPartials = buffer(size_t((cap + 63) / 64) * 32);
+        BoundsKernel   = Make(source,
+                              {{0, BindingType::ReadOnlyStorageBuffer},
+                               {1, BindingType::ReadOnlyStorageBuffer},
+                               {2, BindingType::ReadOnlyStorageBuffer},
+                               {3, BindingType::StorageBuffer}},
+                              4);
+        BoundsFinish   = Make(R"(#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) buffer Counters{uint c[];};
+layout(set=0,binding=1,std430) readonly buffer Partials{vec4 partials[];};
+layout(push_constant) uniform P{uint groups;}p;
+shared vec4 lower[64],upper[64];
+void main(){uint lane=gl_LocalInvocationID.x;vec4 lo=vec4(vec3(3.402823e38),0),hi=vec4(vec3(-3.402823e38),0);
+for(uint i=lane;i<p.groups;i+=64){lo.xyz=min(lo.xyz,partials[i*2].xyz);lo.w=max(lo.w,partials[i*2].w);hi.xyz=max(hi.xyz,partials[i*2+1].xyz);}
+lower[lane]=lo;upper[lane]=hi;barrier();
+for(uint stride=32;stride>0;stride/=2){if(lane<stride){lower[lane].xyz=min(lower[lane].xyz,lower[lane+stride].xyz);lower[lane].w=max(lower[lane].w,lower[lane+stride].w);upper[lane].xyz=max(upper[lane].xyz,upper[lane+stride].xyz);}barrier();}
+if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=floatBitsToUint(upper[0][k]);}c[14]=floatBitsToUint(lower[0].w);}})",
+                              {{0, BindingType::StorageBuffer}, {1, BindingType::ReadOnlyStorageBuffer}},
+                              4);
         for (auto& r : Readbacks)
             r = device.CreateBuffer({64, BufferUsage::CopyDestination, MemoryUsage::Readback});
     }
@@ -460,19 +490,34 @@ void main(){vec3 lo=vec3(3.402823e38),hi=-lo;float radius=0.0;
         emitter.Pending.clear();
         if (worked)
         {
-            auto k = BoundsKernel;
-            auto c = Counters, a = Attributes, al = Alive;
+            auto           k = BoundsKernel;
+            auto           c = Counters, a = Attributes, al = Alive, partials = BoundsPartials;
+            auto           partialId = graph.ImportBuffer("VFX partial bounds", partials);
+            const uint32_t groups    = (cap + 63) / 64;
             graph.AddPass(
-                "VFX dynamic bounds",
+                "VFX dynamic bounds groups",
                 GraphPassKind::Compute,
-                {{counters, GraphAccess::StorageReadWrite},
+                {{counters, GraphAccess::StorageRead},
                  {attributes, GraphAccess::StorageRead},
-                 {alive, GraphAccess::StorageRead}},
-                [k, c, a, al, cap](auto& ctx) {
+                 {alive, GraphAccess::StorageRead},
+                 {partialId, GraphAccess::StorageWrite}},
+                [k, c, a, al, partials, cap, groups](auto& ctx) {
                     ctx.Commands.BindComputePipeline(k.Pipeline);
-                    ctx.Commands.BindGroup(Group(ctx.Device, k.Layout, {c, a, al}));
+                    ctx.Commands.BindGroup(Group(ctx.Device, k.Layout, {c, a, al, partials}));
                     ctx.Commands.PushConstants(0, &cap, 4);
-                    ctx.Commands.Dispatch(1, 1, 1);
+                    ctx.Commands.Dispatch(groups);
+                },
+                true);
+            k = BoundsFinish;
+            graph.AddPass(
+                "VFX dynamic bounds reduction",
+                GraphPassKind::Compute,
+                {{counters, GraphAccess::StorageReadWrite}, {partialId, GraphAccess::StorageRead}},
+                [k, c, partials, groups](auto& ctx) {
+                    ctx.Commands.BindComputePipeline(k.Pipeline);
+                    ctx.Commands.BindGroup(Group(ctx.Device, k.Layout, {c, partials}));
+                    ctx.Commands.PushConstants(0, &groups, 4);
+                    ctx.Commands.Dispatch(1);
                 },
                 true);
         }
@@ -544,6 +589,440 @@ void main(){vec3 lo=vec3(3.402823e38),hi=-lo;float radius=0.0;
                 Upload(c.Device, c.Commands, d, args.data(), 16);
             },
             true);
+    }
+    std::vector<uint32_t> GpuEmitter::SortCpu(const EmitterInstance& emitter,
+                                              const Renderer&        renderer,
+                                              const glm::mat4&       view,
+                                              const glm::mat4&       owner)
+    {
+        auto indices = emitter.Alive;
+        if (renderer.Sorting <= Sort::EmitterOrder)
+            return indices;
+        auto       camera = glm::vec3(glm::inverse(view)[3]);
+        const auto key    = [&](uint32_t slot) {
+            if (renderer.Sorting == Sort::Custom)
+            {
+                float value = emitter.Read(renderer.Bindings.at("SortKey"), slot).Data.x;
+                return std::isnan(value) ? 0.f : value;
+            }
+            auto position = emitter.Read(renderer.Bindings.at("Position"), slot).Data;
+            position.w    = 1;
+            if (emitter.Compiled->Settings.SimulationSpace == Space::Local)
+                position = owner * position;
+            return renderer.Sorting == Sort::ParticleDistance ?
+                       glm::dot(glm::vec3(position) - camera, glm::vec3(position) - camera) :
+                       -(view * position).z;
+        };
+        std::vector<float> keys(emitter.Compiled->Settings.Capacity);
+        for (auto slot : indices)
+            keys[slot] = key(slot);
+        bool ascending = renderer.Sorting == Sort::Custom && renderer.SortAscending;
+        std::stable_sort(indices.begin(), indices.end(), [&](uint32_t a, uint32_t b) {
+            return ascending ? keys[a] < keys[b] : keys[a] > keys[b];
+        });
+        return indices;
+    }
+    GpuEmitter::Workspace& GpuEmitter::Acquire(std::vector<Workspace>& pool, RenderGraph& graph)
+    {
+        for (auto& workspace : pool)
+            if (workspace.Graph.expired())
+            {
+                workspace.Graph       = graph.Lifetime();
+                workspace.RendererKey = nullptr;
+                workspace.Input       = nullptr;
+                return workspace;
+            }
+        pool.emplace_back();
+        pool.back().Graph = graph.Lifetime();
+        return pool.back();
+    }
+    Handle<Buffer> GpuEmitter::SortForView(RenderGraph&           graph,
+                                           const EmitterInstance& emitter,
+                                           const Renderer&        renderer,
+                                           const glm::mat4&       view,
+                                           const glm::mat4&       owner,
+                                           bool                   transparent)
+    {
+        if (!transparent || renderer.Sorting <= Sort::EmitterOrder)
+            return Alive;
+        const auto cap       = Compiled.Settings.Capacity;
+        auto&      workspace = Acquire(SortWorkspaces, graph);
+        if (!workspace.Output)
+            workspace.Output = Device.CreateBuffer(
+                {size_t(cap) * 4, BufferUsage::Storage | BufferUsage::CopyDestination | BufferUsage::CopySource});
+        auto output = workspace.Output;
+        auto out    = graph.ImportBuffer("VFX sorted alive per view", output);
+        if (Compiled.Settings.Target == SimTarget::CPU)
+        {
+            auto indices = SortCpu(emitter, renderer, view, owner);
+            graph.AddPass(
+                "VFX CPU sort upload",
+                GraphPassKind::Transfer,
+                {{out, GraphAccess::TransferWrite}},
+                [output, indices = std::move(indices)](auto& c) {
+                    if (!indices.empty())
+                        for (size_t first = 0; first < indices.size(); first += 16384)
+                            c.Commands.UpdateBuffer(output,
+                                                    first * 4,
+                                                    indices.data() + first,
+                                                    std::min(size_t(16384), indices.size() - first) * 4);
+                },
+                true);
+            return output;
+        }
+        if (!SortPrepare.Pipeline)
+        {
+            SortPrepare = Make(R"(#version 450
+layout(local_size_x=1) in;
+layout(set=0,binding=0,std430) readonly buffer Count{uint count[];};
+layout(set=0,binding=1,std430) buffer Dispatch{uint args[];};
+void main(){uint n=count[1],padded=1;while(padded<n)padded*=2;args[0]=n==0?0:(padded+63)/64;args[1]=1;args[2]=1;args[3]=padded;}
+)",
+                               {{0, BindingType::ReadOnlyStorageBuffer}, {1, BindingType::StorageBuffer}},
+                               0);
+            SortKeys    = Make(R"(#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) readonly buffer Attributes{uvec4 a[];};
+layout(set=0,binding=1,std430) readonly buffer Alive{uint alive[];};
+layout(set=0,binding=2,std430) readonly buffer Count{uint count[];};
+layout(set=0,binding=3,std430) buffer Pairs{uvec4 pairs[];};
+layout(set=0,binding=4,std140) uniform Params{mat4 owner;mat4 view;vec4 camera;uvec4 data;uvec4 options;}p;
+void main(){uint padded=1;while(padded<count[1])padded*=2;uint i=gl_GlobalInvocationID.x;if(i>=padded)return;
+if(i>=count[1]){pairs[i]=uvec4(0,0xffffffffu,0,1);return;}
+uint slot=alive[i];float key;
+if(p.options.x==4)key=uintBitsToFloat(a[p.data.z*p.data.x+slot]).x;
+else{vec4 pos=vec4(uintBitsToFloat(a[p.data.y*p.data.x+slot]).xyz,1);if(p.options.z!=0)pos=p.owner*pos;
+key=p.options.x==3?dot(pos.xyz-p.camera.xyz,pos.xyz-p.camera.xyz):-(p.view*pos).z;}
+if(isnan(key))key=0; if(p.options.y==0)key=-key;
+pairs[i]=uvec4(floatBitsToUint(key),i,slot,0);}
+)",
+                               {{0, BindingType::ReadOnlyStorageBuffer},
+                                {1, BindingType::ReadOnlyStorageBuffer},
+                                {2, BindingType::ReadOnlyStorageBuffer},
+                                {3, BindingType::StorageBuffer},
+                                {4, BindingType::UniformBuffer}},
+                               0);
+            SortStep    = Make(R"(#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) buffer Pairs{uvec4 pairs[];};
+layout(set=0,binding=1,std430) readonly buffer Count{uint count[];};
+layout(push_constant) uniform P{uint width;uint stride;}p;
+bool before(uvec4 a,uvec4 b){if(a.w!=b.w)return a.w<b.w;float x=uintBitsToFloat(a.x),y=uintBitsToFloat(b.x);return x<y||(x==y&&a.y<b.y);}
+void main(){uint padded=1;while(padded<count[1])padded*=2;uint i=gl_GlobalInvocationID.x,j=i^p.stride;if(i>=padded||j<=i||j>=padded)return;
+uvec4 a=pairs[i],b=pairs[j];if(before(b,a)==((i&p.width)==0)){pairs[i]=b;pairs[j]=a;}}
+)",
+                               {{0, BindingType::StorageBuffer}, {1, BindingType::ReadOnlyStorageBuffer}},
+                               8);
+            SortOutput  = Make(R"(#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) readonly buffer Pairs{uvec4 pairs[];};
+layout(set=0,binding=1,std430) readonly buffer Count{uint count[];};
+layout(set=0,binding=2,std430) buffer Output{uint indices[];};
+void main(){uint i=gl_GlobalInvocationID.x;if(i<count[1])indices[i]=pairs[i].z;}
+)",
+                               {{0, BindingType::ReadOnlyStorageBuffer},
+                                {1, BindingType::ReadOnlyStorageBuffer},
+                                {2, BindingType::StorageBuffer}},
+                               0);
+        }
+        uint32_t padded = 1;
+        while (padded < cap)
+            padded *= 2;
+        if (!workspace.Pairs)
+        {
+            workspace.Pairs    = Device.CreateBuffer({size_t(padded) * 16, BufferUsage::Storage});
+            workspace.Dispatch = Device.CreateBuffer({16, BufferUsage::Storage | BufferUsage::Indirect});
+        }
+        auto pairs = workspace.Pairs, dispatch = workspace.Dispatch;
+        auto pairId     = graph.ImportBuffer("VFX sort key ordinal slot", pairs),
+             dispatchId = graph.ImportBuffer("VFX sort indirect dispatch", dispatch);
+        auto countId    = graph.ImportBuffer("VFX draw indirect", DrawArgs);
+        auto count      = DrawArgs;
+        auto prepare    = SortPrepare;
+        graph.AddPass(
+            "VFX sort prepare",
+            GraphPassKind::Compute,
+            {{countId, GraphAccess::StorageRead}, {dispatchId, GraphAccess::StorageWrite}},
+            [prepare, count, dispatch](auto& c) {
+                c.Commands.BindComputePipeline(prepare.Pipeline);
+                c.Commands.BindGroup(Group(c.Device, prepare.Layout, {count, dispatch}));
+                c.Commands.Dispatch(1, 1, 1);
+            },
+            true);
+        struct Params
+        {
+            glm::mat4  Owner, View;
+            glm::vec4  Camera;
+            glm::uvec4 Data, Options;
+        } params;
+        auto offset = [&](const char* binding) {
+            for (const auto& a : Compiled.Attributes)
+                if (a.Name == renderer.Bindings.at(binding))
+                    return a.Offset;
+            return 0u;
+        };
+        params.Owner   = owner;
+        params.View    = view;
+        params.Camera  = glm::inverse(view)[3];
+        params.Data    = {cap, offset("Position"), renderer.Sorting == Sort::Custom ? offset("SortKey") : 0, 0};
+        params.Options = {uint32_t(renderer.Sorting),
+                          uint32_t(renderer.Sorting == Sort::Custom && renderer.SortAscending),
+                          uint32_t(Compiled.Settings.SimulationSpace == Space::Local),
+                          0};
+        if (!workspace.Uniform)
+            workspace.Uniform =
+                Device.CreateBuffer({sizeof(params), BufferUsage::Uniform | BufferUsage::CopyDestination});
+        auto uniform   = workspace.Uniform;
+        auto uniformId = graph.ImportBuffer("VFX sort view parameters", uniform);
+        graph.AddPass(
+            "VFX sort parameters",
+            GraphPassKind::Transfer,
+            {{uniformId, GraphAccess::TransferWrite}},
+            [uniform, params](auto& c) { c.Commands.UpdateBuffer(uniform, 0, &params, sizeof(params)); },
+            true);
+        auto key        = SortKeys;
+        auto attributes = Attributes, alive = Alive;
+        graph.AddPass(
+            "VFX sort keys",
+            GraphPassKind::Compute,
+            {{graph.ImportBuffer("VFX attributes", attributes), GraphAccess::StorageRead},
+             {graph.ImportBuffer("VFX alive", alive), GraphAccess::StorageRead},
+             {countId, GraphAccess::StorageRead},
+             {dispatchId, GraphAccess::IndirectRead},
+             {pairId, GraphAccess::StorageWrite},
+             {uniformId, GraphAccess::UniformRead}},
+            [key, attributes, alive, count, dispatch, pairs, uniform](auto& c) {
+                c.Commands.BindComputePipeline(key.Pipeline);
+                c.Commands.BindGroup(Group(c.Device, key.Layout, {attributes, alive, count, pairs, uniform}));
+                c.Commands.DispatchIndirect(dispatch);
+            },
+            true);
+        auto step = SortStep;
+        for (uint32_t width = 2; width <= padded; width *= 2)
+            for (uint32_t stride = width / 2; stride; stride /= 2)
+                graph.AddPass(
+                    "VFX sort bitonic",
+                    GraphPassKind::Compute,
+                    {{pairId, GraphAccess::StorageReadWrite},
+                     {countId, GraphAccess::StorageRead},
+                     {dispatchId, GraphAccess::IndirectRead}},
+                    [step, pairs, count, dispatch, width, stride](auto& c) {
+                        glm::uvec2 push(width, stride);
+                        c.Commands.BindComputePipeline(step.Pipeline);
+                        c.Commands.BindGroup(Group(c.Device, step.Layout, {pairs, count}));
+                        c.Commands.PushConstants(0, &push, 8);
+                        c.Commands.DispatchIndirect(dispatch);
+                    },
+                    true);
+        auto finish = SortOutput;
+        graph.AddPass(
+            "VFX sort output",
+            GraphPassKind::Compute,
+            {{pairId, GraphAccess::StorageRead},
+             {countId, GraphAccess::StorageRead},
+             {dispatchId, GraphAccess::IndirectRead},
+             {out, GraphAccess::StorageWrite}},
+            [finish, pairs, count, dispatch, output](auto& c) {
+                c.Commands.BindComputePipeline(finish.Pipeline);
+                c.Commands.BindGroup(Group(c.Device, finish.Layout, {pairs, count, output}));
+                c.Commands.DispatchIndirect(dispatch);
+            },
+            true);
+        return output;
+    }
+    GpuEmitter::MeshBin GpuEmitter::BinMesh(RenderGraph&                    graph,
+                                            const Renderer&                 renderer,
+                                            uint32_t                        entry,
+                                            const std::vector<MeshSection>& sections,
+                                            Handle<Buffer>                  indices)
+    {
+        if (!BinCount.Pipeline)
+        {
+            BinCount     = Make(R"(#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) readonly buffer Attributes{uvec4 a[];};
+layout(set=0,binding=1,std430) readonly buffer Alive{uint alive[];};
+layout(set=0,binding=2,std430) readonly buffer Count{uint count[];};
+layout(set=0,binding=3,std430) buffer Counts{uint counts[];};
+layout(push_constant) uniform P{uint capacity;uint attributeOffset;uint entries;uint groups;}p;
+shared uint selected[64];
+void main(){uint lane=gl_LocalInvocationID.x,i=gl_GlobalInvocationID.x;
+selected[lane]=i<count[1]?uint(clamp(int(a[p.attributeOffset*p.capacity+alive[i]].x),0,int(p.entries)-1)):0xffffffffu;
+barrier();for(uint e=lane;e<p.entries;e+=64){uint n=0;for(uint j=0;j<64;++j)n+=uint(selected[j]==e);counts[e*p.groups+gl_WorkGroupID.x]=n;}}
+)",
+                                {{0, BindingType::ReadOnlyStorageBuffer},
+                                 {1, BindingType::ReadOnlyStorageBuffer},
+                                 {2, BindingType::ReadOnlyStorageBuffer},
+                                 {3, BindingType::StorageBuffer}},
+                                16);
+            BinScan      = Make(R"(#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) readonly buffer Input{uint inputCounts[];};
+layout(set=0,binding=1,std430) buffer Output{uint outputCounts[];};
+layout(push_constant) uniform P{uint groups;uint entries;uint stride;}p;
+void main(){uint i=gl_GlobalInvocationID.x;if(i>=p.groups*p.entries)return;outputCounts[i]=inputCounts[i]+(i%p.groups>=p.stride?inputCounts[i-p.stride]:0);}
+)",
+                                {{0, BindingType::ReadOnlyStorageBuffer}, {1, BindingType::StorageBuffer}},
+                                12);
+            BinScatter   = Make(R"(#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) readonly buffer Attributes{uvec4 a[];};
+layout(set=0,binding=1,std430) readonly buffer Alive{uint alive[];};
+layout(set=0,binding=2,std430) readonly buffer Count{uint count[];};
+layout(set=0,binding=3,std430) readonly buffer Counts{uint counts[];};
+layout(set=0,binding=4,std430) buffer Output{uint outputSlots[];};
+layout(push_constant) uniform P{uint capacity;uint attributeOffset;uint entries;uint groups;}p;
+shared uint selected[64];
+void main(){uint lane=gl_LocalInvocationID.x,i=gl_GlobalInvocationID.x,slot=0,e=0xffffffffu;
+if(i<count[1]){slot=alive[i];e=uint(clamp(int(a[p.attributeOffset*p.capacity+slot].x),0,int(p.entries)-1));}
+selected[lane]=e;barrier();if(i>=count[1])return;uint rank=0;for(uint j=0;j<lane;++j)rank+=uint(selected[j]==e);
+uint group=gl_WorkGroupID.x;uint base=group==0?0:counts[e*p.groups+group-1];outputSlots[e*p.capacity+base+rank]=slot;}
+)",
+                                {{0, BindingType::ReadOnlyStorageBuffer},
+                                 {1, BindingType::ReadOnlyStorageBuffer},
+                                 {2, BindingType::ReadOnlyStorageBuffer},
+                                 {3, BindingType::ReadOnlyStorageBuffer},
+                                 {4, BindingType::StorageBuffer}},
+                                16);
+            BinArguments = Make(R"(#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) readonly buffer Counts{uint counts[];};
+layout(set=0,binding=1,std430) buffer Args{uint args[];};
+layout(push_constant) uniform P{uint groups;uint entry;uint sections;}p;
+void main(){uint s=gl_GlobalInvocationID.x;if(s<p.sections)args[s*5+1]=counts[(p.entry+1)*p.groups-1];}
+)",
+                                {{0, BindingType::ReadOnlyStorageBuffer}, {1, BindingType::StorageBuffer}},
+                                12);
+        }
+        auto       lifetime  = graph.Lifetime();
+        Workspace* workspace = nullptr;
+        for (auto& w : BinWorkspaces)
+            if (!w.Graph.owner_before(lifetime) && !lifetime.owner_before(w.Graph) && w.RendererKey == &renderer &&
+                w.Input == indices.get())
+                workspace = &w;
+        const uint32_t cap = Compiled.Settings.Capacity, entries = uint32_t(renderer.Meshes.size());
+        const uint32_t groups = (cap + 63) / 64;
+        if (!workspace)
+        {
+            workspace              = &Acquire(BinWorkspaces, graph);
+            workspace->RendererKey = &renderer;
+            workspace->Input       = indices.get();
+            auto ensure            = [&](Handle<Buffer>& b, size_t bytes, BufferUsage usage) {
+                if (!b || b->GetDesc().Bytes < bytes)
+                    b = Device.CreateBuffer({bytes, usage});
+            };
+            ensure(workspace->Counts, size_t(entries) * groups * 4, BufferUsage::Storage);
+            ensure(workspace->Scan, size_t(entries) * groups * 4, BufferUsage::Storage);
+            ensure(workspace->Gather, size_t(entries) * cap * 4, BufferUsage::Storage | BufferUsage::CopySource);
+            workspace->Bins.resize(entries);
+            uint32_t attribute = 0;
+            for (const auto& a : Compiled.Attributes)
+                if (a.Name == renderer.Bindings.at("MeshIndex"))
+                    attribute = a.Offset;
+            std::array<uint32_t, 4> push {cap, attribute, entries, groups};
+            auto a = Attributes, count = DrawArgs, counts = workspace->Counts, scan = workspace->Scan;
+            auto gather   = workspace->Gather;
+            auto attrId   = graph.ImportBuffer("VFX attributes", a),
+                 aliveId  = graph.ImportBuffer("VFX bin input", indices);
+            auto countId  = graph.ImportBuffer("VFX draw indirect", count);
+            auto countsId = graph.ImportBuffer("VFX mesh group counts", counts);
+            auto scanId   = graph.ImportBuffer("VFX mesh scanned counts", scan);
+            auto gatherId = graph.ImportBuffer("VFX mesh stable gather", gather);
+            auto kernel   = BinCount;
+            graph.AddPass(
+                "VFX mesh count all entries",
+                GraphPassKind::Compute,
+                {{attrId, GraphAccess::StorageRead},
+                 {aliveId, GraphAccess::StorageRead},
+                 {countId, GraphAccess::StorageRead},
+                 {countsId, GraphAccess::StorageWrite}},
+                [kernel, a, indices, count, counts, push, groups](auto& c) {
+                    c.Commands.BindComputePipeline(kernel.Pipeline);
+                    c.Commands.BindGroup(Group(c.Device, kernel.Layout, {a, indices, count, counts}));
+                    c.Commands.PushConstants(0, push.data(), 16);
+                    c.Commands.Dispatch(groups);
+                },
+                true);
+            kernel = BinScan;
+            for (uint32_t stride = 1; stride < groups; stride *= 2)
+            {
+                graph.AddPass(
+                    "VFX mesh scan",
+                    GraphPassKind::Compute,
+                    {{countsId, GraphAccess::StorageRead}, {scanId, GraphAccess::StorageWrite}},
+                    [kernel, counts, scan, groups, entries, stride](auto& c) {
+                        std::array<uint32_t, 3> p {groups, entries, stride};
+                        c.Commands.BindComputePipeline(kernel.Pipeline);
+                        c.Commands.BindGroup(Group(c.Device, kernel.Layout, {counts, scan}));
+                        c.Commands.PushConstants(0, p.data(), 12);
+                        c.Commands.Dispatch((groups * entries + 63) / 64);
+                    },
+                    true);
+                std::swap(counts, scan);
+                std::swap(countsId, scanId);
+            }
+            // Keep the final scan in Counts for per-entry argument generation below.
+            workspace->Counts = counts;
+            workspace->Scan   = scan;
+            kernel            = BinScatter;
+            graph.AddPass(
+                "VFX mesh scatter all entries",
+                GraphPassKind::Compute,
+                {{attrId, GraphAccess::StorageRead},
+                 {aliveId, GraphAccess::StorageRead},
+                 {countId, GraphAccess::StorageRead},
+                 {countsId, GraphAccess::StorageRead},
+                 {gatherId, GraphAccess::StorageWrite}},
+                [kernel, a, indices, count, counts, gather, push, groups](auto& c) {
+                    c.Commands.BindComputePipeline(kernel.Pipeline);
+                    c.Commands.BindGroup(Group(c.Device, kernel.Layout, {a, indices, count, counts, gather}));
+                    c.Commands.PushConstants(0, push.data(), 16);
+                    c.Commands.Dispatch(groups);
+                },
+                true);
+        }
+        auto& result = workspace->Bins.at(entry);
+        if (!result.Indices)
+            result.Indices = Device.CreateBuffer(
+                {size_t(cap) * 4, BufferUsage::Storage | BufferUsage::CopySource | BufferUsage::CopyDestination});
+        if (!result.Arguments || result.Arguments->GetDesc().Bytes < std::max(size_t(20), sections.size() * 20))
+            result.Arguments = Device.CreateBuffer({std::max(size_t(20), sections.size() * 20),
+                                                    BufferUsage::Storage | BufferUsage::Indirect |
+                                                        BufferUsage::CopyDestination | BufferUsage::CopySource});
+        std::vector<uint32_t> values;
+        for (const auto& section : sections)
+            values.insert(values.end(), {section.IndexCount, 0, section.FirstIndex, 0, 0});
+        auto out = result.Indices, args = result.Arguments, gather = workspace->Gather, counts = workspace->Counts;
+        auto outId  = graph.ImportBuffer("VFX mesh entry alive", out),
+             argsId = graph.ImportBuffer("VFX mesh arguments", args);
+        graph.AddPass(
+            "VFX mesh entry copy",
+            GraphPassKind::Transfer,
+            {{graph.ImportBuffer("VFX mesh stable gather", gather), GraphAccess::TransferRead},
+             {outId, GraphAccess::TransferWrite},
+             {argsId, GraphAccess::TransferWrite}},
+            [out, args, gather, values, entry, cap](auto& c) {
+                c.Commands.CopyBuffer(gather, size_t(entry) * cap * 4, out, 0, size_t(cap) * 4);
+                for (size_t first = 0; first < values.size(); first += 16384)
+                    c.Commands.UpdateBuffer(
+                        args, first * 4, values.data() + first, std::min(size_t(16384), values.size() - first) * 4);
+            },
+            true);
+        auto kernel = BinArguments;
+        graph.AddPass(
+            "VFX mesh entry counts",
+            GraphPassKind::Compute,
+            {{graph.ImportBuffer("VFX mesh group counts", counts), GraphAccess::StorageRead},
+             {argsId, GraphAccess::StorageReadWrite}},
+            [kernel, counts, args, groups, entry, n = uint32_t(sections.size())](auto& c) {
+                std::array<uint32_t, 3> p {groups, entry, n};
+                c.Commands.BindComputePipeline(kernel.Pipeline);
+                c.Commands.BindGroup(Group(c.Device, kernel.Layout, {counts, args}));
+                c.Commands.PushConstants(0, p.data(), 12);
+                c.Commands.Dispatch(std::max(1u, (n + 63) / 64));
+            },
+            true);
+        return result;
     }
     void GpuEmitter::Poll(EmitterInstance& emitter)
     {
