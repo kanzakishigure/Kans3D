@@ -278,6 +278,8 @@ void UpdateBuffer(const Handle<Buffer>& handle, size_t offset, const void* data,
                 bytes <= 65536,
             "Invalid buffer update (4-byte alignment, maximum 64 KiB)");
     Range(b->Desc.Bytes, offset, bytes);
+    if (Owner->BufferWrites)
+        Owner->BufferWrites(b->Desc, offset, data, bytes);
     Mark(b);
     std::vector<uint32_t> copy(bytes / 4);
     std::memcpy(copy.data(), data, bytes);

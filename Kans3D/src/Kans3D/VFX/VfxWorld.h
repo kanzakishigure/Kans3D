@@ -42,12 +42,22 @@ namespace Kans::Vfx
         Value                                            Read(const std::string& name, uint32_t slot) const;
         glm::vec3                                        WorldPosition(uint32_t slot, const glm::mat4& owner) const;
     };
+    struct MeshSamplingSource
+    {
+        Ref<const MeshAsset>     Mesh;
+        Ref<const SkeletonAsset> Skeleton;
+        glm::mat4                Transform {1};
+        std::vector<glm::mat4>   Palette;
+        bool                     Valid = false;
+    };
+    using MeshSourceResolver = std::function<MeshSamplingSource(const InterfaceBinding&)>;
     class SystemInstance
     {
     public:
         SystemInstance(Ref<const VfxSystemAsset>,
                        const ParticleSystemComponent&,
-                       const glm::mat4& initialOwner = glm::mat4(1));
+                       const glm::mat4&   initialOwner = glm::mat4(1),
+                       MeshSourceResolver meshSources  = {});
         ~SystemInstance();
         SystemInstance(const SystemInstance&)                           = delete;
         SystemInstance& operator=(const SystemInstance&)                = delete;
@@ -69,11 +79,24 @@ namespace Kans::Vfx
         std::vector<EmitterInstance>&       Emitters() { return m_Emitters; }
         const std::vector<EmitterInstance>& Emitters() const { return m_Emitters; }
         const glm::mat4&                    OwnerTransform() const { return m_Owner; }
+        std::function<void(const std::string&)> RuntimeWarning;
         std::optional<Bounds>               FixedBounds;
         float                               TimeScale   = 1;
         bool                                AutoDestroy = false;
 
     private:
+        struct MeshState
+        {
+            Ref<const MeshAsset>     Mesh;
+            Ref<const SkeletonAsset> Skeleton;
+            InterfaceBinding         Baked;
+            glm::mat4                PreviousTransform {1};
+            std::vector<glm::mat4>   PreviousPalette;
+            bool                     Initialized = false, Cached = false, Warned = false;
+        };
+        MeshSourceResolver               m_MeshSources;
+        std::map<std::string, MeshState> m_MeshStates;
+        void                         PrepareMeshTables(ExecutionContext&, float, const glm::mat4&, const glm::mat4&);
         void                         Reset();
         void                         Step(float, const glm::mat4&, glm::vec3);
         Ref<const VfxSystemAsset>    m_Asset;

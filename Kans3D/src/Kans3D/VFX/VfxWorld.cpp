@@ -2,6 +2,8 @@
 #include "VfxWorld.h"
 #include <glm/gtx/matrix_decompose.hpp>
 #include "Kans3D/Asset/Manager/AssetManager.h"
+#include "Kans3D/Core/Log/Log.h"
+#include "Kans3D/Renderer/Resource/Skinning.h"
 #include "Kans3D/Scene/Entity.h"
 #include "VfxGpu.h"
 namespace Kans::Vfx
@@ -84,9 +86,11 @@ namespace Kans::Vfx
     }
     SystemInstance::SystemInstance(Ref<const VfxSystemAsset>      a,
                                    const ParticleSystemComponent& c,
-                                   const glm::mat4&               initialOwner) :
-        m_Asset(std::move(a)), m_Seed(c.SeedOverride ? Hash(m_Asset->GetData().Settings.Seed ^ Hash(*c.SeedOverride)) :
-                                                       m_Asset->GetData().Settings.Seed)
+                                   const glm::mat4&               initialOwner,
+                                   MeshSourceResolver             meshSources) :
+        m_MeshSources(std::move(meshSources)), m_Asset(std::move(a)),
+        m_Seed(c.SeedOverride ? Hash(m_Asset->GetData().Settings.Seed ^ Hash(*c.SeedOverride)) :
+                                m_Asset->GetData().Settings.Seed)
     {
         m_Owner     = initialOwner;
         FixedBounds = c.FixedBounds ? c.FixedBounds : m_Asset->GetData().Settings.FixedBounds;
@@ -109,6 +113,7 @@ namespace Kans::Vfx
     void SystemInstance::Reset()
     {
         m_Emitters.clear();
+        m_MeshStates.clear();
         m_Entropy = Hash(uint32_t(uint64_t(UUID {})));
         m_Time    = 0;
         for (auto i = m_Parameters.begin(); i != m_Parameters.end();)
@@ -226,16 +231,118 @@ namespace Kans::Vfx
         else
             m_Owner = owner;
     }
+    void SystemInstance::PrepareMeshTables(ExecutionContext& context,
+                                           float             dt,
+                                           const glm::mat4&  owner,
+                                           const glm::mat4&  previousOwner)
+    {
+        using Table = std::shared_ptr<const MeshSamplingSnapshot>;
+        std::map<std::string, Table> tables;
+        auto                         bindings = std::make_shared<std::map<const InterfaceBinding*, Table>>();
+        auto                         prepare  = [&](const Program& program) {
+            for (const auto& layout : program.Interfaces)
+            {
+                const auto& i = program.Code.at(layout.Instruction);
+                if (!IsMeshOperation(i.Op))
+                    continue;
+                const auto& binding = i.Interface;
+                auto        key     = MeshBindingKey(binding);
+                if (auto found = tables.find(key); found != tables.end())
+                {
+                    (*bindings)[&binding] = found->second;
+                    continue;
+                }
+                auto&              state = m_MeshStates[key];
+                bool               asset = binding.Source.empty() || binding.Source == "Asset";
+                MeshSamplingSource source;
+                if (!asset && m_MeshSources)
+                    source = m_MeshSources(binding);
+                bool valid = asset ? bool(binding.Geometry) : source.Valid && bool(source.Mesh);
+                if (asset && !state.Cached)
+                {
+                    state.Baked  = binding;
+                    state.Cached = true;
+                }
+                else if (!asset && valid &&
+                         (!state.Cached || state.Mesh != source.Mesh || state.Skeleton != source.Skeleton))
+                {
+                    state.Mesh     = source.Mesh;
+                    state.Skeleton = source.Skeleton;
+                    state.Baked    = binding;
+                    try
+                    {
+                        if (binding.Kind == "SkeletalMesh")
+                        {
+                            if (!source.Skeleton || source.Mesh->GetData().Skeleton != source.Skeleton->assetID ||
+                                (binding.Skeleton.IsValid() && binding.Skeleton != source.Skeleton->assetID))
+                                throw std::invalid_argument("Source skeleton does not match compiled skeleton");
+                            std::vector<std::string> names;
+                            for (const auto& j : source.Skeleton->GetData().Joints)
+                                names.push_back(j.Name);
+                            if (!binding.SkeletonNames.empty() && binding.SkeletonNames != names)
+                                throw std::invalid_argument("Source skeleton does not match compiled bone filter");
+                        }
+                        state.Baked = CachedMeshSampling(binding, source.Mesh, source.Skeleton);
+                    }
+                    catch (const std::exception&)
+                    {
+                        state.Baked.Geometry.reset();
+                    }
+                    state.Initialized = false;
+                    state.Cached      = true;
+                }
+                valid           = valid && bool(state.Baked.Geometry);
+                auto transform  = asset ? owner : source.Transform;
+                auto previous   = state.Initialized ? state.PreviousTransform : asset ? previousOwner : transform;
+                auto palette    = source.Palette;
+                auto oldPalette = state.Initialized && state.PreviousPalette.size() == palette.size() ?
+                                      state.PreviousPalette :
+                                      palette;
+                auto frame = MeshSamplingFrame(state.Baked, transform, previous, owner, dt, palette, oldPalette, valid);
+                valid      = frame.Frame[2].w != 0;
+                if (!valid && !state.Warned)
+                {
+                    std::string message = "VFX " + binding.Kind +
+                                          " source unavailable or skeleton/filter mismatch: " + binding.EntityPath;
+                    if (RuntimeWarning)
+                        RuntimeWarning(message);
+                    else if (Log::GetCoreLogger())
+                        CORE_WARN("{}", message);
+                    state.Warned = true;
+                }
+                tables[key]             = std::make_shared<const MeshSamplingSnapshot>(std::move(frame));
+                (*bindings)[&binding]   = tables[key];
+                state.PreviousTransform = transform;
+                state.PreviousPalette   = std::move(palette);
+                state.Initialized       = valid;
+            }
+        };
+        for (const auto& [stage, program] : m_Asset->GetData().Programs)
+            prepare(program);
+        for (const auto& emitter : m_Asset->GetData().Emitters)
+        {
+            for (const auto& [stage, program] : emitter.Programs)
+                prepare(program);
+            for (const auto& handler : emitter.Handlers)
+                prepare(handler.Bytecode);
+        }
+        context.MeshTable = [bindings](const InterfaceBinding& binding) -> Table {
+            auto at = bindings->find(&binding);
+            return at == bindings->end() ? nullptr : at->second;
+        };
+    }
     void SystemInstance::Step(float dt, const glm::mat4& owner, glm::vec3 camera)
     {
         if (dt <= 0)
             return;
-        auto velocity = (glm::vec3(owner[3]) - glm::vec3(m_Owner[3])) / dt;
-        m_Owner       = owner;
+        auto previousOwner = m_Owner;
+        auto velocity      = (glm::vec3(owner[3]) - glm::vec3(m_Owner[3])) / dt;
+        m_Owner            = owner;
         m_Time += dt;
         EngineValues(m_Parameters, dt, float(m_Time), owner, camera, velocity);
         m_Parameters["System.Age"] = Value::Float(float(m_Time));
         ExecutionContext context {m_Seed, 0, 0, owner};
+        PrepareMeshTables(context, dt, owner, previousOwner);
         Run(m_Asset->GetData().Programs, Stage::SystemUpdate, m_Parameters, context);
         for (auto& e : m_Emitters)
         {
@@ -348,8 +455,12 @@ namespace Kans::Vfx
                     e.Siblings->size() > 1 || count || e.ParticleCount || queued ||
                     (e.GPU && e.GPU->HasPendingReadback() &&
                      (!e.HasReadback || e.ReadbackSpawnRevision != e.SpawnRevision)))
-                    e.Pending.push_back(
-                        {std::move(params), {context.Seed, context.EmitterIndex, 0, context.LocalToWorld}, count});
+                {
+                    auto gpuContext         = context;
+                    gpuContext.ReadParticle = {};
+                    gpuContext.WriteEvent   = {};
+                    e.Pending.push_back({std::move(params), std::move(gpuContext), count});
+                }
                 ++context.EmitterIndex;
                 continue;
             }
@@ -621,7 +732,64 @@ namespace Kans::Vfx
                 }
                 if (!source)
                     return;
-                auto instance         = std::make_unique<SystemInstance>(source, c, m_Scene.GetWorldTransform(entity));
+                auto meshSources = [this, entity](const InterfaceBinding& binding) {
+                    MeshSamplingSource result;
+                    Entity             bound = entity;
+                    if (binding.Source == "Entity")
+                    {
+                        std::istringstream path(binding.EntityPath);
+                        std::string        name;
+                        while (std::getline(path, name, '/'))
+                        {
+                            Entity child;
+                            if (name.empty() || name == "." || name == "..")
+                                return result;
+                            for (auto candidate : m_Scene.GetChildren(bound))
+                                if (candidate.GetComponent<TagComponent>().Tag == name)
+                                {
+                                    child = candidate;
+                                    break;
+                                }
+                            if (!child)
+                                return result;
+                            bound = child;
+                        }
+                    }
+                    if (!bound || !bound.HasComponent<MeshComponent>())
+                        return result;
+                    auto manager = m_Scene.GetAssetManager();
+                    if (!manager)
+                        return result;
+                    auto loaded = manager->Request<MeshAsset>(bound.GetComponent<MeshComponent>().Mesh);
+                    if (!loaded.IsReady())
+                        return result;
+                    result.Mesh      = loaded.Asset;
+                    result.Transform = m_Scene.GetWorldTransform(bound);
+                    if (binding.Kind == "SkeletalMesh")
+                    {
+                        auto root = m_Scene.GetDeformationRoot(bound);
+                        if (!root || !root.HasComponent<AnimatorComponent>())
+                            return result;
+                        const auto& animator = root.GetComponent<AnimatorComponent>();
+                        result.Skeleton      = animator.SkeletonSource;
+                        if (!result.Skeleton)
+                        {
+                            auto skeleton = manager->Request<SkeletonAsset>(animator.Skeleton);
+                            if (skeleton.IsReady())
+                                result.Skeleton = skeleton.Asset;
+                        }
+                        auto pose = m_Scene.GetSkinningPose(bound);
+                        if (!pose || !result.Skeleton)
+                            return result;
+                        result.Palette = pose->Palette;
+                        // Rendering palettes are model-space; the deformation root supplies the world transform.
+                        result.Transform = m_Scene.GetWorldTransform(root);
+                    }
+                    result.Valid = true;
+                    return result;
+                };
+                auto instance =
+                    std::make_unique<SystemInstance>(source, c, m_Scene.GetWorldTransform(entity), meshSources);
                 instance->AutoDestroy = m_AutoDestroy.count(id) != 0;
                 m_Instances[id]       = std::move(instance);
                 m_Configurations[id]  = c;

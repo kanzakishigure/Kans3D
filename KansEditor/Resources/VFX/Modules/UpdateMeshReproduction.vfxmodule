@@ -1,0 +1,75 @@
+Version: 1
+AssetID: cbb33c3ee3985f61:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: UpdateMeshReproduction
+Inputs:
+- Name: Module.Mesh
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+Nodes:
+- Guid: get-Particles.MeshTriangle
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Particles.MeshTriangle
+- Guid: get-Particles.MeshBarycentric
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.MeshBarycentric
+- Guid: sample
+  Op: SampleTriangle
+  Type: position
+  Inputs:
+  - Name: Triangle
+    Type: int
+  - Name: Barycentric
+    Type: vec3
+  Outputs:
+  - Name: Position
+    Type: position
+  - Name: Normal
+    Type: vec3
+  - Name: MeshVelocity
+    Type: vec3
+  - Name: Color
+    Type: color
+  - Name: Valid
+    Type: bool
+  Parameter: Module.Mesh
+  Interface:
+    Kind: StaticMesh
+    Source: Owner
+- Guid: set-Particles.Position
+  Op: Set
+  Type: position
+  Inputs:
+  - Name: Value
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+Links:
+- From: get-Particles.MeshTriangle
+  Output: Value
+  To: sample
+  Input: Triangle
+- From: get-Particles.MeshBarycentric
+  Output: Value
+  To: sample
+  Input: Barycentric
+- From: sample
+  Output: Position
+  To: set-Particles.Position
+  Input: Value

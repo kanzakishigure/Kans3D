@@ -41,13 +41,20 @@ namespace Kans::Vfx
                         const std::vector<MeshSection>&,
                         RenderHardware::Handle<RenderHardware::Buffer> indices);
         static std::vector<uint32_t>
-             SortCpu(const EmitterInstance&, const Renderer&, const glm::mat4& view, const glm::mat4& owner);
+        SortCpu(const EmitterInstance&, const Renderer&, const glm::mat4& view, const glm::mat4& owner);
+        RenderHardware::Handle<RenderHardware::Buffer> MeshGeometryBuffer(const InterfaceBinding&) const;
         bool HasPendingReadback() const { return Pending[0] || Pending[1] || Pending[2]; }
         RenderHardware::Handle<RenderHardware::Buffer> Attributes, Alive, DrawArgs, DispatchArgs, Counters;
         RenderHardware::Handle<RenderHardware::Buffer> Flags, Free;
         RenderHardware::Device&                        Device;
 
     private:
+        std::shared_ptr<const MeshSamplingGeometry> EmptyGeometry;
+        std::map<std::weak_ptr<const MeshSamplingGeometry>,
+                 RenderHardware::Handle<RenderHardware::Buffer>,
+                 std::owner_less<std::weak_ptr<const MeshSamplingGeometry>>>
+                                                       GeometryBuffers;
+        RenderHardware::Handle<RenderHardware::Buffer> GeometryBuffer(const InterfaceBinding&, const ExecutionContext&);
         struct Workspace
         {
             std::weak_ptr<const void>                      Graph;
@@ -57,7 +64,8 @@ namespace Kans::Vfx
             RenderHardware::Buffer*                        Input       = nullptr;
             std::vector<MeshBin>                           Bins;
         };
-        std::vector<Workspace> SortWorkspaces, BinWorkspaces, RibbonWorkspaces, UniformWorkspaces, ParameterWorkspaces;
+        std::vector<Workspace> SortWorkspaces, BinWorkspaces, RibbonWorkspaces, UniformWorkspaces, ParameterWorkspaces,
+            InterfaceWorkspaces;
         RenderHardware::Handle<RenderHardware::Buffer> BoundsPartials;
         Workspace&                                     Acquire(std::vector<Workspace>&, RenderGraph&);
         struct Kernel

@@ -1,4 +1,5 @@
 #pragma once
+#include "Kans3D/Animation/AnimationData.h"
 #include "Kans3D/Asset/Runtime/MeshData.h"
 #include "Kans3D/Asset/Runtime/ShaderData.h"
 #include "VfxAsset.h"
@@ -83,13 +84,20 @@ namespace Kans::Vfx
         std::vector<Diagnostic> Errors;
         explicit                operator bool() const { return Errors.empty(); }
     };
-    using MeshResolver = std::function<MeshData(AssetID)>;
+    using SkeletonResolver = std::function<SkeletonData(AssetID)>;
+    using MeshResolver     = std::function<MeshData(AssetID)>;
     CompileResult Compile(const System&,
                           const EmitterResolver&,
                           const ModuleResolver&,
-                          AssetID             asset  = {},
-                          const MeshResolver& meshes = {});
+                          AssetID                 asset     = {},
+                          const MeshResolver&     meshes    = {},
+                          const SkeletonResolver& skeletons = {});
     std::string   FormatDiagnostics(const std::vector<Diagnostic>&);
+    struct MeshSamplingSnapshot
+    {
+        std::shared_ptr<const MeshSamplingGeometry> Geometry;
+        std::vector<glm::vec4>                      Frame;
+    };
     struct ExecutionContext
     {
         uint32_t                                                            Seed = 1, EmitterIndex = 0, UniqueID = 0;
@@ -98,7 +106,27 @@ namespace Kans::Vfx
         std::optional<uint32_t>                                             RandomID;
         std::function<Value(const Instruction&, const std::vector<Value>&)> ReadParticle;
         std::function<void(const Instruction&, const std::vector<Value>&)>  WriteEvent;
+        uint32_t                                                            SpawnIndex = 0;
+        std::function<std::shared_ptr<const MeshSamplingSnapshot>(const InterfaceBinding&)> MeshTable;
     };
+    // Mesh sampling tables share the CPU/GPU vec4 layout. CDFs use bind-pose area,
+    // Niagara's default approximation; morph targets are intentionally excluded.
+    bool IsMeshOperation(const std::string&);
+    InterfaceBinding
+         CachedMeshSampling(const InterfaceBinding&, const Ref<const MeshAsset>&, const Ref<const SkeletonAsset>&);
+    void BakeMeshSampling(InterfaceBinding&, const MeshData&, const SkeletonData& = {});
+    MeshSamplingSnapshot   MeshSamplingFrame(const InterfaceBinding&,
+                                             const glm::mat4&              source,
+                                             const glm::mat4&              previousSource,
+                                             const glm::mat4&              owner,
+                                             float                         delta,
+                                             const std::vector<glm::mat4>& palette         = {},
+                                             const std::vector<glm::mat4>& previousPalette = {},
+                                             bool                          valid           = true);
+    std::vector<glm::vec4> GpuInterfaceTable(const Program&, const ExecutionContext&);
+    std::vector<std::pair<const InterfaceBinding*, uint32_t>> MeshGpuBindings(const Program&);
+    std::shared_ptr<const MeshSamplingGeometry>               InternMeshGeometry(std::vector<glm::vec4>);
+    std::string                                               MeshBindingKey(const InterfaceBinding&);
     Value Evaluate(const Instruction&, const std::vector<Value>&, const ExecutionContext&);
     void  Execute(const Program&, ParameterMap&, const ExecutionContext& = {});
     // Compiled products contain bytecode, generated source and SPIR-V; no module source is needed at runtime.

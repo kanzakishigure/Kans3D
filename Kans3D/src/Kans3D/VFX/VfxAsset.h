@@ -11,8 +11,20 @@
 #include "Kans3D/Asset/Asset.h"
 #include "Kans3D/Core/Math/Bounds.h"
 
+namespace Kans::RenderHardware
+{
+    class Device;
+    class Buffer;
+} // namespace Kans::RenderHardware
+
 namespace Kans::Vfx
 {
+    struct MeshSamplingGeometry
+    {
+        std::vector<glm::vec4> Values;
+        // GPU emitters retain active buffers; this index never extends device lifetime.
+        mutable std::map<const RenderHardware::Device*, std::weak_ptr<RenderHardware::Buffer>> Buffers;
+    };
     enum class Type
     {
         Float,
@@ -113,10 +125,16 @@ namespace Kans::Vfx
         std::string Kind = "Curve";
         AssetID     Asset;
         std::string SourceEmitter, Channel;
+        // Mesh sources use an asset, the owner, or a child path relative to the owner.
+        std::string              Source, EntityPath;
+        AssetID                  Skeleton;
+        std::vector<uint32_t>    Sections;
+        std::vector<std::string> Bones, Region, SkeletonNames;
         // Baked sample table: x is time, values are linearly interpolated. Texture2D uses row-major texels.
-        std::vector<float>     Times;
-        std::vector<glm::vec4> Values;
-        uint32_t               Width = 0, Height = 0;
+        std::vector<float>                          Times;
+        std::vector<glm::vec4>                      Values;
+        std::shared_ptr<const MeshSamplingGeometry> Geometry;
+        uint32_t                                    Width = 0, Height = 0;
     };
     struct Input
     {

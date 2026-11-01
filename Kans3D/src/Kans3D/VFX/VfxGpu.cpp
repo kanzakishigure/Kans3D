@@ -116,14 +116,10 @@ namespace Kans::Vfx
                 if (resource.Kind == "EmitterState")
                     EmitterState = buffer(std::max(size_t(16), program.Parameters.size() * 16));
             }
-            auto& data = InterfaceData[&program];
-            for (const auto& table : program.Interfaces)
-            {
-                const auto& values = program.Code.at(table.Instruction).Interface.Values;
-                data.insert(data.end(), values.begin(), values.end());
-            }
-            if (data.empty())
-                data.push_back(glm::vec4(0));
+            for (const auto& [binding, slot] : MeshGpuBindings(program))
+                bindings.push_back({slot, BindingType::ReadOnlyStorageBuffer});
+            auto& data                 = InterfaceData[&program];
+            data                       = GpuInterfaceTable(program, {});
             InterfaceBuffers[&program] = buffer(data.size() * 16);
             return Make(program.GLSL, bindings, 24, &program.SpirV);
         };
@@ -236,8 +232,48 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
         for (auto& r : Readbacks)
             r = device.CreateBuffer({64, BufferUsage::CopyDestination, MemoryUsage::Readback});
     }
+    Handle<Buffer> GpuEmitter::MeshGeometryBuffer(const InterfaceBinding& binding) const
+    {
+        if (!binding.Geometry)
+            return {};
+        auto at = binding.Geometry->Buffers.find(&Device);
+        return at == binding.Geometry->Buffers.end() ? nullptr : at->second.lock();
+    }
+    Handle<Buffer> GpuEmitter::GeometryBuffer(const InterfaceBinding& binding, const ExecutionContext& context)
+    {
+        auto snapshot = context.MeshTable ? context.MeshTable(binding) : nullptr;
+        auto geometry = snapshot ? snapshot->Geometry : binding.Geometry;
+        // Unavailable sources still need a legal binding; validity prevents shader reads.
+        if (!geometry)
+        {
+            if (!EmptyGeometry)
+                EmptyGeometry = InternMeshGeometry(std::vector<glm::vec4>(12, glm::vec4(0)));
+            geometry = EmptyGeometry;
+        }
+        auto buffer = geometry->Buffers[&Device].lock();
+        if (!buffer)
+        {
+            buffer        = Device.CreateBuffer({geometry->Values.size() * 16,
+                                                 BufferUsage::Storage | BufferUsage::CopyDestination,
+                                                 MemoryUsage::DeviceLocal});
+            auto commands = Device.CreateCommandList();
+            Upload(Device, *commands, buffer, geometry->Values.data(), geometry->Values.size() * 16);
+            Device.Submit(commands);
+            geometry->Buffers[&Device] = buffer;
+        }
+        GeometryBuffers[geometry] = buffer;
+        return buffer;
+    }
     void GpuEmitter::AddPasses(RenderGraph& graph, EmitterInstance& emitter)
     {
+        auto releaseExpiredGeometry = [&]() {
+            for (auto at = GeometryBuffers.begin(); at != GeometryBuffers.end();)
+                if (at->first.expired())
+                    at = GeometryBuffers.erase(at);
+                else
+                    ++at;
+        };
+        releaseExpiredGeometry();
         const auto cap  = Compiled.Settings.Capacity;
         auto attributes = graph.ImportBuffer("VFX attributes", Attributes),
              alive = graph.ImportBuffer("VFX alive", Alive), free = graph.ImportBuffer("VFX free", Free),
@@ -358,17 +394,37 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                         Device.CreateBuffer({words.size() * 16,
                                              BufferUsage::Storage | BufferUsage::CopyDestination,
                                              MemoryUsage::DeviceLocal});
-                auto                  params = parameterWorkspace.Output;
-                auto                  gp     = graph.ImportBuffer("VFX stage parameters", params);
-                auto                  a = Attributes, f = Flags, fr = Free, c = Counters, al = Alive, di = DispatchArgs;
-                Push                  push {cap,
-                                            tick.Context.Seed,
-                                            tick.Context.EmitterIndex,
-                                            requested,
-                                            uint32_t(Compiled.Settings.SimulationSpace == Space::World),
-                                            uint32_t(tick.Parameters.at("Emitter.ExecutionState").Integer == 3 ||
-                                                     tick.Parameters.at("System.ExecutionState").Integer == 3)};
-                auto                  table        = InterfaceBuffers.at(&program);
+                auto params = parameterWorkspace.Output;
+                auto gp     = graph.ImportBuffer("VFX stage parameters", params);
+                auto a = Attributes, f = Flags, fr = Free, c = Counters, al = Alive, di = DispatchArgs;
+                Push push {cap,
+                           tick.Context.Seed,
+                           tick.Context.EmitterIndex,
+                           requested,
+                           uint32_t(Compiled.Settings.SimulationSpace == Space::World),
+                           uint32_t(tick.Parameters.at("Emitter.ExecutionState").Integer == 3 ||
+                                    tick.Parameters.at("System.ExecutionState").Integer == 3)};
+                auto table      = InterfaceBuffers.at(&program);
+                bool meshTables = std::any_of(
+                    program.Code.begin(), program.Code.end(), [](const auto& i) { return IsMeshOperation(i.Op); });
+                if (meshTables)
+                {
+                    auto  data      = GpuInterfaceTable(program, tick.Context);
+                    auto& workspace = Acquire(InterfaceWorkspaces, graph);
+                    if (!workspace.Output || workspace.Output->GetDesc().Bytes < data.size() * 16)
+                        workspace.Output = Device.CreateBuffer({data.size() * 16,
+                                                                BufferUsage::Storage | BufferUsage::CopyDestination,
+                                                                MemoryUsage::DeviceLocal});
+                    table = workspace.Output;
+                    graph.AddPass(
+                        "VFX mesh sampling snapshot",
+                        GraphPassKind::Transfer,
+                        {{graph.ImportBuffer("VFX mesh sampling snapshot", table), GraphAccess::TransferWrite}},
+                        [table, data = std::move(data)](auto& ctx) {
+                            Upload(ctx.Device, ctx.Commands, table, data.data(), data.size() * 16);
+                        },
+                        true);
+                }
                 bool                  spawn        = program.StageKind == Stage::ParticleSpawn;
                 bool                  emitterStage = program.StageKind == Stage::EmitterUpdate;
                 std::vector<GraphUse> uses         = {{attributes, GraphAccess::StorageReadWrite},
@@ -418,6 +474,12 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                                         resource.Kind == "EventOutput" ? GraphAccess::StorageReadWrite :
                                                                          GraphAccess::StorageRead});
                     }
+                }
+                for (const auto& [binding, slot] : MeshGpuBindings(program))
+                {
+                    auto buffer = GeometryBuffer(*binding, tick.Context);
+                    bound.push_back(buffer);
+                    uses.push_back({graph.ImportBuffer("VFX static mesh geometry", buffer), GraphAccess::StorageRead});
                 }
                 graph.AddPass(
                     spawn ? "VFX particle spawn" : "VFX particle update",
@@ -499,6 +561,7 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
         }
         bool worked = !emitter.Pending.empty();
         emitter.Pending.clear();
+        releaseExpiredGeometry();
         if (worked)
         {
             auto           k = BoundsKernel;

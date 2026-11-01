@@ -1,0 +1,58 @@
+Version: 1
+AssetID: aced91ce41185586:0000000000000001
+Usage: Module
+AllowedStages: 16
+Category: Built-in
+Description: SkeletalMeshBoneLocation
+Inputs:
+- Name: Module.Mesh
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+Nodes:
+- Guid: bone
+  Op: RandomBone
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Mesh
+  Interface:
+    Kind: SkeletalMesh
+    Source: Owner
+- Guid: sample
+  Op: SampleBone
+  Type: position
+  Inputs:
+  - Name: Index
+    Type: int
+  Outputs:
+  - Name: Position
+    Type: position
+  - Name: Valid
+    Type: bool
+  Parameter: Module.Mesh
+  Interface:
+    Kind: SkeletalMesh
+    Source: Owner
+- Guid: set-Particles.Position
+  Op: Set
+  Type: position
+  Inputs:
+  - Name: Value
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+Links:
+- From: bone
+  Output: Value
+  To: sample
+  Input: Index
+- From: sample
+  Output: Position
+  To: set-Particles.Position
+  Input: Value

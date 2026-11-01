@@ -4,6 +4,7 @@
 #include <mutex>
 #include <glm/gtc/type_ptr.hpp>
 #include "Kans3D/FileSystem/FileSystem.h"
+#include "VfxCompiler.h"
 namespace Kans::Vfx
 {
     namespace
@@ -604,6 +605,16 @@ namespace Kans::Vfx
             n["SourceEmitter"] = x.SourceEmitter;
         if (!x.Channel.empty())
             n["Channel"] = x.Channel;
+        if (x.Kind == "StaticMesh" || x.Kind == "SkeletalMesh")
+        {
+            n["Source"]        = x.Source.empty() ? (x.Kind == "StaticMesh" ? "Asset" : "Owner") : x.Source;
+            n["Entity"]        = x.EntityPath;
+            n["Skeleton"]      = ID(x.Skeleton);
+            n["Sections"]      = x.Sections;
+            n["Bones"]         = x.Bones;
+            n["Region"]        = x.Region;
+            n["SkeletonNames"] = x.SkeletonNames;
+        }
         n["Asset"]  = ID(x.Asset);
         n["Width"]  = x.Width;
         n["Height"] = x.Height;
@@ -611,7 +622,7 @@ namespace Kans::Vfx
         n["Values"] = YAML::Node(YAML::NodeType::Sequence);
         for (auto t : x.Times)
             n["Times"].push_back(t);
-        for (auto v : x.Values)
+        for (auto v : x.Geometry ? x.Geometry->Values : x.Values)
             n["Values"].push_back(Vec(v, 4));
         return n;
     }
@@ -622,8 +633,19 @@ namespace Kans::Vfx
         x.SourceEmitter = n["SourceEmitter"].as<std::string>("");
         x.Channel       = n["Channel"].as<std::string>("");
         x.Asset         = ReadID(n["Asset"]);
-        x.Width         = n["Width"].as<uint32_t>(0);
-        x.Height        = n["Height"].as<uint32_t>(0);
+        x.Source        = n["Source"].as<std::string>(x.Kind == "SkeletalMesh" ? "Owner" : "Asset");
+        x.EntityPath    = n["Entity"].as<std::string>("");
+        x.Skeleton      = ReadID(n["Skeleton"]);
+        if (n["Sections"])
+            x.Sections = n["Sections"].as<std::vector<uint32_t>>();
+        if (n["Bones"])
+            x.Bones = n["Bones"].as<std::vector<std::string>>();
+        if (n["Region"])
+            x.Region = n["Region"].as<std::vector<std::string>>();
+        if (n["SkeletonNames"])
+            x.SkeletonNames = n["SkeletonNames"].as<std::vector<std::string>>();
+        x.Width  = n["Width"].as<uint32_t>(0);
+        x.Height = n["Height"].as<uint32_t>(0);
         for (const auto& t : n["Times"])
         {
             float v = t.as<float>();
@@ -634,6 +656,8 @@ namespace Kans::Vfx
         for (const auto& v : n["Values"])
             x.Values.push_back(ReadVec(v, 4));
         Check(x.Times.empty() || x.Times.size() == x.Values.size(), "VFX curve time/value count mismatch");
+        if ((x.Kind == "StaticMesh" || x.Kind == "SkeletalMesh") && !x.Values.empty())
+            x.Geometry = InternMeshGeometry(std::exchange(x.Values, {}));
         return x;
     }
     YAML::Node EncodeEventLayout(const EventLayout& x)
@@ -1087,7 +1111,7 @@ namespace Kans::Vfx
         Register("EmitterParticles", {Type::Vec4, true});
         Register("Events", {Type::Vec4, true});
         for (const char* s : {"SkeletalMesh", "StaticMesh"})
-            Register(s, {Type::Vec4, false});
+            Register(s, {Type::Vec4, true});
     }
     void InterfaceRegistry::Register(std::string s, Entry e)
     {
@@ -1126,6 +1150,8 @@ namespace Kans::Vfx
         add("Engine.Owner.Velocity", Type::Vec3);
         add("Engine.Camera.Position", Type::Position);
         add("Particles.Position", Type::Position);
+        add("Particles.MeshTriangle", Type::Int);
+        add("Particles.MeshBarycentric", Type::Vec3, {1, 0, 0, 0});
         add("Particles.Velocity", Type::Vec3);
         add("Particles.Color", Type::Color, glm::vec4(1));
         add("Particles.SpriteSize", Type::Vec2, glm::vec4(1));

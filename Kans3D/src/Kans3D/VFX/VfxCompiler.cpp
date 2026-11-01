@@ -1,12 +1,14 @@
 #include "kspch.h"
 #include "VfxCompiler.h"
 #include <iomanip>
+#include <mutex>
 #include <regex>
 #include <sstream>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <shaderc/shaderc.hpp>
 namespace Kans::Vfx
 {
+#include "VfxMeshSampling.inc"
     namespace
     {
         bool VectorType(Type t) { return t != Type::Int && t != Type::Bool; }
@@ -62,14 +64,18 @@ namespace Kans::Vfx
         std::string                           GType(Type);
         struct Compiler
         {
-            const ModuleResolver&            Resolve;
-            std::map<std::string, Parameter> Known;
-            std::vector<Diagnostic>&         Errors;
-            Program                          Out;
-            std::vector<AssetID>             Calls;
-            AssetID                          Asset;
-            Space                            SimulationSpace = Space::Local;
-            uint32_t                         Emit(Instruction i)
+            const ModuleResolver&                    Resolve;
+            std::map<std::string, Parameter>         Known;
+            std::vector<Diagnostic>&                 Errors;
+            Program                                  Out;
+            std::vector<AssetID>                     Calls;
+            AssetID                                  Asset;
+            Space                                    SimulationSpace = Space::Local;
+            MeshResolver                             Meshes;
+            SkeletonResolver                         Skeletons;
+            std::map<std::string, InterfaceBinding>  MeshCache;
+            std::map<std::string, InterfaceBinding>* SharedMeshCache = nullptr;
+            uint32_t                                 Emit(Instruction i)
             {
                 if (i.Kind == Type::Position && (i.Op == "ReadAttribute" || i.Op == "ReadAttributeByID"))
                     i.PositionSpace = SimulationSpace;
@@ -340,6 +346,9 @@ namespace Kans::Vfx
                     uint32_t reg = 0;
                     if (n.Op == "Input")
                     {
+                        auto input = inputs.find(n.Parameter);
+                        if (input != inputs.end() && input->second.Kind == InputKind::DataInterface)
+                            Error(id, guid, output, "Input cannot read DataInterface parameter: " + n.Parameter);
                         auto p = resolved.find(n.Parameter);
                         if (p == resolved.end())
                         {
@@ -408,6 +417,123 @@ namespace Kans::Vfx
                             for (uint32_t a = 1; a < i.Args.size(); ++a)
                                 if (Out.Code[i.Args[a]].Kind == Type::Position)
                                     i.Args[a] = PositionTo(i.Args[a], SimulationSpace);
+                        reg = Emit(i);
+                    }
+                    else if (IsMeshOperation(n.Op))
+                    {
+                        auto binding = inputs.find(n.Parameter);
+                        if (binding != inputs.end() && binding->second.Kind == InputKind::DataInterface)
+                            i.Interface = binding->second.Interface;
+                        // Every output of one sampling node shares its random stream.
+                        i.RandomKey         = Hash(StableHash(scope) ^ StableHash(guid));
+                        const bool skeletal = i.Interface.Kind == "SkeletalMesh";
+                        if (!skeletal && i.Interface.Kind != "StaticMesh")
+                            Error(id, guid, output, "Mesh operation requires StaticMesh or SkeletalMesh binding");
+                        if (i.Interface.Source.empty())
+                            i.Interface.Source = skeletal ? "Owner" : "Asset";
+                        if (i.Interface.Source != "Asset" && i.Interface.Source != "Owner" &&
+                            i.Interface.Source != "Entity")
+                            Error(id, guid, output, "Invalid mesh Source");
+                        if (skeletal && i.Interface.Source == "Asset")
+                            Error(id, guid, output, "SkeletalMesh requires Owner or Entity source");
+                        if (i.Interface.Source == "Entity" && i.Interface.EntityPath.empty())
+                            Error(id, guid, output, "Entity source requires a relative child path");
+                        const bool bone =
+                            n.Op == "RandomBone" || n.Op == "BoneCount" || n.Op == "SampleBone" || n.Op == "BoneByName";
+                        if ((bone || n.Op == "SampleSkinnedTriangle") && !skeletal)
+                            Error(id, guid, output, "Skeletal mesh operation requires SkeletalMesh binding");
+                        auto count = n.Op == "SampleTriangle" || n.Op == "SampleSkinnedTriangle" ? 2u :
+                                     n.Op == "SampleVertex" || n.Op == "SampleBone"              ? 1u :
+                                                                                                   0u;
+                        if (i.Args.size() != count)
+                            Error(id, guid, output, "Wrong input count for " + n.Op);
+                        if (count && !i.Args.empty() && Out.Code[i.Args[0]].Kind != Type::Int)
+                            Error(id, guid, n.Inputs[0].Name, "Mesh index requires int");
+                        if (count == 2 && i.Args.size() == 2 && Out.Code[i.Args[1]].Kind != Type::Vec3)
+                            Error(id, guid, n.Inputs[1].Name, "Barycentric coordinates require vec3");
+                        Type expectedType = Type::Int;
+                        if (count)
+                        {
+                            if (output == "Position")
+                                expectedType = Type::Position;
+                            else if (output == "Normal" || output == "Velocity" || output == "MeshVelocity")
+                                expectedType = Type::Vec3;
+                            else if (output == "Tangent")
+                                expectedType = Type::Vec4;
+                            else if (output == "UV0")
+                                expectedType = Type::Vec2;
+                            else if (output == "Color")
+                                expectedType = Type::Color;
+                            else if (output == "Rotation" && bone)
+                                expectedType = Type::Quat;
+                            else if (output == "Valid")
+                                expectedType = Type::Bool;
+                            else
+                                Error(id, guid, output, "Unknown mesh sample output");
+                        }
+                        if (i.Kind != expectedType)
+                            Error(id, guid, output, "Mesh output type mismatch");
+                        try
+                        {
+                            auto geometry = i.Interface;
+                            geometry.Source.clear();
+                            geometry.EntityPath.clear();
+                            auto  key       = MeshBindingKey(geometry);
+                            auto& meshCache = SharedMeshCache ? *SharedMeshCache : MeshCache;
+                            auto  cached    = meshCache.find(key);
+                            if (cached != meshCache.end())
+                            {
+                                i.Interface.Geometry      = cached->second.Geometry;
+                                i.Interface.Skeleton      = cached->second.Skeleton;
+                                i.Interface.SkeletonNames = cached->second.SkeletonNames;
+                            }
+                            else if (i.Interface.Asset.IsValid())
+                            {
+                                if (!Meshes)
+                                    throw std::invalid_argument("Missing mesh resolver");
+                                auto mesh       = Meshes(i.Interface.Asset);
+                                auto skeletonID = mesh.Skeleton.IsValid() ? mesh.Skeleton : i.Interface.Skeleton;
+                                SkeletonData skeleton;
+                                if (skeletal)
+                                {
+                                    if (!Skeletons)
+                                        throw std::invalid_argument("Missing skeleton resolver");
+                                    skeleton = Skeletons(skeletonID);
+                                }
+                                BakeMeshSampling(i.Interface, mesh, skeleton);
+                                meshCache.emplace(key, i.Interface);
+                            }
+                            else if (i.Interface.Source == "Asset")
+                                throw std::invalid_argument("Asset source requires a mesh asset");
+                            if (skeletal && i.Interface.Skeleton.IsValid() && i.Interface.SkeletonNames.empty() &&
+                                Skeletons)
+                            {
+                                auto skeleton = Skeletons(i.Interface.Skeleton);
+                                for (const auto& joint : skeleton.Joints)
+                                    i.Interface.SkeletonNames.push_back(joint.Name);
+                                for (const auto& names : {i.Interface.Bones, i.Interface.Region})
+                                    for (const auto& name : names)
+                                        if (skeleton.FindJoint(name) < 0)
+                                            throw std::invalid_argument("Missing bone: " + name);
+                            }
+                            if (n.Op == "BoneByName")
+                            {
+                                SkeletonData skeleton;
+                                if (Skeletons && i.Interface.Skeleton.IsValid())
+                                    skeleton = Skeletons(i.Interface.Skeleton);
+                                auto index = skeleton.FindJoint(n.Code);
+                                if (index < 0)
+                                    throw std::invalid_argument("Missing bone: " + n.Code);
+                                i.Literal = Value::Int(index);
+                                if (i.Interface.SkeletonNames.empty())
+                                    for (const auto& joint : skeleton.Joints)
+                                        i.Interface.SkeletonNames.push_back(joint.Name);
+                            }
+                        }
+                        catch (const std::exception& ex)
+                        {
+                            Error(id, guid, output, ex.what());
+                        }
                         reg = Emit(i);
                     }
                     else if (n.Op == "Call")
@@ -490,6 +616,8 @@ namespace Kans::Vfx
                                 if (p != inputs.end() && p->second.Kind == InputKind::DataInterface)
                                     i.Interface = p->second.Interface;
                             }
+                            if (i.Interface.Kind == "StaticMesh" || i.Interface.Kind == "SkeletalMesh")
+                                Error(id, guid, output, "Mesh data interfaces require mesh sampling operations");
                             InterfaceRegistry registry;
                             auto              entry = registry.Find(i.Interface.Kind);
                             if (!entry)
@@ -690,17 +818,23 @@ namespace Kans::Vfx
                         scan(use.Script, use.Guid);
             return known;
         }
-        Program StageProgram(Stage                            stage,
-                             const Stack&                     stack,
-                             SimTarget                        target,
-                             const ModuleResolver&            resolve,
-                             std::map<std::string, Parameter> known,
-                             std::vector<Diagnostic>&         errors,
-                             AssetID                          asset,
-                             Space                            simulationSpace = Space::Local)
+        Program StageProgram(Stage                                    stage,
+                             const Stack&                             stack,
+                             SimTarget                                target,
+                             const ModuleResolver&                    resolve,
+                             std::map<std::string, Parameter>         known,
+                             std::vector<Diagnostic>&                 errors,
+                             AssetID                                  asset,
+                             Space                                    simulationSpace = Space::Local,
+                             const MeshResolver&                      meshes          = {},
+                             const SkeletonResolver&                  skeletons       = {},
+                             std::map<std::string, InterfaceBinding>* meshCache       = nullptr)
         {
             Compiler c {resolve, std::move(known), errors, {}, {}, asset};
             c.SimulationSpace = simulationSpace;
+            c.Meshes          = meshes;
+            c.Skeletons       = skeletons;
+            c.SharedMeshCache = meshCache;
             c.Out.StageKind   = stage;
             c.Out.Target      = target;
             // Event-producing modules observe the final particle state, including kills later in the stack.
@@ -764,9 +898,11 @@ namespace Kans::Vfx
             c.Out.Parameters      = std::move(layout);
             uint32_t valuesOffset = 0;
             for (uint32_t index = 0; index < c.Out.Code.size(); ++index)
-                if (c.Out.Code[index].Op == "Sample")
+                if (c.Out.Code[index].Op == "Sample" || IsMeshOperation(c.Out.Code[index].Op))
                 {
-                    auto count                  = uint32_t(c.Out.Code[index].Interface.Values.size());
+                    auto count                  = IsMeshOperation(c.Out.Code[index].Op) ?
+                                                      1u :
+                                                      uint32_t(c.Out.Code[index].Interface.Values.size());
                     c.Out.Code[index].Parameter = uint32_t(c.Out.Interfaces.size());
                     c.Out.Interfaces.push_back({index, 6, valuesOffset, count});
                     valuesOffset += count;
@@ -808,13 +944,15 @@ namespace Kans::Vfx
             return s + ")";
         }
     } // namespace
-    CompileResult Compile(const System&          system,
-                          const EmitterResolver& emitters,
-                          const ModuleResolver&  modules,
-                          AssetID                asset,
-                          const MeshResolver&    meshes)
+    CompileResult Compile(const System&           system,
+                          const EmitterResolver&  emitters,
+                          const ModuleResolver&   modules,
+                          AssetID                 asset,
+                          const MeshResolver&     meshes,
+                          const SkeletonResolver& skeletons)
     {
-        CompileResult r;
+        CompileResult                           r;
+        std::map<std::string, InterfaceBinding> meshCache;
         r.Product.Settings            = system;
         auto known                    = BuiltinParameters();
         known["Transient.SpawnIndex"] = {"Transient.SpawnIndex", Type::Int, Value::Int(0), {}};
@@ -833,7 +971,8 @@ namespace Kans::Vfx
                                                                       "Stage belongs to an emitter"});
                 continue;
             }
-            r.Product.Programs[s] = StageProgram(s, stack, SimTarget::CPU, modules, known, r.Errors, asset);
+            r.Product.Programs[s] = StageProgram(
+                s, stack, SimTarget::CPU, modules, known, r.Errors, asset, Space::Local, meshes, skeletons, &meshCache);
         }
         // Resolve all emitter settings first: cross-emitter validation never depends on handle order.
         std::vector<std::map<std::string, Parameter>> parameters;
@@ -915,7 +1054,10 @@ namespace Kans::Vfx
                                                   k,
                                                   r.Errors,
                                                   asset,
-                                                  ce.Settings.SimulationSpace);
+                                                  ce.Settings.SimulationSpace,
+                                                  meshes,
+                                                  skeletons,
+                                                  &meshCache);
                 }
                 for (auto stage : {Stage::ParticleSpawn, Stage::ParticleUpdate})
                     if (!ce.Programs.count(stage))
@@ -1184,10 +1326,10 @@ namespace Kans::Vfx
             p.Interfaces.clear();
             uint32_t offset = 0;
             for (uint32_t i = 0; i < p.Code.size(); ++i)
-                if (p.Code[i].Op == "Sample")
+                if (p.Code[i].Op == "Sample" || IsMeshOperation(p.Code[i].Op))
                 {
-                    p.Code[i].Parameter = offset;
-                    auto count          = uint32_t(p.Code[i].Interface.Values.size());
+                    p.Code[i].Parameter = uint32_t(p.Interfaces.size());
+                    auto count = IsMeshOperation(p.Code[i].Op) ? 1u : uint32_t(p.Code[i].Interface.Values.size());
                     p.Interfaces.push_back({i, 6, offset, count});
                     offset += count;
                 }
@@ -1239,7 +1381,10 @@ namespace Kans::Vfx
                                               k,
                                               r.Errors,
                                               asset,
-                                              ce.Settings.SimulationSpace);
+                                              ce.Settings.SimulationSpace,
+                                              meshes,
+                                              skeletons,
+                                              &meshCache);
                 for (auto i = before; i < r.Errors.size(); ++i)
                 {
                     r.Errors[i].Asset   = asset;
@@ -1428,6 +1573,8 @@ namespace Kans::Vfx
         const auto a   = [&](size_t k) -> Value { return k < i.Args.size() ? r.at(i.Args[k]) : Value::Float(0); };
         const auto x = a(0), y = a(1), z = a(2);
         const auto op = i.Op;
+        if (IsMeshOperation(op))
+            return EvaluateMesh(i, r, c);
         if (op == "ParticleCount" || op == "ReadAttribute" || op == "ReadAttributeByID")
             return c.ReadParticle ? c.ReadParticle(i, r) : out;
         if (op == "WriteEvent")
@@ -1684,7 +1831,12 @@ namespace Kans::Vfx
                 r.push_back(v);
             }
             else
-                r.push_back(Evaluate(i, r, c));
+            {
+                auto context       = c;
+                auto spawn         = values.find("Transient.SpawnIndex");
+                context.SpawnIndex = spawn == values.end() ? 0 : uint32_t(spawn->second.Integer);
+                r.push_back(Evaluate(i, r, context));
+            }
         }
     }
     void GenerateGpuProgram(Program& p, const std::vector<Attribute>& attributes)
@@ -1731,6 +1883,24 @@ float noiseV(vec3 x){ivec3 b=ivec3(floor(x));vec3 f=fract(x);f=f*f*(3.0-2.0*f);f
 for(int z=0;z<2;++z)for(int y=0;y<2;++y)for(int a=0;a<2;++a){ivec3 p=b+ivec3(a,y,z);float n=float(hashV(uint(p.x)^hashV(uint(p.y))^hashV(uint(p.z)))>>8)*(1.0/16777216.0);v+=n*(a!=0?f.x:1-f.x)*(y!=0?f.y:1-f.y)*(z!=0?f.z:1-f.z);}return v;}
 void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
 )glsl";
+        if (std::any_of(p.Code.begin(), p.Code.end(), [](const auto& i) { return IsMeshOperation(i.Op); }))
+        {
+            std::string geometryDeclarations, accessor = "vec4 meshStatic(int g,int o){switch(g){";
+            auto        meshBindings = MeshGpuBindings(p);
+            for (size_t index = 0; index < meshBindings.size(); ++index)
+            {
+                auto id = std::to_string(index);
+                geometryDeclarations += "layout(set=0,binding=" + std::to_string(meshBindings[index].second) +
+                                        ",std430) readonly buffer MeshGeometry" + id + "{vec4 meshValues" + id +
+                                        "[];};\n";
+                accessor += "case " + id + ":return meshValues" + id + "[o];";
+            }
+            accessor += "}return vec4(0); }\n";
+            const std::string helper = geometryDeclarations + accessor +
+#include "VfxMeshSamplingGLSL.inc"
+                ;
+            s.insert(s.find("void main()"), helper);
+        }
         std::string declarations;
         for (uint32_t r = 0; r < p.Resources.size(); ++r)
         {
@@ -2050,6 +2220,58 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                     e += ")";
                 }
             }
+            else if (IsMeshOperation(op))
+            {
+                auto   meshBindings  = MeshGpuBindings(p);
+                size_t geometryIndex = 0;
+                while (MeshBindingKey(*meshBindings.at(geometryIndex).first) != MeshBindingKey(i.Interface))
+                    ++geometryIndex;
+                auto geometry = std::to_string(geometryIndex);
+                auto base     = "int(diValues[" + std::to_string(p.Interfaces.at(i.Parameter).ValueOffset) + "].x)";
+                if (op == "RandomTriangle" || op == "RandomVertex" || op == "RandomBone")
+                {
+                    auto randomID = p.Handler && spawn ?
+                                        "invocation%" + std::to_string(std::max(1u, p.SpawnNumber)) + "u" :
+                                        "uniqueID";
+                    e             = "meshRandom(" + base + "," + geometry + "," +
+                                    (op == "RandomTriangle" ? "0" :
+                                     op == "RandomVertex"   ? "1" :
+                                                              "2") +
+                                    ",randomV(" + randomID + "," + std::to_string(i.RandomKey) + "u^hashV(" +
+                                    (spawn ? "invocation" : "0u") + "+0x9e3779b9u),0u))";
+                }
+                else if (op == "BoneByName")
+                    e = std::to_string(i.Literal.Integer);
+                else if (op == "TriangleCount" || op == "VertexCount" || op == "BoneCount")
+                    e = "(diValues[" + base + "+2].w==0?0:int(diValues[" + base +
+                        (op == "VertexCount" ? "+3].w" :
+                         op == "BoneCount"   ? "].w" :
+                                               "].y") +
+                        "))";
+                else
+                {
+                    int field = i.Output == "Position" ? 0 :
+                                i.Output == "Normal"   ? 1 :
+                                i.Output == "Tangent"  ? 2 :
+                                i.Output == "UV0"      ? 3 :
+                                i.Output == "Color"    ? 4 :
+                                i.Output == "Rotation" ? 7 :
+                                i.Output == "Valid"    ? 8 :
+                                                         5;
+                    e         = "meshSample(" + base + "," + geometry + "," + a + "," +
+                                (i.Args.size() == 2 ? b : "vec3(1,0,0)") + "," +
+                                (op == "SampleBone"   ? "2" :
+                                 op == "SampleVertex" ? "1" :
+                                                        "0") +
+                                "," + std::to_string(field) + ")";
+                    if (i.Kind == Type::Bool)
+                        e = "(" + e + ".x!=0)";
+                    else if (Components(i.Kind) == 2)
+                        e += ".xy";
+                    else if (Components(i.Kind) == 3)
+                        e += ".xyz";
+                }
+            }
             else if (op == "Sample")
             {
                 const auto& di    = i.Interface;
@@ -2292,9 +2514,13 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                                              b["Binding"].as<uint32_t>(),
                                              b["ValueOffset"].as<uint32_t>(),
                                              b["ValueCount"].as<uint32_t>()};
-                    if (binding.Instruction >= p.Code.size() || p.Code[binding.Instruction].Op != "Sample" ||
+                    if (binding.Instruction >= p.Code.size() ||
+                        (p.Code[binding.Instruction].Op != "Sample" &&
+                         !IsMeshOperation(p.Code[binding.Instruction].Op)) ||
                         binding.Binding != 6 || binding.ValueOffset != offset ||
-                        binding.ValueCount != p.Code[binding.Instruction].Interface.Values.size())
+                        binding.ValueCount != (IsMeshOperation(p.Code[binding.Instruction].Op) ?
+                                                   1u :
+                                                   p.Code[binding.Instruction].Interface.Values.size()))
                         throw std::invalid_argument("Invalid VFX data interface binding");
                     offset += binding.ValueCount;
                     p.Interfaces.push_back(binding);

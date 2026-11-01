@@ -1,0 +1,404 @@
+Version: 1
+AssetID: 8a4fb301beff52f1:0000000000000001
+Usage: Module
+AllowedStages: 16
+Category: Built-in
+Description: StaticMeshLocation
+Inputs:
+- Name: Module.Mesh
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.NormalVelocity
+  Type: bool
+  Default:
+    Type: bool
+    Value: false
+- Name: Module.Speed
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+- Name: Module.VertexColor
+  Type: bool
+  Default:
+    Type: bool
+    Value: false
+Nodes:
+- Guid: triangle
+  Op: RandomTriangle
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Mesh
+  Interface:
+    Kind: StaticMesh
+    Source: Owner
+- Guid: random-u
+  Op: Random
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: random-v
+  Op: Random
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: half
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 0.5
+- Guid: one
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 1.0
+- Guid: sqrt-u
+  Op: Pow
+  Type: float
+  Inputs:
+  - Name: A0
+    Type: float
+  - Name: A1
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: bary-a
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A0
+    Type: float
+  - Name: A1
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: one-v
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A0
+    Type: float
+  - Name: A1
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: bary-b
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: A0
+    Type: float
+  - Name: A1
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: bary-c
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: A0
+    Type: float
+  - Name: A1
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: bary
+  Op: Make
+  Type: vec3
+  Inputs:
+  - Name: A0
+    Type: float
+  - Name: A1
+    Type: float
+  - Name: A2
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: set-Particles.MeshTriangle
+  Op: Set
+  Type: int
+  Inputs:
+  - Name: Value
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Particles.MeshTriangle
+- Guid: set-Particles.MeshBarycentric
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: Value
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.MeshBarycentric
+- Guid: sample
+  Op: SampleTriangle
+  Type: position
+  Inputs:
+  - Name: Triangle
+    Type: int
+  - Name: Barycentric
+    Type: vec3
+  Outputs:
+  - Name: Position
+    Type: position
+  - Name: Normal
+    Type: vec3
+  - Name: MeshVelocity
+    Type: vec3
+  - Name: Color
+    Type: color
+  - Name: Valid
+    Type: bool
+  Parameter: Module.Mesh
+  Interface:
+    Kind: StaticMesh
+    Source: Owner
+- Guid: set-Particles.Position
+  Op: Set
+  Type: position
+  Inputs:
+  - Name: Value
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: input-NormalVelocity
+  Op: Input
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Module.NormalVelocity
+- Guid: input-Speed
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Speed
+- Guid: normal-speed
+  Op: Mul
+  Type: vec3
+  Inputs:
+  - Name: A0
+    Type: vec3
+  - Name: A1
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: get-Particles.Velocity
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: velocity-option
+  Op: Select
+  Type: vec3
+  Inputs:
+  - Name: A0
+    Type: bool
+  - Name: A1
+    Type: vec3
+  - Name: A2
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: set-Particles.Velocity
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: Value
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: input-VertexColor
+  Op: Input
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Module.VertexColor
+- Guid: get-Particles.Color
+  Op: Get
+  Type: color
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Particles.Color
+- Guid: color-option
+  Op: Select
+  Type: color
+  Inputs:
+  - Name: A0
+    Type: bool
+  - Name: A1
+    Type: color
+  - Name: A2
+    Type: color
+  Outputs:
+  - Name: Value
+    Type: color
+- Guid: set-Particles.Color
+  Op: Set
+  Type: color
+  Inputs:
+  - Name: Value
+    Type: color
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Particles.Color
+Links:
+- From: random-u
+  Output: Value
+  To: sqrt-u
+  Input: A0
+- From: half
+  Output: Value
+  To: sqrt-u
+  Input: A1
+- From: one
+  Output: Value
+  To: bary-a
+  Input: A0
+- From: sqrt-u
+  Output: Value
+  To: bary-a
+  Input: A1
+- From: one
+  Output: Value
+  To: one-v
+  Input: A0
+- From: random-v
+  Output: Value
+  To: one-v
+  Input: A1
+- From: sqrt-u
+  Output: Value
+  To: bary-b
+  Input: A0
+- From: one-v
+  Output: Value
+  To: bary-b
+  Input: A1
+- From: sqrt-u
+  Output: Value
+  To: bary-c
+  Input: A0
+- From: random-v
+  Output: Value
+  To: bary-c
+  Input: A1
+- From: bary-a
+  Output: Value
+  To: bary
+  Input: A0
+- From: bary-b
+  Output: Value
+  To: bary
+  Input: A1
+- From: bary-c
+  Output: Value
+  To: bary
+  Input: A2
+- From: triangle
+  Output: Value
+  To: set-Particles.MeshTriangle
+  Input: Value
+- From: bary
+  Output: Value
+  To: set-Particles.MeshBarycentric
+  Input: Value
+- From: triangle
+  Output: Value
+  To: sample
+  Input: Triangle
+- From: bary
+  Output: Value
+  To: sample
+  Input: Barycentric
+- From: sample
+  Output: Position
+  To: set-Particles.Position
+  Input: Value
+- From: sample
+  Output: Normal
+  To: normal-speed
+  Input: A0
+- From: input-Speed
+  Output: Value
+  To: normal-speed
+  Input: A1
+- From: input-NormalVelocity
+  Output: Value
+  To: velocity-option
+  Input: A0
+- From: normal-speed
+  Output: Value
+  To: velocity-option
+  Input: A1
+- From: get-Particles.Velocity
+  Output: Value
+  To: velocity-option
+  Input: A2
+- From: velocity-option
+  Output: Value
+  To: set-Particles.Velocity
+  Input: Value
+- From: input-VertexColor
+  Output: Value
+  To: color-option
+  Input: A0
+- From: sample
+  Output: Color
+  To: color-option
+  Input: A1
+- From: get-Particles.Color
+  Output: Value
+  To: color-option
+  Input: A2
+- From: color-option
+  Output: Value
+  To: set-Particles.Color
+  Input: Value
