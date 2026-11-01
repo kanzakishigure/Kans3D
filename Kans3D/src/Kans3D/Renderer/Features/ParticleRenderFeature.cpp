@@ -27,21 +27,11 @@ namespace Kans
         if (point == RenderExtensionPoint::BeforeOpaque)
         {
             for (const auto& [id, instance] : world->Instances())
-                for (auto& e : instance->Emitters())
-                {
-                    if (!e.GPU)
-                        e.GPU = std::make_unique<Vfx::GpuEmitter>(*frame->GetDevice(), *e.Compiled);
-                    if (&e.GPU->Device != frame->GetDevice().get())
-                        throw std::logic_error("VFX instance rendered on a different device");
-                    if (e.Compiled->Settings.Target == Vfx::SimTarget::GPU)
-                    {
-                        e.GPU->Poll(e);
-                        e.GPU->AddPasses(graph, e);
-                    }
-                    else
-                        e.GPU->UploadCpu(graph, e);
+            {
+                Vfx::GpuEmitter::AddSystemPasses(graph, *instance, *frame->GetDevice());
+                for (const auto& e : instance->Emitters())
                     frame->Stats.SimulatedParticles += e.ParticleCount;
-                }
+            }
             return;
         }
         if (point != RenderExtensionPoint::AfterTransparent || !frame->Assets())

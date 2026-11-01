@@ -1,0 +1,184 @@
+Version: 1
+AssetID: 91b1e00100000002:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Events
+Description: GenerateDeathEvent
+Inputs:
+- Name: Module.Event
+  Type: vec4
+  Default:
+    Type: vec4
+    Value:
+    - 0
+    - 0
+    - 0
+    - 0
+EventLayouts:
+- Name: Death
+  Fields:
+  - Name: Position
+    Type: position
+  - Name: Velocity
+    Type: vec3
+  - Name: Color
+    Type: color
+  - Name: Age
+    Type: float
+  - Name: ParticleUniqueID
+    Type: int
+Nodes:
+- Guid: alive
+  Op: Get
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Particles.Alive
+- Guid: dead
+  Op: Not
+  Type: bool
+  Inputs:
+  - Name: Alive
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: one
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 1
+- Guid: zero
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 0
+- Guid: count
+  Op: Select
+  Type: int
+  Inputs:
+  - Name: Dead
+    Type: bool
+  - Name: 'Yes'
+    Type: int
+  - Name: 'No'
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: payload-Position
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: payload-Velocity
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: payload-Color
+  Op: Get
+  Type: color
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Particles.Color
+- Guid: payload-Age
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Age
+- Guid: payload-ParticleUniqueID
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Particles.UniqueID
+- Guid: write
+  Op: WriteEvent
+  Type: int
+  Inputs:
+  - Name: Count
+    Type: int
+  - Name: Position
+    Type: position
+  - Name: Velocity
+    Type: vec3
+  - Name: Color
+    Type: color
+  - Name: Age
+    Type: float
+  - Name: ParticleUniqueID
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Event
+  Interface:
+    Kind: Events
+    Channel: Death
+Links:
+- From: alive
+  Output: Value
+  To: dead
+  Input: Alive
+- From: dead
+  Output: Value
+  To: count
+  Input: Dead
+- From: one
+  Output: Value
+  To: count
+  Input: 'Yes'
+- From: zero
+  Output: Value
+  To: count
+  Input: 'No'
+- From: payload-Position
+  Output: Value
+  To: write
+  Input: Position
+- From: payload-Velocity
+  Output: Value
+  To: write
+  Input: Velocity
+- From: payload-Color
+  Output: Value
+  To: write
+  Input: Color
+- From: payload-Age
+  Output: Value
+  To: write
+  Input: Age
+- From: payload-ParticleUniqueID
+  Output: Value
+  To: write
+  Input: ParticleUniqueID
+- From: count
+  Output: Value
+  To: write
+  Input: Count

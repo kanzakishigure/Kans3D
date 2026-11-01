@@ -109,6 +109,7 @@ namespace Kans::Vfx
     {
         std::string Kind = "Curve";
         AssetID     Asset;
+        std::string SourceEmitter, Channel;
         // Baked sample table: x is time, values are linearly interpolated. Texture2D uses row-major texels.
         std::vector<float>     Times;
         std::vector<glm::vec4> Values;
@@ -140,7 +141,8 @@ namespace Kans::Vfx
     struct Node
     {
         std::string      Guid, Op, Parameter, Code;
-        Type             Kind = Type::Float;
+        uint32_t         Stages = UINT32_MAX;
+        Type             Kind   = Type::Float;
         Value            Constant;
         AssetID          Function;
         std::vector<Pin> Inputs;
@@ -150,6 +152,29 @@ namespace Kans::Vfx
     struct Link
     {
         std::string From, Output = "Value", To, Input = "Value";
+    };
+    struct EventLayout
+    {
+        std::string            Name;
+        std::vector<Parameter> Fields;
+    };
+    struct EventChannel
+    {
+        std::string Name, Layout;
+        uint32_t    Capacity = 1024;
+    };
+    enum class EventMode
+    {
+        SpawnedParticles,
+        EveryParticle
+    };
+    struct EventHandler
+    {
+        std::string Guid, SourceEmitter, Channel;
+        bool        Enabled     = true;
+        EventMode   Mode        = EventMode::SpawnedParticles;
+        uint32_t    SpawnNumber = 1, MaxEventsPerFrame = UINT32_MAX;
+        Stack       Modules;
     };
     struct Module
     {
@@ -161,7 +186,8 @@ namespace Kans::Vfx
         std::vector<Node>      Nodes;
         std::vector<Link>      Links;
         // Function/dynamic-input return node and output pin; modules use parameter-map Set nodes.
-        std::string ResultNode, ResultPin = "Value";
+        std::string              ResultNode, ResultPin = "Value";
+        std::vector<EventLayout> EventLayouts;
     };
     struct Renderer
     {
@@ -195,31 +221,38 @@ namespace Kans::Vfx
             SetEnabled,
             AddRenderer,
             RemoveRenderer,
-            ReplaceRenderer
+            ReplaceRenderer,
+            AddHandler,
+            RemoveHandler,
+            MoveHandler
         };
-        Kind        Action    = Kind::SetInput;
-        Stage       StageKind = Stage::ParticleUpdate;
-        std::string Target, Before, InputName;
-        ModuleUse   Added;
-        Input       InputValue;
-        bool        Enabled = true;
-        Renderer    Render;
+        Kind         Action    = Kind::SetInput;
+        Stage        StageKind = Stage::ParticleUpdate;
+        std::string  Target, Before, InputName;
+        ModuleUse    Added;
+        Input        InputValue;
+        bool         Enabled = true;
+        Renderer     Render;
+        EventHandler Handler;
+        std::string  HandlerGuid;
     };
     struct Emitter
     {
-        std::string            Name;
-        AssetID                Parent;
-        SimTarget              Target          = SimTarget::GPU;
-        Space                  SimulationSpace = Space::Local;
-        uint32_t               Capacity        = 1024;
-        bool                   Deterministic   = true;
-        std::optional<Bounds>  FixedBounds;
-        float                  CullDistance   = 0;
-        CullPolicy             DistancePolicy = CullPolicy::PauseSpawning;
-        std::map<Stage, Stack> Stages;
-        std::vector<Renderer>  Renderers;
-        std::vector<Parameter> Attributes;
-        std::vector<Override>  Overrides;
+        std::string               Name;
+        AssetID                   Parent;
+        SimTarget                 Target          = SimTarget::GPU;
+        Space                     SimulationSpace = Space::Local;
+        uint32_t                  Capacity        = 1024;
+        bool                      Deterministic   = true;
+        std::optional<Bounds>     FixedBounds;
+        float                     CullDistance   = 0;
+        CullPolicy                DistancePolicy = CullPolicy::PauseSpawning;
+        std::map<Stage, Stack>    Stages;
+        std::vector<Renderer>     Renderers;
+        std::vector<EventChannel> Channels;
+        std::vector<EventHandler> Handlers;
+        std::vector<Parameter>    Attributes;
+        std::vector<Override>     Overrides;
         // A child stores only settings explicitly named here, plus GUID-keyed Overrides.
         std::set<std::string> SettingOverrides;
     };
@@ -273,6 +306,8 @@ namespace Kans::Vfx
     Emitter                          DecodeEmitter(const YAML::Node&);
     YAML::Node                       EncodeSystem(const System&);
     System                           DecodeSystem(const YAML::Node&);
+    YAML::Node                       EncodeEventLayout(const EventLayout&);
+    EventLayout                      DecodeEventLayout(const YAML::Node&);
     YAML::Node                       EncodeInterface(const InterfaceBinding&);
     InterfaceBinding                 DecodeInterface(const YAML::Node&);
     YAML::Node                       EncodeParameters(const ParameterMap&);

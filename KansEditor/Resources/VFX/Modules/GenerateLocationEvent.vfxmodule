@@ -1,0 +1,412 @@
+Version: 1
+AssetID: 91b1e00100000001:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: GenerateLocationEvent
+Inputs:
+- Name: Module.Frequency
+  Type: float
+  Default:
+    Type: float
+    Value: 10.0
+- Name: Module.MaxEventsPerFrame
+  Type: int
+  Default:
+    Type: int
+    Value: 2147483647
+- Name: Module.Event
+  Type: vec4
+  Default:
+    Type: vec4
+    Value:
+    - 0
+    - 0
+    - 0
+    - 0
+Nodes:
+- Guid: 05493a96-4440-5380-99f0-2a36831b10b8
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Frequency
+- Guid: fd4062d5-dfe3-53c6-b5a8-90f190b8371e
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Emitter.ExecutionState
+- Guid: c7824be2-8f8a-53d1-abc2-878531f58115
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 0
+- Guid: 46c59cf1-2c95-51b3-bdfb-0988384ffc1d
+  Op: Equal
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: int
+  - Name: B
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 86073621-30f8-5b28-8e01-c91b02d19a27
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 0.0
+- Guid: 7f00ebe6-76e6-516b-ab4c-4a1d65047d40
+  Op: Select
+  Type: float
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: b659f0fa-c503-5203-a866-299d565de296
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: 0f9a6013-bebf-5c36-8796-f89173947f7c
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.EventRemainder$Usage
+- Guid: 48a85714-0aab-5c9e-8cc7-761e348611ee
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 109d83ff-363d-57b5-b74e-2e69862344f9
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 63da533b-bdbe-58aa-8137-f2cb30dedd4f
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 1.0e-06
+- Guid: 63ec2c66-195f-547a-8509-12a772cad3d1
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: bf69ee66-9811-5501-8d08-a81a77f97951
+  Op: Floor
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 9575d506-a7c1-597e-a94a-5e6988b2c9fe
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 3f772d99-7c1f-5353-8dfe-29f41e8b8ab3
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 0.0
+- Guid: c9b7a8ae-cd6b-5397-9364-848d3a57e981
+  Op: Max
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 6c9bb860-da81-50c5-b0b7-14ec07e9603a
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.EventRemainder$Usage
+- Guid: 80743e8e-d843-5686-9723-23e6af50adc9
+  Op: ToInt
+  Type: int
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: max-input
+  Op: Input
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.MaxEventsPerFrame
+- Guid: limit
+  Op: Min
+  Type: int
+  Inputs:
+  - Name: Count
+    Type: int
+  - Name: Max
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: payload-Position
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: payload-Velocity
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: payload-Color
+  Op: Get
+  Type: color
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: color
+  Parameter: Particles.Color
+- Guid: payload-Age
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Age
+- Guid: payload-ParticleUniqueID
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Particles.UniqueID
+- Guid: write
+  Op: WriteEvent
+  Type: int
+  Inputs:
+  - Name: Count
+    Type: int
+  - Name: Position
+    Type: position
+  - Name: Velocity
+    Type: vec3
+  - Name: Color
+    Type: color
+  - Name: Age
+    Type: float
+  - Name: ParticleUniqueID
+    Type: int
+  - Name: MaxEventsPerFrame
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Event
+  Interface:
+    Kind: Events
+    Channel: Location
+Links:
+- From: fd4062d5-dfe3-53c6-b5a8-90f190b8371e
+  Output: Value
+  To: 46c59cf1-2c95-51b3-bdfb-0988384ffc1d
+  Input: A
+- From: c7824be2-8f8a-53d1-abc2-878531f58115
+  Output: Value
+  To: 46c59cf1-2c95-51b3-bdfb-0988384ffc1d
+  Input: B
+- From: 46c59cf1-2c95-51b3-bdfb-0988384ffc1d
+  Output: Value
+  To: 7f00ebe6-76e6-516b-ab4c-4a1d65047d40
+  Input: A
+- From: 05493a96-4440-5380-99f0-2a36831b10b8
+  Output: Value
+  To: 7f00ebe6-76e6-516b-ab4c-4a1d65047d40
+  Input: B
+- From: 86073621-30f8-5b28-8e01-c91b02d19a27
+  Output: Value
+  To: 7f00ebe6-76e6-516b-ab4c-4a1d65047d40
+  Input: C
+- From: 7f00ebe6-76e6-516b-ab4c-4a1d65047d40
+  Output: Value
+  To: 48a85714-0aab-5c9e-8cc7-761e348611ee
+  Input: A
+- From: b659f0fa-c503-5203-a866-299d565de296
+  Output: Value
+  To: 48a85714-0aab-5c9e-8cc7-761e348611ee
+  Input: B
+- From: 0f9a6013-bebf-5c36-8796-f89173947f7c
+  Output: Value
+  To: 109d83ff-363d-57b5-b74e-2e69862344f9
+  Input: A
+- From: 48a85714-0aab-5c9e-8cc7-761e348611ee
+  Output: Value
+  To: 109d83ff-363d-57b5-b74e-2e69862344f9
+  Input: B
+- From: 109d83ff-363d-57b5-b74e-2e69862344f9
+  Output: Value
+  To: 63ec2c66-195f-547a-8509-12a772cad3d1
+  Input: A
+- From: 63da533b-bdbe-58aa-8137-f2cb30dedd4f
+  Output: Value
+  To: 63ec2c66-195f-547a-8509-12a772cad3d1
+  Input: B
+- From: 63ec2c66-195f-547a-8509-12a772cad3d1
+  Output: Value
+  To: bf69ee66-9811-5501-8d08-a81a77f97951
+  Input: A
+- From: 109d83ff-363d-57b5-b74e-2e69862344f9
+  Output: Value
+  To: 9575d506-a7c1-597e-a94a-5e6988b2c9fe
+  Input: A
+- From: bf69ee66-9811-5501-8d08-a81a77f97951
+  Output: Value
+  To: 9575d506-a7c1-597e-a94a-5e6988b2c9fe
+  Input: B
+- From: 9575d506-a7c1-597e-a94a-5e6988b2c9fe
+  Output: Value
+  To: c9b7a8ae-cd6b-5397-9364-848d3a57e981
+  Input: A
+- From: 3f772d99-7c1f-5353-8dfe-29f41e8b8ab3
+  Output: Value
+  To: c9b7a8ae-cd6b-5397-9364-848d3a57e981
+  Input: B
+- From: c9b7a8ae-cd6b-5397-9364-848d3a57e981
+  Output: Value
+  To: 6c9bb860-da81-50c5-b0b7-14ec07e9603a
+  Input: A
+- From: bf69ee66-9811-5501-8d08-a81a77f97951
+  Output: Value
+  To: 80743e8e-d843-5686-9723-23e6af50adc9
+  Input: A
+- From: 80743e8e-d843-5686-9723-23e6af50adc9
+  Output: Value
+  To: limit
+  Input: Count
+- From: max-input
+  Output: Value
+  To: limit
+  Input: Max
+- From: payload-Position
+  Output: Value
+  To: write
+  Input: Position
+- From: payload-Velocity
+  Output: Value
+  To: write
+  Input: Velocity
+- From: payload-Color
+  Output: Value
+  To: write
+  Input: Color
+- From: payload-Age
+  Output: Value
+  To: write
+  Input: Age
+- From: payload-ParticleUniqueID
+  Output: Value
+  To: write
+  Input: ParticleUniqueID
+- From: limit
+  Output: Value
+  To: write
+  Input: Count
+- From: max-input
+  Output: Value
+  To: write
+  Input: MaxEventsPerFrame
+EventLayouts:
+- Name: Location
+  Fields:
+  - Name: Position
+    Type: position
+  - Name: Velocity
+    Type: vec3
+  - Name: Color
+    Type: color
+  - Name: Age
+    Type: float
+  - Name: ParticleUniqueID
+    Type: int

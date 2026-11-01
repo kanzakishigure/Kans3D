@@ -64,6 +64,8 @@ namespace Kans::Vfx
             for (uint32_t i = e.Settings.Capacity; i > 0; --i)
                 Free.push_back(i - 1);
         }
+        for (const auto& channel : e.Settings.Channels)
+            Events[channel.Name] = {};
         for (const auto& [name, p] : BuiltinParameters())
             if (name.rfind("Emitter.", 0) == 0)
                 Parameters[name] = *p.Default;
@@ -133,6 +135,8 @@ namespace Kans::Vfx
                     instance.Parameters[name] = v;
             ++c.EmitterIndex;
         }
+        for (auto& e : m_Emitters)
+            e.Siblings = &m_Emitters;
     }
     void SystemInstance::Activate(bool reset)
     {
@@ -166,7 +170,8 @@ namespace Kans::Vfx
         }
         for (const auto& e : m_Emitters)
             if (e.ParticleCount || e.PendingBurst ||
-                (e.GPU && e.SpawnRevision > 0 && (!e.HasReadback || e.ReadbackSpawnRevision != e.SpawnRevision)) ||
+                (e.Compiled->Settings.Target == SimTarget::GPU && e.SpawnRevision > 0 &&
+                 (!e.GPU || !e.HasReadback || e.ReadbackSpawnRevision != e.SpawnRevision)) ||
                 std::any_of(e.Pending.begin(), e.Pending.end(), [](const auto& tick) { return tick.SpawnCount > 0; }))
                 return false;
         return true;
@@ -234,6 +239,77 @@ namespace Kans::Vfx
         Run(m_Asset->GetData().Programs, Stage::SystemUpdate, m_Parameters, context);
         for (auto& e : m_Emitters)
         {
+            e.EventsDropped = 0;
+            for (auto& [name, events] : e.Events)
+                events.clear();
+        }
+        for (auto emitterIndex : m_Asset->GetData().TickOrder)
+        {
+            auto& e              = m_Emitters[emitterIndex];
+            context.EmitterIndex = emitterIndex;
+            context.EventIndex   = 0;
+            context.RandomID.reset();
+            context.ReadParticle = [&](const Instruction& i, const std::vector<Value>& registers) {
+                const auto at = std::find_if(m_Emitters.begin(), m_Emitters.end(), [&](const auto& source) {
+                    return source.Compiled->Handle == i.Interface.SourceEmitter;
+                });
+                if (at == m_Emitters.end())
+                    throw std::logic_error("Missing compiled particle-reader source");
+                const auto& source = *at;
+                if (i.Op == "ParticleCount")
+                    return Value::Int(int32_t(source.Alive.size()));
+                int32_t  index = registers.at(i.Args.at(0)).Integer;
+                bool     found = index >= 0 && uint32_t(index) < source.Alive.size();
+                uint32_t slot  = found ? source.Alive[index] : 0;
+                if (i.Op == "ReadAttributeByID")
+                {
+                    found = false;
+                    for (auto candidate : source.Alive)
+                        if (source.Read("Particles.UniqueID", candidate).Integer == index)
+                        {
+                            slot  = candidate;
+                            found = true;
+                            break;
+                        }
+                }
+                if (i.Output == "Found")
+                    return Value::Bool(found);
+                if (!found)
+                    return Value::Vector({}, i.Kind);
+                auto value = source.Read(i.Code, slot);
+                if (value.Kind == Type::Position &&
+                    source.Compiled->Settings.SimulationSpace != e.Compiled->Settings.SimulationSpace)
+                {
+                    auto transform = e.Compiled->Settings.SimulationSpace == Space::World ? owner : glm::inverse(owner);
+                    value.Data     = glm::vec4(glm::vec3(transform * glm::vec4(glm::vec3(value.Data), 1)), 0);
+                }
+                return value;
+            };
+            std::map<std::string, uint32_t> generatedEvents;
+            context.WriteEvent = [&](const Instruction& i, const std::vector<Value>& registers) {
+                const auto& channels = e.Compiled->Settings.Channels;
+                auto        c        = std::find_if(
+                    channels.begin(), channels.end(), [&](const auto& c) { return c.Name == i.Interface.Channel; });
+                const auto& layout    = e.Compiled->EventLayouts.at(c->Layout);
+                auto&       events    = e.Events.at(c->Name);
+                uint32_t    requested = uint32_t(std::max(0, registers.at(i.Args.at(0)).Integer));
+                uint32_t    limit     = i.Args.size() == layout.Fields.size() + 2 ?
+                                            uint32_t(std::max(0, registers.at(i.Args.back()).Integer)) :
+                                            UINT32_MAX;
+                auto&       generated = generatedEvents[c->Name];
+                uint32_t    bounded   = std::min(requested, limit > generated ? limit - generated : 0u);
+                generated += bounded;
+                uint32_t actual = std::min(bounded, c->Capacity - uint32_t(events.size()));
+                e.EventsDropped += bounded - actual;
+                ParameterMap payload;
+                for (uint32_t f = 0; f < layout.Fields.size(); ++f)
+                    payload["Transient.Event." + layout.Fields[f].Name] = registers.at(i.Args.at(f + 1));
+                for (uint32_t n = 0; n < actual; ++n)
+                {
+                    payload["@EventIndex"] = Value::Int(int32_t(Hash(context.UniqueID ^ Hash(n ^ i.RandomKey))));
+                    events.push_back(payload);
+                }
+            };
             const auto& compiled = *e.Compiled;
             const auto& settings = compiled.Settings;
             context.UniqueID     = 0;
@@ -242,7 +318,9 @@ namespace Kans::Vfx
             for (const auto& [name, v] : e.Parameters)
                 params[name] = v;
             params["Emitter.SpawnCountThisFrame"] = Value::Int(0);
-            Run(compiled.Programs, Stage::EmitterUpdate, params, context);
+            auto emitterProgram                   = compiled.Programs.find(Stage::EmitterUpdate);
+            if (emitterProgram == compiled.Programs.end() || emitterProgram->second.Target == SimTarget::CPU)
+                Run(compiled.Programs, Stage::EmitterUpdate, params, context);
             for (const auto& [name, v] : params)
                 if (name.rfind("Emitter.", 0) == 0)
                     e.Parameters[name] = v;
@@ -257,28 +335,41 @@ namespace Kans::Vfx
             e.PendingBurst     = 0;
             if (settings.Target == SimTarget::GPU)
             {
-                if (count)
+                if (count || !compiled.Handlers.empty() ||
+                    (emitterProgram != compiled.Programs.end() && emitterProgram->second.Target == SimTarget::GPU))
                     ++e.SpawnRevision;
+                params["Transient.AllowSpawning"] = Value::Bool(spawning);
                 if (e.GPU)
                     e.GPU->Poll(e);
                 bool queued = std::any_of(
                     e.Pending.begin(), e.Pending.end(), [](const auto& tick) { return tick.SpawnCount > 0; });
-                if (count || e.ParticleCount || queued ||
+                if (!compiled.Handlers.empty() || !compiled.EventLayouts.empty() ||
+                    (emitterProgram != compiled.Programs.end() && emitterProgram->second.Target == SimTarget::GPU) ||
+                    e.Siblings->size() > 1 || count || e.ParticleCount || queued ||
                     (e.GPU && e.GPU->HasPendingReadback() &&
                      (!e.HasReadback || e.ReadbackSpawnRevision != e.SpawnRevision)))
-                    e.Pending.push_back({std::move(params), context, count});
+                    e.Pending.push_back(
+                        {std::move(params), {context.Seed, context.EmitterIndex, 0, context.LocalToWorld}, count});
                 ++context.EmitterIndex;
                 continue;
             }
             uint32_t actual = std::min(count, uint32_t(e.Free.size()));
             e.Dropped += count - actual;
             e.TotalSpawned += actual;
-            auto run = [&](Stage stage, uint32_t slot) {
+            uint32_t spawnIndex = 0;
+            auto     run        = [&](Stage stage, uint32_t slot) {
                 auto p = params;
                 for (size_t i = 0; i < compiled.Attributes.size(); ++i)
                     p[compiled.Attributes[i].Name] = e.Attributes[i][slot];
                 context.UniqueID = uint32_t(p["Particles.UniqueID"].Integer);
-                Run(compiled.Programs, stage, p, context);
+                if (stage == Stage::ParticleSpawn)
+                {
+                    Initialize(p, compiled.Programs.at(stage));
+                    p["Transient.SpawnIndex"] = Value::Int(int32_t(spawnIndex));
+                    Execute(compiled.Programs.at(stage), p, context);
+                }
+                else
+                    Run(compiled.Programs, stage, p, context);
                 for (size_t i = 0; i < compiled.Attributes.size(); ++i)
                     e.Attributes[i][slot] = p[compiled.Attributes[i].Name];
             };
@@ -294,6 +385,7 @@ namespace Kans::Vfx
                         if (compiled.Attributes[a].Kind == Type::Position)
                             e.Attributes[a][slot].Data =
                                 glm::vec4(glm::vec3(owner * glm::vec4(glm::vec3(e.Attributes[a][slot].Data), 1)), 0);
+                spawnIndex = n;
                 run(Stage::ParticleSpawn, slot);
                 if (settings.SimulationSpace == Space::World)
                     for (size_t a = 0; a < compiled.Attributes.size(); ++a)
@@ -328,6 +420,96 @@ namespace Kans::Vfx
             }
             e.Alive.resize(write);
             e.ParticleCount = uint32_t(write);
+            for (const auto& handler : compiled.Handlers)
+            {
+                const auto& h      = handler.Settings;
+                const auto& source = m_Emitters.at(handler.Source);
+                const auto& events = source.Events.at(h.Channel);
+                uint32_t    count  = std::min(uint32_t(events.size()), h.MaxEventsPerFrame);
+                for (uint32_t eventIndex = 0; eventIndex < count; ++eventIndex)
+                {
+                    context.EventIndex = uint32_t(events[eventIndex].at("@EventIndex").Integer);
+                    auto apply         = [&](uint32_t slot, uint32_t index) {
+                        auto p = params;
+                        for (size_t a = 0; a < compiled.Attributes.size(); ++a)
+                            p[compiled.Attributes[a].Name] = e.Attributes[a][slot];
+                        for (auto [name, value] : events[eventIndex])
+                        {
+                            if (value.Kind == Type::Position &&
+                                source.Compiled->Settings.SimulationSpace != settings.SimulationSpace)
+                            {
+                                auto transform = settings.SimulationSpace == Space::World ? owner : glm::inverse(owner);
+                                value.Data = glm::vec4(glm::vec3(transform * glm::vec4(glm::vec3(value.Data), 1)), 0);
+                            }
+                            p[name] = value;
+                        }
+                        p["Transient.SpawnIndex"] = Value::Int(int32_t(index));
+                        context.UniqueID          = uint32_t(p["Particles.UniqueID"].Integer);
+                        if (h.Mode == EventMode::SpawnedParticles)
+                            context.RandomID = index % std::max(1u, h.SpawnNumber);
+                        else
+                            context.RandomID.reset();
+                        Initialize(p, handler.Bytecode);
+                        Execute(handler.Bytecode, p, context);
+                        for (size_t a = 0; a < compiled.Attributes.size(); ++a)
+                            e.Attributes[a][slot] = p[compiled.Attributes[a].Name];
+                    };
+                    if (h.Mode == EventMode::EveryParticle)
+                    {
+                        for (auto slot : e.Alive)
+                            if (e.Read("Particles.Alive", slot).Integer)
+                                apply(slot, 0);
+                    }
+                    else
+                    {
+                        uint32_t actual = std::min(h.SpawnNumber, uint32_t(e.Free.size()));
+                        e.Dropped += h.SpawnNumber - actual;
+                        e.TotalSpawned += actual;
+                        for (uint32_t n = 0; n < actual; ++n)
+                        {
+                            auto slot = e.Free.back();
+                            e.Free.pop_back();
+                            for (size_t a = 0; a < compiled.Attributes.size(); ++a)
+                            {
+                                auto value = compiled.Attributes[a].Default;
+                                if (value.Kind == Type::Position && settings.SimulationSpace == Space::World)
+                                    value.Data = glm::vec4(glm::vec3(owner * glm::vec4(glm::vec3(value.Data), 1)), 0);
+                                e.Attributes[a][slot] = value;
+                            }
+                            e.Attributes[AttributeIndex(compiled, "Particles.UniqueID")][slot] =
+                                Value::Int(int32_t(e.NextID++));
+                            apply(slot, eventIndex * h.SpawnNumber + n);
+                            e.Alive.push_back(slot);
+                        }
+                    }
+                }
+            }
+            if (!compiled.Handlers.empty())
+            {
+                size_t write    = 0;
+                e.DynamicBounds = Bounds {};
+                e.SpriteRadius  = 0;
+                for (auto slot : e.Alive)
+                    if (e.Read("Particles.Alive", slot).Integer)
+                    {
+                        e.Alive[write++] = slot;
+                        for (size_t a = 0; a < compiled.Attributes.size(); ++a)
+                            if (compiled.Attributes[a].Kind == Type::Position)
+                                e.DynamicBounds.Expand(glm::vec3(e.Attributes[a][slot].Data));
+                        for (const auto& renderer : settings.Renderers)
+                            if (renderer.Kind == RendererKind::Sprite)
+                            {
+                                auto size = glm::vec2(e.Read(renderer.Bindings.at("SpriteSize"), slot).Data);
+                                auto corner =
+                                    glm::max(glm::abs(renderer.Pivot), glm::abs(glm::vec2(1) - renderer.Pivot));
+                                e.SpriteRadius = std::max(e.SpriteRadius, glm::length(size * corner));
+                            }
+                    }
+                    else
+                        e.Free.push_back(slot);
+                e.Alive.resize(write);
+                e.ParticleCount = uint32_t(write);
+            }
             ++context.EmitterIndex;
         }
     }

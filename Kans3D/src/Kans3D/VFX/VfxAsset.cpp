@@ -218,7 +218,12 @@ namespace Kans::Vfx
             {
                 auto s = Parse<Stage>(x.first, Stages);
                 Check(x.second.IsSequence(), "VFX stage must contain a module stack");
-                if (s == Stage::EventHandler || s == Stage::SimulationStage)
+                if (s == Stage::EventHandler)
+                {
+                    Check(!system || x.second.size() == 0, "EventHandler belongs to an emitter");
+                    continue; // Handler records are decoded separately from module stacks.
+                }
+                if (s == Stage::SimulationStage)
                 {
                     Check(x.second.size() == 0, std::string(StageName(s)) + " not implemented in V1a");
                 }
@@ -295,8 +300,47 @@ namespace Kans::Vfx
                                            "SetEnabled",
                                            "AddRenderer",
                                            "RemoveRenderer",
-                                           "ReplaceRenderer"};
-        YAML::Node            OverridesNode(const std::vector<Override>& v)
+                                           "ReplaceRenderer",
+                                           "AddHandler",
+                                           "RemoveHandler",
+                                           "MoveHandler"};
+        YAML::Node            HandlerNode(const EventHandler& h)
+        {
+            YAML::Node n;
+            n["Guid"]              = h.Guid;
+            n["Enabled"]           = h.Enabled;
+            n["Source"]["Emitter"] = h.SourceEmitter;
+            n["Source"]["Channel"] = h.Channel;
+            n["Mode"]              = h.Mode == EventMode::SpawnedParticles ? "SpawnedParticles" : "EveryParticle";
+            n["SpawnNumber"]       = h.SpawnNumber;
+            n["MaxEventsPerFrame"] = h.MaxEventsPerFrame;
+            n["Modules"]           = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& u : h.Modules)
+                n["Modules"].push_back(UseNode(u));
+            return n;
+        }
+        EventHandler ReadHandler(const YAML::Node& n)
+        {
+            EventHandler h;
+            h.Guid = n["Guid"].as<std::string>();
+            Check(!h.Guid.empty(), "Event handler requires a stable GUID");
+            h.Enabled                     = n["Enabled"].as<bool>(true);
+            h.SourceEmitter               = n["Source"]["Emitter"].as<std::string>();
+            h.Channel                     = n["Source"]["Channel"].as<std::string>();
+            constexpr const char* modes[] = {"SpawnedParticles", "EveryParticle"};
+            h.Mode                        = Parse<EventMode>(n["Mode"], modes);
+            h.SpawnNumber                 = n["SpawnNumber"].as<uint32_t>(1);
+            h.MaxEventsPerFrame           = n["MaxEventsPerFrame"].as<uint32_t>(UINT32_MAX);
+            std::set<std::string> ids;
+            for (const auto& u : n["Modules"])
+            {
+                auto use = ReadUse(u);
+                Check(ids.insert(use.Guid).second, "Duplicate VFX usage GUID: " + use.Guid);
+                h.Modules.push_back(use);
+            }
+            return h;
+        }
+        YAML::Node OverridesNode(const std::vector<Override>& v)
         {
             YAML::Node n(YAML::NodeType::Sequence);
             for (const auto& x : v)
@@ -306,6 +350,10 @@ namespace Kans::Vfx
                 a["Stage"]  = StageName(x.StageKind);
                 a["Target"] = x.Target;
                 a["Before"] = x.Before;
+                if (!x.HandlerGuid.empty())
+                    a["HandlerGuid"] = x.HandlerGuid;
+                if (x.Action == Override::Kind::AddHandler)
+                    a["Handler"] = HandlerNode(x.Handler);
                 if (x.Action == Override::Kind::AddModule)
                     a["Module"] = UseNode(x.Added);
                 if (x.Action == Override::Kind::SetInput)
@@ -330,8 +378,11 @@ namespace Kans::Vfx
                 x.Action = Parse<Override::Kind>(a["Action"], Actions);
                 if (a["Stage"])
                     x.StageKind = Parse<Stage>(a["Stage"], Stages);
-                x.Target = a["Target"].as<std::string>("");
-                x.Before = a["Before"].as<std::string>("");
+                x.Target      = a["Target"].as<std::string>("");
+                x.Before      = a["Before"].as<std::string>("");
+                x.HandlerGuid = a["HandlerGuid"].as<std::string>("");
+                if (x.Action == Override::Kind::AddHandler)
+                    x.Handler = ReadHandler(a["Handler"]);
                 if (x.Action == Override::Kind::AddModule)
                     x.Added = ReadUse(a["Module"]);
                 if (x.Action == Override::Kind::SetInput)
@@ -455,7 +506,11 @@ namespace Kans::Vfx
     YAML::Node EncodeInterface(const InterfaceBinding& x)
     {
         YAML::Node n;
-        n["Kind"]   = x.Kind;
+        n["Kind"] = x.Kind;
+        if (!x.SourceEmitter.empty())
+            n["SourceEmitter"] = x.SourceEmitter;
+        if (!x.Channel.empty())
+            n["Channel"] = x.Channel;
         n["Asset"]  = ID(x.Asset);
         n["Width"]  = x.Width;
         n["Height"] = x.Height;
@@ -470,10 +525,12 @@ namespace Kans::Vfx
     InterfaceBinding DecodeInterface(const YAML::Node& n)
     {
         InterfaceBinding x;
-        x.Kind   = n["Kind"].as<std::string>();
-        x.Asset  = ReadID(n["Asset"]);
-        x.Width  = n["Width"].as<uint32_t>(0);
-        x.Height = n["Height"].as<uint32_t>(0);
+        x.Kind          = n["Kind"].as<std::string>();
+        x.SourceEmitter = n["SourceEmitter"].as<std::string>("");
+        x.Channel       = n["Channel"].as<std::string>("");
+        x.Asset         = ReadID(n["Asset"]);
+        x.Width         = n["Width"].as<uint32_t>(0);
+        x.Height        = n["Height"].as<uint32_t>(0);
         for (const auto& t : n["Times"])
         {
             float v = t.as<float>();
@@ -486,10 +543,28 @@ namespace Kans::Vfx
         Check(x.Times.empty() || x.Times.size() == x.Values.size(), "VFX curve time/value count mismatch");
         return x;
     }
+    YAML::Node EncodeEventLayout(const EventLayout& x)
+    {
+        YAML::Node n;
+        n["Name"]   = x.Name;
+        n["Fields"] = Parameters(x.Fields);
+        return n;
+    }
+    EventLayout DecodeEventLayout(const YAML::Node& n)
+    {
+        EventLayout x;
+        x.Name   = n["Name"].as<std::string>();
+        x.Fields = ReadParameters(n["Fields"], "");
+        Check(!x.Name.empty() && !x.Fields.empty(), "Invalid VFX event layout");
+        return x;
+    }
     YAML::Node EncodeModule(const Module& x)
     {
         YAML::Node n;
-        n["Version"]                   = 1;
+        n["Version"] = 1;
+        if (!x.EventLayouts.empty())
+            for (const auto& l : x.EventLayouts)
+                n["EventLayouts"].push_back(EncodeEventLayout(l));
         n["AssetID"]                   = ID(x.Identity);
         constexpr const char* usages[] = {"Module", "Function", "DynamicInput"};
         n["Usage"]                     = usages[int(x.ScriptUsage)];
@@ -503,8 +578,10 @@ namespace Kans::Vfx
         for (const auto& v : x.Nodes)
         {
             YAML::Node a;
-            a["Guid"]      = v.Guid;
-            a["Op"]        = v.Op;
+            a["Guid"] = v.Guid;
+            a["Op"]   = v.Op;
+            if (v.Stages != UINT32_MAX)
+                a["Stages"] = v.Stages;
             a["Type"]      = TypeName(v.Kind);
             a["Parameter"] = v.Parameter;
             a["Code"]      = v.Code;
@@ -531,6 +608,8 @@ namespace Kans::Vfx
     {
         Check(n["Version"].as<int>() == 1, "Unsupported VFX module version");
         Module x;
+        for (const auto& l : n["EventLayouts"])
+            x.EventLayouts.push_back(DecodeEventLayout(l));
         x.Identity                     = ReadID(n["AssetID"]);
         constexpr const char* usages[] = {"Module", "Function", "DynamicInput"};
         x.ScriptUsage                  = Parse<Usage>(n["Usage"], usages);
@@ -547,6 +626,7 @@ namespace Kans::Vfx
             v.Guid = a["Guid"].as<std::string>();
             Check(!v.Guid.empty() && ids.insert(v.Guid).second, "Duplicate or empty VFX node GUID");
             v.Op        = a["Op"].as<std::string>();
+            v.Stages    = a["Stages"].as<uint32_t>(UINT32_MAX);
             v.Kind      = Parse<Type>(a["Type"], Types);
             v.Parameter = a["Parameter"].as<std::string>("");
             v.Code      = a["Code"].as<std::string>("");
@@ -598,7 +678,22 @@ namespace Kans::Vfx
             n["DistancePolicy"] = x.DistancePolicy == CullPolicy::PauseSpawning ? "PauseSpawning" : "Continue";
         if (!x.Parent.IsValid())
         {
-            n["Stages"]     = StageNode(x.Stages);
+            n["Stages"] = StageNode(x.Stages);
+            if (!x.Handlers.empty())
+            {
+                n["Stages"]["EventHandler"] = YAML::Node(YAML::NodeType::Sequence);
+                for (const auto& h : x.Handlers)
+                    n["Stages"]["EventHandler"].push_back(HandlerNode(h));
+            }
+            if (!x.Channels.empty())
+                for (const auto& c : x.Channels)
+                {
+                    YAML::Node channel;
+                    channel["Name"]     = c.Name;
+                    channel["Layout"]   = c.Layout;
+                    channel["Capacity"] = c.Capacity;
+                    n["Channels"].push_back(channel);
+                }
             n["Attributes"] = Parameters(x.Attributes);
             n["Renderers"]  = YAML::Node(YAML::NodeType::Sequence);
             for (const auto& r : x.Renderers)
@@ -633,7 +728,23 @@ namespace Kans::Vfx
         constexpr const char* policies[] = {"PauseSpawning", "Continue"};
         if (n["DistancePolicy"])
             x.DistancePolicy = Parse<CullPolicy>(n["DistancePolicy"], policies);
-        x.Stages     = ReadStages(n["Stages"], false);
+        x.Stages = ReadStages(n["Stages"], false);
+        std::set<std::string> handlerIDs, channelNames;
+        if (n["Stages"])
+            for (const auto& h : n["Stages"]["EventHandler"])
+            {
+                auto handler = ReadHandler(h);
+                Check(handlerIDs.insert(handler.Guid).second, "Duplicate VFX handler GUID: " + handler.Guid);
+                x.Handlers.push_back(handler);
+            }
+        for (const auto& c : n["Channels"])
+        {
+            EventChannel channel {
+                c["Name"].as<std::string>(), c["Layout"].as<std::string>(), c["Capacity"].as<uint32_t>(1024)};
+            Check(!channel.Name.empty() && channelNames.insert(channel.Name).second, "Duplicate or empty VFX channel");
+            Check(channel.Capacity > 0 && channel.Capacity <= 16777216, "Invalid VFX event channel capacity");
+            x.Channels.push_back(channel);
+        }
         x.Attributes = ReadParameters(n["Attributes"], "Particles.");
         std::set<std::string> ids;
         for (const auto& r : n["Renderers"])
@@ -643,7 +754,8 @@ namespace Kans::Vfx
             x.Renderers.push_back(v);
         }
         x.Overrides = ReadOverrides(n["Overrides"]);
-        Check(!x.Parent.IsValid() || (x.Stages.empty() && x.Attributes.empty() && x.Renderers.empty()),
+        Check(!x.Parent.IsValid() || (x.Stages.empty() && x.Attributes.empty() && x.Renderers.empty() &&
+                                      x.Handlers.empty() && x.Channels.empty()),
               "Child VFX emitter must store only overrides");
         return x;
     }
@@ -713,6 +825,51 @@ namespace Kans::Vfx
     {
         for (const auto& o : overrides)
         {
+            if (o.Action >= Override::Kind::AddHandler ||
+                (o.StageKind == Stage::EventHandler && o.HandlerGuid.empty() &&
+                 (o.Action == Override::Kind::SetEnabled || o.Action == Override::Kind::SetInput)))
+            {
+                auto& v  = e.Handlers;
+                auto  at = std::find_if(v.begin(), v.end(), [&](const auto& h) { return h.Guid == o.Target; });
+                if (o.Action == Override::Kind::AddHandler)
+                {
+                    Check(std::none_of(v.begin(), v.end(), [&](const auto& h) { return h.Guid == o.Handler.Guid; }),
+                          "Duplicate VFX handler GUID: " + o.Handler.Guid);
+                    auto before = std::find_if(v.begin(), v.end(), [&](const auto& h) { return h.Guid == o.Before; });
+                    Check(o.Before.empty() || before != v.end(), "Missing VFX handler reorder target: " + o.Before);
+                    v.insert(before, o.Handler);
+                }
+                else
+                {
+                    Check(at != v.end(), "Missing VFX handler override target: " + o.Target);
+                    if (o.Action == Override::Kind::RemoveHandler)
+                        v.erase(at);
+                    else if (o.Action == Override::Kind::SetEnabled)
+                        at->Enabled = o.Enabled;
+                    else if (o.Action == Override::Kind::SetInput)
+                    {
+                        Check(o.InputValue.Kind == InputKind::Literal && o.InputValue.Literal.Kind == Type::Int &&
+                                  o.InputValue.Literal.Integer >= 0,
+                              "Handler input requires nonnegative int");
+                        if (o.InputName == "SpawnNumber")
+                            at->SpawnNumber = uint32_t(o.InputValue.Literal.Integer);
+                        else if (o.InputName == "MaxEventsPerFrame")
+                            at->MaxEventsPerFrame = uint32_t(o.InputValue.Literal.Integer);
+                        else
+                            Check(false, "Unknown VFX handler input: " + o.InputName);
+                    }
+                    else
+                    {
+                        auto item = *at;
+                        v.erase(at);
+                        auto before =
+                            std::find_if(v.begin(), v.end(), [&](const auto& h) { return h.Guid == o.Before; });
+                        Check(o.Before.empty() || before != v.end(), "Missing VFX handler reorder target: " + o.Before);
+                        v.insert(before, item);
+                    }
+                }
+                continue;
+            }
             if (o.Action >= Override::Kind::AddRenderer)
             {
                 auto& v  = e.Renderers;
@@ -739,13 +896,27 @@ namespace Kans::Vfx
                 continue;
             }
             Check(o.StageKind >= Stage::EmitterSpawn, "VFX emitter override cannot target a system stage");
-            Check(o.StageKind < Stage::EventHandler, std::string(StageName(o.StageKind)) + " not implemented in V1a");
-            auto& v  = e.Stages[o.StageKind];
+            Check(o.StageKind < Stage::SimulationStage,
+                  std::string(StageName(o.StageKind)) + " not implemented in V1a");
+            Stack* stack = &e.Stages[o.StageKind];
+            if (o.StageKind == Stage::EventHandler)
+            {
+                auto h = std::find_if(
+                    e.Handlers.begin(), e.Handlers.end(), [&](const auto& h) { return h.Guid == o.HandlerGuid; });
+                Check(h != e.Handlers.end(), "Missing VFX handler override target: " + o.HandlerGuid);
+                stack = &h->Modules;
+            }
+            auto& v  = *stack;
             auto  at = std::find_if(v.begin(), v.end(), [&](const auto& x) { return x.Guid == o.Target; });
             if (o.Action == Override::Kind::AddModule)
             {
                 for (const auto& [s, st] : e.Stages)
                     Check(std::none_of(st.begin(), st.end(), [&](const auto& x) { return x.Guid == o.Added.Guid; }),
+                          "Duplicate VFX usage GUID: " + o.Added.Guid);
+                for (const auto& handler : e.Handlers)
+                    Check(std::none_of(handler.Modules.begin(),
+                                       handler.Modules.end(),
+                                       [&](const auto& x) { return x.Guid == o.Added.Guid; }),
                           "Duplicate VFX usage GUID: " + o.Added.Guid);
                 auto before = std::find_if(v.begin(), v.end(), [&](const auto& x) { return x.Guid == o.Before; });
                 Check(o.Before.empty() || before != v.end(), "Missing VFX reorder target: " + o.Before);
@@ -820,7 +991,9 @@ namespace Kans::Vfx
         Register("Curve", {Type::Float, true});
         Register("Gradient", {Type::Color, true});
         Register("Texture2D", {Type::Color, true});
-        for (const char* s : {"SkeletalMesh", "StaticMesh", "EmitterParticles", "Events"})
+        Register("EmitterParticles", {Type::Vec4, true});
+        Register("Events", {Type::Vec4, true});
+        for (const char* s : {"SkeletalMesh", "StaticMesh"})
             Register(s, {Type::Vec4, false});
     }
     void InterfaceRegistry::Register(std::string s, Entry e)

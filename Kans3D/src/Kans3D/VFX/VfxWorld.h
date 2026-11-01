@@ -22,22 +22,25 @@ namespace Kans::Vfx
         explicit EmitterInstance(const CompiledEmitter&);
         ~EmitterInstance();
         EmitterInstance(EmitterInstance&&) noexcept;
-        EmitterInstance&                operator=(EmitterInstance&&) noexcept;
-        const CompiledEmitter*          Compiled;
-        ParameterMap                    Parameters;
-        std::vector<std::vector<Value>> Attributes;
-        std::vector<uint32_t>           Alive, Free;
-        std::vector<GpuTick>            Pending;
-        std::unique_ptr<GpuEmitter>     GPU;
-        uint32_t                        NextID = 0, PendingBurst = 0, ParticleCount = 0;
-        uint64_t                        Dropped = 0, TotalSpawned = 0;
-        uint64_t                        SpawnRevision = 0, ReadbackSpawnRevision = 0;
-        bool                            HasReadback = false;
-        Bounds                          DynamicBounds;
-        float                           SpriteRadius     = 0;
-        bool                            HiddenByDistance = false;
-        Value                           Read(const std::string& name, uint32_t slot) const;
-        glm::vec3                       WorldPosition(uint32_t slot, const glm::mat4& owner) const;
+        EmitterInstance&                                 operator=(EmitterInstance&&) noexcept;
+        const CompiledEmitter*                           Compiled;
+        ParameterMap                                     Parameters;
+        std::map<std::string, std::vector<ParameterMap>> Events;
+        uint64_t                                         EventsDropped = 0;
+        std::vector<EmitterInstance>*                    Siblings      = nullptr;
+        std::vector<std::vector<Value>>                  Attributes;
+        std::vector<uint32_t>                            Alive, Free;
+        std::vector<GpuTick>                             Pending;
+        std::unique_ptr<GpuEmitter>                      GPU;
+        uint32_t                                         NextID = 0, PendingBurst = 0, ParticleCount = 0;
+        uint64_t                                         Dropped = 0, TotalSpawned = 0;
+        uint64_t                                         SpawnRevision = 0, ReadbackSpawnRevision = 0;
+        bool                                             HasReadback = false;
+        Bounds                                           DynamicBounds;
+        float                                            SpriteRadius     = 0;
+        bool                                             HiddenByDistance = false;
+        Value                                            Read(const std::string& name, uint32_t slot) const;
+        glm::vec3                                        WorldPosition(uint32_t slot, const glm::mat4& owner) const;
     };
     class SystemInstance
     {
@@ -46,6 +49,10 @@ namespace Kans::Vfx
                        const ParticleSystemComponent&,
                        const glm::mat4& initialOwner = glm::mat4(1));
         ~SystemInstance();
+        SystemInstance(const SystemInstance&)                           = delete;
+        SystemInstance& operator=(const SystemInstance&)                = delete;
+        SystemInstance(SystemInstance&&)                                = delete;
+        SystemInstance&                     operator=(SystemInstance&&) = delete;
         void     Activate(bool reset = true);
         void     Deactivate() { m_Spawning = false; }
         void     DeactivateImmediate();

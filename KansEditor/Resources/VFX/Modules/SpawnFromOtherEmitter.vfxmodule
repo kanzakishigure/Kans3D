@@ -1,0 +1,418 @@
+Version: 1
+AssetID: 91b1e00100000003:0000000000000001
+Usage: Module
+AllowedStages: 24
+Category: Particle reader
+Description: SpawnFromOtherEmitter
+Inputs:
+- Name: Module.Rate
+  Type: float
+  Default:
+    Type: float
+    Value: 10.0
+- Name: Module.Source
+  Type: vec4
+  Default:
+    Type: vec4
+    Value:
+    - 0
+    - 0
+    - 0
+    - 0
+Nodes:
+- Guid: 05493a96-4440-5380-99f0-2a36831b10b8
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Rate
+- Guid: fd4062d5-dfe3-53c6-b5a8-90f190b8371e
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Emitter.ExecutionState
+- Guid: c7824be2-8f8a-53d1-abc2-878531f58115
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 0
+- Guid: 46c59cf1-2c95-51b3-bdfb-0988384ffc1d
+  Op: Equal
+  Type: bool
+  Inputs:
+  - Name: A
+    Type: int
+  - Name: B
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: 86073621-30f8-5b28-8e01-c91b02d19a27
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 0.0
+- Guid: 7f00ebe6-76e6-516b-ab4c-4a1d65047d40
+  Op: Select
+  Type: float
+  Inputs:
+  - Name: A
+    Type: bool
+  - Name: B
+    Type: float
+  - Name: C
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: b659f0fa-c503-5203-a866-299d565de296
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: 0f9a6013-bebf-5c36-8796-f89173947f7c
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Emitter.Remainder$Usage
+- Guid: 48a85714-0aab-5c9e-8cc7-761e348611ee
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 109d83ff-363d-57b5-b74e-2e69862344f9
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 63da533b-bdbe-58aa-8137-f2cb30dedd4f
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 1.0e-06
+- Guid: 63ec2c66-195f-547a-8509-12a772cad3d1
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: bf69ee66-9811-5501-8d08-a81a77f97951
+  Op: Floor
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 9575d506-a7c1-597e-a94a-5e6988b2c9fe
+  Op: Sub
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 3f772d99-7c1f-5353-8dfe-29f41e8b8ab3
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 0.0
+- Guid: c9b7a8ae-cd6b-5397-9364-848d3a57e981
+  Op: Max
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 6c9bb860-da81-50c5-b0b7-14ec07e9603a
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Emitter.Remainder$Usage
+  Stages: 8
+- Guid: a9991f37-bb6e-5e06-8a48-7f3573edd592
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Emitter.SpawnCountThisFrame
+- Guid: 80743e8e-d843-5686-9723-23e6af50adc9
+  Op: ToInt
+  Type: int
+  Inputs:
+  - Name: A
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: 1b62c778-bdd3-5d28-8387-403851ae4b07
+  Op: Add
+  Type: int
+  Inputs:
+  - Name: A
+    Type: int
+  - Name: B
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: 30f527b3-1c71-5c7e-aa53-0a9c7f3d50ba
+  Op: Set
+  Type: int
+  Inputs:
+  - Name: A
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Emitter.SpawnCountThisFrame
+  Stages: 8
+- Guid: count-source
+  Op: ParticleCount
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Source
+  Interface:
+    Kind: EmitterParticles
+- Guid: count-float
+  Op: ToFloat
+  Type: float
+  Inputs:
+  - Name: Count
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: total-rate
+  Op: Mul
+  Type: float
+  Inputs:
+  - Name: Rate
+    Type: float
+  - Name: Count
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: spawn-index
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Particles.UniqueID
+- Guid: source-index
+  Op: Mod
+  Type: int
+  Inputs:
+  - Name: Index
+    Type: int
+  - Name: Count
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: source-position
+  Op: ReadAttribute
+  Type: position
+  Inputs:
+  - Name: Index
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Module.Source
+  Code: Particles.Position
+  Interface:
+    Kind: EmitterParticles
+- Guid: set-position
+  Op: Set
+  Type: position
+  Inputs:
+  - Name: Position
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+  Stages: 16
+Links:
+- From: fd4062d5-dfe3-53c6-b5a8-90f190b8371e
+  Output: Value
+  To: 46c59cf1-2c95-51b3-bdfb-0988384ffc1d
+  Input: A
+- From: c7824be2-8f8a-53d1-abc2-878531f58115
+  Output: Value
+  To: 46c59cf1-2c95-51b3-bdfb-0988384ffc1d
+  Input: B
+- From: 46c59cf1-2c95-51b3-bdfb-0988384ffc1d
+  Output: Value
+  To: 7f00ebe6-76e6-516b-ab4c-4a1d65047d40
+  Input: A
+- From: total-rate
+  Output: Value
+  To: 7f00ebe6-76e6-516b-ab4c-4a1d65047d40
+  Input: B
+- From: 86073621-30f8-5b28-8e01-c91b02d19a27
+  Output: Value
+  To: 7f00ebe6-76e6-516b-ab4c-4a1d65047d40
+  Input: C
+- From: 7f00ebe6-76e6-516b-ab4c-4a1d65047d40
+  Output: Value
+  To: 48a85714-0aab-5c9e-8cc7-761e348611ee
+  Input: A
+- From: b659f0fa-c503-5203-a866-299d565de296
+  Output: Value
+  To: 48a85714-0aab-5c9e-8cc7-761e348611ee
+  Input: B
+- From: 0f9a6013-bebf-5c36-8796-f89173947f7c
+  Output: Value
+  To: 109d83ff-363d-57b5-b74e-2e69862344f9
+  Input: A
+- From: 48a85714-0aab-5c9e-8cc7-761e348611ee
+  Output: Value
+  To: 109d83ff-363d-57b5-b74e-2e69862344f9
+  Input: B
+- From: 109d83ff-363d-57b5-b74e-2e69862344f9
+  Output: Value
+  To: 63ec2c66-195f-547a-8509-12a772cad3d1
+  Input: A
+- From: 63da533b-bdbe-58aa-8137-f2cb30dedd4f
+  Output: Value
+  To: 63ec2c66-195f-547a-8509-12a772cad3d1
+  Input: B
+- From: 63ec2c66-195f-547a-8509-12a772cad3d1
+  Output: Value
+  To: bf69ee66-9811-5501-8d08-a81a77f97951
+  Input: A
+- From: 109d83ff-363d-57b5-b74e-2e69862344f9
+  Output: Value
+  To: 9575d506-a7c1-597e-a94a-5e6988b2c9fe
+  Input: A
+- From: bf69ee66-9811-5501-8d08-a81a77f97951
+  Output: Value
+  To: 9575d506-a7c1-597e-a94a-5e6988b2c9fe
+  Input: B
+- From: 9575d506-a7c1-597e-a94a-5e6988b2c9fe
+  Output: Value
+  To: c9b7a8ae-cd6b-5397-9364-848d3a57e981
+  Input: A
+- From: 3f772d99-7c1f-5353-8dfe-29f41e8b8ab3
+  Output: Value
+  To: c9b7a8ae-cd6b-5397-9364-848d3a57e981
+  Input: B
+- From: c9b7a8ae-cd6b-5397-9364-848d3a57e981
+  Output: Value
+  To: 6c9bb860-da81-50c5-b0b7-14ec07e9603a
+  Input: A
+- From: bf69ee66-9811-5501-8d08-a81a77f97951
+  Output: Value
+  To: 80743e8e-d843-5686-9723-23e6af50adc9
+  Input: A
+- From: a9991f37-bb6e-5e06-8a48-7f3573edd592
+  Output: Value
+  To: 1b62c778-bdd3-5d28-8387-403851ae4b07
+  Input: A
+- From: 80743e8e-d843-5686-9723-23e6af50adc9
+  Output: Value
+  To: 1b62c778-bdd3-5d28-8387-403851ae4b07
+  Input: B
+- From: 1b62c778-bdd3-5d28-8387-403851ae4b07
+  Output: Value
+  To: 30f527b3-1c71-5c7e-aa53-0a9c7f3d50ba
+  Input: A
+- From: count-source
+  Output: Value
+  To: count-float
+  Input: Count
+- From: 05493a96-4440-5380-99f0-2a36831b10b8
+  Output: Value
+  To: total-rate
+  Input: Rate
+- From: count-float
+  Output: Value
+  To: total-rate
+  Input: Count
+- From: spawn-index
+  Output: Value
+  To: source-index
+  Input: Index
+- From: count-source
+  Output: Value
+  To: source-index
+  Input: Count
+- From: source-index
+  Output: Value
+  To: source-position
+  Input: Index
+- From: source-position
+  Output: Value
+  To: set-position
+  Input: Position

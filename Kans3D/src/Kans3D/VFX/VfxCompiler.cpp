@@ -57,7 +57,8 @@ namespace Kans::Vfx
                                                        {"ToFloat", 1},
                                                        {"And", 2},
                                                        {"Or", 2},
-                                                       {"Not", 1}};
+                                                       {"Not", 1},
+                                                       {"Mod", 2}};
         std::string                           GType(Type);
         struct Compiler
         {
@@ -70,7 +71,9 @@ namespace Kans::Vfx
             Space                            SimulationSpace = Space::Local;
             uint32_t                         Emit(Instruction i)
             {
-                if (i.Kind == Type::Position && i.Op != "Get" && i.Op != "Set")
+                if (i.Kind == Type::Position && (i.Op == "ReadAttribute" || i.Op == "ReadAttributeByID"))
+                    i.PositionSpace = SimulationSpace;
+                else if (i.Kind == Type::Position && i.Op != "Get" && i.Op != "Set")
                 {
                     i.PositionSpace = Space::Local;
                     for (auto argument : i.Args)
@@ -146,6 +149,11 @@ namespace Kans::Vfx
                     Out.Reads.insert(name);
                     return Emit(std::move(matrix));
                 }
+                if (name.rfind("Transient.Event.", 0) == 0 && Out.StageKind != Stage::EventHandler)
+                {
+                    Error(asset, node, pin, "Transient.Event payload is only readable in an EventHandler");
+                    return Constant(Value::Vector({}, type));
+                }
                 auto k = Known.find(name);
                 if (k == Known.end() || !k->second.Default)
                 {
@@ -176,7 +184,8 @@ namespace Kans::Vfx
             {
                 auto s = Out.StageKind;
                 return (n.rfind("Transient.", 0) == 0) ||
-                       (n.rfind("Particles.", 0) == 0 && (s == Stage::ParticleSpawn || s == Stage::ParticleUpdate)) ||
+                       (n.rfind("Particles.", 0) == 0 &&
+                        (s == Stage::ParticleSpawn || s == Stage::ParticleUpdate || s == Stage::EventHandler)) ||
                        (n.rfind("Emitter.", 0) == 0 && (s == Stage::EmitterSpawn || s == Stage::EmitterUpdate)) ||
                        (n.rfind("System.", 0) == 0 && (s == Stage::SystemSpawn || s == Stage::SystemUpdate));
             }
@@ -365,6 +374,42 @@ namespace Kans::Vfx
                         Out.Writes.insert(name);
                         reg = Emit(i);
                     }
+                    else if (n.Op == "WriteEvent" || n.Op == "ParticleCount" || n.Op == "ReadAttribute" ||
+                             n.Op == "ReadAttributeByID")
+                    {
+                        auto binding = inputs.find(n.Parameter);
+                        if (binding != inputs.end() && binding->second.Kind == InputKind::DataInterface)
+                            i.Interface = binding->second.Interface;
+                        i.Code = n.Code; // Attribute name for particle-reader operations.
+                        if (n.Op == "WriteEvent")
+                        {
+                            if (Out.StageKind != Stage::ParticleUpdate)
+                                Error(id, guid, output, "WriteEvent requires ParticleUpdate");
+                            if (i.Interface.Channel.empty())
+                                i.Interface.Channel = n.Parameter;
+                            if (i.Args.empty() || Out.Code[i.Args[0]].Kind != Type::Int)
+                                Error(id, guid, "Count", "WriteEvent requires an int count");
+                        }
+                        else
+                        {
+                            if (i.Interface.Kind != "EmitterParticles")
+                                Error(id, guid, output, "Particle reader requires EmitterParticles binding");
+                            if (n.Op == "ParticleCount")
+                            {
+                                if (!i.Args.empty() || i.Kind != Type::Int)
+                                    Error(id, guid, output, "ParticleCount requires int output and no inputs");
+                            }
+                            else if (i.Args.size() != 1 || Out.Code[i.Args[0]].Kind != Type::Int)
+                                Error(id, guid, "Index", "Particle reader requires one int index or unique ID");
+                            if (n.Op == "ReadAttributeByID" && output == "Found" && i.Kind != Type::Bool)
+                                Error(id, guid, output, "Particle reader Found output requires bool");
+                        }
+                        if (n.Op == "WriteEvent")
+                            for (uint32_t a = 1; a < i.Args.size(); ++a)
+                                if (Out.Code[i.Args[a]].Kind == Type::Position)
+                                    i.Args[a] = PositionTo(i.Args[a], SimulationSpace);
+                        reg = Emit(i);
+                    }
                     else if (n.Op == "Call")
                     {
                         std::map<std::string, uint32_t> a;
@@ -480,14 +525,14 @@ namespace Kans::Vfx
                 };
                 // Node order is the parameter-map execution order. Links are expression dependencies.
                 for (const auto& n : m.Nodes)
-                    if (n.Op == "Set")
+                    if ((n.Stages & (1u << uint32_t(Out.StageKind))) && (n.Op == "Set" || n.Op == "WriteEvent"))
                         visit(n.Guid, n.Outputs.empty() ? "Value" : n.Outputs.front().Name);
                 uint32_t result = Constant(Value::Float(0));
                 if (expected != Usage::Module)
                     result = visit(m.ResultNode, m.ResultPin);
                 // Validate disconnected expressions too, so diagnostics are collected together.
                 for (const auto& n : m.Nodes)
-                    if (n.Op != "Set")
+                    if ((n.Stages & (1u << uint32_t(Out.StageKind))) && n.Op != "Set" && n.Op != "WriteEvent")
                         for (const auto& p : n.Outputs)
                             visit(n.Guid, p.Name);
                 Calls.pop_back();
@@ -590,8 +635,8 @@ namespace Kans::Vfx
                 }
                 else if (i.Kind == Type::Bool ||
                          (i.Kind == Type::Int &&
-                          !std::set<std::string> {"Add", "Sub", "Mul", "Div", "Min", "Max", "Abs", "Clamp"}.count(
-                              i.Op)))
+                          !std::set<std::string> {"Add", "Sub", "Mul", "Div", "Min", "Max", "Abs", "Clamp", "Mod"}
+                               .count(i.Op)))
                     error(0, "Operation requires floating operands");
                 else
                     for (size_t k = 0; k < i.Args.size(); ++k)
@@ -658,9 +703,23 @@ namespace Kans::Vfx
             c.SimulationSpace = simulationSpace;
             c.Out.StageKind   = stage;
             c.Out.Target      = target;
-            for (const auto& use : stack)
-                if (use.Enabled)
-                    c.Inline(use.Script, Usage::Module, use.Inputs, use.Guid);
+            // Event-producing modules observe the final particle state, including kills later in the stack.
+            for (bool eventPass : {false, true})
+                for (const auto& use : stack)
+                    if (use.Enabled)
+                    {
+                        bool events = false;
+                        try
+                        {
+                            auto m = resolve(use.Script);
+                            events = std::any_of(
+                                m.Nodes.begin(), m.Nodes.end(), [](const auto& n) { return n.Op == "WriteEvent"; });
+                        }
+                        catch (const std::exception&)
+                        {}
+                        if (events == eventPass)
+                            c.Inline(use.Script, Usage::Module, use.Inputs, use.Guid);
+                    }
             // Validate the entire graph, then retain only effects and their expression dependencies.
             std::vector<bool>             live(c.Out.Code.size(), false);
             std::function<void(uint32_t)> mark = [&](uint32_t index) {
@@ -671,7 +730,7 @@ namespace Kans::Vfx
                     mark(argument);
             };
             for (uint32_t index = 0; index < c.Out.Code.size(); ++index)
-                if (c.Out.Code[index].Op == "Set")
+                if (c.Out.Code[index].Op == "Set" || c.Out.Code[index].Op == "WriteEvent")
                     mark(index);
             std::vector<uint32_t>    registers(c.Out.Code.size()), parameters(c.Out.Parameters.size(), UINT32_MAX);
             std::vector<Instruction> code;
@@ -753,21 +812,36 @@ namespace Kans::Vfx
     Compile(const System& system, const EmitterResolver& emitters, const ModuleResolver& modules, AssetID asset)
     {
         CompileResult r;
-        r.Product.Settings = system;
-        auto known         = BuiltinParameters();
+        r.Product.Settings            = system;
+        auto known                    = BuiltinParameters();
+        known["Transient.SpawnIndex"] = {"Transient.SpawnIndex", Type::Int, Value::Int(0), {}};
         for (const auto& p : system.UserParameters)
             known[p.Name] = p;
         known = Collect(system.Stages, modules, std::move(known));
         for (const auto& [s, stack] : system.Stages)
+        {
+            if (s > Stage::SystemUpdate)
+            {
+                if (!stack.empty())
+                    r.Errors.push_back({asset,
+                                        "",
+                                        "Stage",
+                                        s == Stage::SimulationStage ? "SimulationStage not implemented in V1a" :
+                                                                      "Stage belongs to an emitter"});
+                continue;
+            }
             r.Product.Programs[s] = StageProgram(s, stack, SimTarget::CPU, modules, known, r.Errors, asset);
+        }
+        // Resolve all emitter settings first: cross-emitter validation never depends on handle order.
+        std::vector<std::map<std::string, Parameter>> parameters;
         for (const auto& h : system.Emitters)
             if (h.Enabled)
             {
                 CompiledEmitter ce;
+                ce.Handle = h.Guid;
                 try
                 {
-                    auto e      = h.Inline ? *h.Inline : emitters(h.Reference);
-                    ce.Settings = MergeEmitter(e, emitters);
+                    ce.Settings = MergeEmitter(h.Inline ? *h.Inline : emitters(h.Reference), emitters);
                     ApplyOverrides(ce.Settings, h.Overrides);
                     ce.Settings.Name = h.Name;
                 }
@@ -780,31 +854,82 @@ namespace Kans::Vfx
                 for (const auto& p : ce.Settings.Attributes)
                     k[p.Name] = p;
                 k = Collect(ce.Settings.Stages, modules, std::move(k));
+                for (const auto& handler : ce.Settings.Handlers)
+                    if (handler.Enabled)
+                        k = Collect({{Stage::EventHandler, handler.Modules}}, modules, std::move(k));
+                std::set<AssetID>            visited;
+                std::function<void(AssetID)> layouts = [&](AssetID id) {
+                    if (!visited.insert(id).second)
+                        return;
+                    try
+                    {
+                        auto m = modules(id);
+                        for (const auto& l : m.EventLayouts)
+                        {
+                            auto at = ce.EventLayouts.find(l.Name);
+                            if (at != ce.EventLayouts.end() &&
+                                YAML::Dump(EncodeEventLayout(at->second)) != YAML::Dump(EncodeEventLayout(l)))
+                                r.Errors.push_back(
+                                    {asset, h.Guid, l.Name, "Conflicting event payload layout: " + l.Name});
+                            else
+                                ce.EventLayouts[l.Name] = l;
+                        }
+                        for (const auto& n : m.Nodes)
+                            if (n.Op == "Call")
+                                layouts(n.Function);
+                    }
+                    catch (const std::exception&)
+                    {}
+                };
+                for (const auto& [stage, stack] : ce.Settings.Stages)
+                    for (const auto& use : stack)
+                        layouts(use.Script); // Disabled generators still declare the channel's payload type.
+                std::set<std::string> channelNames;
+                for (const auto& c : ce.Settings.Channels)
+                {
+                    if (!channelNames.insert(c.Name).second || c.Name.empty() || !c.Capacity || c.Capacity > 16777216)
+                        r.Errors.push_back({asset, h.Guid, c.Name, "Invalid or duplicate event channel"});
+                    if (!ce.EventLayouts.count(c.Layout))
+                        r.Errors.push_back({asset, h.Guid, c.Name, "Unknown event layout: " + c.Layout});
+                }
                 std::set<std::string> attributes;
                 for (const auto& [s, stack] : ce.Settings.Stages)
                 {
                     if (s >= Stage::EventHandler)
                     {
                         if (!stack.empty())
-                            r.Errors.push_back(
-                                {asset, h.Guid, "", std::string(StageName(s)) + " not implemented in V1a"});
+                            r.Errors.push_back({asset,
+                                                h.Guid,
+                                                "",
+                                                s == Stage::SimulationStage ? "SimulationStage not implemented in V1a" :
+                                                                              "EventHandler requires handler entries"});
                         continue;
                     }
-                    auto p = StageProgram(s,
-                                          stack,
-                                          s >= Stage::ParticleSpawn ? ce.Settings.Target : SimTarget::CPU,
-                                          modules,
-                                          k,
-                                          r.Errors,
-                                          asset,
-                                          ce.Settings.SimulationSpace);
+                    ce.Programs[s] = StageProgram(s,
+                                                  stack,
+                                                  s >= Stage::ParticleSpawn ? ce.Settings.Target : SimTarget::CPU,
+                                                  modules,
+                                                  k,
+                                                  r.Errors,
+                                                  asset,
+                                                  ce.Settings.SimulationSpace);
+                }
+                for (auto stage : {Stage::ParticleSpawn, Stage::ParticleUpdate})
+                    if (!ce.Programs.count(stage))
+                    {
+                        Program p;
+                        p.StageKind        = stage;
+                        p.Target           = ce.Settings.Target;
+                        ce.Programs[stage] = p;
+                    }
+                for (const auto& [stage, p] : ce.Programs)
+                {
                     for (const auto& a : p.Reads)
                         if (a.rfind("Particles.", 0) == 0)
                             attributes.insert(a);
                     for (const auto& a : p.Writes)
                         if (a.rfind("Particles.", 0) == 0)
                             attributes.insert(a);
-                    ce.Programs[s] = std::move(p);
                 }
                 for (const auto& renderer : ce.Settings.Renderers)
                 {
@@ -842,38 +967,321 @@ namespace Kans::Vfx
                             attributes.insert(name);
                     }
                 }
-                // Lifecycle data is consumed by the allocator and update scheduler.
+
                 attributes.insert("Particles.UniqueID");
                 attributes.insert("Particles.Alive");
-                for (const auto& a : attributes)
-                {
-                    auto p = k.find(a);
-                    if (p != k.end())
-                        ce.Attributes.push_back({a,
+                for (const auto& name : attributes)
+                    if (auto p = k.find(name); p != k.end())
+                        ce.Attributes.push_back({name,
                                                  p->second.Kind,
                                                  p->second.Default.value_or(Value::Vector({}, p->second.Kind)),
                                                  uint32_t(ce.Attributes.size())});
-                }
-                for (auto stage : {Stage::ParticleSpawn, Stage::ParticleUpdate})
-                    if (!ce.Programs.count(stage))
-                    {
-                        Program p;
-                        p.StageKind        = stage;
-                        p.Target           = ce.Settings.Target;
-                        ce.Programs[stage] = std::move(p);
-                    }
-                if (r.Errors.empty())
-                    for (auto& [s, p] : ce.Programs)
-                        if (p.Target == SimTarget::GPU)
-                            try
-                            {
-                                GenerateGpuProgram(p, ce.Attributes);
-                            }
-                            catch (const std::exception& e)
-                            {
-                                r.Errors.push_back({asset, h.Guid, "", e.what()});
-                            }
+                parameters.push_back(std::move(k));
                 r.Product.Emitters.push_back(std::move(ce));
+            }
+        auto&                           result = r.Product.Emitters;
+        std::vector<std::set<uint32_t>> dependencies(result.size());
+        const auto sourceIndex = [&](const std::string& source, const std::string& guid) -> uint32_t {
+            for (uint32_t i = 0; i < result.size(); ++i)
+                if (result[i].Handle == source)
+                    return i;
+            r.Errors.push_back({asset, guid, "Source", "Unknown source emitter handle: " + source});
+            return UINT32_MAX;
+        };
+        const auto keep = [&](uint32_t            emitter,
+                              const std::string&  name,
+                              const std::string&  guid,
+                              std::optional<Type> type = {}) -> uint32_t {
+            auto& e  = result[emitter];
+            auto  at = parameters[emitter].find(name);
+            if (at == parameters[emitter].end() || !at->second.Default || name.rfind("Particles.", 0) != 0)
+            {
+                r.Errors.push_back({asset, guid, name, "Missing source attribute " + name + " on emitter " + e.Handle});
+                return 0;
+            }
+            if (type && at->second.Kind != *type)
+                r.Errors.push_back(
+                    {asset, guid, name, "Source attribute type mismatch: " + name + " on emitter " + e.Handle});
+            for (const auto& a : e.Attributes)
+                if (a.Name == name)
+                    return a.Offset;
+            uint32_t offset = uint32_t(e.Attributes.size());
+            e.Attributes.push_back({name, at->second.Kind, *at->second.Default, offset});
+            return offset;
+        };
+        // Merge spawn bytecode before a spawned-particle handler, retaining one typed parameter map.
+        const auto prepend = [](const Program& spawn, Program handler, Space space) {
+            Program               p = spawn;
+            std::vector<uint32_t> map;
+            for (const auto& parameter : handler.Parameters)
+            {
+                auto at = std::find_if(
+                    p.Parameters.begin(), p.Parameters.end(), [&](const auto& x) { return x.Name == parameter.Name; });
+                if (at == p.Parameters.end())
+                {
+                    map.push_back(uint32_t(p.Parameters.size()));
+                    p.Parameters.push_back(parameter);
+                }
+                else
+                    map.push_back(uint32_t(at - p.Parameters.begin()));
+            }
+            auto velocity = std::find_if(p.Parameters.begin(), p.Parameters.end(), [](const auto& parameter) {
+                return parameter.Name == "Particles.Velocity";
+            });
+            if (velocity == p.Parameters.end())
+            {
+                p.Parameters.push_back({"Particles.Velocity", Type::Vec3, Value::Vector({}, Type::Vec3), {}});
+                velocity = std::prev(p.Parameters.end());
+            }
+            Instruction boundary;
+            boundary.Op            = "SpawnBoundary";
+            boundary.Parameter     = uint32_t(velocity - p.Parameters.begin());
+            boundary.PositionSpace = space;
+            p.Code.push_back(boundary);
+            p.Reads.insert("Particles.Velocity");
+            p.Writes.insert("Particles.Velocity");
+            uint32_t base = uint32_t(p.Code.size());
+            for (auto i : handler.Code)
+            {
+                for (auto& arg : i.Args)
+                    arg += base;
+                if (i.Op == "Get" || i.Op == "Set")
+                    i.Parameter = map.at(i.Parameter);
+                p.Code.push_back(std::move(i));
+            }
+            p.Reads.insert(handler.Reads.begin(), handler.Reads.end());
+            p.Writes.insert(handler.Writes.begin(), handler.Writes.end());
+            p.Interfaces.clear();
+            uint32_t offset = 0;
+            for (uint32_t i = 0; i < p.Code.size(); ++i)
+                if (p.Code[i].Op == "Sample")
+                {
+                    p.Code[i].Parameter = offset;
+                    auto count          = uint32_t(p.Code[i].Interface.Values.size());
+                    p.Interfaces.push_back({i, 6, offset, count});
+                    offset += count;
+                }
+            return p;
+        };
+        for (uint32_t index = 0; index < result.size(); ++index)
+        {
+            auto&                 ce = result[index];
+            std::set<std::string> ids;
+            for (const auto& h : ce.Settings.Handlers)
+            {
+                if (!ids.insert(h.Guid).second || h.Guid.empty())
+                    r.Errors.push_back({asset, h.Guid, "", "Duplicate or empty event handler GUID"});
+                if (!h.Enabled)
+                    continue;
+                uint32_t source = sourceIndex(h.SourceEmitter, h.Guid);
+                if (source == UINT32_MAX)
+                    continue;
+                dependencies[index].insert(source);
+                auto& src = result[source];
+                if (src.Settings.Target != ce.Settings.Target)
+                    r.Errors.push_back({asset,
+                                        h.Guid,
+                                        "Source",
+                                        "Event handler CPU/GPU simulation target mismatch with " + h.SourceEmitter});
+                auto channel = std::find_if(src.Settings.Channels.begin(),
+                                            src.Settings.Channels.end(),
+                                            [&](const auto& c) { return c.Name == h.Channel; });
+                if (channel == src.Settings.Channels.end())
+                {
+                    r.Errors.push_back(
+                        {asset, h.Guid, "Channel", "Unknown event channel: " + h.Channel + " on " + h.SourceEmitter});
+                    continue;
+                }
+                auto layout = src.EventLayouts.find(channel->Layout);
+                if (layout == src.EventLayouts.end())
+                    continue;
+                auto k = parameters[index];
+                for (const auto& field : layout->second.Fields)
+                {
+                    auto name = "Transient.Event." + field.Name;
+                    k[name]   = {name, field.Kind, Value::Vector({}, field.Kind), {}};
+                }
+                auto    before = r.Errors.size();
+                Program p      = StageProgram(Stage::EventHandler,
+                                              h.Modules,
+                                              ce.Settings.Target,
+                                              modules,
+                                              k,
+                                              r.Errors,
+                                              asset,
+                                              ce.Settings.SimulationSpace);
+                for (auto i = before; i < r.Errors.size(); ++i)
+                {
+                    r.Errors[i].Asset   = asset;
+                    r.Errors[i].Message = "Handler " + h.Guid + ": " + r.Errors[i].Message;
+                }
+                if (h.Mode == EventMode::SpawnedParticles)
+                    p = prepend(ce.Programs.at(Stage::ParticleSpawn), std::move(p), ce.Settings.SimulationSpace);
+                p.StageKind         = Stage::EventHandler;
+                p.Handler           = true;
+                p.Mode              = h.Mode;
+                p.SpawnNumber       = h.SpawnNumber;
+                p.MaxEventsPerFrame = h.MaxEventsPerFrame;
+                p.Resources.push_back({"EventInput",
+                                       h.Channel,
+                                       h.SourceEmitter,
+                                       source,
+                                       7,
+                                       channel->Capacity,
+                                       0,
+                                       src.Settings.SimulationSpace,
+                                       layout->second});
+                for (const auto& name : p.Reads)
+                    if (name.rfind("Particles.", 0) == 0)
+                        keep(index, name, h.Guid);
+                for (const auto& name : p.Writes)
+                    if (name.rfind("Particles.", 0) == 0)
+                        keep(index, name, h.Guid);
+                ce.Handlers.push_back({h, std::move(p), source});
+            }
+        }
+        for (uint32_t index = 0; index < result.size(); ++index)
+        {
+            auto& ce   = result[index];
+            auto  bind = [&](Program& p, const std::string& guid) {
+                for (auto& i : p.Code)
+                    if (i.Op == "WriteEvent" || i.Op == "ParticleCount" || i.Op == "ReadAttribute" ||
+                        i.Op == "ReadAttributeByID")
+                    {
+                        ResourceBinding resource;
+                        if (i.Op == "WriteEvent")
+                        {
+                            resource.Kind         = "EventOutput";
+                            resource.Source       = index;
+                            resource.SourceHandle = ce.Handle;
+                            resource.Channel      = i.Interface.Channel;
+                            auto c = std::find_if(ce.Settings.Channels.begin(),
+                                                  ce.Settings.Channels.end(),
+                                                  [&](const auto& c) { return c.Name == resource.Channel; });
+                            if (c == ce.Settings.Channels.end())
+                            {
+                                r.Errors.push_back(
+                                    {asset, guid, "Channel", "Unknown event channel: " + resource.Channel});
+                                continue;
+                            }
+                            auto l = ce.EventLayouts.find(c->Layout);
+                            if (l == ce.EventLayouts.end())
+                                continue;
+                            resource.Capacity      = c->Capacity;
+                            resource.Layout        = l->second;
+                            resource.PositionSpace = ce.Settings.SimulationSpace;
+                            if (i.Args.size() == l->second.Fields.size() + 2 && p.Code[i.Args.back()].Kind != Type::Int)
+                                r.Errors.push_back({asset, guid, "MaxEventsPerFrame", "Event limit requires int"});
+                            if (i.Args.size() != l->second.Fields.size() + 1 &&
+                                i.Args.size() != l->second.Fields.size() + 2)
+                                r.Errors.push_back({asset, guid, "Payload", "Event payload field count mismatch"});
+                            else
+                                for (uint32_t k = 0; k < l->second.Fields.size(); ++k)
+                                    if (p.Code[i.Args[k + 1]].Kind != l->second.Fields[k].Kind)
+                                        r.Errors.push_back(
+                                            {asset, guid, l->second.Fields[k].Name, "Event payload type mismatch"});
+                        }
+                        else
+                        {
+                            resource.Kind         = "ParticleReader";
+                            resource.SourceHandle = i.Interface.SourceEmitter;
+                            resource.Source       = sourceIndex(resource.SourceHandle, guid);
+                            if (resource.Source == UINT32_MAX)
+                                continue;
+                            dependencies[index].insert(resource.Source);
+                            auto& src = result[resource.Source];
+                            if (src.Settings.Target != ce.Settings.Target)
+                                r.Errors.push_back({asset,
+                                                    guid,
+                                                    "Source",
+                                                    "Particle reader CPU/GPU simulation target mismatch with " +
+                                                        resource.SourceHandle});
+                            resource.Capacity      = src.Settings.Capacity;
+                            resource.PositionSpace = src.Settings.SimulationSpace;
+                            resource.IDOffset      = keep(resource.Source, "Particles.UniqueID", guid);
+                            if (i.Op != "ParticleCount")
+                                i.Parameter = keep(resource.Source,
+                                                   i.Code,
+                                                   guid,
+                                                   i.Output == "Found" ? std::optional<Type> {} : i.Kind);
+                        }
+                        auto at = std::find_if(p.Resources.begin(), p.Resources.end(), [&](const auto& x) {
+                            return x.Kind == resource.Kind && x.Source == resource.Source &&
+                                   x.Channel == resource.Channel;
+                        });
+                        if (at == p.Resources.end())
+                        {
+                            resource.Binding = 7;
+                            for (const auto& x : p.Resources)
+                                resource.Binding =
+                                    std::max(resource.Binding, x.Binding + (x.Kind == "ParticleReader" ? 3u : 1u));
+                            i.Resource = uint32_t(p.Resources.size());
+                            p.Resources.push_back(resource);
+                        }
+                        else
+                            i.Resource = uint32_t(at - p.Resources.begin());
+                    }
+                // GPU emitter-stage readers execute on the device, never against a CPU count mirror.
+                if (p.StageKind == Stage::EmitterUpdate && ce.Settings.Target == SimTarget::GPU && !p.Resources.empty())
+                {
+                    p.Target         = SimTarget::GPU;
+                    uint32_t binding = 7;
+                    for (const auto& resource : p.Resources)
+                        binding = std::max(binding, resource.Binding + (resource.Kind == "ParticleReader" ? 3u : 1u));
+                    ResourceBinding state;
+                    state.Kind    = "EmitterState";
+                    state.Binding = binding;
+                    p.Resources.push_back(state);
+                }
+            };
+            for (auto& [stage, p] : ce.Programs)
+                bind(p, ce.Handle);
+            for (auto& h : ce.Handlers)
+                bind(h.Bytecode, h.Settings.Guid);
+        }
+        // Stable Kahn ordering: among available emitters choose the first handle in the asset.
+        std::set<uint32_t> done;
+        while (done.size() < result.size())
+        {
+            uint32_t next = UINT32_MAX;
+            for (uint32_t i = 0; i < result.size(); ++i)
+                if (!done.count(i) && std::all_of(dependencies[i].begin(), dependencies[i].end(), [&](auto source) {
+                        return done.count(source);
+                    }))
+                {
+                    next = i;
+                    break;
+                }
+            if (next == UINT32_MAX)
+            {
+                std::string message = "Emitter dependency cycle:";
+                for (uint32_t i = 0; i < result.size(); ++i)
+                    if (!done.count(i))
+                        message += " " + result[i].Handle;
+                r.Errors.push_back({asset, "", "Source", message});
+                break;
+            }
+            done.insert(next);
+            r.Product.TickOrder.push_back(next);
+        }
+        if (r.Errors.empty())
+            for (auto& e : result)
+            {
+                auto generate = [&](Program& p) {
+                    if (p.Target == SimTarget::GPU)
+                        try
+                        {
+                            GenerateGpuProgram(p, e.Attributes);
+                        }
+                        catch (const std::exception& ex)
+                        {
+                            r.Errors.push_back({asset, e.Handle, "", ex.what()});
+                        }
+                };
+                for (auto& [stage, p] : e.Programs)
+                    generate(p);
+                for (auto& h : e.Handlers)
+                    generate(h.Bytecode);
             }
         return r;
     }
@@ -890,6 +1298,16 @@ namespace Kans::Vfx
         const auto a   = [&](size_t k) -> Value { return k < i.Args.size() ? r.at(i.Args[k]) : Value::Float(0); };
         const auto x = a(0), y = a(1), z = a(2);
         const auto op = i.Op;
+        if (op == "ParticleCount" || op == "ReadAttribute" || op == "ReadAttributeByID")
+            return c.ReadParticle ? c.ReadParticle(i, r) : out;
+        if (op == "WriteEvent")
+        {
+            if (c.WriteEvent)
+                c.WriteEvent(i, r);
+            return Value::Int(0);
+        }
+        if (op == "Mod")
+            return Value::Int(y.Integer ? x.Integer % y.Integer : 0);
         if (op == "OwnerMatrixColumn")
             return Value::Vector(c.LocalToWorld[i.Parameter], Type::Vec4);
         if (op == "Constant")
@@ -994,7 +1412,8 @@ namespace Kans::Vfx
             return out;
         }
         const auto random = [&](uint32_t lane) {
-            uint32_t h = Hash(c.Seed ^ Hash(c.EmitterIndex) ^ Hash(c.UniqueID) ^ i.RandomKey ^ Hash(lane));
+            uint32_t h = Hash(c.Seed ^ Hash(c.EmitterIndex) ^ Hash(c.RandomID.value_or(c.UniqueID)) ^ i.RandomKey ^
+                              Hash(lane) ^ Hash(c.EventIndex));
             return float(h >> 8) * (1.f / 16777216.f);
         };
         if (op == "RandomUnitVector")
@@ -1116,6 +1535,18 @@ namespace Kans::Vfx
                 else
                     r.push_back(at->second);
             }
+            else if (i.Op == "SpawnBoundary")
+            {
+                if (i.PositionSpace == Space::World)
+                {
+                    const auto& parameter  = p.Parameters.at(i.Parameter);
+                    auto        at         = values.find(parameter.Name);
+                    auto        value      = at == values.end() ? *parameter.Default : at->second;
+                    value.Data             = glm::vec4(glm::mat3(c.LocalToWorld) * glm::vec3(value.Data), 0);
+                    values[parameter.Name] = value;
+                }
+                r.push_back(Value::Float(0));
+            }
             else if (i.Op == "Set")
             {
                 auto v                                    = r.at(i.Args.at(0));
@@ -1153,7 +1584,7 @@ namespace Kans::Vfx
                                          "") +
                    "))";
         };
-        std::string s     = R"glsl(#version 450
+        std::string s = R"glsl(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) buffer Attributes { uvec4 attributes[]; };
 layout(set=0,binding=1,std430) readonly buffer Parameters { uvec4 parameters[]; };
@@ -1163,14 +1594,42 @@ layout(set=0,binding=4,std430) buffer Counters { uint counters[]; };
 layout(set=0,binding=5,std430) readonly buffer AliveList { uint aliveList[]; };
 layout(set=0,binding=6,std430) readonly buffer DataInterfaces {vec4 diValues[];};
 layout(push_constant) uniform Push {uint capacity;uint seed;uint emitter;uint requested;uint worldSpace;uint kill;} pc;
+uint eventKey=0u;
 uint hashV(uint x){x^=x>>16;x*=0x7feb352du;x^=x>>15;x*=0x846ca68bu;return x^(x>>16);}
-float randomV(uint id,uint key,uint lane){return float(hashV(pc.seed^hashV(pc.emitter)^hashV(id)^key^hashV(lane))>>8)*(1.0/16777216.0);}
+float randomV(uint id,uint key,uint lane){return float(hashV(pc.seed^hashV(pc.emitter)^hashV(id)^key^hashV(lane)^hashV(eventKey))>>8)*(1.0/16777216.0);}
 float noiseV(vec3 x){ivec3 b=ivec3(floor(x));vec3 f=fract(x);f=f*f*(3.0-2.0*f);float v=0;
 for(int z=0;z<2;++z)for(int y=0;y<2;++y)for(int a=0;a<2;++a){ivec3 p=b+ivec3(a,y,z);float n=float(hashV(uint(p.x)^hashV(uint(p.y))^hashV(uint(p.z)))>>8)*(1.0/16777216.0);v+=n*(a!=0?f.x:1-f.x)*(y!=0?f.y:1-f.y)*(z!=0?f.z:1-f.z);}return v;}
 void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
 )glsl";
-        const bool  spawn = p.StageKind == Stage::ParticleSpawn;
-        if (spawn)
+        std::string declarations;
+        for (uint32_t r = 0; r < p.Resources.size(); ++r)
+        {
+            const auto& resource = p.Resources[r];
+            auto        id = std::to_string(r), binding = std::to_string(resource.Binding);
+            if (resource.Kind == "ParticleReader")
+            {
+                declarations += "layout(set=0,binding=" + binding + ",std430) readonly buffer ReaderAttributes" + id +
+                                "{uvec4 readerAttributes" + id + "[];};\n";
+                declarations += "layout(set=0,binding=" + std::to_string(resource.Binding + 1) +
+                                ",std430) readonly buffer ReaderAlive" + id + "{uint readerAlive" + id + "[];};\n";
+                declarations += "layout(set=0,binding=" + std::to_string(resource.Binding + 2) +
+                                ",std430) readonly buffer ReaderCounters" + id + "{uint readerCounters" + id +
+                                "[];};\n";
+            }
+            else if (resource.Kind == "EmitterState")
+                declarations +=
+                    "layout(set=0,binding=" + binding + ",std430) buffer EmitterState{uvec4 emitterState[];};\n";
+            else
+                declarations += "layout(set=0,binding=" + binding + ",std430) " +
+                                (resource.Kind == "EventInput" ? "readonly " : "") + "buffer Events" + id +
+                                "{uvec4 events" + id + "[];};\n";
+        }
+        s.insert(s.find("void main()"), declarations);
+        const bool emitter = p.StageKind == Stage::EmitterUpdate;
+        const bool spawn = p.StageKind == Stage::ParticleSpawn || (p.Handler && p.Mode == EventMode::SpawnedParticles);
+        if (emitter)
+            s += "if(invocation!=0u)return;slot=0u;uniqueID=0u;\n";
+        else if (spawn)
             s += "if(invocation>=counters[2])return;slot=freeList[counters[4]+invocation];uniqueID=counters[5]+"
                  "invocation;flags[slot]=1u;\n";
         else
@@ -1190,8 +1649,9 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
         for (const auto& a : attributes)
         {
             s += GType(a.Kind) + " a" + std::to_string(a.Offset) + "=" +
-                 (spawn ? Literal(a.Default) :
-                          decode(a.Kind, "attributes[" + std::to_string(a.Offset) + "u*pc.capacity+slot]")) +
+                 ((spawn || emitter) ?
+                      Literal(a.Default) :
+                      decode(a.Kind, "attributes[" + std::to_string(a.Offset) + "u*pc.capacity+slot]")) +
                  ";\n";
         }
         if (spawn)
@@ -1204,13 +1664,44 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                 }
         s += "a" + std::to_string(attribute("Particles.UniqueID")->Offset) + "=int(uniqueID);\n";
         s += "a" + std::to_string(attribute("Particles.Alive")->Offset) + "=true;\n";
+        if (p.Handler)
+        {
+            const auto& event  = p.Resources.at(0);
+            auto        stride = std::to_string(event.Layout.Fields.size() + 1);
+            if (spawn)
+                s += "uint eventIndex=invocation/" + std::to_string(std::max(1u, p.SpawnNumber)) + "u;\n";
+            else
+                s += "uint eventCount=min(events0[0].x," + std::to_string(p.MaxEventsPerFrame) +
+                     "u);for(uint eventIndex=0u;eventIndex<eventCount;++eventIndex){\n";
+            s += "eventKey=events0[1u+eventIndex*" + stride + "u+" + std::to_string(event.Layout.Fields.size()) +
+                 "u].x;\n";
+        }
         for (uint32_t k = 0; k < p.Parameters.size(); ++k)
         {
             const auto& v = p.Parameters[k];
             auto        a = attribute(v.Name);
-            s += GType(v.Kind) + " p" + std::to_string(k) + "=" +
-                 (a ? "a" + std::to_string(a->Offset) : decode(v.Kind, "parameters[" + std::to_string(k) + "]")) +
-                 ";\n";
+            std::string value =
+                a ? "a" + std::to_string(a->Offset) : decode(v.Kind, "parameters[" + std::to_string(k) + "]");
+            if (v.Name == "Transient.SpawnIndex")
+                value = "int(invocation)";
+            if (emitter && v.Name.rfind("Emitter.", 0) == 0 && v.Name != "Emitter.SpawnCountThisFrame")
+                value = decode(v.Kind, "emitterState[" + std::to_string(k) + "]");
+            if (p.Handler && v.Name.rfind("Transient.Event.", 0) == 0)
+            {
+                const auto& event = p.Resources.at(0);
+                for (uint32_t f = 0; f < event.Layout.Fields.size(); ++f)
+                    if (v.Name == "Transient.Event." + event.Layout.Fields[f].Name)
+                    {
+                        value = decode(v.Kind,
+                                       "events0[1u+eventIndex*" + std::to_string(event.Layout.Fields.size() + 1) +
+                                           "u+" + std::to_string(f) + "u]");
+                        if (v.Kind == Type::Position)
+                            value = event.PositionSpace == Space::World ?
+                                        "(pc.worldSpace==0u?(inverse(owner)*vec4(" + value + ",1)).xyz:" + value + ")" :
+                                        "(pc.worldSpace!=0u?(owner*vec4(" + value + ",1)).xyz:" + value + ")";
+                    }
+            }
+            s += GType(v.Kind) + " p" + std::to_string(k) + "=" + value + ";\n";
         }
         std::string customHelpers;
         for (uint32_t k = 0; k < p.Code.size(); ++k)
@@ -1219,7 +1710,79 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
             const auto  arg = [&](size_t a) { return a < i.Args.size() ? "r" + std::to_string(i.Args[a]) : "0.0"; };
             std::string e;
             auto        a = arg(0), b = arg(1), c = arg(2), op = i.Op;
-            if (op == "OwnerMatrixColumn")
+            if (op == "SpawnBoundary")
+            {
+                if (i.PositionSpace == Space::World)
+                    s += "p" + std::to_string(i.Parameter) + "=mat3(owner)*p" + std::to_string(i.Parameter) + ";\n";
+                e = "0.0";
+            }
+            else if (op == "WriteEvent")
+            {
+                const auto& resource = p.Resources.at(i.Resource);
+                auto        name     = "events" + std::to_string(i.Resource);
+                auto        capacity = std::to_string(resource.Capacity) + "u";
+                auto        limit    = i.Args.size() == resource.Layout.Fields.size() + 2 ?
+                                           "uint(max(0," + arg(i.Args.size() - 1) + "))" :
+                                           "0xffffffffu";
+                auto        tag      = std::to_string(k);
+                // Reserve the per-frame generation budget independently of storage capacity.
+                s += "uint wanted" + tag + "=uint(max(0," + a + "));uint generated" + tag + "=" + name +
+                     "[0].z;uint allowed" + tag + "=0u;\n";
+                s += "while(generated" + tag + "<" + limit + "){uint candidate=min(wanted" + tag + "," + limit +
+                     "-generated" + tag + ");uint previous=atomicCompSwap(" + name + "[0].z,generated" + tag +
+                     ",generated" + tag + "+candidate);if(previous==generated" + tag + "){allowed" + tag +
+                     "=candidate;break;}generated" + tag + "=previous;}\n";
+                s += "uint attempts" + tag + "=min(allowed" + tag + "," + capacity + ");atomicAdd(" + name +
+                     "[0].y,allowed" + tag + "-attempts" + tag + ");\n";
+                s += "for(uint ordinal=0u;ordinal<attempts" + tag + ";++ordinal){uint at=" + name +
+                     "[0].x;bool reserved=false;while(at<" + capacity + "){uint previous=atomicCompSwap(" + name +
+                     "[0].x,at,at+1u);if(previous==at){reserved=true;break;}at=previous;}if(!reserved){atomicAdd(" +
+                     name + "[0].y,1u);continue;}\n";
+                for (uint32_t f = 0; f < resource.Layout.Fields.size(); ++f)
+                    s += name + "[1u+at*" + std::to_string(resource.Layout.Fields.size() + 1) + "u+" +
+                         std::to_string(f) + "u]=" + encode(resource.Layout.Fields[f].Kind, arg(f + 1)) + ";\n";
+                s += name + "[1u+at*" + std::to_string(resource.Layout.Fields.size() + 1) + "u+" +
+                     std::to_string(resource.Layout.Fields.size()) + "u]=uvec4(hashV(uniqueID^hashV(ordinal^" +
+                     std::to_string(i.RandomKey) + "u)),0,0,0); }\n";
+                e = "0";
+            }
+            else if (op == "ParticleCount" || op == "ReadAttribute" || op == "ReadAttributeByID")
+            {
+                const auto& resource = p.Resources.at(i.Resource);
+                auto        id = std::to_string(i.Resource), tag = std::to_string(k);
+                auto        count = "readerCounters" + id + "[1]";
+                if (op == "ParticleCount")
+                    e = "int(" + count + ")";
+                else
+                {
+                    auto found = "found" + tag, sourceSlot = "sourceSlot" + tag;
+                    s += "bool " + found + "=false;uint " + sourceSlot + "=0u;\n";
+                    if (op == "ReadAttribute")
+                        s += "if(" + a + ">=0&&uint(" + a + ")<" + count + "){" + found + "=true;" + sourceSlot +
+                             "=readerAlive" + id + "[uint(" + a + ")];}\n";
+                    else
+                        s += "for(uint j=0u;j<" + count + ";++j){uint candidate=readerAlive" + id +
+                             "[j];if(readerAttributes" + id + "[" + std::to_string(resource.IDOffset) + "u*" +
+                             std::to_string(resource.Capacity) + "u+candidate].x==uint(" + a + ")){" + found +
+                             "=true;" + sourceSlot + "=candidate;break;}}\n";
+                    if (i.Output == "Found")
+                        e = found;
+                    else
+                    {
+                        auto value = decode(i.Kind,
+                                            "readerAttributes" + id + "[" + std::to_string(i.Parameter) + "u*" +
+                                                std::to_string(resource.Capacity) + "u+" + sourceSlot + "]");
+                        if (i.Kind == Type::Position)
+                            value = resource.PositionSpace == Space::World ?
+                                        "(pc.worldSpace==0u?(inverse(owner)*vec4(" + value + ",1)).xyz:" + value + ")" :
+                                        "(pc.worldSpace!=0u?(owner*vec4(" + value + ",1)).xyz:" + value + ")";
+                        e = "(" + found + "?" + value + ":" + GType(i.Kind) + "(0))";
+                    }
+                }
+            }
+            else if (op == "Mod")
+                e = "(" + b + "==0?0:" + a + "%" + b + ")";
+            else if (op == "OwnerMatrixColumn")
                 e = "owner[" + std::to_string(i.Parameter) + "]";
             else if (op == "Get")
                 e = "p" + std::to_string(i.Parameter);
@@ -1287,7 +1850,12 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
             else if (op == "Random" || op == "RandomVector" || op == "RandomRange" || op == "RandomUnitVector")
             {
                 const auto random = [&](uint32_t lane) {
-                    return "randomV(uniqueID," + std::to_string(i.RandomKey) + "u," + std::to_string(lane) + "u)";
+                    return "randomV(" +
+                           (p.Handler ? (p.Mode == EventMode::SpawnedParticles ?
+                                             "(invocation%" + std::to_string(std::max(1u, p.SpawnNumber)) + "u)" :
+                                             "uniqueID") :
+                                        "uniqueID") +
+                           "," + std::to_string(i.RandomKey) + "u," + std::to_string(lane) + "u)";
                 };
                 if (op == "RandomUnitVector")
                 {
@@ -1400,7 +1968,21 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
             if (auto a = attribute(v.Name); a && p.Writes.count(v.Name))
                 s += "a" + std::to_string(a->Offset) + "=p" + std::to_string(k) + ";\n";
         }
-        if (spawn)
+        if (p.Handler && p.Mode == EventMode::EveryParticle)
+            s += "if(!a" + std::to_string(attribute("Particles.Alive")->Offset) + ")break;}\n";
+        if (emitter)
+        {
+            for (uint32_t k = 0; k < p.Parameters.size(); ++k)
+            {
+                const auto& v = p.Parameters[k];
+                if (v.Name.rfind("Emitter.", 0) == 0 && p.Writes.count(v.Name))
+                    s += "emitterState[" + std::to_string(k) + "]=" + encode(v.Kind, "p" + std::to_string(k)) + ";\n";
+                if (v.Name == "Emitter.SpawnCountThisFrame")
+                    s += "counters[15]=uint(max(0,p" + std::to_string(k) + "));\n";
+            }
+            s += "return;\n";
+        }
+        if (spawn && !p.Handler)
             if (auto a = attribute("Particles.Velocity"))
                 s += "if(pc.worldSpace!=0u)a" + std::to_string(a->Offset) + "=mat3(owner)*a" +
                      std::to_string(a->Offset) + ";\n";
@@ -1429,6 +2011,26 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
             {
                 YAML::Node n;
                 n["Stage"]             = int(stage);
+                n["Handler"]           = p.Handler;
+                n["Mode"]              = int(p.Mode);
+                n["SpawnNumber"]       = p.SpawnNumber;
+                n["MaxEventsPerFrame"] = p.MaxEventsPerFrame;
+                n["Resources"]         = YAML::Node(YAML::NodeType::Sequence);
+                for (const auto& r : p.Resources)
+                {
+                    YAML::Node resource;
+                    resource["Kind"]         = r.Kind;
+                    resource["Channel"]      = r.Channel;
+                    resource["SourceHandle"] = r.SourceHandle;
+                    resource["Source"]       = r.Source;
+                    resource["Binding"]      = r.Binding;
+                    resource["Capacity"]     = r.Capacity;
+                    resource["IDOffset"]     = r.IDOffset;
+                    resource["Space"]        = int(r.PositionSpace);
+                    if (!r.Layout.Name.empty())
+                        resource["Layout"] = EncodeEventLayout(r.Layout);
+                    n["Resources"].push_back(resource);
+                }
                 n["Target"]            = int(p.Target);
                 n["GLSL"]              = p.GLSL;
                 n["SpirV"]             = p.SpirV;
@@ -1463,6 +2065,7 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                 {
                     YAML::Node a;
                     a["Op"]                 = i.Op;
+                    a["Resource"]           = i.Resource;
                     a["Type"]               = int(i.Kind);
                     a["Args"]               = i.Args;
                     a["Literal"]            = EncodeValue(i.Literal);
@@ -1485,11 +2088,30 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
             for (const auto& n : in)
             {
                 Program p;
-                p.StageKind = Stage(n["Stage"].as<int>());
-                p.Target    = SimTarget(n["Target"].as<int>());
-                p.GLSL      = n["GLSL"].as<std::string>();
-                p.SpirV     = n["SpirV"].as<std::vector<uint32_t>>();
-                if (p.StageKind > Stage::ParticleUpdate || p.Target > SimTarget::GPU)
+                p.StageKind         = Stage(n["Stage"].as<int>());
+                p.Handler           = n["Handler"].as<bool>(false);
+                p.Mode              = EventMode(n["Mode"].as<int>(0));
+                p.SpawnNumber       = n["SpawnNumber"].as<uint32_t>(1);
+                p.MaxEventsPerFrame = n["MaxEventsPerFrame"].as<uint32_t>(UINT32_MAX);
+                for (const auto& node : n["Resources"])
+                {
+                    ResourceBinding resource;
+                    resource.Kind          = node["Kind"].as<std::string>();
+                    resource.Channel       = node["Channel"].as<std::string>();
+                    resource.SourceHandle  = node["SourceHandle"].as<std::string>();
+                    resource.Source        = node["Source"].as<uint32_t>();
+                    resource.Binding       = node["Binding"].as<uint32_t>();
+                    resource.Capacity      = node["Capacity"].as<uint32_t>();
+                    resource.IDOffset      = node["IDOffset"].as<uint32_t>();
+                    resource.PositionSpace = Space(node["Space"].as<int>());
+                    if (node["Layout"])
+                        resource.Layout = DecodeEventLayout(node["Layout"]);
+                    p.Resources.push_back(resource);
+                }
+                p.Target = SimTarget(n["Target"].as<int>());
+                p.GLSL   = n["GLSL"].as<std::string>();
+                p.SpirV  = n["SpirV"].as<std::vector<uint32_t>>();
+                if (p.StageKind > Stage::EventHandler || p.Target > SimTarget::GPU)
                     throw std::invalid_argument("Invalid VFX product stage");
                 for (const auto& a : n["Parameters"])
                 {
@@ -1510,8 +2132,9 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                 for (const auto& a : n["Code"])
                 {
                     Instruction i;
-                    i.Op   = a["Op"].as<std::string>();
-                    auto t = a["Type"].as<int>();
+                    i.Op       = a["Op"].as<std::string>();
+                    i.Resource = a["Resource"].as<uint32_t>(0);
+                    auto t     = a["Type"].as<int>();
                     if (t < 0 || t > int(Type::Position))
                         throw std::invalid_argument("Invalid VFX bytecode type");
                     i.Kind = Type(t);
@@ -1522,7 +2145,8 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                     i.Literal       = DecodeValue(a["Literal"]);
                     i.PositionSpace = Space(a["PositionSpace"].as<int>(0));
                     i.Parameter     = a["Parameter"].as<uint32_t>();
-                    if ((i.Op == "Get" || i.Op == "Set") && i.Parameter >= p.Parameters.size())
+                    if ((i.Op == "Get" || i.Op == "Set" || i.Op == "SpawnBoundary") &&
+                        i.Parameter >= p.Parameters.size())
                         throw std::invalid_argument("Invalid VFX bytecode parameter");
                     i.RandomKey          = a["RandomKey"].as<uint32_t>();
                     i.Interface          = DecodeInterface(a["Interface"]);
@@ -1553,14 +2177,28 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
     YAML::Node EncodeProduct(const CompiledSystem& p)
     {
         YAML::Node n;
-        n["VfxProductVersion"] = 1;
+        n["VfxProductVersion"] = 2;
+        n["TickOrder"]         = p.TickOrder;
         n["Settings"]          = EncodeSystem(p.Settings);
         n["Programs"]          = ProgramsNode(p.Programs);
         n["Emitters"]          = YAML::Node(YAML::NodeType::Sequence);
         for (const auto& e : p.Emitters)
         {
             YAML::Node a;
-            a["Settings"]   = EncodeEmitter(e.Settings);
+            a["Settings"]     = EncodeEmitter(e.Settings);
+            a["Handle"]       = e.Handle;
+            a["EventLayouts"] = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& [name, layout] : e.EventLayouts)
+                a["EventLayouts"].push_back(EncodeEventLayout(layout));
+            a["Handlers"] = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& h : e.Handlers)
+            {
+                YAML::Node handler;
+                handler["Guid"]     = h.Settings.Guid;
+                handler["Source"]   = h.Source;
+                handler["Programs"] = ProgramsNode({{Stage::EventHandler, h.Bytecode}});
+                a["Handlers"].push_back(handler);
+            }
             a["Programs"]   = ProgramsNode(e.Programs);
             a["Attributes"] = YAML::Node(YAML::NodeType::Sequence);
             for (const auto& v : e.Attributes)
@@ -1577,15 +2215,36 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
     }
     CompiledSystem DecodeProduct(const YAML::Node& n)
     {
-        if (n["VfxProductVersion"].as<int>() != 1)
-            throw std::invalid_argument("Unsupported VFX product version");
+        if (n["VfxProductVersion"].as<int>() != 2)
+            throw std::invalid_argument("Unsupported VFX product version; reimport with VFX product version 2");
         CompiledSystem p;
-        p.Settings = DecodeSystem(n["Settings"]);
-        p.Programs = ReadPrograms(n["Programs"]);
+        p.Settings  = DecodeSystem(n["Settings"]);
+        p.TickOrder = n["TickOrder"].as<std::vector<uint32_t>>();
+        p.Programs  = ReadPrograms(n["Programs"]);
         for (const auto& a : n["Emitters"])
         {
             CompiledEmitter e;
             e.Settings = DecodeEmitter(a["Settings"]);
+            e.Handle   = a["Handle"].as<std::string>();
+            for (const auto& l : a["EventLayouts"])
+            {
+                auto layout                 = DecodeEventLayout(l);
+                e.EventLayouts[layout.Name] = layout;
+            }
+            for (const auto& h : a["Handlers"])
+            {
+                CompiledHandler handler;
+                auto            guid = h["Guid"].as<std::string>();
+                auto at = std::find_if(e.Settings.Handlers.begin(), e.Settings.Handlers.end(), [&](const auto& x) {
+                    return x.Guid == guid;
+                });
+                if (at == e.Settings.Handlers.end())
+                    throw std::invalid_argument("Invalid VFX product handler GUID");
+                handler.Settings = *at;
+                handler.Source   = h["Source"].as<uint32_t>();
+                handler.Bytecode = ReadPrograms(h["Programs"]).at(Stage::EventHandler);
+                e.Handlers.push_back(handler);
+            }
             e.Programs = ReadPrograms(a["Programs"]);
             std::set<std::string> names;
             for (const auto& b : a["Attributes"])
@@ -1601,6 +2260,16 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
             }
             p.Emitters.push_back(e);
         }
+        std::set<uint32_t> order;
+        for (auto index : p.TickOrder)
+            if (index >= p.Emitters.size() || !order.insert(index).second)
+                throw std::invalid_argument("Invalid VFX product tick order");
+        if (order.size() != p.Emitters.size())
+            throw std::invalid_argument("Incomplete VFX product tick order");
+        for (const auto& e : p.Emitters)
+            for (const auto& h : e.Handlers)
+                if (h.Source >= p.Emitters.size())
+                    throw std::invalid_argument("Invalid VFX product handler source");
         return p;
     }
 } // namespace Kans::Vfx
