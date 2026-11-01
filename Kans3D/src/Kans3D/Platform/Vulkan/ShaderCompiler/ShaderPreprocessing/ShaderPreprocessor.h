@@ -5,6 +5,8 @@
 #include <vulkan/vulkan.h>
 
 #include <filesystem>
+#include <sstream>
+#include <stdexcept>
 #include <unordered_set>
 namespace Kans
 {
@@ -149,85 +151,54 @@ namespace Kans
     template<typename ShaderUtils::ShaderLang Lang>
     std::map<VkShaderStageFlagBits, std::string> ShaderPreprocessor::PreprocessShader(const std::string& source)
     {
-        // get the source code without explanatory
-        std::stringstream preFilterSource;
-        PreprocessUtils::CopyWithoutComments(
-            source.begin(), source.end(), std::ostream_iterator<char>(preFilterSource));
-        std::string newSource = preFilterSource.str();
-
-        std::map<VkShaderStageFlagBits, std::string>           shaderSources;
-        std::vector<std::tuple<VkShaderStageFlagBits, size_t>> shaderStagePositions;
-
-        size_t startOfStage = 0;
-        size_t pos          = newSource.find('#');
-
-        if constexpr (Lang == ShaderUtils::ShaderLang::GLSL)
+        std::stringstream filtered;
+        PreprocessUtils::CopyWithoutComments(source.begin(), source.end(), std::ostream_iterator<char>(filtered));
+        std::istringstream                           lines(filtered.str());
+        std::map<VkShaderStageFlagBits, std::string> stages;
+        VkShaderStageFlagBits                        current = VK_SHADER_STAGE_FLAG_BITS_MAX_ENUM;
+        std::string                                  text, line;
+        auto                                         flush = [&] {
+            if (current == VK_SHADER_STAGE_FLAG_BITS_MAX_ENUM)
+                return;
+            if (!stages.emplace(current, text).second)
+                throw std::invalid_argument("Duplicate shader stage");
+            text.clear();
+            current = VK_SHADER_STAGE_FLAG_BITS_MAX_ENUM;
+        };
+        while (std::getline(lines, line))
         {
-            const size_t                    endofline = newSource.find_first_of("\r\n", pos);
-            const std::vector<std::string>& tokens    = Utils::SplitString(newSource.substr(pos, endofline - pos));
-            CORE_ASSERT(tokens.size() > 3, "illegal version");
-            CORE_INFO("GLSL sahder request Version : {0}", tokens[2]);
-        }
-
-        while (pos != std::string::npos)
-        {
-            const size_t                    endofline = newSource.find_first_of("\r\n", pos);
-            const std::vector<std::string>& tokens    = Utils::SplitString(newSource.substr(pos, endofline - pos));
-
-            size_t index = 1; // skip #
-            if (tokens[index] == "pragma")
+            const auto first     = line.find_first_not_of(" \t\r");
+            const auto directive = first == std::string::npos ? std::string() : line.substr(first);
+            const bool typed     = directive.rfind("#type", 0) == 0;
+            const auto pragma    = directive.find("stage");
+            const bool staged    = directive.rfind("#pragma", 0) == 0 && pragma != std::string::npos;
+            if (typed || staged)
             {
-                ++index;
-                if (tokens[index] == "stage")
-                {
-                    ++index;
-                    CORE_ASSERT(tokens[index] == ":", "Stage pragma is invalid");
-                    ++index;
-                    const std::string_view stage = tokens[index];
-                    CORE_ASSERT(stage == "vert" || stage == "comp" || stage == "frag" || stage == "geo",
-                                "invalid shader type : {0} ",
-                                tokens[index]);
-                    auto shaderStage = ShaderUtils::ShaderTypeFromString(stage);
-                    shaderStagePositions.push_back({shaderStage, startOfStage});
-                }
+                if (typed || current != VK_SHADER_STAGE_FLAG_BITS_MAX_ENUM)
+                    flush();
+                auto       name  = directive.substr(typed ? 5 : pragma + 5);
+                const auto begin = name.find_first_not_of(" :\t");
+                name             = begin == std::string::npos ? "" : name.substr(begin);
+                name             = name.substr(0, name.find_first_of(" \t\r"));
+                current          = name == "compute" || name == "comp"  ? VK_SHADER_STAGE_COMPUTE_BIT :
+                                   name == "vertex" || name == "vert"   ? VK_SHADER_STAGE_VERTEX_BIT :
+                                   name == "fragment" || name == "frag" ? VK_SHADER_STAGE_FRAGMENT_BIT :
+                                   name == "geometry" || name == "geo"  ? VK_SHADER_STAGE_GEOMETRY_BIT :
+                                                                          VK_SHADER_STAGE_FLAG_BITS_MAX_ENUM;
+                if (current == VK_SHADER_STAGE_FLAG_BITS_MAX_ENUM)
+                    throw std::invalid_argument("Unknown shader stage: " + name);
+                continue;
             }
-            else if constexpr (Lang == ShaderUtils::ShaderLang::GLSL)
-            {
-                if (tokens[index] == "version")
-                {
-                    startOfStage = pos;
-                    ++index;
-                }
-            }
-            pos = newSource.find('#', pos + 1);
+            if (directive.rfind("#version", 0) == 0 && text.find("#version") != std::string::npos)
+                flush();
+            text += line + "\n";
         }
-
-        // split shader source
-        CORE_ASSERT(shaderStagePositions.size(), "preprocesse shader fail,There are no known stages defined in file ");
-
-        if (shaderStagePositions.size() > 1)
-        {
-
-            // Get stages in the middle
-            for (size_t stageIndex = 0; stageIndex < shaderStagePositions.size() - 1; stageIndex++)
-            {
-                auto& [Pshaderstage, Pstagepos] = shaderStagePositions[stageIndex];
-                auto& [Nshaderstage, Nstagepos] = shaderStagePositions[stageIndex + 1];
-
-                const std::string stageStr  = newSource.substr(Pstagepos, Nstagepos - Pstagepos);
-                shaderSources[Pshaderstage] = stageStr;
-            }
-
-            // Get last stage
-            auto& [shaderstage, stagepos] = shaderStagePositions[shaderStagePositions.size() - 1];
-            shaderSources[shaderstage]    = newSource.substr(stagepos, newSource.size() - stagepos);
-        }
-        else
-        {
-            auto& [shaderstage, stagepos] = shaderStagePositions[0];
-            shaderSources[shaderstage]    = newSource;
-        }
-        return shaderSources;
+        flush();
+        if (stages.empty())
+            throw std::invalid_argument("Shader source has no stage declaration");
+        if (stages.count(VK_SHADER_STAGE_COMPUTE_BIT) && stages.size() != 1)
+            throw std::invalid_argument("Compute shader cannot mix with graphics stages");
+        return stages;
     }
 
     template<>

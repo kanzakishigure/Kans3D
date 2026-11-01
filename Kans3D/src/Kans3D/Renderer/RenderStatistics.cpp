@@ -60,7 +60,7 @@ namespace Kans
                     const auto&  pass  = *ordered[i];
                     const double start = double((ticks[i * 2] - origin) & mask) * scale;
                     const double end   = start + double((ticks[i * 2 + 1] - ticks[i * 2]) & mask) * scale;
-                    completed.Passes.push_back({pass.ID, pass.Name, pass.ExecutionIndex, start, end});
+                    completed.Passes.push_back({pass.ID, pass.Name, pass.ExecutionIndex, start, end, pass.Kind});
                     completed.PassMilliseconds += end - start;
                 }
                 m_Free.emplace_back(ticks.size(), std::move(pending.Queries));

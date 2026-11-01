@@ -22,6 +22,10 @@ namespace Kans
                                                                              const std::string& name,
                                                                              const std::string& vertex,
                                                                              const std::string& fragment);
+    const InternalShaderData& GetInternalComputeShaderData(const std::string& name, const std::string& source);
+    const InternalShaderData& GetBuiltinComputeShaderData(const std::string& name);
+    RenderHardware::Handle<RenderHardware::Shader> CreateBuiltinComputeShader(RenderHardware::Device&,
+                                                                              const std::string& name);
     glm::mat4 DeviceProjection(const glm::mat4& projection, RenderHardware::CoordinateConventions coordinates);
     // Render-to-texture projection: canonical UV V=0 maps to stored row zero,
     // independently of the display framebuffer origin.

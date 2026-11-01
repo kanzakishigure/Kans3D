@@ -3,6 +3,7 @@
 #include <mutex>
 #include <tuple>
 #include "Kans3D/Asset/Importer/ShaderImporter.h"
+#include "ComputeShaders.h"
 #include "Skinning.h"
 
 namespace Kans
@@ -67,6 +68,44 @@ namespace Kans
         if (auto* error = std::get_if<AssetError>(&converted))
             throw std::runtime_error(error->Message);
         auto shader = device.CreateShader(std::get<ShaderData>(converted));
+        cache[key]  = shader;
+        return shader;
+    }
+
+    const InternalShaderData& GetInternalComputeShaderData(const std::string& name, const std::string& source)
+    {
+        static std::mutex                                                        mutex;
+        static std::map<std::pair<std::string, std::string>, InternalShaderData> cache;
+        const std::lock_guard<std::mutex>                                        lock(mutex);
+        const auto                                                               key = std::make_pair(name, source);
+        if (auto found = cache.find(key); found != cache.end())
+            return found->second;
+        auto product =
+            CompileEmbeddedShaderProgram("KansShaderProgram 1\ncompute=Internal.comp\n", {{"Internal.comp", source}});
+        if (auto* error = std::get_if<AssetError>(&product))
+            error->Message = "Compute shader '" + name + "': " + error->Message;
+        return cache.emplace(key, std::move(product)).first->second;
+    }
+    const InternalShaderData& GetBuiltinComputeShaderData(const std::string& name)
+    {
+        if (name == "CompactAlive")
+            return GetInternalComputeShaderData(name, ComputeShaders::CompactAlive);
+        if (name == "CompactAliveFinalize")
+            return GetInternalComputeShaderData(name, ComputeShaders::CompactAliveFinalize);
+        throw std::invalid_argument("Unknown builtin compute shader: " + name);
+    }
+    RenderHardware::Handle<RenderHardware::Shader> CreateBuiltinComputeShader(RenderHardware::Device& device,
+                                                                              const std::string&      name)
+    {
+        static std::map<std::pair<const RenderHardware::Device*, std::string>, std::weak_ptr<RenderHardware::Shader>>
+                   cache;
+        const auto key = std::make_pair(&device, name);
+        if (auto shader = cache[key].lock())
+            return shader;
+        const auto& data = GetBuiltinComputeShaderData(name);
+        if (const auto* error = std::get_if<AssetError>(&data))
+            throw std::runtime_error(error->Message);
+        auto shader = device.CreateShader(std::get<ShaderData>(data));
         cache[key]  = shader;
         return shader;
     }

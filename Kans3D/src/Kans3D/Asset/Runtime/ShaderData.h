@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <map>
 #include <variant>
 #include <vector>
@@ -27,12 +28,18 @@ namespace Kans
     enum class ShaderBindingKind
     {
         UniformBuffer,
-        CombinedImageSampler
+        CombinedImageSampler,
+        StorageBuffer,
+        ReadOnlyStorageBuffer,
+        StorageImage,
+        SampledImage,
+        Sampler
     };
     enum class ShaderImageDimension
     {
         Texture2D,
-        Cube
+        Cube,
+        Texture3D
     };
     enum class ShaderUniformType
     {
@@ -79,6 +86,8 @@ namespace Kans
         ShaderProductStage                   Stage;
         std::vector<ShaderResourceBinding>   Bindings;
         std::vector<ShaderInterfaceVariable> Inputs, Outputs;
+        uint32_t                             PushConstantBytes = 0;
+        std::array<uint32_t, 3>              WorkgroupSize {};
     };
     // Default values of material parameters (uniform members by name), declared by
     // the Shader source; scalars in declaration order, as in MaterialSource.

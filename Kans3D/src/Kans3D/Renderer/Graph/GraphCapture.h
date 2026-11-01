@@ -40,6 +40,8 @@ namespace Kans
     {
         uint64_t                   Frame = 0;
         std::vector<CapturedImage> Images;
+        std::vector<CompiledGraphResource> Resources;
+        std::vector<CompiledGraphPass>     Passes;
         const CapturedImage*       Find(CaptureSelection selection, bool fullResolution = false) const;
     };
     struct CaptureDisplaySettings

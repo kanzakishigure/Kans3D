@@ -8,6 +8,12 @@
 
 namespace Kans
 {
+    enum class GraphPassKind
+    {
+        Graphics,
+        Compute,
+        Transfer
+    };
     using GraphDebugID = uint64_t;
     // Fixed FNV-1a, independent of std::hash, declaration indices and physical alias slots.
     GraphDebugID  GraphNameID(const std::string& name, bool resource = false, uint32_t occurrence = 0);
@@ -23,6 +29,7 @@ namespace Kans
         bool                                             Culled         = true;
         std::optional<double>                            CpuRecordMilliseconds, GpuMilliseconds;
         std::optional<RenderHardware::CommandStatistics> Draws;
+        GraphPassKind                                    Kind = GraphPassKind::Graphics;
     };
     struct GpuPassTiming
     {
@@ -31,6 +38,7 @@ namespace Kans
         uint32_t     ExecutionIndex = 0;
         // Relative to the first executed pass of SourceFrame, in milliseconds.
         double BeginMilliseconds = 0, EndMilliseconds = 0;
+        GraphPassKind Kind = GraphPassKind::Graphics;
     };
     struct CompletedGpuFrame
     {

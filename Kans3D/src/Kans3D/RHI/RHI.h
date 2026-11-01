@@ -24,7 +24,8 @@ namespace Kans::RenderHardware
         Uniform         = 4,
         Storage         = 8,
         CopySource      = 16,
-        CopyDestination = 32
+        CopyDestination = 32,
+        Indirect        = 64
     };
     enum class TextureUsage : uint32_t
     {
@@ -32,7 +33,8 @@ namespace Kans::RenderHardware
         RenderTarget    = 2,
         DepthStencil    = 4,
         CopySource      = 8,
-        CopyDestination = 16
+        CopyDestination = 16,
+        Storage         = 32
     };
     constexpr BufferUsage  operator|(BufferUsage a, BufferUsage b) { return BufferUsage(uint32_t(a) | uint32_t(b)); }
     constexpr TextureUsage operator|(TextureUsage a, TextureUsage b) { return TextureUsage(uint32_t(a) | uint32_t(b)); }
@@ -52,12 +54,15 @@ namespace Kans::RenderHardware
         R32Uint,
         R8Unorm,
         Depth32Float,
-        Depth24Stencil8
+        Depth24Stencil8,
+        R32Float,
+        RG16Float
     };
     enum class TextureDimension
     {
         Texture2D,
-        Cube
+        Cube,
+        Texture3D
     };
     enum class Filter
     {
@@ -76,7 +81,9 @@ namespace Kans::RenderHardware
         SampledTexture,
         Sampler,
         CombinedTextureSampler,
-        StorageBuffer
+        StorageBuffer,
+        ReadOnlyStorageBuffer,
+        StorageTexture
     };
     enum class VertexFormat
     {
@@ -220,6 +227,7 @@ namespace Kans::RenderHardware
         TextureUsage     Usage       = TextureUsage::Sampled;
         uint32_t         ArrayLayers = 1; // Cube has six faces; cube arrays are not supported.
         uint32_t         Samples     = 1; // 1, 2, 4 or 8. Multisampled images have one mip and are 2D.
+        uint32_t         Depth       = 1; // 3D extent; array layers must be one for Texture3D.
     };
     struct SamplerDesc
     {
@@ -256,6 +264,7 @@ namespace Kans::RenderHardware
     {
     public:
         virtual uint32_t GetPushConstantBytes() const = 0;
+        virtual std::array<uint32_t, 3> GetWorkgroupSize() const { return {0, 0, 0}; }
     };
     struct BindGroupLayoutEntry
     {
@@ -361,6 +370,27 @@ namespace Kans::RenderHardware
     public:
         virtual const PipelineDesc& GetDesc() const = 0;
     };
+    struct ComputePipelineDesc
+    {
+        Handle<Shader>                       Program;
+        std::vector<Handle<BindGroupLayout>> GroupLayouts;
+        uint32_t                             PushConstantBytes = 0;
+    };
+    class ComputePipeline : public Resource
+    {
+    public:
+        virtual const ComputePipelineDesc& GetDesc() const = 0;
+    };
+    struct ComputeLimits
+    {
+        std::array<uint32_t, 3> MaxGroupCount {}, MaxGroupSize {};
+        uint32_t                MaxInvocations = 0, SharedMemoryBytes = 0;
+    };
+    struct IndirectCapabilities
+    {
+        bool     MultiDraw = false, DrawCount = false;
+        uint32_t MaxDrawCount = 1;
+    };
     struct ColorAttachment
     {
         Handle<Texture>      Target;
@@ -405,7 +435,8 @@ namespace Kans::RenderHardware
     };
     struct CommandStatistics
     {
-        uint64_t DrawCalls = 0, Triangles = 0; // Includes instances; lines/points contribute no triangles.
+        uint64_t DrawCalls = 0, Triangles = 0,
+                 IndirectDraws = 0; // Includes instances; lines/points contribute no triangles.
     };
     class TimestampQueryPool : public Resource
     {
@@ -442,6 +473,46 @@ namespace Kans::RenderHardware
                                               size_t = 0)
         {
             throw std::runtime_error("Texel readback unavailable");
+        }
+        virtual void BindComputePipeline(const Handle<ComputePipeline>&)
+        {
+            throw std::runtime_error("Compute unavailable");
+        }
+        virtual void Dispatch(uint32_t, uint32_t = 1, uint32_t = 1) { throw std::runtime_error("Compute unavailable"); }
+        virtual void DispatchIndirect(const Handle<Buffer>&, size_t = 0)
+        {
+            throw std::runtime_error("Compute unavailable");
+        }
+        virtual void DrawIndirect(const Handle<Buffer>&, size_t = 0, uint32_t = 1, uint32_t = 16)
+        {
+            throw std::runtime_error("Indirect draw unavailable");
+        }
+        virtual void DrawIndexedIndirect(const Handle<Buffer>&, size_t = 0, uint32_t = 1, uint32_t = 20)
+        {
+            throw std::runtime_error("Indirect draw unavailable");
+        }
+        virtual void
+        DrawIndirectCount(const Handle<Buffer>&, size_t, const Handle<Buffer>&, size_t, uint32_t, uint32_t = 16)
+        {
+            throw std::runtime_error("Indirect count unavailable");
+        }
+        virtual void
+        DrawIndexedIndirectCount(const Handle<Buffer>&, size_t, const Handle<Buffer>&, size_t, uint32_t, uint32_t = 20)
+        {
+            throw std::runtime_error("Indirect count unavailable");
+        }
+        virtual void FillBuffer(const Handle<Buffer>&, size_t, size_t, uint32_t)
+        {
+            throw std::runtime_error("Buffer fill unavailable");
+        }
+        virtual void UpdateBuffer(const Handle<Buffer>&, size_t, const void*, size_t)
+        {
+            throw std::runtime_error("Buffer update unavailable");
+        }
+        // Clear all mips/layers of a colour storage image; integer formats use ClearUint.
+        virtual void ClearStorageTexture(const Handle<Texture>&, const std::array<float, 4>& = {}, uint32_t = 0)
+        {
+            throw std::runtime_error("Storage clear unavailable");
         }
         virtual void BeginRendering(const RenderingDesc& desc)                                        = 0;
         virtual void EndRendering()                                                                   = 0;
@@ -501,6 +572,14 @@ namespace Kans::RenderHardware
         // Bit mask of supported sample counts (bits 1/2/4/8), for this format, usage and dimension.
         // Samples is ignored. Unsupported backends report single-sample only.
         virtual uint32_t GetSupportedSampleCounts(const TextureDesc&) const { return 1; }
+        virtual ComputeLimits           GetComputeLimits() const { return {}; }
+        virtual IndirectCapabilities    GetIndirectCapabilities() const { return {}; }
+        virtual bool                    SupportsVertexStorageWrites() const { return false; }
+        virtual bool                    SupportsFragmentStorageWrites() const { return false; }
+        virtual Handle<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc&)
+        {
+            throw std::runtime_error("Compute unavailable");
+        }
         virtual bool     SupportsSampleRateShading() const { return false; }
         // Required byte alignment for uniform/storage buffer binding offsets.
         virtual size_t                  GetBufferBindingAlignment(BindingType type) const      = 0;

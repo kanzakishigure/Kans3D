@@ -34,6 +34,7 @@ namespace Kans::RenderHardware
             std::unordered_map<std::string, std::weak_ptr<VKSet>> DescriptorCache;
             uint64_t        PipelineCreations = 0, DescriptorAllocations = 0, GroupCreationNanoseconds = 0;
             VulkanTestProbes::BufferWriteObserver BufferWrites;
+            VulkanTestProbes::BarrierObserver     Barriers;
             DeviceStats     Stats;
             bool            InFrame = false, Alive = true;
             std::thread::id Thread = std::this_thread::get_id();
@@ -132,13 +133,14 @@ namespace Kans::RenderHardware
                                                       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 4096},
                                                       {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 4096},
                                                       {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096},
+                                                      {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4096},
                                                       {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 4096},
                                                       {VK_DESCRIPTOR_TYPE_SAMPLER, 4096},
                                                       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096}};
                 VkDescriptorPoolCreateInfo pool {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
                 pool.flags         = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
                 pool.maxSets       = 1024;
-                pool.poolSizeCount = 7;
+                pool.poolSizeCount = 8;
                 pool.pPoolSizes    = sizes;
                 VkDescriptorPool native;
                 Check(vkCreateDescriptorPool(Native.Logical, &pool, nullptr, &native));
@@ -199,10 +201,12 @@ namespace Kans::RenderHardware
             size_t        PendingWrites = 0;
             VKBuffer(std::shared_ptr<State> owner, BufferDesc desc) : Memory(std::move(owner)), Desc(desc)
             {
-                Require(desc.Bytes && uint32_t(desc.Usage) && !(uint32_t(desc.Usage) & ~63u),
+                Require(desc.Bytes && uint32_t(desc.Usage) && !(uint32_t(desc.Usage) & ~127u),
                         "Invalid buffer description");
                 VkBufferCreateInfo buffer {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
                 buffer.size = desc.Bytes;
+                if (Has(desc.Usage, BufferUsage::Indirect))
+                    buffer.usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
                 if (Has(desc.Usage, BufferUsage::Vertex))
                     buffer.usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
                 if (Has(desc.Usage, BufferUsage::Index))
@@ -317,16 +321,19 @@ namespace Kans::RenderHardware
         };
         uint32_t Width(const TextureDesc& d, uint32_t mip) { return std::max(1u, d.Width >> mip); }
         uint32_t Height(const TextureDesc& d, uint32_t mip) { return std::max(1u, d.Height >> mip); }
+        uint32_t Depth(const TextureDesc& d, uint32_t mip) { return std::max(1u, d.Depth >> mip); }
         size_t   TextureBytes(const TextureDesc& d, TextureSubresource sub)
         {
             Require(sub.Mip < d.MipLevels && sub.Face < (d.Dimension == TextureDimension::Cube ? 6u : d.ArrayLayers),
                     "Invalid texture subresource");
-            return size_t(Width(d, sub.Mip)) * Height(d, sub.Mip) * Info(d.PixelFormat).Bytes;
+            return size_t(Width(d, sub.Mip)) * Height(d, sub.Mip) * Depth(d, sub.Mip) * Info(d.PixelFormat).Bytes;
         }
         uint32_t SupportedSamples(const Context& context, const TextureDesc& desc)
         {
             auto              f     = Info(desc.PixelFormat);
             VkImageUsageFlags usage = 0;
+            if (Has(desc.Usage, TextureUsage::Storage))
+                usage |= VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
             if (Has(desc.Usage, TextureUsage::Sampled))
                 usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
             if (Has(desc.Usage, TextureUsage::RenderTarget))
@@ -343,7 +350,7 @@ namespace Kans::RenderHardware
             if (vkGetPhysicalDeviceImageFormatProperties(
                     context.Physical,
                     f.Native,
-                    VK_IMAGE_TYPE_2D,
+                    desc.Dimension == TextureDimension::Texture3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D,
                     VK_IMAGE_TILING_OPTIMAL,
                     usage,
                     desc.Dimension == TextureDimension::Cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0,
@@ -414,7 +421,8 @@ namespace Kans::RenderHardware
                         return view.Native;
                 VkImageViewCreateInfo view {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
                 view.image    = Native;
-                view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                view.viewType =
+                    Desc.Dimension == TextureDimension::Texture3D ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
                 view.format   = Info(Desc.PixelFormat).Native;
                 auto mask =
                     aspect == TextureAspect::Stencil ?
@@ -430,32 +438,51 @@ namespace Kans::RenderHardware
             size_t                   Index(TextureSubresource sub) const { return sub.Face * Desc.MipLevels + sub.Mip; }
             VKTexture(std::shared_ptr<State> owner, TextureDesc desc) : Memory(std::move(owner)), Desc(desc)
             {
-                Require(desc.Width && desc.Height && desc.MipLevels && desc.ArrayLayers &&
+                Require(desc.Width && desc.Height && desc.Depth && desc.MipLevels && desc.ArrayLayers &&
+                            (desc.Dimension == TextureDimension::Texture3D ?
+                                 (desc.ArrayLayers == 1 && desc.Samples == 1 &&
+                                  !Has(desc.Usage, TextureUsage::RenderTarget) &&
+                                  !Has(desc.Usage, TextureUsage::DepthStencil)) :
+                                 desc.Depth == 1) &&
                             (desc.Dimension != TextureDimension::Cube || desc.ArrayLayers == 1) &&
-                            uint32_t(desc.Usage) && !(uint32_t(desc.Usage) & ~31u),
+                            uint32_t(desc.Usage) && !(uint32_t(desc.Usage) & ~63u),
                         "Invalid texture description");
+                auto f = Info(desc.PixelFormat);
+                if (Has(desc.Usage, TextureUsage::Storage))
+                {
+                    VkPhysicalDeviceFeatures features {};
+                    vkGetPhysicalDeviceFeatures(Memory.Owner->Native.Physical, &features);
+                    Require(desc.PixelFormat != Format::RG16Float || features.shaderStorageImageExtendedFormats,
+                            "Storage format needs shaderStorageImageExtendedFormats");
+                    VkFormatProperties properties {};
+                    vkGetPhysicalDeviceFormatProperties(Memory.Owner->Native.Physical, f.Native, &properties);
+                    Require(!f.Depth() && desc.Samples == 1 &&
+                                (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT),
+                            "Storage texture format is unsupported by device");
+                }
                 Require((desc.Samples == 1 || desc.Samples == 2 || desc.Samples == 4 || desc.Samples == 8) &&
                             (SupportedSamples(Memory.Owner->Native, desc) & desc.Samples),
                         "Unsupported texture sample count");
                 uint32_t maxMips = 1;
-                for (uint32_t size = std::max(desc.Width, desc.Height); size > 1; size >>= 1)
+                for (uint32_t size = std::max({desc.Width, desc.Height, desc.Depth}); size > 1; size >>= 1)
                     ++maxMips;
                 Require(desc.MipLevels <= maxMips &&
                             (desc.Dimension != TextureDimension::Cube || desc.Width == desc.Height),
                         "Invalid texture mip count or cube extent");
-                auto f = Info(desc.PixelFormat);
                 Require((!Has(desc.Usage, TextureUsage::RenderTarget) || !f.Depth()) &&
                             (!Has(desc.Usage, TextureUsage::DepthStencil) || f.Depth()),
                         "Attachment format/usage mismatch");
                 VkImageCreateInfo image {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
                 image.flags       = desc.Dimension == TextureDimension::Cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
-                image.imageType   = VK_IMAGE_TYPE_2D;
+                image.imageType   = desc.Dimension == TextureDimension::Texture3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
                 image.format      = f.Native;
-                image.extent      = {desc.Width, desc.Height, 1};
+                image.extent      = {desc.Width, desc.Height, desc.Depth};
                 image.mipLevels   = desc.MipLevels;
                 image.arrayLayers = desc.Dimension == TextureDimension::Cube ? 6 : desc.ArrayLayers;
                 image.samples     = VkSampleCountFlagBits(desc.Samples);
                 image.tiling      = VK_IMAGE_TILING_OPTIMAL;
+                if (Has(desc.Usage, TextureUsage::Storage))
+                    image.usage |= VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
                 if (Has(desc.Usage, TextureUsage::Sampled))
                     image.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
                 if (Has(desc.Usage, TextureUsage::RenderTarget))
@@ -474,6 +501,10 @@ namespace Kans::RenderHardware
                                                                image.usage,
                                                                image.flags,
                                                                &properties));
+                Require(desc.Width <= properties.maxExtent.width && desc.Height <= properties.maxExtent.height &&
+                            desc.Depth <= properties.maxExtent.depth && desc.ArrayLayers <= properties.maxArrayLayers &&
+                            desc.MipLevels <= properties.maxMipLevels,
+                        "Texture dimensions exceed device format limits");
                 VmaAllocationCreateInfo allocation {};
                 allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
                 auto allocator   = Memory.Owner->Native.Allocator;
@@ -484,7 +515,7 @@ namespace Kans::RenderHardware
                 {
                     Last.resize(size_t(image.arrayLayers) * image.mipLevels);
                     if (image.usage & (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                       VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))
+                                       VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT))
                     {
                         Views.resize(Last.size(), VK_NULL_HANDLE);
                         for (uint32_t face = 0; face < image.arrayLayers; ++face)
@@ -492,7 +523,8 @@ namespace Kans::RenderHardware
                             {
                                 VkImageViewCreateInfo view {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
                                 view.image            = Native;
-                                view.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+                                view.viewType = desc.Dimension == TextureDimension::Texture3D ? VK_IMAGE_VIEW_TYPE_3D :
+                                                                                                VK_IMAGE_VIEW_TYPE_2D;
                                 view.format           = f.Native;
                                 view.subresourceRange = {f.Aspects, mip, 1, face, 1};
                                 Check(vkCreateImageView(device, &view, nullptr, &Views[Index({mip, face})]));
@@ -503,6 +535,8 @@ namespace Kans::RenderHardware
                         VkImageViewCreateInfo view {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
                         view.image = Native;
                         view.viewType =
+                            desc.Dimension == TextureDimension::Texture3D ?
+                                VK_IMAGE_VIEW_TYPE_3D :
                             desc.Dimension == TextureDimension::Cube ?
                                 VK_IMAGE_VIEW_TYPE_CUBE :
                                 (desc.ArrayLayers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D);
@@ -627,6 +661,8 @@ namespace Kans::RenderHardware
                 dependency.pBufferMemoryBarriers    = BufferBarriers.data();
                 dependency.imageMemoryBarrierCount  = uint32_t(ImageBarriers.size());
                 dependency.pImageMemoryBarriers     = ImageBarriers.data();
+                if (Owner->Barriers)
+                    Owner->Barriers(BufferBarriers, ImageBarriers);
                 vkCmdPipelineBarrier2(Native, &dependency);
                 BufferBarriers.clear();
                 ImageBarriers.clear();
@@ -674,6 +710,8 @@ namespace Kans::RenderHardware
             }
             void Use(VKBuffer& buffer, Access next)
             {
+                // Whole-buffer tracking is conservative across subranges. Each command unions
+                // all aliased bindings before Use, so a slot cannot hide another slot's write.
                 if (!Writes(buffer.Last.Mask) && !Writes(next.Mask))
                 {
                     buffer.Last.Stage |= next.Stage;
@@ -748,7 +786,8 @@ namespace Kans::RenderHardware
                 VkBufferImageCopy region {};
                 region.bufferOffset     = offset;
                 region.imageSubresource = {aspect, sub.Mip, sub.Face, 1};
-                region.imageExtent      = {Width(texture.Desc, sub.Mip), Height(texture.Desc, sub.Mip), 1};
+                region.imageExtent      = {
+                    Width(texture.Desc, sub.Mip), Height(texture.Desc, sub.Mip), Depth(texture.Desc, sub.Mip)};
                 if (upload)
                     vkCmdCopyBufferToImage(
                         Native, buffer.Native, texture.Native, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
@@ -836,7 +875,8 @@ namespace Kans::RenderHardware
         {
             std::map<VKBuffer*, std::pair<std::shared_ptr<VKBuffer>, Access>> Buffers;
             std::map<VKTexture*, std::shared_ptr<VKTexture>>                  Textures;
-            bool DepthWrites = false, PreserveAttachments = false;
+            std::map<std::pair<VKTexture*, size_t>, std::pair<std::shared_ptr<VKTexture>, Access>> StorageTextures;
+            bool DepthWrites = false, PreserveAttachments = false, HasDraws = false;
             void Buffer(const std::shared_ptr<VKBuffer>& buffer, Access access)
             {
                 auto& value = Buffers[buffer.get()];
@@ -846,6 +886,11 @@ namespace Kans::RenderHardware
             }
             void Prepare(Execution& execution, const DepthAttachment& depth)
             {
+                for (auto& [key, value] : StorageTextures)
+                    execution.Use(*value.first,
+                                  {uint32_t(key.second % value.first->Desc.MipLevels),
+                                   uint32_t(key.second / value.first->Desc.MipLevels)},
+                                  value.second);
                 for (auto& [key, value] : Buffers)
                     execution.Use(*value.first, value.second);
                 for (auto& [key, texture] : Textures)
@@ -891,6 +936,7 @@ namespace Kans::RenderHardware
             std::vector<Handle<Resource>>                Temporary;
             std::vector<Handle<Resource>>                RetainedBindings;
             std::shared_ptr<VKPipeline>                  BoundPipeline;
+            std::shared_ptr<VKComputePipeline>           BoundCompute;
             std::shared_ptr<VKBuffer>                    BoundIndex;
             IndexType                                    IndexFormat = IndexType::Uint32;
             size_t                                       IndexOffset = 0;
@@ -915,6 +961,7 @@ namespace Kans::RenderHardware
                 Recorded.clear();
                 Temporary.clear();
                 BoundPipeline.reset();
+                BoundCompute.reset();
                 BoundIndex.reset();
                 Groups.clear();
                 Vertices.clear();
@@ -951,7 +998,8 @@ namespace Kans::RenderHardware
                 auto validate = [&](const Handle<Texture>& target, TextureSubresource sub, bool depth) {
                     auto t = Cast<VKTexture>(target, Owner);
                     TextureBytes(t->Desc, sub);
-                    Require(Info(t->Desc.PixelFormat).Depth() == depth &&
+                    Require(t->Desc.Dimension != TextureDimension::Texture3D &&
+                                Info(t->Desc.PixelFormat).Depth() == depth &&
                                 Has(t->Desc.Usage, depth ? TextureUsage::DepthStencil : TextureUsage::RenderTarget),
                             "Invalid attachment usage or format");
                     if (!width)
@@ -1148,20 +1196,24 @@ namespace Kans::RenderHardware
             {
                 Inside();
                 BoundPipeline = Cast<VKPipeline>(pipeline, Owner);
+                BoundCompute.reset();
                 RetainedBindings.push_back(pipeline);
             }
             void BindGroup(const Handle<RenderHardware::BindGroup>& group) override
             {
-                Inside();
+                Mutable();
                 auto g                                  = Cast<VKGroup>(group, Owner);
                 Groups[g->Desc.Layout->GetDesc().Group] = g;
                 RetainedBindings.push_back(g);
             }
             void PushConstants(uint32_t offset, const void* data, uint32_t bytes) override
             {
-                Inside();
-                Require(BoundPipeline && data && offset % 4 == 0 && bytes % 4 == 0, "Invalid push constant write");
-                Range(BoundPipeline->Desc.PushConstantBytes, offset, bytes);
+                Mutable();
+                Require((BoundPipeline || BoundCompute) && data && offset % 4 == 0 && bytes % 4 == 0,
+                        "Invalid push constant write");
+                Range(BoundCompute ? BoundCompute->Desc.PushConstantBytes : BoundPipeline->Desc.PushConstantBytes,
+                      offset,
+                      bytes);
                 std::memcpy(PushData.data() + offset, data, bytes);
             }
             void BindVertexBuffers(const std::vector<VertexBufferView>& buffers) override
@@ -1245,7 +1297,11 @@ namespace Kans::RenderHardware
                     RenderingInfo.Depth.Target &&
                     ((sampledDepth && (Uses->DepthWrites || RenderingInfo.Depth.Load != LoadOp::Load)) ||
                      (writesDepth && Uses->Textures.count(Cast<VKTexture>(RenderingInfo.Depth.Target, Owner).get())));
-                if (StorageWritten || changeDepthLayout)
+                const bool shaderWrites =
+                    std::any_of(shader->Bindings.begin(), shader->Bindings.end(), [](const auto& b) {
+                        return b.Type == BindingType::StorageBuffer || b.Type == BindingType::StorageTexture;
+                    });
+                if (StorageWritten || changeDepthLayout || (shaderWrites && Uses->HasDraws))
                 {
                     // Dynamic rendering does not permit buffer barriers inside the
                     // scope. Preserve attachments and begin a new native segment.
@@ -1268,6 +1324,7 @@ namespace Kans::RenderHardware
                     SetScissor(scissor);
                 }
                 Uses->DepthWrites |= writesDepth;
+                Uses->HasDraws = true;
                 for (auto binding : shader->Bindings)
                 {
                     const auto& group = Groups.at(binding.Group);
@@ -1283,6 +1340,8 @@ namespace Kans::RenderHardware
                         Access access {VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                                        binding.Type == BindingType::StorageBuffer ?
                                            VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT :
+                                       binding.Type == BindingType::ReadOnlyStorageBuffer ?
+                                           VK_ACCESS_2_SHADER_STORAGE_READ_BIT :
                                            VK_ACCESS_2_UNIFORM_READ_BIT};
                         Uses->Buffer(b, access);
                         StorageWritten |= binding.Type == BindingType::StorageBuffer;
@@ -1292,8 +1351,9 @@ namespace Kans::RenderHardware
                         auto texture = Cast<VKTexture>(entry->TextureResource, Owner);
                         Require(entry->Subresource || texture->Desc.ArrayLayers == 1,
                                 "Array textures require a single-layer sampled view");
-                        Require((entry->Subresource ? TextureDimension::Texture2D : texture->Desc.Dimension) ==
-                                    binding.Dimension,
+                        Require((entry->Subresource && texture->Desc.Dimension != TextureDimension::Texture3D ?
+                                     TextureDimension::Texture2D :
+                                     texture->Desc.Dimension) == binding.Dimension,
                                 "Texture dimension disagrees with shader binding");
                         Require(binding.Multisampled == (texture->Desc.Samples > 1),
                                 "Shader image sample count mismatch");
@@ -1308,8 +1368,27 @@ namespace Kans::RenderHardware
                             Require(!binding.Comparison || Info(texture->Desc.PixelFormat).Depth(),
                                     "Comparison sampling requires a depth texture");
                         }
-                        Uses->Textures[texture.get()] = texture;
+                        if (binding.Type == BindingType::StorageTexture)
+                        {
+                            ValidateStorageFormat(binding, *texture);
+                            const auto sub   = entry->Subresource.value_or(TextureSubresource {});
+                            auto&      value = Uses->StorageTextures[{texture.get(), texture->Index(sub)}];
+                            value.first      = texture;
+                            value.second = {VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+                                                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                            VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                                            VK_IMAGE_LAYOUT_GENERAL};
+                            StorageWritten = true;
+                        }
+                        else
+                            Uses->Textures[texture.get()] = texture;
                     }
+                }
+                for (const auto& [key, value] : Uses->StorageTextures)
+                {
+                    Require(!Uses->Textures.count(key.first), "Cannot bind image as sampled and storage within a draw");
+                    for (const auto& color : RenderingInfo.Colors)
+                        Require(value.first != color.Target, "Storage access to a colour attachment is unsupported");
                 }
                 for (auto b : d.VertexBindings)
                 {
@@ -1390,6 +1469,7 @@ namespace Kans::RenderHardware
                     vkCmdDrawIndexed(e.Native, indices, instances, firstIndex, baseVertex, firstInstance);
                 });
             }
+#include "VulkanCompute.inl"
             void CopyBuffer(const Handle<Buffer>& source,
                             size_t                from,
                             const Handle<Buffer>& destination,
@@ -1527,7 +1607,9 @@ namespace Kans::RenderHardware
                             (s->Desc.PixelFormat == d->Desc.PixelFormat || compatibleColor) &&
                             TextureBytes(s->Desc, from) == TextureBytes(d->Desc, to) &&
                             Width(s->Desc, from.Mip) == Width(d->Desc, to.Mip) &&
-                            Height(s->Desc, from.Mip) == Height(d->Desc, to.Mip),
+                            Height(s->Desc, from.Mip) == Height(d->Desc, to.Mip) &&
+                            s->Desc.Dimension == d->Desc.Dimension &&
+                            Depth(s->Desc, from.Mip) == Depth(d->Desc, to.Mip),
                         "Texture copy description mismatch");
                 Recorded.push_back([s, d, from, to](Execution& e) {
                     e.Use(*s,
@@ -1549,7 +1631,8 @@ namespace Kans::RenderHardware
                             VkImageCopy region {};
                             region.srcSubresource = {VkImageAspectFlags(aspect), from.Mip, from.Face, 1};
                             region.dstSubresource = {VkImageAspectFlags(aspect), to.Mip, to.Face, 1};
-                            region.extent         = {Width(s->Desc, from.Mip), Height(s->Desc, from.Mip), 1};
+                            region.extent         = {
+                                Width(s->Desc, from.Mip), Height(s->Desc, from.Mip), Depth(s->Desc, from.Mip)};
                             vkCmdCopyImage(e.Native,
                                            s->Native,
                                            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -1638,9 +1721,12 @@ namespace Kans::RenderHardware
                             VkImageBlit region {};
                             region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip - 1, face, 1};
                             region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, face, 1};
-                            region.srcOffsets[1]  = {
-                                int32_t(Width(t->Desc, mip - 1)), int32_t(Height(t->Desc, mip - 1)), 1};
-                            region.dstOffsets[1] = {int32_t(Width(t->Desc, mip)), int32_t(Height(t->Desc, mip)), 1};
+                            region.srcOffsets[1]  = {int32_t(Width(t->Desc, mip - 1)),
+                                                     int32_t(Height(t->Desc, mip - 1)),
+                                                     int32_t(Depth(t->Desc, mip - 1))};
+                            region.dstOffsets[1]  = {int32_t(Width(t->Desc, mip)),
+                                                     int32_t(Height(t->Desc, mip)),
+                                                     int32_t(Depth(t->Desc, mip))};
                             vkCmdBlitImage(e.Native,
                                            t->Native,
                                            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -1751,10 +1837,71 @@ namespace Kans::RenderHardware
                     case BindingType::UniformBuffer:
                         return Owner->Native.Properties.limits.minUniformBufferOffsetAlignment;
                     case BindingType::StorageBuffer:
+                    case BindingType::ReadOnlyStorageBuffer:
                         return Owner->Native.Properties.limits.minStorageBufferOffsetAlignment;
                     default:
                         throw std::invalid_argument("Binding type is not a buffer");
                 }
+            }
+            ComputeLimits GetComputeLimits() const override
+            {
+                Owner->CheckThread();
+                const auto& l = Owner->Native.Properties.limits;
+                return {{l.maxComputeWorkGroupCount[0], l.maxComputeWorkGroupCount[1], l.maxComputeWorkGroupCount[2]},
+                        {l.maxComputeWorkGroupSize[0], l.maxComputeWorkGroupSize[1], l.maxComputeWorkGroupSize[2]},
+                        l.maxComputeWorkGroupInvocations,
+                        l.maxComputeSharedMemorySize};
+            }
+            IndirectCapabilities GetIndirectCapabilities() const override
+            {
+                Owner->CheckThread();
+                VkPhysicalDeviceVulkan12Features f12 {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+                VkPhysicalDeviceFeatures2        f {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+                f.pNext = &f12;
+                vkGetPhysicalDeviceFeatures2(Owner->Native.Physical, &f);
+                return {bool(f.features.multiDrawIndirect),
+                        bool(f12.drawIndirectCount),
+                        Owner->Native.Properties.limits.maxDrawIndirectCount};
+            }
+            bool SupportsVertexStorageWrites() const override
+            {
+                VkPhysicalDeviceFeatures f {};
+                vkGetPhysicalDeviceFeatures(Owner->Native.Physical, &f);
+                return f.vertexPipelineStoresAndAtomics;
+            }
+            bool SupportsFragmentStorageWrites() const override
+            {
+                VkPhysicalDeviceFeatures f {};
+                vkGetPhysicalDeviceFeatures(Owner->Native.Physical, &f);
+                return f.fragmentStoresAndAtomics;
+            }
+            std::unordered_map<size_t, std::vector<std::pair<std::string, std::weak_ptr<VKComputePipeline>>>>
+                                    ComputeCache;
+            Handle<ComputePipeline> CreateComputePipeline(const ComputePipelineDesc& desc) override
+            {
+                Owner->CheckThread();
+                Require(Cast<VKShader>(desc.Program, Owner)->Compute, "Compute pipeline requires a compute program");
+                for (const auto& layout : desc.GroupLayouts)
+                    Cast<VKLayout>(layout, Owner);
+                // Use the same canonical, field-wise key as graphics; padding is never hashed.
+                PipelineDesc keyDesc;
+                keyDesc.Program           = desc.Program;
+                keyDesc.GroupLayouts      = desc.GroupLayouts;
+                keyDesc.PushConstantBytes = desc.PushConstantBytes;
+                auto  key                 = Detail::PipelineKey(keyDesc);
+                auto& bucket              = ComputeCache[std::hash<std::string> {}(key)];
+                for (auto it = bucket.begin(); it != bucket.end();)
+                    if (auto pipeline = it->second.lock())
+                    {
+                        if (it->first == key)
+                            return pipeline;
+                        ++it;
+                    }
+                    else
+                        it = bucket.erase(it);
+                auto pipeline = std::make_shared<VKComputePipeline>(Owner, desc);
+                bucket.emplace_back(std::move(key), pipeline);
+                return pipeline;
             }
             Handle<Buffer> CreateBuffer(const BufferDesc& d) override
             {
@@ -2168,6 +2315,12 @@ namespace Kans::RenderHardware
 
 namespace Kans::RenderHardware::VulkanTestProbes
 {
+    void SetBarrierObserver(const Device& device, BarrierObserver observer)
+    {
+        auto owner = dynamic_cast<const VKDevice&>(device).GetOwner();
+        owner->CheckThread();
+        owner->Barriers = std::move(observer);
+    }
     void SetBufferWriteObserver(const Device& device, BufferWriteObserver observer)
     {
         auto owner = dynamic_cast<const VKDevice&>(device).GetOwner();

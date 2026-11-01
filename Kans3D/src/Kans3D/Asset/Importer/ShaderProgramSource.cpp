@@ -130,6 +130,8 @@ namespace Kans
         }
         if (post && (stages.size() != 1 || !stages.count(ShaderProductStage::Fragment)))
             return AssetError {AssetErrorCode::InvalidData, "Post-process requires exactly one fragment stage"};
+        if (stages.count(ShaderProductStage::Compute) && stages.size() != 1)
+            return AssetError {AssetErrorCode::InvalidData, "Compute shader cannot mix with graphics stages"};
         if (!post && ((stages.count(ShaderProductStage::Compute) && stages.size() != 1) ||
                       (!stages.count(ShaderProductStage::Compute) &&
                        (stages.size() != 2 || !stages.count(ShaderProductStage::Vertex) ||

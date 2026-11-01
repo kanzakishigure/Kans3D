@@ -38,7 +38,7 @@ namespace Kans
         {
             return a.Width == b.Width && a.Height == b.Height && a.MipLevels == b.MipLevels &&
                    a.Dimension == b.Dimension && a.ArrayLayers == b.ArrayLayers && a.PixelFormat == b.PixelFormat &&
-                   a.Usage == b.Usage && a.Samples == b.Samples;
+                   a.Usage == b.Usage && a.Samples == b.Samples && a.Depth == b.Depth;
         }
     } // namespace
     const CapturedImage* CapturedGraphFrame::Find(CaptureSelection selection, bool fullResolution) const
@@ -88,10 +88,13 @@ namespace Kans
             return;
         auto       commands = m_Device->CreateCommandList();
         bool       recorded = false;
+        m_Current->Resources = graph.Resources();
+        m_Current->Passes    = graph.Passes();
         const auto passID   = graph.Passes().at(pass).ID;
         for (auto use : graph.Passes()[pass].Uses)
         {
-            if (use.Access == GraphAccess::SampledRead || use.Access == GraphAccess::TransferRead)
+            if (use.IsBuffer || use.Access == GraphAccess::SampledRead || use.Access == GraphAccess::TransferRead ||
+                use.Access == GraphAccess::StorageRead)
                 continue;
             const auto&                   resource = graph.Resources().at(use.Texture);
             const auto&                   desc     = resource.Description;
@@ -164,7 +167,9 @@ namespace Kans
                     image.FullResolution    = kind == 1;
                     image.InverseProjection = m_InverseProjection;
                     const auto sub          = selection.Subresource;
-                    if (sub.Mip >= desc.MipLevels || sub.Face >= Layers(desc))
+                    if (desc.Dimension == TextureDimension::Texture3D)
+                        image.Unavailable = "Volume preview requires a slice selection";
+                    else if (sub.Mip >= desc.MipLevels || sub.Face >= Layers(desc))
                         image.Unavailable = "Invalid mip/layer";
                     else
                     {
@@ -385,15 +390,16 @@ void main() { vec2 p=vec2((gl_VertexIndex<<1)&2,gl_VertexIndex&2); gl_Position=v
                 auto read    = [&](size_t offset, auto& value) {
                     std::memcpy(&value, result.Bytes.data() + offset, sizeof(value));
                 };
-                if (result.StoredFormat == Format::RGBA16Float)
-                    for (size_t i = 0; i < 4; ++i)
+                if (result.StoredFormat == Format::RGBA16Float || result.StoredFormat == Format::RG16Float)
+                    for (size_t i = 0; i < (result.StoredFormat == Format::RG16Float ? 2u : 4u); ++i)
                     {
                         uint16_t value;
                         read(i * 2, value);
                         result.Value[i] = glm::unpackHalf1x16(value);
                     }
-                else if (result.StoredFormat == Format::RGBA32Float || result.StoredFormat == Format::Depth32Float)
-                    for (size_t i = 0; i < (result.StoredFormat == Format::Depth32Float ? 1u : 4u); ++i)
+                else if (result.StoredFormat == Format::RGBA32Float || result.StoredFormat == Format::Depth32Float ||
+                         result.StoredFormat == Format::R32Float)
+                    for (size_t i = 0; i < (result.StoredFormat == Format::RGBA32Float ? 4u : 1u); ++i)
                     {
                         float value;
                         read(i * 4, value);

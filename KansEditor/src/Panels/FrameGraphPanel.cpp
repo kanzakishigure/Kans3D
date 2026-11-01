@@ -28,6 +28,10 @@ namespace Kans
                 case Format::RGBA8Srgb: return "RGBA8 sRGB";
                 case Format::RGBA16Float: return "RGBA16F";
                 case Format::RGBA32Float: return "RGBA32F";
+                case Format::R32Float:
+                    return "R32F";
+                case Format::RG16Float:
+                    return "RG16F";
                 case Format::RG8Unorm: return "RG8";
                 case Format::R32Uint: return "R32UI";
                 case Format::R8Unorm: return "R8";
@@ -48,13 +52,30 @@ namespace Kans
                 case GraphAccess::DepthReadWrite: return "depth read/write";
                 case GraphAccess::TransferRead: return "copy source";
                 case GraphAccess::TransferWrite: return "copy destination";
+                case GraphAccess::StorageRead:
+                    return "storage read";
+                case GraphAccess::StorageWrite:
+                    return "storage write";
+                case GraphAccess::StorageReadWrite:
+                    return "storage read/write";
+                case GraphAccess::IndirectRead:
+                    return "indirect";
+                case GraphAccess::VertexRead:
+                    return "vertex";
+                case GraphAccess::IndexRead:
+                    return "index";
+                case GraphAccess::UniformRead:
+                    return "uniform";
             }
             return "?";
         }
 
         bool Writes(GraphAccess access)
         {
-            return access != GraphAccess::SampledRead && access != GraphAccess::TransferRead;
+            return access == GraphAccess::ColorWrite || access == GraphAccess::ColorReadWrite ||
+                   access == GraphAccess::DepthWrite || access == GraphAccess::DepthReadWrite ||
+                   access == GraphAccess::TransferWrite || access == GraphAccess::StorageWrite ||
+                   access == GraphAccess::StorageReadWrite;
         }
 
         bool IsDepth(Format format) { return format == Format::Depth32Float || format == Format::Depth24Stencil8; }
@@ -185,7 +206,8 @@ namespace Kans
                 const auto& pass   = m_Passes[access->Pass];
                 const bool  writes = Writes(access->Access);
                 const bool  reads  = !writes || access->Access == GraphAccess::ColorReadWrite ||
-                                    access->Access == GraphAccess::DepthReadWrite;
+                                     access->Access == GraphAccess::DepthReadWrite ||
+                                     access->Access == GraphAccess::StorageReadWrite;
                 if (reads)
                 {
                     if (!current) // Read before any write: the content the frame started with.
@@ -408,8 +430,20 @@ namespace Kans
                      resource.Name + "  v" + std::to_string(node.Version) + (node.Read ? "" : "  (unused)"));
                 const auto& d = resource.Description;
                 char        info[96];
-                std::snprintf(info, sizeof(info), "%ux%u %s%s", d.Width, d.Height, FormatName(d.PixelFormat),
-                              resource.Imported ? "  imported" : "  transient");
+                if (resource.IsBuffer)
+                    std::snprintf(info,
+                                  sizeof(info),
+                                  "%zu bytes%s",
+                                  resource.BufferDescription.Bytes,
+                                  resource.Imported ? "  imported buffer" : "  transient buffer");
+                else
+                    std::snprintf(info,
+                                  sizeof(info),
+                                  "%ux%u %s%s",
+                                  d.Width,
+                                  d.Height,
+                                  FormatName(d.PixelFormat),
+                                  resource.Imported ? "  imported" : "  transient");
                 text({min.x + pad, min.y + 20 * m_Zoom}, IM_COL32(170, 160, 150, 255), info);
                 // The content right after the write that produced this version.
                 const ImVec2 imageMin = toScreen({node.Position.x + 6, node.Position.y + 40});
@@ -470,6 +504,10 @@ namespace Kans
         if (pass)
         {
             ImGui::TextUnformatted(pass->Name.c_str());
+            ImGui::TextDisabled("%s",
+                                pass->Kind == GraphPassKind::Compute  ? "Compute" :
+                                pass->Kind == GraphPassKind::Transfer ? "Transfer" :
+                                                                        "Graphics");
             const auto* stats = FindStatistics(pass->ID);
             if (pass->Culled)
                 ImGui::TextDisabled("Culled: its outputs are not used.");
@@ -500,8 +538,17 @@ namespace Kans
         {
             const auto& d = resource->Description;
             ImGui::TextUnformatted(resource->Name.c_str());
-            ImGui::Text("%u x %u  %s  %u mip%s  %u layer%s", d.Width, d.Height, FormatName(d.PixelFormat), d.MipLevels,
-                        d.MipLevels > 1 ? "s" : "", d.ArrayLayers, d.ArrayLayers > 1 ? "s" : "");
+            if (resource->IsBuffer)
+                ImGui::Text("Buffer: %zu bytes", resource->BufferDescription.Bytes);
+            else
+                ImGui::Text("%u x %u  %s  %u mip%s  %u layer%s",
+                            d.Width,
+                            d.Height,
+                            FormatName(d.PixelFormat),
+                            d.MipLevels,
+                            d.MipLevels > 1 ? "s" : "",
+                            d.ArrayLayers,
+                            d.ArrayLayers > 1 ? "s" : "");
             ImGui::TextDisabled("%s%s", resource->Imported ? "Imported" : "Transient",
                                 resource->PhysicalSlot != uint32_t(-1) ?
                                     (", aliased slot " + std::to_string(resource->PhysicalSlot)).c_str() :
@@ -532,6 +579,11 @@ namespace Kans
 
     void FrameGraphPanel::DrawImageInspector(const CompiledGraphPass& pass, const CompiledGraphResource& resource)
     {
+        if (resource.IsBuffer)
+        {
+            ImGui::TextDisabled("Buffer resource; no image preview.");
+            return;
+        }
         const auto& d     = resource.Description;
         const bool  depth = IsDepth(d.PixelFormat);
         ImGui::Separator();

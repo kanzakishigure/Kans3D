@@ -13,18 +13,71 @@ namespace Kans
         {
             return a.Width == b.Width && a.Height == b.Height && a.MipLevels == b.MipLevels &&
                    a.Dimension == b.Dimension && a.ArrayLayers == b.ArrayLayers && a.PixelFormat == b.PixelFormat &&
-                   a.Usage == b.Usage && a.Samples == b.Samples;
+                   a.Usage == b.Usage && a.Samples == b.Samples && a.Depth == b.Depth;
+        }
+        bool Equal(const RenderHardware::BufferDesc& a, const RenderHardware::BufferDesc& b)
+        {
+            return a.Bytes == b.Bytes && a.Usage == b.Usage && a.Memory == b.Memory;
         }
         bool Reads(GraphAccess a)
         {
             return a == GraphAccess::SampledRead || a == GraphAccess::TransferRead ||
-                   a == GraphAccess::ColorReadWrite || a == GraphAccess::DepthReadWrite;
+                   a == GraphAccess::ColorReadWrite || a == GraphAccess::DepthReadWrite ||
+                   a == GraphAccess::StorageRead || a == GraphAccess::StorageReadWrite ||
+                   a == GraphAccess::IndirectRead || a == GraphAccess::VertexRead || a == GraphAccess::IndexRead ||
+                   a == GraphAccess::UniformRead;
         }
-        bool Writes(GraphAccess a) { return a != GraphAccess::SampledRead && a != GraphAccess::TransferRead; }
+        bool Writes(GraphAccess a)
+        {
+            return a == GraphAccess::ColorWrite || a == GraphAccess::ColorReadWrite || a == GraphAccess::DepthWrite ||
+                   a == GraphAccess::DepthReadWrite || a == GraphAccess::TransferWrite ||
+                   a == GraphAccess::StorageWrite || a == GraphAccess::StorageReadWrite;
+        }
+        void Validate(const RenderHardware::BufferDesc& d, GraphAccess a, const std::string& name)
+        {
+            using namespace RenderHardware;
+            BufferUsage needed;
+            switch (a)
+            {
+                case GraphAccess::StorageRead:
+                case GraphAccess::StorageWrite:
+                case GraphAccess::StorageReadWrite:
+                    needed = BufferUsage::Storage;
+                    break;
+                case GraphAccess::IndirectRead:
+                    needed = BufferUsage::Indirect;
+                    break;
+                case GraphAccess::VertexRead:
+                    needed = BufferUsage::Vertex;
+                    break;
+                case GraphAccess::IndexRead:
+                    needed = BufferUsage::Index;
+                    break;
+                case GraphAccess::UniformRead:
+                    needed = BufferUsage::Uniform;
+                    break;
+                case GraphAccess::TransferRead:
+                    needed = BufferUsage::CopySource;
+                    break;
+                case GraphAccess::TransferWrite:
+                    needed = BufferUsage::CopyDestination;
+                    break;
+                default:
+                    throw std::invalid_argument("RenderGraph: incompatible buffer access '" + name + "'");
+            }
+            if (!(uint32_t(d.Usage) & uint32_t(needed)))
+                throw std::invalid_argument("RenderGraph: incompatible buffer usage '" + name + "'");
+        }
         void Validate(const RenderHardware::TextureDesc& d, GraphAccess a, const std::string& name)
         {
             using namespace RenderHardware;
-            TextureUsage needed = a == GraphAccess::SampledRead   ? TextureUsage::Sampled :
+            if (a == GraphAccess::IndirectRead || a == GraphAccess::VertexRead || a == GraphAccess::IndexRead ||
+                a == GraphAccess::UniformRead)
+                throw std::invalid_argument("RenderGraph: buffer access on texture '" + name + "'");
+            TextureUsage needed = (a == GraphAccess::StorageRead || a == GraphAccess::StorageWrite ||
+                                   a == GraphAccess::StorageReadWrite) ?
+                                      TextureUsage::Storage :
+                                  a == GraphAccess::SampledRead   ? TextureUsage::Sampled :
                                   a == GraphAccess::TransferRead  ? TextureUsage::CopySource :
                                   a == GraphAccess::TransferWrite ? TextureUsage::CopyDestination :
                                   (a == GraphAccess::DepthWrite || a == GraphAccess::DepthReadWrite) ?
@@ -64,6 +117,64 @@ namespace Kans
         m_Textures = textures;
         return textures;
     }
+    std::vector<RenderHardware::Handle<RenderHardware::Buffer>>
+    TransientBufferPool::Acquire(const std::vector<RenderHardware::BufferDesc>& descriptions, const Factory& create)
+    {
+        if (descriptions.empty())
+            return {};
+        std::vector<RenderHardware::Handle<RenderHardware::Buffer>> buffers;
+        std::vector<bool>                                           used(m_Buffers.size());
+        for (const auto& desc : descriptions)
+        {
+            RenderHardware::Handle<RenderHardware::Buffer> buffer;
+            for (size_t i = 0; i < m_Buffers.size(); ++i)
+                if (!used[i] && Equal(desc, m_Buffers[i]->GetDesc()))
+                {
+                    used[i] = true;
+                    buffer  = m_Buffers[i];
+                    break;
+                }
+            if (!buffer)
+                buffer = create(desc);
+            if (!buffer || !Equal(desc, buffer->GetDesc()))
+                throw std::invalid_argument("RenderGraph: incompatible buffer allocation");
+            buffers.push_back(std::move(buffer));
+        }
+        m_Buffers = buffers;
+        return buffers;
+    }
+    GraphBuffer RenderGraph::ImportBuffer(std::string name, RenderHardware::Handle<RenderHardware::Buffer> buffer)
+    {
+        if (!buffer)
+            throw std::invalid_argument("RenderGraph: null imported buffer");
+        for (uint32_t i = 0; i < m_Resources.size(); ++i)
+            if (m_Resources[i].Imported && m_Resources[i].Data == buffer)
+                return {i};
+        auto  handle      = CreateBuffer(std::move(name), buffer->GetDesc());
+        auto& resource    = m_Resources[handle.Index];
+        resource.Imported = true;
+        resource.Data     = std::move(buffer);
+        return handle;
+    }
+    GraphBuffer RenderGraph::CreateBuffer(std::string name, RenderHardware::BufferDesc description)
+    {
+        if (!description.Bytes || !uint32_t(description.Usage))
+            throw std::invalid_argument("RenderGraph: invalid buffer description");
+        m_Compiled = false;
+        Resource resource;
+        resource.Name              = std::move(name);
+        resource.IsBuffer          = true;
+        resource.BufferDescription = description;
+        m_Resources.push_back(std::move(resource));
+        return {uint32_t(m_Resources.size() - 1)};
+    }
+    void RenderGraph::ExportBuffer(GraphBuffer buffer)
+    {
+        if (buffer.Index >= m_Resources.size() || !m_Resources[buffer.Index].IsBuffer)
+            throw std::invalid_argument("RenderGraph: invalid exported buffer");
+        m_Compiled                         = false;
+        m_Resources[buffer.Index].Exported = true;
+    }
     void TransientTexturePool::DiscardMultisampled()
     {
         m_Textures.erase(std::remove_if(m_Textures.begin(),
@@ -86,7 +197,9 @@ namespace Kans
     }
     GraphTexture RenderGraph::CreateTexture(std::string name, RenderHardware::TextureDesc desc)
     {
-        if (!desc.Width || !desc.Height || !desc.MipLevels || !desc.ArrayLayers ||
+        if (!desc.Width || !desc.Height || !desc.Depth ||
+            (desc.Dimension == RenderHardware::TextureDimension::Texture3D ? desc.ArrayLayers != 1 : desc.Depth != 1) ||
+            !desc.MipLevels || !desc.ArrayLayers ||
             (desc.Dimension == RenderHardware::TextureDimension::Cube && desc.ArrayLayers != 1) ||
             (desc.Dimension == RenderHardware::TextureDimension::Cube && desc.Width != desc.Height))
             throw std::invalid_argument("RenderGraph: invalid texture description '" + name + "'");
@@ -94,20 +207,26 @@ namespace Kans
         m_Resources.push_back({std::move(name), desc, {}, false, false});
         return uint32_t(m_Resources.size() - 1);
     }
-    GraphPass RenderGraph::AddPass(std::string name, std::vector<GraphUse> uses, Record record, bool sideEffect)
+    GraphPass RenderGraph::AddPass(std::string           name,
+                                   std::vector<GraphUse> uses,
+                                   Record                record,
+                                   bool                  sideEffect,
+                                   GraphPassKind         kind)
     {
         m_Compiled = false;
         m_Passes.push_back({std::move(name), std::move(uses), std::move(record), sideEffect, {}});
+        m_Passes.back().Kind = kind;
         return uint32_t(m_Passes.size() - 1);
     }
     GraphPass RenderGraph::AddRecordedPass(std::string                                         name,
                                            std::vector<GraphUse>                               uses,
                                            RenderHardware::Handle<RenderHardware::CommandList> commands,
-                                           std::optional<double>                               cpuRecordMilliseconds)
+                                           std::optional<double>                               cpuRecordMilliseconds,
+                                           GraphPassKind                                       kind)
     {
         if (!commands)
             throw std::invalid_argument("RenderGraph: null recorded commands");
-        auto pass               = AddPass(std::move(name), std::move(uses), {});
+        auto pass                            = AddPass(std::move(name), std::move(uses), {}, false, kind);
         m_Passes[pass].Commands = std::move(commands);
         m_Passes[pass].CpuRecordMilliseconds = cpuRecordMilliseconds;
         return pass;
@@ -121,7 +240,7 @@ namespace Kans
     }
     void RenderGraph::ExportTexture(GraphTexture texture)
     {
-        if (texture >= m_Resources.size())
+        if (texture >= m_Resources.size() || m_Resources[texture].IsBuffer)
             throw std::invalid_argument("RenderGraph: invalid exported texture");
         m_Compiled                    = false;
         m_Resources[texture].Exported = true;
@@ -138,6 +257,7 @@ namespace Kans
         m_Compiled = false;
         m_Order.clear();
         m_Slots.clear();
+        m_BufferSlots.clear();
         m_CompiledResources.clear();
         m_CompiledPasses.clear();
         m_Statistics.clear();
@@ -155,7 +275,20 @@ namespace Kans
                 if (!seen.insert(use.Texture).second)
                     throw std::invalid_argument("RenderGraph: duplicate texture use in pass '" + m_Passes[p].Name +
                                                 "'");
-                Validate(m_Resources[use.Texture].Description, use.Access, m_Resources[use.Texture].Name);
+                const auto& resource = m_Resources[use.Texture];
+                if (use.IsBuffer != resource.IsBuffer)
+                    throw std::invalid_argument("RenderGraph: resource handle type mismatch");
+                if (m_Passes[p].Kind != GraphPassKind::Graphics &&
+                    (use.Access == GraphAccess::ColorWrite || use.Access == GraphAccess::ColorReadWrite ||
+                     use.Access == GraphAccess::DepthWrite || use.Access == GraphAccess::DepthReadWrite))
+                    throw std::invalid_argument("RenderGraph: attachment access requires graphics pass");
+                if (m_Passes[p].Kind == GraphPassKind::Transfer && use.Access != GraphAccess::TransferRead &&
+                    use.Access != GraphAccess::TransferWrite)
+                    throw std::invalid_argument("RenderGraph: transfer pass requires transfer access");
+                if (resource.IsBuffer)
+                    Validate(resource.BufferDescription, use.Access, resource.Name);
+                else
+                    Validate(resource.Description, use.Access, resource.Name);
                 if (Writes(use.Access) && firstWriter[use.Texture] == none)
                     firstWriter[use.Texture] = p;
             }
@@ -248,7 +381,11 @@ namespace Kans
             if (live[p])
                 m_Order.push_back(p);
         for (auto& r : m_Resources)
+        {
             m_CompiledResources.push_back({r.Name, r.Description, r.Imported, none, {}});
+            m_CompiledResources.back().IsBuffer          = r.IsBuffer;
+            m_CompiledResources.back().BufferDescription = r.BufferDescription;
+        }
         for (uint32_t i = 0; i < m_Order.size(); ++i)
             for (auto use : m_Passes[m_Order[i]].Uses)
                 m_CompiledResources[use.Texture].Accesses.push_back({m_Order[i], i, use.Access});
@@ -263,6 +400,7 @@ namespace Kans
             info.Name   = pass.Name;
             info.Culled = !live[p];
             info.Uses   = pass.Uses;
+            info.Kind   = pass.Kind;
             if (live[p])
                 info.ExecutionIndex = uint32_t(std::find(m_Order.begin(), m_Order.end(), p) - m_Order.begin());
             for (uint32_t dependency = 0; dependency < count; ++dependency)
@@ -270,6 +408,7 @@ namespace Kans
                     info.Dependencies.push_back(dependency);
             m_Statistics.push_back(
                 {info.ID, info.Name, info.ExecutionIndex, info.Culled, pass.CpuRecordMilliseconds, {}, pass.Draws});
+            m_Statistics.back().Kind = pass.Kind;
             m_CompiledPasses.push_back(std::move(info));
             for (auto use : pass.Uses)
                 m_CompiledResources[use.Texture].DeclaredAccesses.push_back(
@@ -283,7 +422,7 @@ namespace Kans
             m_CompiledResources[r].ID = GraphNameID(m_Resources[r].Name, true, occurrence);
         }
         // Exported transients remain live through output consumption at the end of execution.
-        std::vector<uint32_t> resources, slotLast;
+        std::vector<uint32_t> resources, slotLast, bufferSlotLast;
         for (uint32_t r = 0; r < m_Resources.size(); ++r)
             if (!m_Resources[r].Imported && !m_CompiledResources[r].Accesses.empty())
                 resources.push_back(r);
@@ -295,18 +434,24 @@ namespace Kans
         {
             auto&    compiled = m_CompiledResources[r];
             uint32_t slot = 0, start = compiled.Accesses.front().ExecutionIndex;
-            for (; slot < m_Slots.size(); ++slot)
-                if (slotLast[slot] < start && Equal(m_Slots[slot], compiled.Description))
+            auto&        last      = compiled.IsBuffer ? bufferSlotLast : slotLast;
+            const size_t slotCount = compiled.IsBuffer ? m_BufferSlots.size() : m_Slots.size();
+            for (; slot < slotCount; ++slot)
+                if (last[slot] < start && (compiled.IsBuffer ? Equal(m_BufferSlots[slot], compiled.BufferDescription) :
+                                                               Equal(m_Slots[slot], compiled.Description)))
                     break;
             const auto end =
                 m_Resources[r].Exported ? uint32_t(m_Order.size()) : compiled.Accesses.back().ExecutionIndex;
-            if (slot == m_Slots.size())
+            if (slot == slotCount)
             {
-                m_Slots.push_back(compiled.Description);
-                slotLast.push_back(end);
+                if (compiled.IsBuffer)
+                    m_BufferSlots.push_back(compiled.BufferDescription);
+                else
+                    m_Slots.push_back(compiled.Description);
+                last.push_back(end);
             }
             else
-                slotLast[slot] = end;
+                last[slot] = end;
             compiled.PhysicalSlot = slot;
         }
         if (m_Order.size() < m_Submitted.size() || !std::equal(m_Submitted.begin(), m_Submitted.end(), m_Order.begin()))
@@ -319,10 +464,22 @@ namespace Kans
             throw std::logic_error("RenderGraph: Compile required before allocation");
         auto textures = pool.Acquire(m_Slots, create);
         for (uint32_t r = 0; r < m_Resources.size(); ++r)
-            if (!m_Resources[r].Imported)
+            if (!m_Resources[r].Imported && !m_Resources[r].IsBuffer)
             {
                 auto slot            = m_CompiledResources[r].PhysicalSlot;
                 m_Resources[r].Image = slot == uint32_t(-1) ? nullptr : textures.at(slot);
+            }
+    }
+    void RenderGraph::AllocateBuffers(TransientBufferPool& pool, const TransientBufferPool::Factory& create)
+    {
+        if (!m_Compiled)
+            throw std::logic_error("RenderGraph: Compile required before allocation");
+        const auto buffers = pool.Acquire(m_BufferSlots, create);
+        for (uint32_t r = 0; r < m_Resources.size(); ++r)
+            if (!m_Resources[r].Imported && m_Resources[r].IsBuffer)
+            {
+                const auto slot     = m_CompiledResources[r].PhysicalSlot;
+                m_Resources[r].Data = slot == uint32_t(-1) ? nullptr : buffers.at(slot);
             }
     }
     void RenderGraph::ExecutePass(RenderHardware::Device& device, GraphPass p)
@@ -369,6 +526,16 @@ namespace Kans
                               uint64_t                frame,
                               GraphCapture*           capture)
     {
+        Execute(device, pool, m_BufferPool, profiler, frame, capture);
+    }
+    void RenderGraph::Execute(RenderHardware::Device& device,
+                              TransientTexturePool&   pool,
+                              TransientBufferPool&    buffers,
+                              FrameProfiler*          profiler,
+                              uint64_t                frame,
+                              GraphCapture*           capture)
+    {
+        AllocateBuffers(buffers, [&](const RenderHardware::BufferDesc& desc) { return device.CreateBuffer(desc); });
         Allocate(pool, [&](const RenderHardware::TextureDesc& desc) { return device.CreateTexture(desc); });
         if (profiler)
             m_Profiler = profiler;
@@ -406,9 +573,23 @@ namespace Kans
         }
         m_Queries.reset();
     }
+    RenderHardware::Handle<RenderHardware::Buffer> RenderGraph::Buffer(GraphBuffer buffer) const
+    {
+        const auto& resource = m_Resources.at(buffer.Index);
+        if (!resource.IsBuffer)
+            throw std::invalid_argument("RenderGraph: buffer handle refers to texture");
+        return resource.Data;
+    }
+    RenderHardware::Handle<RenderHardware::Buffer> RenderGraphContext::Buffer(GraphBuffer buffer) const
+    {
+        return Graph.Buffer(buffer);
+    }
     RenderHardware::Handle<RenderHardware::Texture> RenderGraph::Texture(GraphTexture texture) const
     {
-        return m_Resources.at(texture).Image;
+        const auto& resource = m_Resources.at(texture);
+        if (resource.IsBuffer)
+            throw std::invalid_argument("RenderGraph: texture handle refers to buffer");
+        return resource.Image;
     }
     RenderHardware::Handle<RenderHardware::Texture> RenderGraphContext::Texture(GraphTexture texture) const
     {

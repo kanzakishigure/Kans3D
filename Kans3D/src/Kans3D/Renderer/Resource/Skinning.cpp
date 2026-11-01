@@ -170,8 +170,9 @@ void main() {
     }
     RenderHardware::Handle<RenderHardware::BindGroupLayout> SkinningLayout(RenderHardware::Device& device)
     {
-        return device.CreateBindGroupLayout(
-            {2, {{0, RenderHardware::BindingType::StorageBuffer}, {1, RenderHardware::BindingType::StorageBuffer}}});
+        return device.CreateBindGroupLayout({2,
+                                             {{0, RenderHardware::BindingType::ReadOnlyStorageBuffer},
+                                              {1, RenderHardware::BindingType::ReadOnlyStorageBuffer}}});
     }
     void BindSkinning(RenderHardware::Device&                                        device,
                       RenderHardware::CommandList&                                   commands,

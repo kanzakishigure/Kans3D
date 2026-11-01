@@ -659,6 +659,7 @@ namespace Kans
             {
                 statistics.Draws->DrawCalls += pass.Draws->DrawCalls;
                 statistics.Draws->Triangles += pass.Draws->Triangles;
+                statistics.Draws->IndirectDraws += pass.Draws->IndirectDraws;
             }
             if (statistics.Gpu)
                 for (auto& gpu : statistics.Gpu->Passes)

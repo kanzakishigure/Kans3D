@@ -5,8 +5,11 @@ VkDescriptorType DescriptorType(BindingType type)
     {
         case BindingType::UniformBuffer:
             return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        case BindingType::ReadOnlyStorageBuffer:
         case BindingType::StorageBuffer:
             return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        case BindingType::StorageTexture:
+            return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         case BindingType::SampledTexture:
             return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         case BindingType::Sampler:
@@ -20,7 +23,7 @@ VkDescriptorType LayoutDescriptorType(uint32_t group, BindingType type)
 {
     if (group == 0 && type == BindingType::UniformBuffer)
         return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    if (group == 0 && type == BindingType::StorageBuffer)
+    if (group == 0 && (type == BindingType::StorageBuffer || type == BindingType::ReadOnlyStorageBuffer))
         return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC;
     return DescriptorType(type);
 }
@@ -33,6 +36,7 @@ struct ShaderBinding
     bool             Comparison = false;
     bool             Unsigned   = false;
     bool             Multisampled = false;
+    spv::ImageFormat StorageFormat = spv::ImageFormatUnknown;
 };
 // IDs and member names are deliberately excluded; compare the actual native byte layout.
 std::string PushLayout(spirv_cross::Compiler& compiler, uint32_t id)
@@ -63,13 +67,20 @@ struct VKShader final : Shader
 {
     Allocation                         Memory;
     uint32_t                           PushBytes = 0;
+    bool                               Compute   = false;
+    std::array<uint32_t, 3>            Workgroup {};
     std::vector<ShaderBinding>         Bindings;
     std::vector<VkShaderModule>        Modules;
     std::vector<std::string>           EntryPoints;
     std::vector<VkShaderStageFlagBits> Stages;
     VKShader(std::shared_ptr<State> owner, const Kans::ShaderData& data) : Memory(std::move(owner))
     {
-        Require(data.Code.Modules.size() == 2, "Graphics shader needs vertex and fragment modules");
+        Compute = data.Code.Modules.size() == 1 && data.Code.Modules[0].Stage == Kans::ShaderProductStage::Compute;
+        Require(Compute || (data.Code.Modules.size() == 2 &&
+                            std::none_of(data.Code.Modules.begin(),
+                                         data.Code.Modules.end(),
+                                         [](const auto& m) { return m.Stage == Kans::ShaderProductStage::Compute; })),
+                "Shader requires vertex+fragment or compute only; compute cannot mix with graphics stages");
         const auto                         device = Memory.Owner->Native.Logical;
         std::set<Kans::ShaderProductStage> kinds;
         std::string                        pushLayout;
@@ -78,7 +89,8 @@ struct VKShader final : Shader
             for (const auto& module : data.Code.Modules)
             {
                 Require((module.Stage == Kans::ShaderProductStage::Vertex ||
-                         module.Stage == Kans::ShaderProductStage::Fragment) &&
+                         module.Stage == Kans::ShaderProductStage::Fragment ||
+                         module.Stage == Kans::ShaderProductStage::Compute) &&
                             kinds.insert(module.Stage).second,
                         "Unsupported or duplicate shader stage");
                 spvtools::SpirvTools validator(SPV_ENV_VULKAN_1_2);
@@ -100,8 +112,22 @@ struct VKShader final : Shader
                 spirv_cross::Compiler reflection(module.Words);
                 reflection.set_entry_point(module.EntryPoint, static_cast<spv::ExecutionModel>(module.Stage));
                 auto resources = reflection.get_shader_resources();
-                Require(resources.storage_images.empty() && resources.subpass_inputs.empty() &&
-                            resources.atomic_counters.empty(),
+                if (Compute)
+                {
+                    for (uint32_t axis = 0; axis < 3; ++axis)
+                        Workgroup[axis] = reflection.get_execution_mode_argument(spv::ExecutionModeLocalSize, axis);
+                    const auto& limits      = Memory.Owner->Native.Properties.limits;
+                    uint64_t    invocations = 1;
+                    for (uint32_t axis = 0; axis < 3; ++axis)
+                    {
+                        Require(Workgroup[axis] && Workgroup[axis] <= limits.maxComputeWorkGroupSize[axis],
+                                "Compute local size exceeds device limits");
+                        invocations *= Workgroup[axis];
+                    }
+                    Require(invocations <= limits.maxComputeWorkGroupInvocations,
+                            "Compute local invocations exceed device limits");
+                }
+                Require(resources.subpass_inputs.empty() && resources.atomic_counters.empty(),
                         "Unsupported shader resource");
                 auto collect = [&](const auto& list, BindingType type) {
                     for (const auto& resource : list)
@@ -113,20 +139,39 @@ struct VKShader final : Shader
                                                type,
                                                0,
                                                TextureDimension::Texture2D};
+                        if (type == BindingType::StorageBuffer &&
+                            reflection.get_buffer_block_flags(resource.id).get(spv::DecorationNonWritable))
+                            binding.Type = BindingType::ReadOnlyStorageBuffer;
+                        if ((binding.Type == BindingType::StorageBuffer ||
+                             binding.Type == BindingType::StorageTexture) &&
+                            !Compute)
+                        {
+                            VkPhysicalDeviceFeatures features {};
+                            vkGetPhysicalDeviceFeatures(Memory.Owner->Native.Physical, &features);
+                            Require(module.Stage == Kans::ShaderProductStage::Vertex ?
+                                        features.vertexPipelineStoresAndAtomics :
+                                        features.fragmentStoresAndAtomics,
+                                    "Storage writes unavailable in shader stage");
+                        }
                         Require(binding.Group < 4, "Group exceeds backend capacity");
                         if (type == BindingType::UniformBuffer || type == BindingType::StorageBuffer)
                             binding.Bytes =
                                 reflection.get_declared_struct_size(reflection.get_type(resource.base_type_id));
-                        if (type == BindingType::SampledTexture || type == BindingType::CombinedTextureSampler)
+                        if (type == BindingType::SampledTexture || type == BindingType::CombinedTextureSampler ||
+                            type == BindingType::StorageTexture)
                         {
                             auto image = nativeType.image;
-                            Require((image.dim == spv::Dim2D || image.dim == spv::DimCube) && !image.arrayed,
+                            Require((image.dim == spv::Dim2D || image.dim == spv::DimCube || image.dim == spv::Dim3D) &&
+                                        !image.arrayed,
                                     "Unsupported shader image dimension");
                             binding.Multisampled = image.ms;
+                            if (type == BindingType::StorageTexture)
+                                binding.StorageFormat = image.format;
                             binding.Comparison = image.depth;
                             binding.Unsigned = reflection.get_type(image.type).basetype == spirv_cross::SPIRType::UInt;
-                            binding.Dimension =
-                                image.dim == spv::DimCube ? TextureDimension::Cube : TextureDimension::Texture2D;
+                            binding.Dimension  = image.dim == spv::Dim3D   ? TextureDimension::Texture3D :
+                                                 image.dim == spv::DimCube ? TextureDimension::Cube :
+                                                                             TextureDimension::Texture2D;
                         }
                         auto old = std::find_if(Bindings.begin(), Bindings.end(), [&](const auto& b) {
                             return b.Group == binding.Group && b.Slot == binding.Slot;
@@ -136,12 +181,15 @@ struct VKShader final : Shader
                         else
                             Require(old->Type == binding.Type && old->Bytes == binding.Bytes &&
                                         old->Dimension == binding.Dimension && old->Comparison == binding.Comparison &&
-                                        old->Unsigned == binding.Unsigned && old->Multisampled == binding.Multisampled,
+                                        old->Unsigned == binding.Unsigned &&
+                                        old->Multisampled == binding.Multisampled &&
+                                        old->StorageFormat == binding.StorageFormat,
                                     "Shader stages disagree about a binding");
                     }
                 };
                 collect(resources.uniform_buffers, BindingType::UniformBuffer);
                 collect(resources.storage_buffers, BindingType::StorageBuffer);
+                collect(resources.storage_images, BindingType::StorageTexture);
                 collect(resources.sampled_images, BindingType::CombinedTextureSampler);
                 collect(resources.separate_images, BindingType::SampledTexture);
                 collect(resources.separate_samplers, BindingType::Sampler);
@@ -163,8 +211,9 @@ struct VKShader final : Shader
                 Check(vkCreateShaderModule(device, &create, nullptr, &native));
                 Modules.push_back(native);
                 EntryPoints.push_back(module.EntryPoint);
-                Stages.push_back(module.Stage == Kans::ShaderProductStage::Vertex ? VK_SHADER_STAGE_VERTEX_BIT :
-                                                                                    VK_SHADER_STAGE_FRAGMENT_BIT);
+                Stages.push_back(module.Stage == Kans::ShaderProductStage::Vertex  ? VK_SHADER_STAGE_VERTEX_BIT :
+                                 module.Stage == Kans::ShaderProductStage::Compute ? VK_SHADER_STAGE_COMPUTE_BIT :
+                                                                                     VK_SHADER_STAGE_FRAGMENT_BIT);
             }
             for (const auto& stage : data.Reflection)
                 for (const auto& binding : stage.Bindings)
@@ -175,12 +224,27 @@ struct VKShader final : Shader
                     Require(found != Bindings.end() && binding.Count == 1 && found->Bytes == binding.BlockBytes &&
                                 found->Type == (binding.Kind == Kans::ShaderBindingKind::UniformBuffer ?
                                                     BindingType::UniformBuffer :
-                                                    BindingType::CombinedTextureSampler) &&
-                                (binding.Kind != Kans::ShaderBindingKind::CombinedImageSampler ||
-                                 found->Dimension == (binding.Dimension == Kans::ShaderImageDimension::Cube ?
-                                                          TextureDimension::Cube :
-                                                          TextureDimension::Texture2D)),
+                                                binding.Kind == Kans::ShaderBindingKind::StorageBuffer ?
+                                                    BindingType::StorageBuffer :
+                                                binding.Kind == Kans::ShaderBindingKind::ReadOnlyStorageBuffer ?
+                                                    BindingType::ReadOnlyStorageBuffer :
+                                                binding.Kind == Kans::ShaderBindingKind::StorageImage ?
+                                                    BindingType::StorageTexture :
+                                                binding.Kind == Kans::ShaderBindingKind::SampledImage ?
+                                                    BindingType::SampledTexture :
+                                                binding.Kind == Kans::ShaderBindingKind::Sampler ?
+                                                    BindingType::Sampler :
+                                                    BindingType::CombinedTextureSampler),
                             "Asset reflection disagrees with bytecode");
+                    if (binding.Kind == Kans::ShaderBindingKind::CombinedImageSampler ||
+                        binding.Kind == Kans::ShaderBindingKind::SampledImage ||
+                        binding.Kind == Kans::ShaderBindingKind::StorageImage)
+                        Require(found->Dimension == (binding.Dimension == Kans::ShaderImageDimension::Cube ?
+                                                         TextureDimension::Cube :
+                                                     binding.Dimension == Kans::ShaderImageDimension::Texture3D ?
+                                                         TextureDimension::Texture3D :
+                                                         TextureDimension::Texture2D),
+                                "Asset image dimension disagrees with bytecode");
                 }
             Memory.Delete = [device, modules = Modules] {
                 for (auto module : modules)
@@ -195,6 +259,7 @@ struct VKShader final : Shader
         }
     }
     uint32_t GetPushConstantBytes() const override { return PushBytes; }
+    std::array<uint32_t, 3> GetWorkgroupSize() const override { return Workgroup; }
 };
 struct VKLayout final : BindGroupLayout
 {
@@ -210,7 +275,7 @@ struct VKLayout final : BindGroupLayout
         {
             Require(bindings.empty() || bindings.back().binding != entry.Slot, "Duplicate group slot");
             bindings.push_back(
-                {entry.Slot, LayoutDescriptorType(Desc.Group, entry.Type), 1, VK_SHADER_STAGE_ALL_GRAPHICS, nullptr});
+                {entry.Slot, LayoutDescriptorType(Desc.Group, entry.Type), 1, VK_SHADER_STAGE_ALL, nullptr});
         }
         VkDescriptorSetLayoutCreateInfo create {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         create.bindingCount = uint32_t(bindings.size());
@@ -262,9 +327,11 @@ struct VKGroup final : BindGroup
             auto&       entry    = entries[i];
             const auto& expected = layout->Desc.Entries[i];
             Require(entry.Slot == expected.Slot, "Bind group slot mismatch");
-            bool buffer = expected.Type == BindingType::UniformBuffer || expected.Type == BindingType::StorageBuffer;
-            bool texture =
-                expected.Type == BindingType::SampledTexture || expected.Type == BindingType::CombinedTextureSampler;
+            bool buffer  = expected.Type == BindingType::UniformBuffer || expected.Type == BindingType::StorageBuffer ||
+                           expected.Type == BindingType::ReadOnlyStorageBuffer;
+            bool texture = expected.Type == BindingType::SampledTexture ||
+                           expected.Type == BindingType::CombinedTextureSampler ||
+                           expected.Type == BindingType::StorageTexture;
             bool sampler =
                 expected.Type == BindingType::Sampler || expected.Type == BindingType::CombinedTextureSampler;
             Require(bool(entry.BufferResource) == buffer && bool(entry.TextureResource) == texture &&
@@ -305,16 +372,24 @@ struct VKGroup final : BindGroup
             if (texture)
             {
                 auto t = Cast<VKTexture>(entry.TextureResource, Memory.Owner);
-                Require(Has(t->Desc.Usage, TextureUsage::Sampled), "Binding texture usage mismatch");
+                const bool storage = expected.Type == BindingType::StorageTexture;
+                Require(Has(t->Desc.Usage, storage ? TextureUsage::Storage : TextureUsage::Sampled),
+                        "Binding texture usage mismatch");
+                Require(!storage || entry.Aspect == TextureAspect::Default, "Storage image requires colour aspect");
+                Require(!storage || entry.Subresource ||
+                            (t->Desc.Dimension == TextureDimension::Texture3D && t->Desc.MipLevels == 1),
+                        "Storage image requires a single mip/layer Subresource (or whole single-mip 3D image)");
                 Require(entry.Aspect == TextureAspect::Default || entry.Subresource.has_value(),
                         "Stencil requires a subresource view");
-                images[i].imageView =
-                    entry.Subresource ? t->SampleViewFor(*entry.Subresource, entry.Aspect) : t->SampledView;
+                images[i].imageView = storage ? t->Views[t->Index(entry.Subresource.value_or(TextureSubresource {}))] :
+                                      entry.Subresource ? t->SampleViewFor(*entry.Subresource, entry.Aspect) :
+                                                          t->SampledView;
                 add(images[i].imageView);
                 images[i].imageLayout =
+                    storage ? VK_IMAGE_LAYOUT_GENERAL :
                     Info(t->Desc.PixelFormat).Depth() && Has(t->Desc.Usage, TextureUsage::DepthStencil) ?
-                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL :
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL :
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             }
             if (sampler)
             {
@@ -404,6 +479,7 @@ void ValidatePipeline(const std::shared_ptr<State>& owner, const PipelineDesc& d
         Require(SupportedSamples(owner->Native, texture) & desc.Samples, "Unsupported pipeline depth samples");
     }
     auto shader = Cast<VKShader>(desc.Program, owner);
+    Require(!shader->Compute, "Graphics pipeline requires a graphics program");
     Require(desc.PushConstantBytes >= shader->PushBytes && desc.PushConstantBytes <= 128 &&
                 desc.PushConstantBytes % 4 == 0,
             "Pipeline push constant range mismatch");
@@ -621,3 +697,87 @@ struct VKPipeline final : Pipeline
     }
     const PipelineDesc& GetDesc() const override { return Desc; }
 };
+
+struct VKComputePipeline final : ComputePipeline
+{
+    Allocation          Memory;
+    ComputePipelineDesc Desc;
+    VkPipeline          Native = VK_NULL_HANDLE;
+    VkPipelineLayout    Layout = VK_NULL_HANDLE;
+    Handle<VKLayout>    EmptyLayout;
+    VKComputePipeline(std::shared_ptr<State> owner, ComputePipelineDesc desc) :
+        Memory(std::move(owner)), Desc(std::move(desc))
+    {
+        auto shader = Cast<VKShader>(Desc.Program, Memory.Owner);
+        Require(shader->Compute, "Compute pipeline requires a compute program");
+        Require(Desc.PushConstantBytes >= shader->PushBytes && Desc.PushConstantBytes <= 128 &&
+                    Desc.PushConstantBytes % 4 == 0,
+                "Compute push constant range mismatch");
+        std::vector<VkDescriptorSetLayout> layouts;
+        for (const auto& handle : Desc.GroupLayouts)
+        {
+            auto l = Cast<VKLayout>(handle, Memory.Owner);
+            if (layouts.size() <= l->Desc.Group)
+                layouts.resize(l->Desc.Group + 1);
+            Require(!layouts[l->Desc.Group], "Duplicate compute pipeline group");
+            layouts[l->Desc.Group] = l->Native;
+        }
+        for (const auto& binding : shader->Bindings)
+        {
+            bool found = false;
+            for (const auto& l : Desc.GroupLayouts)
+                if (l->GetDesc().Group == binding.Group)
+                    for (const auto& entry : l->GetDesc().Entries)
+                        found |= entry.Slot == binding.Slot && entry.Type == binding.Type;
+            Require(found, "Compute pipeline layout disagrees with reflected binding");
+        }
+        if (std::find(layouts.begin(), layouts.end(), VK_NULL_HANDLE) != layouts.end())
+        {
+            EmptyLayout = std::make_shared<VKLayout>(Memory.Owner, BindGroupLayoutDesc {});
+            for (auto& l : layouts)
+                if (!l)
+                    l = EmptyLayout->Native;
+        }
+        auto                       device = Memory.Owner->Native.Logical;
+        VkPushConstantRange        push {VK_SHADER_STAGE_COMPUTE_BIT, 0, Desc.PushConstantBytes};
+        VkPipelineLayoutCreateInfo layout {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        layout.setLayoutCount         = uint32_t(layouts.size());
+        layout.pSetLayouts            = layouts.data();
+        layout.pushConstantRangeCount = Desc.PushConstantBytes ? 1 : 0;
+        layout.pPushConstantRanges    = &push;
+        Check(vkCreatePipelineLayout(device, &layout, nullptr, &Layout));
+        try
+        {
+            VkComputePipelineCreateInfo create {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+            create.layout       = Layout;
+            create.stage        = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+            create.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+            create.stage.module = shader->Modules[0];
+            create.stage.pName  = shader->EntryPoints[0].c_str();
+            Check(vkCreateComputePipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native));
+            ++Memory.Owner->PipelineCreations;
+            Memory.Delete = [device, pipeline = Native, layout = Layout] {
+                vkDestroyPipeline(device, pipeline, nullptr);
+                vkDestroyPipelineLayout(device, layout, nullptr);
+            };
+        }
+        catch (...)
+        {
+            vkDestroyPipelineLayout(device, Layout, nullptr);
+            throw;
+        }
+    }
+    const ComputePipelineDesc& GetDesc() const override { return Desc; }
+};
+
+void ValidateStorageFormat(const ShaderBinding& binding, const VKTexture& texture)
+{
+    const auto format = texture.Desc.PixelFormat;
+    const bool match  = (binding.StorageFormat == spv::ImageFormatRgba16f && format == Format::RGBA16Float) ||
+                        (binding.StorageFormat == spv::ImageFormatRgba32f && format == Format::RGBA32Float) ||
+                        (binding.StorageFormat == spv::ImageFormatR32ui && format == Format::R32Uint) ||
+                        (binding.StorageFormat == spv::ImageFormatR32f && format == Format::R32Float) ||
+                        (binding.StorageFormat == spv::ImageFormatRg16f && format == Format::RG16Float) ||
+                        (binding.StorageFormat == spv::ImageFormatRgba8 && format == Format::RGBA8Unorm);
+    Require(match, "Storage image format disagrees with shader binding (explicit supported format required)");
+}

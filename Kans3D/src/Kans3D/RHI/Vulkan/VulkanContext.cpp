@@ -137,7 +137,9 @@ namespace Kans::RenderHardware::VulkanDetail
                 std::vector<VkQueueFamilyProperties> queues(families);
                 vkGetPhysicalDeviceQueueFamilyProperties(physical, &families, queues.data());
                 for (uint32_t i = 0; i < families; ++i)
-                    if (queues[i].queueCount && (queues[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+                    if (queues[i].queueCount &&
+                        ((queues[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) ==
+                         (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)))
                     {
                         VkBool32 present = VK_TRUE;
                         if (Surface)
@@ -165,15 +167,24 @@ namespace Kans::RenderHardware::VulkanDetail
             enabled.synchronization2 = VK_TRUE;
             VkPhysicalDeviceFeatures supportedFeatures {};
             vkGetPhysicalDeviceFeatures(Physical, &supportedFeatures);
-            Require(supportedFeatures.fillModeNonSolid && supportedFeatures.independentBlend &&
-                        supportedFeatures.vertexPipelineStoresAndAtomics && supportedFeatures.fragmentStoresAndAtomics,
+            Require(supportedFeatures.fillModeNonSolid && supportedFeatures.independentBlend,
                     "Required graphics features are unavailable");
             VkPhysicalDeviceFeatures graphics {};
             graphics.sampleRateShading              = supportedFeatures.sampleRateShading;
             graphics.fillModeNonSolid               = VK_TRUE;
             graphics.independentBlend               = VK_TRUE;
-            graphics.vertexPipelineStoresAndAtomics = VK_TRUE;
-            graphics.fragmentStoresAndAtomics       = VK_TRUE;
+            graphics.vertexPipelineStoresAndAtomics    = supportedFeatures.vertexPipelineStoresAndAtomics;
+            graphics.fragmentStoresAndAtomics          = supportedFeatures.fragmentStoresAndAtomics;
+            graphics.multiDrawIndirect                 = supportedFeatures.multiDrawIndirect;
+            graphics.drawIndirectFirstInstance         = supportedFeatures.drawIndirectFirstInstance;
+            graphics.shaderStorageImageExtendedFormats = supportedFeatures.shaderStorageImageExtendedFormats;
+            VkPhysicalDeviceVulkan12Features f12 {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+            VkPhysicalDeviceFeatures2        features12 {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+            features12.pNext = &f12;
+            vkGetPhysicalDeviceFeatures2(Physical, &features12);
+            VkPhysicalDeviceVulkan12Features enabled12 {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+            enabled12.drawIndirectCount = f12.drawIndirectCount;
+            enabled.pNext               = &enabled12;
             // Match the neutral one-pixel line contract used by the GL path.
             // The optional extension supplies diamond-exit/Bresenham rasterization.
             uint32_t extensionCount = 0;
@@ -195,7 +206,7 @@ namespace Kans::RenderHardware::VulkanDetail
                 lines                = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES_EXT};
                 lines.bresenhamLines = BresenhamLines;
                 if (BresenhamLines)
-                    enabled.pNext = &lines;
+                    enabled12.pNext = &lines;
             }
             VkDeviceCreateInfo device {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
             device.pNext                = &enabled;
@@ -267,6 +278,10 @@ namespace Kans::RenderHardware::VulkanDetail
                 return {VK_FORMAT_R16G16B16A16_SFLOAT, 8};
             case Format::RGBA32Float:
                 return {VK_FORMAT_R32G32B32A32_SFLOAT, 16};
+            case Format::R32Float:
+                return {VK_FORMAT_R32_SFLOAT, 4};
+            case Format::RG16Float:
+                return {VK_FORMAT_R16G16_SFLOAT, 4};
             case Format::RG8Unorm:
                 return {VK_FORMAT_R8G8_UNORM, 2};
             case Format::R32Uint:

@@ -158,7 +158,8 @@ namespace Kans
                     if ((opcode == spv::OpCapability && module.Words[cursor + 1] != spv::CapabilityShader &&
                          module.Words[cursor + 1] != spv::CapabilityMatrix &&
                          module.Words[cursor + 1] != spv::CapabilitySampleRateShading &&
-                         module.Words[cursor + 1] != spv::CapabilityImageQuery) ||
+                         module.Words[cursor + 1] != spv::CapabilityImageQuery &&
+                         module.Words[cursor + 1] != spv::CapabilityStorageImageExtendedFormats) ||
                         opcode == spv::OpExtension)
                         return AssetError {AssetErrorCode::NotImplemented,
                                            "Shader capability/extension is unsupported"};
@@ -170,16 +171,28 @@ namespace Kans
                     return AssetError {AssetErrorCode::InvalidData, "Shader entry point does not match its stage"};
                 compiler.set_entry_point(module.EntryPoint, model);
                 const auto resources = compiler.get_shader_resources();
-                if (!resources.storage_buffers.empty() || !resources.storage_images.empty() ||
-                    !resources.separate_images.empty() || !resources.separate_samplers.empty() ||
-                    !resources.subpass_inputs.empty() || !resources.push_constant_buffers.empty() ||
-                    !resources.atomic_counters.empty())
+                if (!resources.subpass_inputs.empty() || !resources.atomic_counters.empty())
                     return AssetError {AssetErrorCode::NotImplemented,
                                        "Shader reflection resource category is unsupported"};
-                if (resources.uniform_buffers.size() + resources.sampled_images.size() > 4096 ||
-                    resources.stage_inputs.size() > 256 || resources.stage_outputs.size() > 256)
+                if (resources.uniform_buffers.size() + resources.sampled_images.size() +
+                            resources.storage_buffers.size() + resources.storage_images.size() +
+                            resources.separate_images.size() + resources.separate_samplers.size() >
+                        4096 ||
+                    resources.push_constant_buffers.size() > 1 || resources.stage_inputs.size() > 256 ||
+                    resources.stage_outputs.size() > 256)
                     return AssetError {AssetErrorCode::InvalidData, "Shader reflection resource budget exceeded"};
                 ShaderStageReflection                   reflection {module.Stage, {}, {}, {}};
+                if (module.Stage == ShaderProductStage::Compute)
+                    for (uint32_t axis = 0; axis < 3; ++axis)
+                        reflection.WorkgroupSize[axis] =
+                            compiler.get_execution_mode_argument(spv::ExecutionModeLocalSize, axis);
+                for (const auto& push : resources.push_constant_buffers)
+                {
+                    const auto bytes = compiler.get_declared_struct_size(compiler.get_type(push.base_type_id));
+                    if (bytes > 128)
+                        return AssetError {AssetErrorCode::InvalidData, "Shader push constants exceed 128 bytes"};
+                    reflection.PushConstantBytes = uint32_t(bytes);
+                }
                 std::set<std::pair<uint32_t, uint32_t>> bindings;
                 const auto add = [&](const auto& resource, ShaderBindingKind kind) -> std::optional<AssetError> {
                     ShaderResourceBinding binding {kind};
@@ -212,12 +225,28 @@ namespace Kans
                             return *error;
                         binding.Members = std::get<std::vector<ShaderUniformMember>>(std::move(members));
                     }
-                    else if ((type.image.dim != spv::Dim2D && type.image.dim != spv::DimCube) || type.image.arrayed ||
+                    else if (kind == ShaderBindingKind::StorageBuffer)
+                    {
+                        if (!type.array.empty())
+                            return AssetError {AssetErrorCode::NotImplemented,
+                                               "Storage binding arrays are unsupported"};
+                        binding.BlockBytes =
+                            compiler.get_declared_struct_size(compiler.get_type(resource.base_type_id));
+                        if (compiler.get_buffer_block_flags(resource.id).get(spv::DecorationNonWritable))
+                            binding.Kind = ShaderBindingKind::ReadOnlyStorageBuffer;
+                    }
+                    else if (kind == ShaderBindingKind::Sampler)
+                    {
+                    }
+                    else if ((type.image.dim != spv::Dim2D && type.image.dim != spv::DimCube &&
+                              type.image.dim != spv::Dim3D) ||
+                             type.image.arrayed ||
                              (compiler.get_type(type.image.type).basetype != spirv_cross::SPIRType::Float &&
                               compiler.get_type(type.image.type).basetype != spirv_cross::SPIRType::UInt))
                         return AssetError {AssetErrorCode::NotImplemented, "Shader sampled image shape is unsupported"};
                     else
-                        binding.Dimension = type.image.dim == spv::DimCube ? ShaderImageDimension::Cube :
+                        binding.Dimension = type.image.dim == spv::Dim3D   ? ShaderImageDimension::Texture3D :
+                                            type.image.dim == spv::DimCube ? ShaderImageDimension::Cube :
                                                                              ShaderImageDimension::Texture2D;
                     reflection.Bindings.push_back(std::move(binding));
                     return {};
@@ -227,6 +256,18 @@ namespace Kans
                         return *error;
                 for (const auto& resource : resources.sampled_images)
                     if (auto error = add(resource, ShaderBindingKind::CombinedImageSampler))
+                        return *error;
+                for (const auto& resource : resources.storage_buffers)
+                    if (auto error = add(resource, ShaderBindingKind::StorageBuffer))
+                        return *error;
+                for (const auto& resource : resources.storage_images)
+                    if (auto error = add(resource, ShaderBindingKind::StorageImage))
+                        return *error;
+                for (const auto& resource : resources.separate_images)
+                    if (auto error = add(resource, ShaderBindingKind::SampledImage))
+                        return *error;
+                for (const auto& resource : resources.separate_samplers)
+                    if (auto error = add(resource, ShaderBindingKind::Sampler))
                         return *error;
                 const auto interfaces = [&](const auto& source, auto& destination) -> std::optional<AssetError> {
                     std::set<uint32_t> occupied;
