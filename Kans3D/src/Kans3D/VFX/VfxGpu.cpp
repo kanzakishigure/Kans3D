@@ -264,7 +264,7 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
         GeometryBuffers[geometry] = buffer;
         return buffer;
     }
-    void GpuEmitter::AddPasses(RenderGraph& graph, EmitterInstance& emitter)
+    void GpuEmitter::AddPasses(RenderGraph& graph, EmitterInstance& emitter, bool readback)
     {
         auto releaseExpiredGeometry = [&]() {
             for (auto at = GeometryBuffers.begin(); at != GeometryBuffers.end();)
@@ -281,9 +281,12 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
              count    = graph.ImportBuffer("VFX compact count", Count),
              draw     = graph.ImportBuffer("VFX draw indirect", DrawArgs),
              dispatch = graph.ImportBuffer("VFX dispatch indirect", DispatchArgs);
-        if (!Initialized)
+        const bool reset = NeedsInitialization();
+        if (reset)
         {
+            const bool firstInitialization = !Initialized;
             Initialized             = true;
+            ResetPending                   = false;
             auto                  f = Free, fl = Flags, c = Counters;
             std::vector<GraphUse> initialization = {{free, GraphAccess::TransferWrite},
                                                     {flags, GraphAccess::TransferWrite},
@@ -315,7 +318,7 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                  fl,
                  c,
                  cap,
-                 tables  = InterfaceData,
+                 tables  = firstInitialization ? InterfaceData : decltype(InterfaceData) {},
                  buffers = InterfaceBuffers,
                  events  = EventBuffers,
                  state   = EmitterState,
@@ -364,6 +367,8 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                 },
                 true);
         };
+        if (reset)
+            compact();
         for (const auto& tick : emitter.Pending)
         {
             auto requested = tick.SpawnCount;
@@ -595,7 +600,7 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                 },
                 true);
         }
-        if (worked && !Pending[ReadbackCursor])
+        if (worked && readback && !Pending[ReadbackCursor])
         {
             auto target = Readbacks[ReadbackCursor], source = Counters;
             auto output = graph.ImportBuffer("VFX async readback", target);
@@ -627,9 +632,12 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                 e.GPU->UploadCpu(graph, e);
             else
             {
-                e.GPU->Poll(e);
+                if (!instance.TimelineDesiredAge)
+                    e.GPU->Poll(e);
                 ticks[i] = std::move(e.Pending);
                 steps    = std::max(steps, ticks[i].size());
+                if (ticks[i].empty() && e.GPU->NeedsInitialization())
+                    e.GPU->AddPasses(graph, e, !instance.TimelineDesiredAge);
             }
         }
         for (size_t step = 0; step < steps; ++step)
@@ -637,7 +645,7 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                 if (step < ticks[i].size())
                 {
                     emitters[i].Pending = {std::move(ticks[i][step])};
-                    emitters[i].GPU->AddPasses(graph, emitters[i]);
+                    emitters[i].GPU->AddPasses(graph, emitters[i], !instance.TimelineDesiredAge);
                 }
     }
     void GpuEmitter::UploadCpu(RenderGraph& graph, const EmitterInstance& e)

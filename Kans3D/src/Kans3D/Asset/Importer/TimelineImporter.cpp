@@ -36,6 +36,8 @@ namespace Kans
                 inputs.ProductsWithDependencies.emplace(b.Prefab, AssetType::Model);
             if (b.Skeleton.IsValid())
                 inputs.ProductsWithDependencies.emplace(b.Skeleton, AssetType::Skeleton);
+            if (b.Particles)
+                inputs.ProductsWithDependencies.emplace(b.Particles->System, AssetType::VfxSystem);
         }
         for (const auto& t : d.Animations)
             for (const auto& clip : t.Clips)

@@ -6,6 +6,7 @@
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Script/ScriptEngine.h"
 #include "Kans3D/Script/ScriptTimeline.h"
+#include "Kans3D/VFX/VfxWorld.h"
 #include "Timeline.h"
 #include "TimelineProperty.h"
 namespace Kans
@@ -75,6 +76,27 @@ namespace Kans
     } // namespace
     struct TimelineBoundState
     {
+        struct ParticleState
+        {
+            UUID                       Entity {0};
+            const Vfx::SystemInstance* Instance = nullptr;
+            Ref<const VfxSystemAsset>  Source;
+            size_t                     Section   = size_t(-1);
+            double                     Time      = -1;
+            bool                       WasActive = false, WasDesiredAge = false;
+            Vfx::ParameterMap          Parameters;
+        };
+        std::map<std::string, ParticleState> Particles;
+        void                                 ReleaseParticles(Scene& scene)
+        {
+            for (const auto& [binding, state] : Particles)
+                if (auto instance = scene.GetVfxWorld().Find(state.Entity);
+                    instance && instance == state.Instance && instance->Asset() == state.Source)
+                {
+                    instance->TimelineDesiredAge = state.WasDesiredAge;
+                    instance->Deactivate();
+                }
+        }
         struct Entry
         {
             TransformComponent                                                            Transform;
@@ -273,6 +295,17 @@ namespace Kans
         if (!m_State)
             return;
         RestoreCameras();
+        for (const auto& [binding, state] : m_State->Particles)
+            if (auto instance = m_Scene.GetVfxWorld().Find(state.Entity);
+                instance && instance == state.Instance && instance->Asset() == state.Source)
+            {
+                instance->TimelineDesiredAge = state.WasDesiredAge;
+                instance->DeactivateImmediate();
+                for (const auto& [name, value] : state.Parameters)
+                    instance->Set(name, value);
+                if (state.WasActive)
+                    instance->Activate();
+            }
         for (const auto& [id, s] : m_State->Entities)
             if (auto e = m_Scene.GetEntityByUUID(id))
             {
@@ -586,6 +619,106 @@ namespace Kans
         }
         return true;
     }
+    bool TimelinePlayer::EvaluateParticles(const TimelineParticleTrack& track, UUID id, double time)
+    {
+        auto entity = m_Scene.GetEntityByUUID(id);
+        if (!entity.HasComponent<ParticleSystemComponent>())
+            return Fail("particle track " + track.Binding + " requires ParticleSystemComponent");
+        auto& world    = m_Scene.GetVfxWorld();
+        auto  instance = world.Find(id);
+        if (!instance)
+        {
+            auto system = entity.GetComponent<ParticleSystemComponent>().System;
+            auto found  = ParticleSystems.find(system);
+            auto source = found == ParticleSystems.end() ? Load<VfxSystemAsset>(m_Scene, system) : found->second;
+            if (!source || !world.Bind(entity, source))
+                return Fail("particle track " + track.Binding + " missing particle system");
+            instance = world.Find(id);
+        }
+        if (auto validation = ValidateTimelineParticleParameters(track, *instance->Asset());
+            auto error      = std::get_if<AssetError>(&validation))
+        {
+            m_Error = *error;
+            return false;
+        }
+        auto& state = m_State->Particles[track.Binding];
+        if (state.Instance != instance || state.Entity != id || state.Source != instance->Asset())
+        {
+            state               = {};
+            state.Entity        = id;
+            state.Instance      = instance;
+            state.Source        = instance->Asset();
+            state.WasActive     = instance->IsActive();
+            state.WasDesiredAge = instance->TimelineDesiredAge;
+            for (const auto& p : track.Parameters)
+                state.Parameters[p.Name] = instance->Get(p.Name, p.Type);
+            instance->DeactivateImmediate();
+        }
+        instance->TimelineDesiredAge = track.DesiredAge;
+        auto parameters              = [&](double t) {
+            for (const auto& p : track.Parameters)
+                instance->Set(p.Name, Vfx::Value::Vector(p.Curve.Sample(t, state.Parameters.at(p.Name).Data), p.Type));
+        };
+        size_t selected = size_t(-1);
+        for (size_t i = 0; i < track.Sections.size(); ++i)
+            if (time >= track.Sections[i].Start)
+                selected = i;
+        if (selected == size_t(-1))
+        {
+            if (state.Time < 0 || state.Section != selected)
+                instance->DeactivateImmediate();
+        }
+        else
+        {
+            const auto& section = track.Sections[selected];
+            bool        changed =
+                state.Section != selected || (state.Time >= section.End && time < section.End &&
+                                              (!track.DesiredAge || section.OnEnd == TimelineParticleOnEnd::Kill));
+            if (track.DesiredAge)
+            {
+                const double duration = section.End - section.Start;
+                const bool   kill     = time >= section.End && section.OnEnd == TimelineParticleOnEnd::Kill;
+                if (kill)
+                {
+                    if (changed || state.Time < section.End)
+                        instance->DeactivateImmediate();
+                }
+                else
+                {
+                    // Re-evaluate curves at every historical tick, so replay equals straight fixed-step playback.
+                    parameters(section.Start);
+                    instance->SeekAge(time - section.Start,
+                                      track.FixedTick,
+                                      track.MaxSimulationTime,
+                                      m_Scene.GetWorldTransform(entity),
+                                      changed,
+                                      [&](double age) {
+                                          parameters(section.Start + age);
+                                          if (age + track.FixedTick * 1e-6 >= duration)
+                                              instance->Deactivate();
+                                      });
+                    if (time >= section.End)
+                        instance->Deactivate();
+                }
+            }
+            else if (time >= section.End)
+            {
+                if (section.OnEnd == TimelineParticleOnEnd::Finish)
+                    instance->Deactivate();
+                else if (changed || state.Time < section.End)
+                    instance->DeactivateImmediate();
+            }
+            else if (changed || time < state.Time)
+            {
+                parameters(time);
+                instance->Activate();
+            }
+        }
+        state.Section = selected;
+        state.Time    = time;
+        parameters(time);
+        return true;
+    }
     bool TimelinePlayer::Evaluate(double t)
     {
         if (!std::isfinite(t))
@@ -625,6 +758,8 @@ namespace Kans
                         }
                     }
                     auto e = m_Scene.InstantiatePrefab(b.Prefab, b.SpawnTransform.Translation);
+                    if (b.Particles)
+                        e.AddComponent<ParticleSystemComponent>(*b.Particles);
                     if (prefab)
                         e.GetComponent<PrefabInstanceComponent>().Source = prefab;
                     TransformComponent tr;
@@ -753,6 +888,10 @@ namespace Kans
             if (auto e = entity(tr.Binding))
                 if (!EvaluateAnimation(tr, e.GetUUID(), t))
                     return false;
+        for (const auto& tr : data.Particles)
+            if (auto e = entity(tr.Binding))
+                if (!EvaluateParticles(tr, e.GetUUID(), t))
+                    return false;
         RestoreCameras();
         for (const auto& cut : data.CameraCuts)
             if (t >= cut.Start && t < cut.End)
@@ -805,6 +944,8 @@ namespace Kans
             RestoreCameras();
             RemoveSpawned();
             if (m_State)
+            {
+                m_State->ReleaseParticles(m_Scene);
                 for (const auto& [id, base] : m_State->Bases)
                     if (auto e = m_Scene.GetEntityByUUID(id); e && e.HasComponent<AnimatorComponent>())
                     {
@@ -814,6 +955,7 @@ namespace Kans
                                 if (!s.Slot.empty())
                                     a.Player->ClearTimelinePose(s.Slot);
                     }
+            }
             m_State.reset();
         }
         m_Time      = 0;
@@ -887,6 +1029,8 @@ namespace Kans
         {
             RestoreCameras();
             RemoveSpawned();
+            if (m_State)
+                m_State->ReleaseParticles(m_Scene);
         }
         if (ScriptEngine::GetSceneContext() == &m_Scene)
             ScriptTimeline::Queue(m_Owner, 0, {}, true);

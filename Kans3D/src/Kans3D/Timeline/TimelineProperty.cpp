@@ -10,6 +10,8 @@ namespace Kans
             return e.HasComponent<TransformComponent>();
         if (name == "AnimatorComponent")
             return e.HasComponent<AnimatorComponent>();
+        if (name == "ParticleSystemComponent")
+            return e.HasComponent<ParticleSystemComponent>();
         if (name == "CameraComponent")
             return e.HasComponent<CameraComponent>();
         if (name == "PointLightComponent")

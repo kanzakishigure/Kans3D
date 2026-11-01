@@ -8,8 +8,14 @@ namespace Kans::Vfx
     {
     public:
         GpuEmitter(RenderHardware::Device&, const CompiledEmitter&);
-        void        AddPasses(RenderGraph&, EmitterInstance&);
+        void        AddPasses(RenderGraph&, EmitterInstance&, bool readback = true);
         void        Poll(EmitterInstance&);
+        void        Reset()
+        {
+            ResetPending   = true;
+            LatestSequence = SubmittedSequence + 1;
+        }
+        bool        NeedsInitialization() const { return !Initialized || ResetPending; }
         static void AddSystemPasses(RenderGraph&, SystemInstance&, RenderHardware::Device&);
         std::map<std::string, RenderHardware::Handle<RenderHardware::Buffer>> EventBuffers;
         RenderHardware::Handle<RenderHardware::Buffer>                        EventDispatchArgs;
@@ -89,6 +95,7 @@ namespace Kans::Vfx
         uint64_t                                       SubmittedSequence = 0, LatestSequence = 0;
         const CompiledEmitter&                         Compiled;
         bool                                           Initialized = false;
+        bool                                                                     ResetPending = false;
         RenderHardware::Handle<RenderHardware::Buffer> EmitterState;
         Kernel                                         Make(const std::string&,
                                                             const std::vector<RenderHardware::BindGroupLayoutEntry>&,

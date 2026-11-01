@@ -2,9 +2,11 @@
 #include <set>
 #include "Kans3D/Animation/Animation.h"
 #include "Kans3D/Core/UUID.h"
+#include "Kans3D/VFX/ParticleSystemComponent.h"
 
 namespace Kans
 {
+    class VfxSystemAsset;
     // Tangents are derivatives (value/second). Bezier uses controls V0 + out*dt/3, V1 - in*dt/3.
     enum class TimelineInterpolation : uint8_t
     {
@@ -41,6 +43,8 @@ namespace Kans
         JointTransform           SpawnTransform;
         TimelineRange            Lifetime {-1, 0}; // Start=-1 derives first track start; End=0 means timeline length.
         std::vector<std::string> ExpectedComponents;
+        // Spawnable root component, since model prefabs contain geometry rather than VFX components.
+        std::optional<ParticleSystemComponent> Particles;
     };
     struct TimelineTransformTrack
     {
@@ -69,6 +73,31 @@ namespace Kans
         std::string                           Binding, Slot; // Empty: "Timeline" if present, otherwise first AN4 slot.
         std::vector<TimelineAnimationSection> Clips;
     };
+    enum class TimelineParticleOnEnd : uint8_t
+    {
+        Finish,
+        Kill
+    };
+    struct TimelineParticleSection
+    {
+        double                Start = 0, End = 0;
+        TimelineParticleOnEnd OnEnd = TimelineParticleOnEnd::Finish;
+    };
+    struct TimelineParticleParameter
+    {
+        std::string   Name;
+        Vfx::Type     Type = Vfx::Type::Float;
+        TimelineCurve Curve;
+    };
+    struct TimelineParticleTrack
+    {
+        std::string                            Binding;
+        bool                                   DesiredAge        = false;
+        float                                  FixedTick         = 1.f / 60;
+        double                                 MaxSimulationTime = 10;
+        std::vector<TimelineParticleSection>   Sections;
+        std::vector<TimelineParticleParameter> Parameters;
+    };
     struct TimelineEvent
     {
         double      Time = 0;
@@ -87,11 +116,13 @@ namespace Kans
         std::vector<TimelinePropertyTrack>   Properties;
         std::vector<TimelineActivationTrack> Activations;
         std::vector<TimelineAnimationTrack>  Animations;
+        std::vector<TimelineParticleTrack>   Particles;
         std::vector<TimelineEvent>           Events;
         std::vector<TimelineCameraCut>       CameraCuts;
     };
     using TimelineAsset = AnimationDataAsset<TimelineData, AssetType::Timeline>;
     AnimationValidation ValidateTimeline(const TimelineData&);
+    AnimationValidation ValidateTimelineParticleParameters(const TimelineParticleTrack&, const VfxSystemAsset&);
     TimelineRange       TimelineBindingRange(const TimelineData&, const TimelineBinding&);
     enum class TimelineWrapMode : uint8_t
     {
@@ -142,12 +173,14 @@ namespace Kans
         // CPU fixtures/editor can supply already loaded immutable assets.
         std::map<AssetID, Ref<const AnimationClipAsset>> Clips;
         std::map<AssetID, Ref<const SkeletonAsset>>      Skeletons;
+        std::map<AssetID, Ref<const VfxSystemAsset>>     ParticleSystems;
 
     private:
         TimelinePlayerComponent*                  Component() const;
         bool                                      Fail(std::string);
         bool                                      CaptureEntity(UUID);
         bool                                      EvaluateAnimation(const TimelineAnimationTrack&, UUID, double);
+        bool                                      EvaluateParticles(const TimelineParticleTrack&, UUID, double);
         void                                      RemoveSpawned();
         void                                      RestoreCameras();
         void                                      CrossEvents(double from, double to, bool includeZero = false);

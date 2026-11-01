@@ -20,6 +20,7 @@ namespace Kans::Vfx
     struct EmitterInstance
     {
         explicit EmitterInstance(const CompiledEmitter&);
+        void Reset(); // Retains attribute storage and GPU workspaces.
         ~EmitterInstance();
         EmitterInstance(EmitterInstance&&) noexcept;
         EmitterInstance&                                 operator=(EmitterInstance&&) noexcept;
@@ -75,6 +76,14 @@ namespace Kans::Vfx
         Value    Get(const std::string& name, Type) const;
         uint32_t ParticleCount() const;
         void     Tick(float delta, const glm::mat4& owner = glm::mat4(1), glm::vec3 camera = {});
+        void                                    SeekAge(double                             age,
+                                                        float                              fixedTick,
+                                                        double                             maxSimulationTime,
+                                                        const glm::mat4&                   owner      = glm::mat4(1),
+                                                        bool                               reset      = false,
+                                                        const std::function<void(double)>& beforeTick = {});
+        double                                  Age() const { return m_Time; }
+        bool                                    TimelineDesiredAge = false; // Timeline owns stepping until released.
         const Ref<const VfxSystemAsset>&    Asset() const { return m_Asset; }
         std::vector<EmitterInstance>&       Emitters() { return m_Emitters; }
         const std::vector<EmitterInstance>& Emitters() const { return m_Emitters; }
@@ -105,6 +114,7 @@ namespace Kans::Vfx
         uint32_t                     m_Seed, m_Entropy = 0;
         double                       m_Time     = 0;
         bool                         m_Spawning = false, m_Paused = false;
+        bool                             m_ScrubCapWarned = false;
         glm::mat4                    m_Owner {1};
     };
     class VfxWorld

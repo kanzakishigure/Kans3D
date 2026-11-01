@@ -57,6 +57,7 @@ namespace Kans
             Transform,
             Animation,
             Activation,
+            Particle,
             Property,
             Events,
             Cuts

@@ -324,6 +324,9 @@ namespace Kans
             for (size_t i = 0; i < m_Data.Activations.size(); ++i)
                 if (m_Data.Activations[i].Binding == id)
                     rows.push_back({RowKind::Activation, i, id});
+            for (size_t i = 0; i < m_Data.Particles.size(); ++i)
+                if (m_Data.Particles[i].Binding == id)
+                    rows.push_back({RowKind::Particle, i, id});
             for (size_t i = 0; i < m_Data.Properties.size(); ++i)
                 if (m_Data.Properties[i].Binding == id)
                     rows.push_back({RowKind::Property, i, id});
@@ -542,6 +545,9 @@ namespace Kans
                 case RowKind::Activation:
                     label = "    Active";
                     break;
+                case RowKind::Particle:
+                    label = "    Particles";
+                    break;
                 case RowKind::Property:
                     label = "    " + m_Data.Properties[row.Track].Path;
                     break;
@@ -588,7 +594,7 @@ namespace Kans
                                          tracks.end());
                         };
                         erase(m_Data.Transforms), erase(m_Data.Animations), erase(m_Data.Activations),
-                            erase(m_Data.Properties);
+                            erase(m_Data.Properties), erase(m_Data.Particles);
                         m_Data.Bindings.erase(m_Data.Bindings.begin() + long(row.Track));
                         m_Selected = {};
                         Changed();
@@ -607,6 +613,9 @@ namespace Kans
                             break;
                         case RowKind::Activation:
                             m_Data.Activations.erase(m_Data.Activations.begin() + long(row.Track));
+                            break;
+                        case RowKind::Particle:
+                            m_Data.Particles.erase(m_Data.Particles.begin() + long(row.Track));
                             break;
                         case RowKind::Property:
                             m_Data.Properties.erase(m_Data.Properties.begin() + long(row.Track));

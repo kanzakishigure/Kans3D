@@ -2,6 +2,7 @@
 #include "TimelineProduct.h"
 #include <cstring>
 #include <set>
+#include "Kans3D/VFX/VfxSystemAsset.h"
 namespace Kans
 {
     glm::vec4 TimelineCurve::Sample(double t, glm::vec4 fallback) const
@@ -57,6 +58,10 @@ namespace Kans
                 if (t.Binding == binding.ID)
                     for (const auto& c : t.Clips)
                         add(c.Start);
+            for (const auto& t : d.Particles)
+                if (t.Binding == binding.ID)
+                    for (const auto& s : t.Sections)
+                        add(s.Start);
             for (const auto& c : d.CameraCuts)
                 if (c.Binding == binding.ID)
                     add(c.Start);
@@ -77,7 +82,8 @@ namespace Kans
         if (!std::isfinite(d.Length) || d.Length < 0 || !std::isfinite(d.FrameRate) || d.FrameRate <= 0)
             return error("invalid length or frame rate");
         if (d.Bindings.size() > 4096 || d.Transforms.size() + d.Properties.size() + d.Activations.size() +
-                                                d.Animations.size() + d.Events.size() + d.CameraCuts.size() >
+                                                d.Animations.size() + d.Particles.size() + d.Events.size() +
+                                                d.CameraCuts.size() >
                                             65536)
             return error("too many bindings or tracks");
         std::set<std::string> ids, names;
@@ -103,6 +109,9 @@ namespace Kans
             for (const auto& c : b.ExpectedComponents)
                 if (!text(c) || c.empty())
                     return error("invalid expected component");
+            if (b.Particles && (b.Kind != TimelineBindingKind::Spawnable || !b.Particles->System.IsValid() ||
+                                !std::isfinite(b.Particles->TimeScale) || b.Particles->TimeScale < 0))
+                return error("invalid particle component for spawnable " + b.ID);
         }
         auto known = [&](const auto& t) { return ids.count(t.Binding) != 0; };
         auto curve = [&](const TimelineCurve& c) {
@@ -150,6 +159,32 @@ namespace Kans
                     !std::isfinite(c.BlendOut) || c.BlendOut < 0)
                     return error("invalid animation clip/trim/speed/blend");
         }
+        std::set<std::string> particles;
+        for (const auto& t : d.Particles)
+        {
+            const std::string label = "particle track " + t.Binding;
+            if (!known(t) || !particles.insert(t.Binding).second)
+                return error(label + ": unknown or duplicate binding");
+            if (!std::isfinite(t.FixedTick) || t.FixedTick <= 0 || !std::isfinite(t.MaxSimulationTime) ||
+                t.MaxSimulationTime < 0 || t.MaxSimulationTime / t.FixedTick > 1000000)
+                return error(label + ": invalid fixed tick or simulation cap");
+            if (t.Sections.size() > 65536 || t.Parameters.size() > 4096)
+                return error(label + ": too many sections or parameters");
+            double prev = -1;
+            for (const auto& s : t.Sections)
+            {
+                if (!range(s.Start, s.End) || s.Start < prev || unsigned(s.OnEnd) > 1)
+                    return error(label + ": invalid/overlapping section or OnEnd");
+                prev = s.End;
+            }
+            std::set<std::string> parameters;
+            for (const auto& p : t.Parameters)
+                if (!text(p.Name) || p.Name.rfind("User.", 0) != 0 || p.Name.size() <= 5 ||
+                    !parameters.insert(p.Name).second || !curve(p.Curve) ||
+                    (p.Type != Vfx::Type::Float && p.Type != Vfx::Type::Vec2 && p.Type != Vfx::Type::Vec3 &&
+                     p.Type != Vfx::Type::Vec4 && p.Type != Vfx::Type::Color))
+                    return error(label + " parameter " + p.Name + ": invalid name, type or curve");
+        }
         double previous = -1;
         for (const auto& e : d.Events)
         {
@@ -165,6 +200,20 @@ namespace Kans
             if (!known(c) || !range(c.Start, c.End) || c.Start < previous)
                 return error("unknown binding or invalid/overlapping camera cut");
             previous = c.End;
+        }
+        return std::monostate {};
+    }
+    AnimationValidation ValidateTimelineParticleParameters(const TimelineParticleTrack& t, const VfxSystemAsset& asset)
+    {
+        const auto& parameters = asset.GetData().Settings.UserParameters;
+        for (const auto& p : t.Parameters)
+        {
+            auto at =
+                std::find_if(parameters.begin(), parameters.end(), [&](const auto& v) { return v.Name == p.Name; });
+            if (at == parameters.end() || at->Kind != p.Type)
+                return AssetError {AssetErrorCode::InvalidData,
+                                   "Timeline: particle track " + t.Binding + " parameter " + p.Name +
+                                       (at == parameters.end() ? ": unknown parameter" : ": type mismatch")};
         }
         return std::monostate {};
     }
@@ -265,7 +314,8 @@ namespace Kans
         YAML::Node n;
         n["Length"]    = d.Length;
         n["FrameRate"] = d.FrameRate;
-        for (auto key : {"Bindings", "Transforms", "Properties", "Activations", "Animations", "Events", "CameraCuts"})
+        for (auto key :
+             {"Bindings", "Transforms", "Properties", "Activations", "Animations", "Particles", "Events", "CameraCuts"})
             n[key] = YAML::Node(YAML::NodeType::Sequence);
         for (const auto& b : d.Bindings)
         {
@@ -276,6 +326,8 @@ namespace Kans
             if (b.Skeleton.IsValid())
                 v["Skeleton"] = b.Skeleton.ToString();
             v["ExpectedComponents"] = b.ExpectedComponents;
+            if (b.Particles)
+                v["ParticleSystem"] = EncodeParticleSystem(*b.Particles);
             if (b.Kind == TimelineBindingKind::Spawnable)
             {
                 v["Prefab"]   = b.Prefab.ToString();
@@ -343,6 +395,33 @@ namespace Kans
             }
             n["Animations"].push_back(v);
         }
+        for (const auto& t : d.Particles)
+        {
+            YAML::Node v;
+            v["Binding"]           = t.Binding;
+            v["DesiredAge"]        = t.DesiredAge;
+            v["FixedTick"]         = t.FixedTick;
+            v["MaxSimulationTime"] = t.MaxSimulationTime;
+            v["Sections"]          = YAML::Node(YAML::NodeType::Sequence);
+            v["Parameters"]        = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& s : t.Sections)
+            {
+                YAML::Node a;
+                a["Start"] = s.Start;
+                a["End"]   = s.End;
+                a["OnEnd"] = s.OnEnd == TimelineParticleOnEnd::Finish ? "Finish" : "Kill";
+                v["Sections"].push_back(a);
+            }
+            for (const auto& p : t.Parameters)
+            {
+                YAML::Node a;
+                a["Name"] = p.Name;
+                a["Type"] = Vfx::TypeName(p.Type);
+                a["Keys"] = Curve(p.Curve);
+                v["Parameters"].push_back(a);
+            }
+            n["Particles"].push_back(v);
+        }
         for (const auto& e : d.Events)
         {
             YAML::Node v;
@@ -370,7 +449,8 @@ namespace Kans
         TimelineData d;
         d.Length    = n["Length"].as<double>();
         d.FrameRate = Get(n, "FrameRate", 30.0);
-        for (auto key : {"Bindings", "Transforms", "Properties", "Activations", "Animations", "Events", "CameraCuts"})
+        for (auto key :
+             {"Bindings", "Transforms", "Properties", "Activations", "Animations", "Particles", "Events", "CameraCuts"})
             Sequence(n[key]);
         if (n["Bindings"])
             for (const auto& v : n["Bindings"])
@@ -384,6 +464,8 @@ namespace Kans
                 b.Kind     = kind == "Spawnable" ? TimelineBindingKind::Spawnable : TimelineBindingKind::Possessable;
                 b.Prefab   = ID(v["Prefab"]);
                 b.Skeleton = ID(v["Skeleton"]);
+                if (v["ParticleSystem"])
+                    b.Particles = DecodeParticleSystem(v["ParticleSystem"]);
                 b.Lifetime = {Get(v, "Start", -1.0), Get(v, "End", 0.0)};
                 b.SpawnTransform.Translation = glm::vec3(Vector(v["Position"]));
                 b.SpawnTransform.Scale       = glm::vec3(Vector(v["Scale"], glm::vec4(1)));
@@ -435,6 +517,44 @@ namespace Kans
                                            Get(c, "BlendIn", 0.0),
                                            Get(c, "BlendOut", 0.0)});
                 d.Animations.push_back(t);
+            }
+        if (n["Particles"])
+            for (const auto& v : n["Particles"])
+            {
+                TimelineParticleTrack t;
+                t.Binding           = v["Binding"].as<std::string>();
+                t.DesiredAge        = Get(v, "DesiredAge", false);
+                t.FixedTick         = Get(v, "FixedTick", 1.f / 60);
+                t.MaxSimulationTime = Get(v, "MaxSimulationTime", 10.0);
+                Sequence(v["Sections"]);
+                Sequence(v["Parameters"]);
+                if (v["Sections"])
+                    for (const auto& a : v["Sections"])
+                    {
+                        auto end = Get(a, "OnEnd", std::string("Finish"));
+                        if (end != "Finish" && end != "Kill")
+                            throw std::runtime_error("Timeline: particle track " + t.Binding + " unknown OnEnd");
+                        t.Sections.push_back(
+                            {a["Start"].as<double>(),
+                             a["End"].as<double>(),
+                             end == "Finish" ? TimelineParticleOnEnd::Finish : TimelineParticleOnEnd::Kill});
+                    }
+                if (v["Parameters"])
+                    for (const auto& a : v["Parameters"])
+                    {
+                        const auto               name = a["Name"].as<std::string>();
+                        const auto               type = a["Type"].as<std::string>();
+                        std::optional<Vfx::Type> kind;
+                        for (auto k :
+                             {Vfx::Type::Float, Vfx::Type::Vec2, Vfx::Type::Vec3, Vfx::Type::Vec4, Vfx::Type::Color})
+                            if (type == Vfx::TypeName(k))
+                                kind = k;
+                        if (!kind)
+                            throw std::runtime_error("Timeline: particle track " + t.Binding + " parameter " + name +
+                                                     ": invalid type");
+                        t.Parameters.push_back({name, *kind, Curve(a["Keys"])});
+                    }
+                d.Particles.push_back(std::move(t));
             }
         if (n["Events"])
             for (const auto& v : n["Events"])

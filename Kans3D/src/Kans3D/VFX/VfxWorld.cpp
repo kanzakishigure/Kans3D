@@ -73,6 +73,30 @@ namespace Kans::Vfx
                 Parameters[name] = *p.Default;
     }
     EmitterInstance::~EmitterInstance()                                     = default;
+    void EmitterInstance::Reset()
+    {
+        Parameters.clear();
+        for (const auto& [name, p] : BuiltinParameters())
+            if (name.rfind("Emitter.", 0) == 0)
+                Parameters[name] = *p.Default;
+        Alive.clear();
+        Free.clear();
+        for (size_t a = 0; a < Attributes.size(); ++a)
+            std::fill(Attributes[a].begin(), Attributes[a].end(), Compiled->Attributes[a].Default);
+        if (Compiled->Settings.Target == SimTarget::CPU)
+            for (uint32_t i = Compiled->Settings.Capacity; i > 0; --i)
+                Free.push_back(i - 1);
+        for (auto& [name, events] : Events)
+            events.clear();
+        Pending.clear();
+        NextID = PendingBurst = ParticleCount = 0;
+        Dropped = TotalSpawned = EventsDropped = SpawnRevision = ReadbackSpawnRevision = 0;
+        HasReadback = HiddenByDistance = false;
+        DynamicBounds                  = {};
+        SpriteRadius                   = 0;
+        if (GPU)
+            GPU->Reset();
+    }
     EmitterInstance::EmitterInstance(EmitterInstance&&) noexcept            = default;
     EmitterInstance& EmitterInstance::operator=(EmitterInstance&&) noexcept = default;
     Value            EmitterInstance::Read(const std::string& n, uint32_t slot) const
@@ -112,7 +136,6 @@ namespace Kans::Vfx
     SystemInstance::~SystemInstance() = default;
     void SystemInstance::Reset()
     {
-        m_Emitters.clear();
         m_MeshStates.clear();
         m_Entropy = Hash(uint32_t(uint64_t(UUID {})));
         m_Time    = 0;
@@ -129,8 +152,11 @@ namespace Kans::Vfx
         Run(m_Asset->GetData().Programs, Stage::SystemSpawn, m_Parameters, c);
         for (const auto& e : m_Asset->GetData().Emitters)
         {
-            m_Emitters.emplace_back(e);
-            auto& instance = m_Emitters.back();
+            if (c.EmitterIndex >= m_Emitters.size())
+                m_Emitters.emplace_back(e);
+            else
+                m_Emitters[c.EmitterIndex].Reset();
+            auto& instance = m_Emitters[c.EmitterIndex];
             c.Seed         = e.Settings.Deterministic ? m_Seed : Hash(m_Seed ^ m_Entropy);
             auto p         = m_Parameters;
             p.insert(instance.Parameters.begin(), instance.Parameters.end());
@@ -230,6 +256,41 @@ namespace Kans::Vfx
             Step(step, owner, camera);
         else
             m_Owner = owner;
+    }
+    void SystemInstance::SeekAge(double                             age,
+                                 float                              tick,
+                                 double                             cap,
+                                 const glm::mat4&                   owner,
+                                 bool                               reset,
+                                 const std::function<void(double)>& beforeTick)
+    {
+        if (!std::isfinite(age) || age < 0 || !std::isfinite(tick) || tick <= 0 || !std::isfinite(cap) || cap < 0 ||
+            cap / tick > 1000000)
+            throw std::invalid_argument("Invalid VFX desired-age time, fixed tick or simulation cap");
+        if (age > cap && !m_ScrubCapWarned)
+        {
+            std::string message = "VFX desired-age simulation capped at " + std::to_string(cap) + " seconds";
+            if (RuntimeWarning)
+                RuntimeWarning(message);
+            else if (Log::GetCoreLogger())
+                CORE_WARN("{}", message);
+            m_ScrubCapWarned = true;
+        }
+        // Quantize to whole fixed ticks, including float-authored tick values at exact boundaries.
+        double target = std::floor(std::min(age, cap) / tick + 1e-6) * double(tick);
+        m_Owner       = owner;
+        if (reset || target + double(tick) * 1e-6 < m_Time)
+        {
+            Reset();
+            m_Spawning = true;
+            m_Paused   = false;
+        }
+        while (m_Time + double(tick) <= target + double(tick) * 1e-6)
+        {
+            if (beforeTick)
+                beforeTick(m_Time);
+            Step(tick, owner, {});
+        }
     }
     void SystemInstance::PrepareMeshTables(ExecutionContext& context,
                                            float             dt,
@@ -446,13 +507,14 @@ namespace Kans::Vfx
                     (emitterProgram != compiled.Programs.end() && emitterProgram->second.Target == SimTarget::GPU))
                     ++e.SpawnRevision;
                 params["Transient.AllowSpawning"] = Value::Bool(spawning);
-                if (e.GPU)
+                if (e.GPU && !TimelineDesiredAge)
                     e.GPU->Poll(e);
                 bool queued = std::any_of(
                     e.Pending.begin(), e.Pending.end(), [](const auto& tick) { return tick.SpawnCount > 0; });
-                if (!compiled.Handlers.empty() || !compiled.EventLayouts.empty() ||
+                if (TimelineDesiredAge || !compiled.Handlers.empty() || !compiled.EventLayouts.empty() ||
                     (emitterProgram != compiled.Programs.end() && emitterProgram->second.Target == SimTarget::GPU) ||
                     e.Siblings->size() > 1 || count || e.ParticleCount || queued ||
+                    (e.SpawnRevision > 0 && !e.HasReadback) ||
                     (e.GPU && e.GPU->HasPendingReadback() &&
                      (!e.HasReadback || e.ReadbackSpawnRevision != e.SpawnRevision)))
                 {
@@ -797,7 +859,8 @@ namespace Kans::Vfx
             auto instance = Find(id);
             if (instance)
             {
-                instance->Tick(delta, m_Scene.GetWorldTransform(entity), camera);
+                if (!instance->TimelineDesiredAge)
+                    instance->Tick(delta, m_Scene.GetWorldTransform(entity), camera);
                 if (!preview && instance->AutoDestroy && instance->IsComplete())
                     destroy.push_back(id);
             }
