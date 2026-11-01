@@ -72,7 +72,7 @@ namespace Kans::Vfx
             if (name.rfind("Emitter.", 0) == 0)
                 Parameters[name] = *p.Default;
     }
-    EmitterInstance::~EmitterInstance()                                     = default;
+    EmitterInstance::~EmitterInstance() = default;
     void EmitterInstance::Reset()
     {
         Parameters.clear();
@@ -119,6 +119,9 @@ namespace Kans::Vfx
         m_Owner     = initialOwner;
         FixedBounds = c.FixedBounds ? c.FixedBounds : m_Asset->GetData().Settings.FixedBounds;
         TimeScale   = c.TimeScale;
+        if (c.FieldLayer > 31)
+            throw std::invalid_argument("Invalid particle field layer");
+        FieldLayer = c.FieldLayer;
         if (!std::isfinite(TimeScale) || TimeScale < 0)
             throw std::invalid_argument("VFX time scale must be finite and nonnegative");
         for (const auto& p : m_Asset->GetData().Settings.UserParameters)
@@ -403,6 +406,13 @@ namespace Kans::Vfx
         EngineValues(m_Parameters, dt, float(m_Time), owner, camera, velocity);
         m_Parameters["System.Age"] = Value::Float(float(m_Time));
         ExecutionContext context {m_Seed, 0, 0, owner};
+        context.Fields       = Fields;
+        context.FieldTime    = Fields ? FieldTime : m_Time;
+        context.FieldLayer   = FieldLayer;
+        context.FirstImpulse = m_LastImpulse + 1;
+        if (Fields)
+            for (const auto& impulse : Fields->Fields.GetImpulses())
+                m_LastImpulse = std::max(m_LastImpulse, impulse.Sequence);
         PrepareMeshTables(context, dt, owner, previousOwner);
         Run(m_Asset->GetData().Programs, Stage::SystemUpdate, m_Parameters, context);
         for (auto& e : m_Emitters)
@@ -730,6 +740,7 @@ namespace Kans::Vfx
     {
         m_Instances.clear();
         m_Configurations.clear();
+        m_FieldTime = 0;
         m_Playing = false;
     }
     void VfxWorld::Start()
@@ -767,6 +778,12 @@ namespace Kans::Vfx
     }
     void VfxWorld::Tick(float delta, bool preview, glm::vec3 camera)
     {
+        m_FieldTime += std::max(0.f, delta);
+        auto fields = std::make_shared<FieldSnapshot>();
+        m_Scene.GatherForceFields(fields->Fields);
+        if (!m_FieldGPU)
+            m_FieldGPU = std::make_shared<FieldGpuStorage>();
+        fields->GPU = m_FieldGPU;
         std::set<UUID>    live;
         std::vector<UUID> destroy;
         m_Scene.m_Registry.view<ParticleSystemComponent>().each([&](auto handle, const ParticleSystemComponent& c) {
@@ -859,6 +876,9 @@ namespace Kans::Vfx
             auto instance = Find(id);
             if (instance)
             {
+                instance->Fields     = fields;
+                instance->FieldTime  = m_FieldTime;
+                instance->FieldLayer = c.FieldLayer;
                 if (!instance->TimelineDesiredAge)
                     instance->Tick(delta, m_Scene.GetWorldTransform(entity), camera);
                 if (!preview && instance->AutoDestroy && instance->IsComplete())
@@ -903,7 +923,10 @@ namespace Kans
     {
         if (!std::isfinite(c.TimeScale) || c.TimeScale < 0)
             throw std::invalid_argument("Invalid particle time scale");
+        if (c.FieldLayer > 31)
+            throw std::invalid_argument("Invalid particle field layer");
         YAML::Node n;
+        n["FieldLayer"]        = c.FieldLayer;
         n["System"]            = c.System.ToString();
         n["AutoActivate"]      = c.AutoActivate;
         n["PreviewInEditMode"] = c.PreviewInEditMode;
@@ -933,6 +956,11 @@ namespace Kans
             c.SeedOverride = n["SeedOverride"].as<uint32_t>();
         c.UserParameters = Vfx::DecodeParameters(n["UserParameters"]);
         c.TimeScale      = n["TimeScale"].as<float>(1);
+        // Read signed so negative YAML values receive the same range error as values above 31.
+        const auto fieldLayer = n["FieldLayer"].as<int64_t>(0);
+        if (fieldLayer < 0 || fieldLayer > 31)
+            throw std::invalid_argument("Invalid particle field layer");
+        c.FieldLayer = uint32_t(fieldLayer);
         if (n["FixedBounds"])
         {
             Bounds b;

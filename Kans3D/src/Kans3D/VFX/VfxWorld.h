@@ -60,38 +60,41 @@ namespace Kans::Vfx
                        const glm::mat4&   initialOwner = glm::mat4(1),
                        MeshSourceResolver meshSources  = {});
         ~SystemInstance();
-        SystemInstance(const SystemInstance&)                           = delete;
-        SystemInstance& operator=(const SystemInstance&)                = delete;
-        SystemInstance(SystemInstance&&)                                = delete;
-        SystemInstance&                     operator=(SystemInstance&&) = delete;
-        void     Activate(bool reset = true);
-        void     Deactivate() { m_Spawning = false; }
-        void     DeactivateImmediate();
-        void     Pause() { m_Paused = true; }
-        void     Resume() { m_Paused = false; }
-        bool     IsActive() const { return m_Spawning && !m_Paused && !IsComplete(); }
-        bool     IsComplete() const;
-        void     Emit(const std::string& emitter, uint32_t count);
-        void     Set(const std::string& name, const Value&);
-        Value    Get(const std::string& name, Type) const;
-        uint32_t ParticleCount() const;
-        void     Tick(float delta, const glm::mat4& owner = glm::mat4(1), glm::vec3 camera = {});
-        void                                    SeekAge(double                             age,
-                                                        float                              fixedTick,
-                                                        double                             maxSimulationTime,
-                                                        const glm::mat4&                   owner      = glm::mat4(1),
-                                                        bool                               reset      = false,
-                                                        const std::function<void(double)>& beforeTick = {});
-        double                                  Age() const { return m_Time; }
-        bool                                    TimelineDesiredAge = false; // Timeline owns stepping until released.
-        const Ref<const VfxSystemAsset>&    Asset() const { return m_Asset; }
-        std::vector<EmitterInstance>&       Emitters() { return m_Emitters; }
-        const std::vector<EmitterInstance>& Emitters() const { return m_Emitters; }
-        const glm::mat4&                    OwnerTransform() const { return m_Owner; }
+        SystemInstance(const SystemInstance&)                      = delete;
+        SystemInstance& operator=(const SystemInstance&)           = delete;
+        SystemInstance(SystemInstance&&)                           = delete;
+        SystemInstance&                operator=(SystemInstance&&) = delete;
+        void                           Activate(bool reset = true);
+        void                           Deactivate() { m_Spawning = false; }
+        void                           DeactivateImmediate();
+        void                           Pause() { m_Paused = true; }
+        void                           Resume() { m_Paused = false; }
+        bool                           IsActive() const { return m_Spawning && !m_Paused && !IsComplete(); }
+        bool                           IsComplete() const;
+        void                           Emit(const std::string& emitter, uint32_t count);
+        void                           Set(const std::string& name, const Value&);
+        Value                          Get(const std::string& name, Type) const;
+        uint32_t                       ParticleCount() const;
+        void                           Tick(float delta, const glm::mat4& owner = glm::mat4(1), glm::vec3 camera = {});
+        void                           SeekAge(double                             age,
+                                               float                              fixedTick,
+                                               double                             maxSimulationTime,
+                                               const glm::mat4&                   owner      = glm::mat4(1),
+                                               bool                               reset      = false,
+                                               const std::function<void(double)>& beforeTick = {});
+        std::shared_ptr<FieldSnapshot> Fields;
+        uint32_t                       FieldLayer = 0;
+        double                         FieldTime  = 0;
+        double                         Age() const { return m_Time; }
+        bool                           TimelineDesiredAge = false; // Timeline owns stepping until released.
+        const Ref<const VfxSystemAsset>&        Asset() const { return m_Asset; }
+        std::vector<EmitterInstance>&           Emitters() { return m_Emitters; }
+        const std::vector<EmitterInstance>&     Emitters() const { return m_Emitters; }
+        const glm::mat4&                        OwnerTransform() const { return m_Owner; }
         std::function<void(const std::string&)> RuntimeWarning;
-        std::optional<Bounds>               FixedBounds;
-        float                               TimeScale   = 1;
-        bool                                AutoDestroy = false;
+        std::optional<Bounds>                   FixedBounds;
+        float                                   TimeScale   = 1;
+        bool                                    AutoDestroy = false;
 
     private:
         struct MeshState
@@ -112,7 +115,8 @@ namespace Kans::Vfx
         std::vector<EmitterInstance> m_Emitters;
         ParameterMap                 m_Parameters;
         uint32_t                     m_Seed, m_Entropy = 0;
-        double                       m_Time     = 0;
+        uint64_t                         m_LastImpulse = 0;
+        double                           m_Time        = 0;
         bool                         m_Spawning = false, m_Paused = false;
         bool                             m_ScrubCapWarned = false;
         glm::mat4                    m_Owner {1};
@@ -133,6 +137,8 @@ namespace Kans::Vfx
         Entity                                                 Spawn(AssetID, glm::vec3, glm::quat, bool);
 
     private:
+        std::shared_ptr<FieldGpuStorage>                m_FieldGPU;
+        double                                          m_FieldTime = 0;
         Scene&                                          m_Scene;
         std::map<UUID, std::unique_ptr<SystemInstance>> m_Instances;
         std::map<UUID, ParticleSystemComponent>         m_Configurations;

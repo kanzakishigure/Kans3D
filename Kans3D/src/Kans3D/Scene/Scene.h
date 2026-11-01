@@ -239,6 +239,7 @@ namespace Kans
         // The options of the running session (defaults outside one).
         const SceneRuntimeOptions& GetRuntimeOptions() const { return m_RuntimeOptions; }
         void                       OnRuntimeSingleStep();
+        void                       GatherForceFields(ForceFieldSet&) const;
         PhysicsWorld*              GetPhysicsWorld() const { return m_PhysicsWorld.get(); }
         const PhysicsSettings&     GetPhysicsSettings() const;
         double                     GetPhysicsInterpolationAlpha() const;
@@ -346,15 +347,15 @@ namespace Kans
         bool                                          m_ReconcilingPrefab = false;
         void                                          ExpandPrefab(Entity root);
         friend class Vfx::VfxWorld;
-        std::unique_ptr<Vfx::VfxWorld>                m_VfxWorld;
-        entt::registry                                m_Registry;
-        uint32_t                                      m_ViewportWidth = 0, m_ViewportHeight = 0;
-        std::string                                   m_Name;
-        PostProcessSettings                           m_PostProcessSettings;
-        EnvironmentSettings                           m_EnvironmentSettings;
-        bool                                          m_HasEnvironmentSettings = false;
-        EntityMap                                     m_EntityMap;
-        std::vector<UUID>                             m_RootOrder;
+        std::unique_ptr<Vfx::VfxWorld> m_VfxWorld;
+        entt::registry                 m_Registry;
+        uint32_t                       m_ViewportWidth = 0, m_ViewportHeight = 0;
+        std::string                    m_Name;
+        PostProcessSettings            m_PostProcessSettings;
+        EnvironmentSettings            m_EnvironmentSettings;
+        bool                           m_HasEnvironmentSettings = false;
+        EntityMap                      m_EntityMap;
+        std::vector<UUID>              m_RootOrder;
 
     private:
         friend class Entity;

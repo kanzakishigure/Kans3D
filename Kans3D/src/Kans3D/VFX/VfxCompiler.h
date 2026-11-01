@@ -2,6 +2,7 @@
 #include "Kans3D/Animation/AnimationData.h"
 #include "Kans3D/Asset/Runtime/MeshData.h"
 #include "Kans3D/Asset/Runtime/ShaderData.h"
+#include "Kans3D/Physics/ForceFields.h"
 #include "VfxAsset.h"
 namespace Kans::Vfx
 {
@@ -98,6 +99,14 @@ namespace Kans::Vfx
         std::shared_ptr<const MeshSamplingGeometry> Geometry;
         std::vector<glm::vec4>                      Frame;
     };
+    struct FieldGpuStorage;
+    struct FieldSnapshot
+    {
+        ForceFieldSet                    Fields;
+        std::shared_ptr<FieldGpuStorage> GPU;
+    };
+    bool     UsesForceFields(const Program&);
+    uint32_t ForceFieldsGpuBinding(const Program&);
     struct ExecutionContext
     {
         uint32_t                                                            Seed = 1, EmitterIndex = 0, UniqueID = 0;
@@ -107,6 +116,10 @@ namespace Kans::Vfx
         std::function<Value(const Instruction&, const std::vector<Value>&)> ReadParticle;
         std::function<void(const Instruction&, const std::vector<Value>&)>  WriteEvent;
         uint32_t                                                            SpawnIndex = 0;
+        std::shared_ptr<FieldSnapshot>                                      Fields;
+        double                                                              FieldTime    = 0;
+        uint32_t                                                            FieldLayer   = 0;
+        uint64_t                                                            FirstImpulse = 0;
         std::function<std::shared_ptr<const MeshSamplingSnapshot>(const InterfaceBinding&)> MeshTable;
     };
     // Mesh sampling tables share the CPU/GPU vec4 layout. CDFs use bind-pose area,

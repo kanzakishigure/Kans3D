@@ -118,6 +118,8 @@ namespace Kans::Vfx
             }
             for (const auto& [binding, slot] : MeshGpuBindings(program))
                 bindings.push_back({slot, BindingType::ReadOnlyStorageBuffer});
+            if (UsesForceFields(program))
+                bindings.push_back({ForceFieldsGpuBinding(program), BindingType::ReadOnlyStorageBuffer});
             auto& data                 = InterfaceData[&program];
             data                       = GpuInterfaceTable(program, {});
             InterfaceBuffers[&program] = buffer(data.size() * 16);
@@ -232,6 +234,65 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
         for (auto& r : Readbacks)
             r = device.CreateBuffer({64, BufferUsage::CopyDestination, MemoryUsage::Readback});
     }
+    Handle<Buffer> GpuEmitter::FieldBuffer(RenderGraph& graph, const ExecutionContext& context)
+    {
+        auto snapshot = context.Fields ? context.Fields : EmptyFields;
+        if (!snapshot->GPU)
+            snapshot->GPU = std::make_shared<FieldGpuStorage>();
+        auto& slots    = snapshot->GPU->Slots;
+        auto  lifetime = graph.Lifetime();
+        for (auto& slot : slots)
+            if (slot.Device == &Device && slot.Graph.lock() == lifetime.lock() && slot.Snapshot.lock() == snapshot)
+                return slot.Buffer;
+        auto at = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) {
+            return slot.Device == &Device && slot.Graph.expired();
+        });
+        if (at == slots.end())
+        {
+            slots.emplace_back();
+            at = std::prev(slots.end());
+        }
+        auto& slot           = *at;
+        slot.Graph           = lifetime;
+        slot.Snapshot        = snapshot;
+        slot.Device          = &Device;
+        const auto& records  = snapshot->Fields.GetRecords();
+        const auto& impulses = snapshot->Fields.GetImpulses();
+        static_assert(sizeof(FieldRecord) == 160);
+        std::vector<glm::vec4> data(1 + records.size() * 10 + impulses.size() * 4);
+        auto                   word = [](glm::uvec4 v) {
+            glm::vec4 out;
+            std::memcpy(&out, &v, 16);
+            return out;
+        };
+        data[0] = word({uint32_t(records.size()), uint32_t(impulses.size()), 0, 0});
+        if (!records.empty())
+            std::memcpy(data.data() + 1, records.data(), records.size() * sizeof(FieldRecord));
+        for (size_t i = 0; i < impulses.size(); ++i)
+        {
+            const auto& p = impulses[i];
+            size_t      o = 1 + records.size() * 10 + i * 4;
+            data[o]       = word({p.LayerMask, p.AffectMask, 0, 0});
+            data[o + 1]   = glm::vec4(p.Position, p.Radius);
+            data[o + 2]   = glm::vec4(p.Impulse, p.UpwardsModifier);
+            data[o + 3] =
+                word({uint32_t(p.Sequence), uint32_t(p.Sequence >> 32), uint32_t(p.Falloff), uint32_t(p.Radial)});
+        }
+        if (!slot.Buffer || slot.Buffer->GetDesc().Bytes < data.size() * 16)
+            slot.Buffer = Device.CreateBuffer({std::max(size_t(4096), data.size() * 16),
+                                               BufferUsage::Storage | BufferUsage::CopyDestination,
+                                               MemoryUsage::DeviceLocal});
+        auto buffer = slot.Buffer;
+        graph.AddPass(
+            "VFX scene field snapshot",
+            GraphPassKind::Transfer,
+            {{graph.ImportBuffer("VFX scene fields", buffer), GraphAccess::TransferWrite}},
+            [buffer, data = std::move(data)](auto& ctx) {
+                Upload(ctx.Device, ctx.Commands, buffer, data.data(), data.size() * 16);
+            },
+            true);
+        return buffer;
+    }
     Handle<Buffer> GpuEmitter::MeshGeometryBuffer(const InterfaceBinding& binding) const
     {
         if (!binding.Geometry)
@@ -278,14 +339,14 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
         auto attributes = graph.ImportBuffer("VFX attributes", Attributes),
              alive = graph.ImportBuffer("VFX alive", Alive), free = graph.ImportBuffer("VFX free", Free),
              flags = graph.ImportBuffer("VFX flags", Flags), counters = graph.ImportBuffer("VFX counters", Counters),
-             count    = graph.ImportBuffer("VFX compact count", Count),
-             draw     = graph.ImportBuffer("VFX draw indirect", DrawArgs),
-             dispatch = graph.ImportBuffer("VFX dispatch indirect", DispatchArgs);
+             count       = graph.ImportBuffer("VFX compact count", Count),
+             draw        = graph.ImportBuffer("VFX draw indirect", DrawArgs),
+             dispatch    = graph.ImportBuffer("VFX dispatch indirect", DispatchArgs);
         const bool reset = NeedsInitialization();
         if (reset)
         {
             const bool firstInitialization = !Initialized;
-            Initialized             = true;
+            Initialized                    = true;
             ResetPending                   = false;
             auto                  f = Free, fl = Flags, c = Counters;
             std::vector<GraphUse> initialization = {{free, GraphAccess::TransferWrite},
@@ -393,6 +454,9 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                     std::memcpy(&v, &tick.Context.LocalToWorld[k], 16);
                     words.push_back(v);
                 }
+                auto config = Pack(Value::Float(float(tick.Context.FieldTime)));
+                words.push_back({tick.Context.FieldLayer, config.x, 0, 0});
+                words.push_back({uint32_t(tick.Context.FirstImpulse), uint32_t(tick.Context.FirstImpulse >> 32), 0, 0});
                 auto& parameterWorkspace = Acquire(ParameterWorkspaces, graph);
                 if (!parameterWorkspace.Output || parameterWorkspace.Output->GetDesc().Bytes < words.size() * 16)
                     parameterWorkspace.Output =
@@ -485,6 +549,12 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                     auto buffer = GeometryBuffer(*binding, tick.Context);
                     bound.push_back(buffer);
                     uses.push_back({graph.ImportBuffer("VFX static mesh geometry", buffer), GraphAccess::StorageRead});
+                }
+                if (UsesForceFields(program))
+                {
+                    auto buffer = FieldBuffer(graph, tick.Context);
+                    bound.push_back(buffer);
+                    uses.push_back({graph.ImportBuffer("VFX scene fields", buffer), GraphAccess::StorageRead});
                 }
                 graph.AddPass(
                     spawn ? "VFX particle spawn" : "VFX particle update",

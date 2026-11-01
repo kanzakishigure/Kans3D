@@ -1110,6 +1110,7 @@ namespace Kans::Vfx
         Register("Texture2D", {Type::Color, true});
         Register("EmitterParticles", {Type::Vec4, true});
         Register("Events", {Type::Vec4, true});
+        Register("ForceFields", {Type::Vec3, true});
         for (const char* s : {"SkeletalMesh", "StaticMesh"})
             Register(s, {Type::Vec4, true});
     }

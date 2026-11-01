@@ -3,14 +3,25 @@
 #include "VfxWorld.h"
 namespace Kans::Vfx
 {
+    struct FieldGpuStorage
+    {
+        struct Slot
+        {
+            std::weak_ptr<const void>                      Graph;
+            std::weak_ptr<FieldSnapshot>                   Snapshot;
+            RenderHardware::Device*                        Device = nullptr;
+            RenderHardware::Handle<RenderHardware::Buffer> Buffer;
+        };
+        std::vector<Slot> Slots;
+    };
     // Storage is SoA: one 16-byte word per attribute per slot. Integers retain their bits.
     class GpuEmitter
     {
     public:
         GpuEmitter(RenderHardware::Device&, const CompiledEmitter&);
-        void        AddPasses(RenderGraph&, EmitterInstance&, bool readback = true);
-        void        Poll(EmitterInstance&);
-        void        Reset()
+        void AddPasses(RenderGraph&, EmitterInstance&, bool readback = true);
+        void Poll(EmitterInstance&);
+        void Reset()
         {
             ResetPending   = true;
             LatestSequence = SubmittedSequence + 1;
@@ -55,7 +66,9 @@ namespace Kans::Vfx
         RenderHardware::Device&                        Device;
 
     private:
-        std::shared_ptr<const MeshSamplingGeometry> EmptyGeometry;
+        std::shared_ptr<FieldSnapshot>                 EmptyFields = std::make_shared<FieldSnapshot>();
+        RenderHardware::Handle<RenderHardware::Buffer> FieldBuffer(RenderGraph&, const ExecutionContext&);
+        std::shared_ptr<const MeshSamplingGeometry>    EmptyGeometry;
         std::map<std::weak_ptr<const MeshSamplingGeometry>,
                  RenderHardware::Handle<RenderHardware::Buffer>,
                  std::owner_less<std::weak_ptr<const MeshSamplingGeometry>>>
@@ -94,7 +107,7 @@ namespace Kans::Vfx
         std::array<uint64_t, 3>                                                  ReadbackSpawnRevisions {};
         uint64_t                                       SubmittedSequence = 0, LatestSequence = 0;
         const CompiledEmitter&                         Compiled;
-        bool                                           Initialized = false;
+        bool                                                                     Initialized  = false;
         bool                                                                     ResetPending = false;
         RenderHardware::Handle<RenderHardware::Buffer> EmitterState;
         Kernel                                         Make(const std::string&,

@@ -9,12 +9,13 @@ namespace Kans
         std::optional<uint32_t> SeedOverride;
         Vfx::ParameterMap       UserParameters;
         std::optional<Bounds>   FixedBounds;
-        float                   TimeScale = 1;
+        float                   TimeScale  = 1;
+        uint32_t                FieldLayer = 0;
         bool                    operator==(const ParticleSystemComponent& b) const
         {
             return System == b.System && AutoActivate == b.AutoActivate && PreviewInEditMode == b.PreviewInEditMode &&
                    SeedOverride == b.SeedOverride && UserParameters == b.UserParameters && TimeScale == b.TimeScale &&
-                   FixedBounds.has_value() == b.FixedBounds.has_value() &&
+                   FieldLayer == b.FieldLayer && FixedBounds.has_value() == b.FixedBounds.has_value() &&
                    (!FixedBounds || (FixedBounds->Min == b.FixedBounds->Min && FixedBounds->Max == b.FixedBounds->Max));
         }
         bool operator!=(const ParticleSystemComponent& b) const { return !(*this == b); }

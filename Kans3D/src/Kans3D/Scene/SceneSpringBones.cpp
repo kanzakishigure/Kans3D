@@ -317,6 +317,27 @@ namespace Kans
             }
         }
     }
+    void Scene::GatherForceFields(ForceFieldSet& fields) const
+    {
+        fields.Clear();
+        if (m_PhysicsWorld)
+            fields = m_PhysicsWorld->GetForceFields();
+        else
+        {
+            for (auto h : m_Registry.view<WindZoneComponent>())
+            {
+                Entity e {h, const_cast<Scene*>(this)};
+                if (IsEntityActive(e))
+                    fields.AddWind(e.GetComponent<WindZoneComponent>(), GetWorldTransform(e));
+            }
+            for (auto h : m_Registry.view<ForceFieldComponent>())
+            {
+                Entity e {h, const_cast<Scene*>(this)};
+                if (IsEntityActive(e))
+                    fields.AddField(e.GetComponent<ForceFieldComponent>(), GetWorldTransform(e));
+            }
+        }
+    }
     void Scene::PrepareMotionSnapshot()
     {
         if (!m_SpringBoneUpdate)
@@ -324,23 +345,7 @@ namespace Kans
         auto& snapshot        = *m_SpringBoneUpdate;
         m_MotionSnapshotReady = true;
         snapshot.Begin();
-        if (m_PhysicsWorld)
-            snapshot.Fields = m_PhysicsWorld->GetForceFields();
-        else
-        {
-            for (auto h : m_Registry.view<WindZoneComponent>())
-            {
-                Entity e {h, this};
-                if (snapshot.Active(snapshot.Get(e.GetUUID(), e)))
-                    snapshot.Fields.AddWind(e.GetComponent<WindZoneComponent>(), GetWorldTransform(e));
-            }
-            for (auto h : m_Registry.view<ForceFieldComponent>())
-            {
-                Entity e {h, this};
-                if (snapshot.Active(snapshot.Get(e.GetUUID(), e)))
-                    snapshot.Fields.AddField(e.GetComponent<ForceFieldComponent>(), GetWorldTransform(e));
-            }
-        }
+        GatherForceFields(snapshot.Fields);
         for (auto h : m_Registry.view<MotionColliderComponent>())
         {
             Entity e {h, this};

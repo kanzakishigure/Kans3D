@@ -11,6 +11,23 @@ namespace Kans::Vfx
 #include "VfxMeshSampling.inc"
     namespace
     {
+        float Noise3D(glm::vec3 position)
+        {
+            auto base = glm::ivec3(glm::floor(position));
+            auto f    = glm::fract(position);
+            f         = f * f * (3.f - 2.f * f);
+            float v   = 0;
+            for (int zc = 0; zc < 2; ++zc)
+                for (int yc = 0; yc < 2; ++yc)
+                    for (int xc = 0; xc < 2; ++xc)
+                    {
+                        auto  p = base + glm::ivec3(xc, yc, zc);
+                        float n = float(Hash(uint32_t(p.x) ^ Hash(uint32_t(p.y)) ^ Hash(uint32_t(p.z))) >> 8) *
+                                  (1.f / 16777216.f);
+                        v += n * (xc ? f.x : 1 - f.x) * (yc ? f.y : 1 - f.y) * (zc ? f.z : 1 - f.z);
+                    }
+            return v;
+        }
         bool VectorType(Type t) { return t != Type::Int && t != Type::Bool; }
         bool Widen(Type from, Type to)
         {
@@ -49,6 +66,10 @@ namespace Kans::Vfx
                                                        {"RandomVector", 0},
                                                        {"RandomUnitVector", 0},
                                                        {"Noise3D", 1},
+                                                       {"CurlNoise", 4},
+                                                       {"EmitterSeedOffset", 0},
+                                                       {"ToSimulationVector", 1},
+                                                       {"SampleForceFields", 2},
                                                        {"Sample", 1},
                                                        {"TransformPosition", 1},
                                                        {"TransformVector", 1},
@@ -91,6 +112,10 @@ namespace Kans::Vfx
                     if (i.Op == "InverseTransformPosition")
                         i.PositionSpace = Space::Local;
                 }
+                if ((i.Op == "SampleForceFields" || i.Op == "CurlNoise") && !i.Args.empty())
+                    i.PositionSpace = Out.Code[i.Args[0]].PositionSpace;
+                if (i.Op == "ToSimulationVector")
+                    i.PositionSpace = SimulationSpace;
                 Out.Code.push_back(std::move(i));
                 return uint32_t(Out.Code.size() - 1);
             }
@@ -636,6 +661,16 @@ namespace Kans::Vfx
                                 i.Interface.Values.size() != i.Interface.Times.size())
                                 Error(id, guid, output, "Curve sample time/value count mismatch");
                         }
+                        if (i.Op == "SampleForceFields")
+                        {
+                            auto binding = inputs.find(n.Parameter);
+                            if (binding != inputs.end() && binding->second.Kind == InputKind::DataInterface)
+                                i.Interface = binding->second.Interface;
+                            if (i.Interface.Kind.empty())
+                                i.Interface.Kind = "ForceFields";
+                            if (i.Interface.Kind != "ForceFields")
+                                Error(id, guid, output, "SampleForceFields requires ForceFields data interface");
+                        }
                         if (i.Op == "Select" && i.Kind == Type::Position && i.Args.size() == 3)
                         {
                             i.Args[1] = PositionTo(i.Args[1], SimulationSpace);
@@ -728,6 +763,26 @@ namespace Kans::Vfx
                 {
                     if (t(0) != Type::Int || i.Kind != Type::Float)
                         error(0, "ToFloat requires int -> float");
+                }
+                else if (i.Op == "CurlNoise")
+                {
+                    if (t(0) != Type::Position || t(1) != Type::Float || t(2) != Type::Vec3 || i.Kind != Type::Vec3)
+                        error(0, "CurlNoise requires Position, float, vec3, int -> vec3");
+                    if (i.Args.size() == 4)
+                    {
+                        const auto& octave = Out.Code[i.Args[3]];
+                        if (t(3) != Type::Int || octave.Op != "Constant" || octave.Literal.Integer < 1 ||
+                            octave.Literal.Integer > 4)
+                            error(3, "Octaves must be a compile-time integer from 1 to 4");
+                    }
+                }
+                else if (i.Op == "SampleForceFields")
+                {
+                    if (t(0) != Type::Position || t(1) != Type::Vec3 || i.Kind != Type::Vec3)
+                        error(0, "ForceFields requires Position, vec3 -> vec3");
+                    if (i.Output != "Wind" && i.Output != "Force" && i.Output != "Acceleration" &&
+                        i.Output != "Impulse")
+                        error(0, "Unknown ForceFields output");
                 }
                 else if (i.Op == "Noise3D")
                 {
@@ -1575,6 +1630,68 @@ namespace Kans::Vfx
         const auto op = i.Op;
         if (IsMeshOperation(op))
             return EvaluateMesh(i, r, c);
+        if (op == "ToSimulationVector")
+        {
+            out.Data =
+                glm::vec4((i.PositionSpace == Space::Local ? glm::inverse(glm::mat3(c.LocalToWorld)) : glm::mat3(1)) *
+                              glm::vec3(x.Data),
+                          0);
+            return out;
+        }
+        if (op == "EmitterSeedOffset")
+        {
+            uint32_t h = Hash(c.Seed ^ Hash(c.EmitterIndex));
+            out.Data =
+                glm::vec4(float(h & 255u) / 17.f, float((h >> 8) & 255u) / 17.f, float((h >> 16) & 255u) / 17.f, 0);
+            return out;
+        }
+        if (op == "CurlNoise")
+        {
+            auto potential = [&](glm::vec3 p) {
+                return glm::vec3(Noise3D(p), Noise3D(p + glm::vec3(19, 37, 11)), Noise3D(p + glm::vec3(47, 7, 29)));
+            };
+            glm::vec3 result(0), p = glm::vec3(x.Data) * y.Data.x + glm::vec3(z.Data);
+            float     amplitude = 1;
+            for (int octave = 0; octave < a(3).Integer; ++octave)
+            {
+                constexpr float e  = .01f;
+                auto            dx = (potential(p + glm::vec3(e, 0, 0)) - potential(p - glm::vec3(e, 0, 0))) / (2 * e);
+                auto            dy = (potential(p + glm::vec3(0, e, 0)) - potential(p - glm::vec3(0, e, 0))) / (2 * e);
+                auto            dz = (potential(p + glm::vec3(0, 0, e)) - potential(p - glm::vec3(0, 0, e))) / (2 * e);
+                result += amplitude * glm::vec3(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x);
+                p *= 2;
+                amplitude *= .5f;
+            }
+            out.Data = glm::vec4(result, 0);
+            return out;
+        }
+        if (op == "SampleForceFields")
+        {
+            if (!c.Fields)
+                return out;
+            glm::vec3  p(x.Data), v(y.Data);
+            const bool local = i.PositionSpace == Space::Local;
+            if (local)
+            {
+                p = glm::vec3(c.LocalToWorld * glm::vec4(p, 1));
+                v = glm::mat3(c.LocalToWorld) * v;
+            }
+            auto      sample = c.Fields->Fields.Sample(p, v, c.FieldTime, c.FieldLayer, FieldSystem::Particles);
+            glm::vec3 value  = i.Output == "Wind"  ? sample.Wind :
+                               i.Output == "Force" ? sample.Force :
+                                                     sample.Acceleration;
+            if (i.Output == "Impulse")
+            {
+                value = {};
+                for (const auto& impulse : c.Fields->Fields.GetImpulses())
+                    if (impulse.Sequence >= c.FirstImpulse)
+                        value += impulse.Sample(p, c.FieldLayer, FieldSystem::Particles);
+            }
+            if (local)
+                value = glm::inverse(glm::mat3(c.LocalToWorld)) * value;
+            out.Data = glm::vec4(value, 0);
+            return out;
+        }
         if (op == "ParticleCount" || op == "ReadAttribute" || op == "ReadAttributeByID")
             return c.ReadParticle ? c.ReadParticle(i, r) : out;
         if (op == "WriteEvent")
@@ -1728,20 +1845,8 @@ namespace Kans::Vfx
         }
         if (op == "Noise3D")
         {
-            auto base = glm::ivec3(glm::floor(glm::vec3(x.Data)));
-            auto f    = glm::fract(glm::vec3(x.Data));
-            f         = f * f * (3.f - 2.f * f);
-            float v   = 0;
-            for (int zc = 0; zc < 2; ++zc)
-                for (int yc = 0; yc < 2; ++yc)
-                    for (int xc = 0; xc < 2; ++xc)
-                    {
-                        auto  p = base + glm::ivec3(xc, yc, zc);
-                        float n = float(Hash(uint32_t(p.x) ^ Hash(uint32_t(p.y)) ^ Hash(uint32_t(p.z))) >> 8) *
-                                  (1.f / 16777216.f);
-                        v += n * (xc ? f.x : 1 - f.x) * (yc ? f.y : 1 - f.y) * (zc ? f.z : 1 - f.z);
-                    }
-            out.Data = glm::vec4(v);
+            const float v = Noise3D(glm::vec3(x.Data));
+            out.Data      = glm::vec4(v);
             return out;
         }
         for (uint32_t k = 0; k < Components(i.Kind); ++k)
@@ -1839,6 +1944,19 @@ namespace Kans::Vfx
             }
         }
     }
+    bool UsesForceFields(const Program& p)
+    {
+        return std::any_of(p.Code.begin(), p.Code.end(), [](const auto& i) { return i.Op == "SampleForceFields"; });
+    }
+    uint32_t ForceFieldsGpuBinding(const Program& p)
+    {
+        uint32_t binding = 7;
+        for (const auto& r : p.Resources)
+            binding = std::max(binding, r.Binding + (r.Kind == "ParticleReader" ? 3u : 1u));
+        for (const auto& entry : MeshGpuBindings(p))
+            binding = std::max(binding, entry.second + 1);
+        return binding;
+    }
     void GenerateGpuProgram(Program& p, const std::vector<Attribute>& attributes)
     {
         const auto attribute = [&](const std::string& n) -> const Attribute* {
@@ -1866,7 +1984,7 @@ namespace Kans::Vfx
                                          "") +
                    "))";
         };
-        std::string s = R"glsl(#version 450
+        std::string       s = R"glsl(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) buffer Attributes { uvec4 attributes[]; };
 layout(set=0,binding=1,std430) readonly buffer Parameters { uvec4 parameters[]; };
@@ -1883,6 +2001,19 @@ float noiseV(vec3 x){ivec3 b=ivec3(floor(x));vec3 f=fract(x);f=f*f*(3.0-2.0*f);f
 for(int z=0;z<2;++z)for(int y=0;y<2;++y)for(int a=0;a<2;++a){ivec3 p=b+ivec3(a,y,z);float n=float(hashV(uint(p.x)^hashV(uint(p.y))^hashV(uint(p.z)))>>8)*(1.0/16777216.0);v+=n*(a!=0?f.x:1-f.x)*(y!=0?f.y:1-f.y)*(z!=0?f.z:1-f.z);}return v;}
 void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
 )glsl";
+        const std::string curlHelpers =
+#include "VfxCurlGLSL.inc"
+            ;
+        s.insert(s.find("void main()"), curlHelpers);
+        if (UsesForceFields(p))
+        {
+            std::string helpers = "layout(set=0,binding=" + std::to_string(ForceFieldsGpuBinding(p)) +
+                                  ",std430) readonly buffer SceneFields {vec4 fieldWords[];};\n";
+            helpers +=
+#include "VfxFieldsGLSL.inc"
+                ;
+            s.insert(s.find("void main()"), helpers);
+        }
         if (std::any_of(p.Code.begin(), p.Code.end(), [](const auto& i) { return IsMeshOperation(i.Op); }))
         {
             std::string geometryDeclarations, accessor = "vec4 meshStatic(int g,int o){switch(g){";
@@ -2176,6 +2307,23 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                     if (op == "RandomRange")
                         e = "(" + a + "+(" + b + "-" + a + ")*" + e + ")";
                 }
+            }
+            else if (op == "ToSimulationVector")
+                e = "(pc.worldSpace!=0u?" + a + ":inverse(mat3(owner))*" + a + ")";
+            else if (op == "EmitterSeedOffset")
+                e = "seedOffsetV()";
+            else if (op == "CurlNoise")
+                e = "curlV(" + a + "," + b + "," + c + "," + arg(3) + ")";
+            else if (op == "SampleForceFields")
+            {
+                auto pos    = i.PositionSpace == Space::Local ? "(owner*vec4(" + a + ",1)).xyz" : a;
+                auto vel    = i.PositionSpace == Space::Local ? "(mat3(owner)*" + b + ")" : b;
+                int  output = i.Output == "Wind" ? 0 : i.Output == "Force" ? 1 : i.Output == "Acceleration" ? 2 : 3;
+                e           = "sampleFieldsV(" + pos + "," + vel + "," + std::to_string(output) + ",parameters[" +
+                              std::to_string(p.Parameters.size() + 4) + "],parameters[" +
+                              std::to_string(p.Parameters.size() + 5) + "] )";
+                if (i.PositionSpace == Space::Local)
+                    e = "(inverse(mat3(owner))*" + e + ")";
             }
             else if (op == "Noise3D")
                 e = "noiseV(" + a + ")";

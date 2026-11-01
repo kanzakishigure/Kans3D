@@ -1,0 +1,438 @@
+Version: 1
+AssetID: 91b2a00000000001:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: CurlNoiseForce
+Inputs:
+- Name: Module.Strength
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+- Name: Module.Frequency
+  Type: float
+  Default:
+    Type: float
+    Value: 1.0
+- Name: Module.Octaves
+  Type: int
+  Default:
+    Type: int
+    Value: 1
+- Name: Module.PanVelocity
+  Type: vec3
+  Default:
+    Type: vec3
+    Value:
+    - 0.0
+    - 0.0
+    - 0.0
+- Name: Module.Offset
+  Type: vec3
+  Default:
+    Type: vec3
+    Value:
+    - 0.0
+    - 0.0
+    - 0.0
+- Name: Module.Space
+  Type: bool
+  Default:
+    Type: bool
+    Value: true
+Nodes:
+- Guid: 2c796b78-ede3-5d07-8ce8-fb3a0f6ef05d
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Strength
+- Guid: 9fcc4071-7f5a-51ed-a88e-ee8c35410cfb
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Frequency
+- Guid: 5eb7de68-f2e9-5936-b0c3-a8d357ea9dde
+  Op: Input
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Octaves
+- Guid: b05cbd34-ac13-5a96-90a6-3f6b080797dd
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.PanVelocity
+- Guid: 1665f72e-8ee0-5415-82ea-70181e9af921
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Offset
+- Guid: 61293be0-85e3-59d8-b184-4b30cfdb61b7
+  Op: Input
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Module.Space
+- Guid: 2ed60eda-3742-5cff-9f48-df757d07332d
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: 9feb3b4b-5a26-5736-8481-5ca114aa5fd8
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.Time
+- Guid: 0951133d-6d55-5fed-bf79-fa46ce26ec33
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.Mass
+- Guid: 2edce6f7-223d-522b-8206-6beda8173eda
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.PhysicsForce
+- Guid: 09362e7c-f789-59c1-9046-e5122fcd17b7
+  Op: EmitterSeedOffset
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 5fc3d9da-a806-554c-b4fc-aa1c09db4884
+  Op: Splat
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 4518f1a2-790e-544e-b920-a6e6ac0ec060
+  Op: Mul
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: d7344603-4284-5903-988d-5181898db91c
+  Op: Add
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 0747eb2a-a1c5-5b6c-b42b-2c1ef02645fc
+  Op: Add
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 45311b47-8cc5-5ecb-bbe2-b6e9e2346092
+  Op: TransformPosition
+  Type: position
+  Inputs:
+  - Name: Arg0
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: position
+- Guid: 10d13e96-e39e-52f1-a9e2-7fbd33edf12b
+  Op: CurlNoise
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  - Name: Arg1
+    Type: float
+  - Name: Arg2
+    Type: vec3
+  - Name: Arg3
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 6de3ca61-cf0d-56ce-97f8-a8c4973f4b7a
+  Op: InverseTransformPosition
+  Type: position
+  Inputs:
+  - Name: Arg0
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: position
+- Guid: a63df962-8a57-5b83-84c5-f52df3259e6c
+  Op: CurlNoise
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  - Name: Arg1
+    Type: float
+  - Name: Arg2
+    Type: vec3
+  - Name: Arg3
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 1ac656d4-33fe-58d2-a92b-2900ace35bfa
+  Op: TransformVector
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 628320f7-cf84-51b3-bbc9-c53b52c98afe
+  Op: Select
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: bool
+  - Name: Arg1
+    Type: vec3
+  - Name: Arg2
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: c99289ac-8f58-5d8f-a0b2-b6b1fa652624
+  Op: ToSimulationVector
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 6c939123-b7d1-5fbf-87e0-cb8499eeb11f
+  Op: Splat
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: f9986579-9642-5207-b080-2de6de3a9005
+  Op: Splat
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 6cc54850-a5d6-55ba-81f4-fe48319334a7
+  Op: Mul
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: e550e399-b06b-5a36-8278-14ed0240b06b
+  Op: Mul
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: a999a6b6-aae8-5126-8c9a-07de1342f4dc
+  Op: Add
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 08672931-f76a-56e7-a070-27148a38bc42
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.PhysicsForce
+Links:
+- From: 9feb3b4b-5a26-5736-8481-5ca114aa5fd8
+  Output: Value
+  To: 5fc3d9da-a806-554c-b4fc-aa1c09db4884
+  Input: Arg0
+- From: b05cbd34-ac13-5a96-90a6-3f6b080797dd
+  Output: Value
+  To: 4518f1a2-790e-544e-b920-a6e6ac0ec060
+  Input: Arg0
+- From: 5fc3d9da-a806-554c-b4fc-aa1c09db4884
+  Output: Value
+  To: 4518f1a2-790e-544e-b920-a6e6ac0ec060
+  Input: Arg1
+- From: 1665f72e-8ee0-5415-82ea-70181e9af921
+  Output: Value
+  To: d7344603-4284-5903-988d-5181898db91c
+  Input: Arg0
+- From: 09362e7c-f789-59c1-9046-e5122fcd17b7
+  Output: Value
+  To: d7344603-4284-5903-988d-5181898db91c
+  Input: Arg1
+- From: d7344603-4284-5903-988d-5181898db91c
+  Output: Value
+  To: 0747eb2a-a1c5-5b6c-b42b-2c1ef02645fc
+  Input: Arg0
+- From: 4518f1a2-790e-544e-b920-a6e6ac0ec060
+  Output: Value
+  To: 0747eb2a-a1c5-5b6c-b42b-2c1ef02645fc
+  Input: Arg1
+- From: 2ed60eda-3742-5cff-9f48-df757d07332d
+  Output: Value
+  To: 45311b47-8cc5-5ecb-bbe2-b6e9e2346092
+  Input: Arg0
+- From: 45311b47-8cc5-5ecb-bbe2-b6e9e2346092
+  Output: Value
+  To: 10d13e96-e39e-52f1-a9e2-7fbd33edf12b
+  Input: Arg0
+- From: 9fcc4071-7f5a-51ed-a88e-ee8c35410cfb
+  Output: Value
+  To: 10d13e96-e39e-52f1-a9e2-7fbd33edf12b
+  Input: Arg1
+- From: 0747eb2a-a1c5-5b6c-b42b-2c1ef02645fc
+  Output: Value
+  To: 10d13e96-e39e-52f1-a9e2-7fbd33edf12b
+  Input: Arg2
+- From: 5eb7de68-f2e9-5936-b0c3-a8d357ea9dde
+  Output: Value
+  To: 10d13e96-e39e-52f1-a9e2-7fbd33edf12b
+  Input: Arg3
+- From: 2ed60eda-3742-5cff-9f48-df757d07332d
+  Output: Value
+  To: 6de3ca61-cf0d-56ce-97f8-a8c4973f4b7a
+  Input: Arg0
+- From: 6de3ca61-cf0d-56ce-97f8-a8c4973f4b7a
+  Output: Value
+  To: a63df962-8a57-5b83-84c5-f52df3259e6c
+  Input: Arg0
+- From: 9fcc4071-7f5a-51ed-a88e-ee8c35410cfb
+  Output: Value
+  To: a63df962-8a57-5b83-84c5-f52df3259e6c
+  Input: Arg1
+- From: 0747eb2a-a1c5-5b6c-b42b-2c1ef02645fc
+  Output: Value
+  To: a63df962-8a57-5b83-84c5-f52df3259e6c
+  Input: Arg2
+- From: 5eb7de68-f2e9-5936-b0c3-a8d357ea9dde
+  Output: Value
+  To: a63df962-8a57-5b83-84c5-f52df3259e6c
+  Input: Arg3
+- From: a63df962-8a57-5b83-84c5-f52df3259e6c
+  Output: Value
+  To: 1ac656d4-33fe-58d2-a92b-2900ace35bfa
+  Input: Arg0
+- From: 61293be0-85e3-59d8-b184-4b30cfdb61b7
+  Output: Value
+  To: 628320f7-cf84-51b3-bbc9-c53b52c98afe
+  Input: Arg0
+- From: 10d13e96-e39e-52f1-a9e2-7fbd33edf12b
+  Output: Value
+  To: 628320f7-cf84-51b3-bbc9-c53b52c98afe
+  Input: Arg1
+- From: 1ac656d4-33fe-58d2-a92b-2900ace35bfa
+  Output: Value
+  To: 628320f7-cf84-51b3-bbc9-c53b52c98afe
+  Input: Arg2
+- From: 628320f7-cf84-51b3-bbc9-c53b52c98afe
+  Output: Value
+  To: c99289ac-8f58-5d8f-a0b2-b6b1fa652624
+  Input: Arg0
+- From: 2c796b78-ede3-5d07-8ce8-fb3a0f6ef05d
+  Output: Value
+  To: 6c939123-b7d1-5fbf-87e0-cb8499eeb11f
+  Input: Arg0
+- From: 0951133d-6d55-5fed-bf79-fa46ce26ec33
+  Output: Value
+  To: f9986579-9642-5207-b080-2de6de3a9005
+  Input: Arg0
+- From: c99289ac-8f58-5d8f-a0b2-b6b1fa652624
+  Output: Value
+  To: 6cc54850-a5d6-55ba-81f4-fe48319334a7
+  Input: Arg0
+- From: 6c939123-b7d1-5fbf-87e0-cb8499eeb11f
+  Output: Value
+  To: 6cc54850-a5d6-55ba-81f4-fe48319334a7
+  Input: Arg1
+- From: 6cc54850-a5d6-55ba-81f4-fe48319334a7
+  Output: Value
+  To: e550e399-b06b-5a36-8278-14ed0240b06b
+  Input: Arg0
+- From: f9986579-9642-5207-b080-2de6de3a9005
+  Output: Value
+  To: e550e399-b06b-5a36-8278-14ed0240b06b
+  Input: Arg1
+- From: 2edce6f7-223d-522b-8206-6beda8173eda
+  Output: Value
+  To: a999a6b6-aae8-5126-8c9a-07de1342f4dc
+  Input: Arg0
+- From: e550e399-b06b-5a36-8278-14ed0240b06b
+  Output: Value
+  To: a999a6b6-aae8-5126-8c9a-07de1342f4dc
+  Input: Arg1
+- From: a999a6b6-aae8-5126-8c9a-07de1342f4dc
+  Output: Value
+  To: 08672931-f76a-56e7-a070-27148a38bc42
+  Input: Arg0
