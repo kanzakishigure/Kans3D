@@ -247,16 +247,38 @@ namespace Kans::Vfx
         YAML::Node            RendererNode(const Renderer& x)
         {
             YAML::Node n;
-            n["Guid"]              = x.Guid;
-            n["Kind"]              = RenderKinds[int(x.Kind)];
-            n["Material"]          = ID(x.Material);
-            n["Facing"]            = FacingModes[int(x.FacingMode)];
-            n["Sort"]              = SortModes[int(x.Sorting)];
-            n["SortAscending"]     = x.SortAscending;
-            n["CastShadows"]       = x.CastShadows;
-            n["LockedAxisEnable"]  = x.LockedAxisEnable;
-            n["LockedAxis"]        = Vec(glm::vec4(x.LockedAxis, 0), 3);
-            n["Meshes"]            = YAML::Node(YAML::NodeType::Sequence);
+            n["Guid"]             = x.Guid;
+            n["Kind"]             = RenderKinds[int(x.Kind)];
+            n["Material"]         = ID(x.Material);
+            n["Facing"]           = FacingModes[int(x.FacingMode)];
+            n["Sort"]             = SortModes[int(x.Sorting)];
+            n["SortAscending"]    = x.SortAscending;
+            n["CastShadows"]      = x.CastsShadows();
+            n["LockedAxisEnable"] = x.LockedAxisEnable;
+            n["LockedAxis"]       = Vec(glm::vec4(x.LockedAxis, 0), 3);
+            if (x.Kind == RendererKind::Ribbon)
+            {
+                constexpr const char* facing[] = {"Screen", "Custom", "CustomSide"};
+                constexpr const char* modes[]  = {"ScaledUniformly",
+                                                  "TiledOverRibbonLength",
+                                                  "TiledFromStartOverRibbonLength",
+                                                  "ScaledUsingRibbonSegmentLength"};
+                n["RibbonFacing"]              = facing[int(x.RibbonFacingMode)];
+                n["TessellationFactor"]        = x.TessellationFactor;
+                n["CurveTension"]              = x.CurveTension;
+                for (const auto& uv : x.UVChannels)
+                {
+                    YAML::Node u;
+                    u["Mode"]         = modes[int(uv.Mode)];
+                    u["TileSize"]     = uv.TileSize;
+                    u["Offset"]       = Vec(glm::vec4(uv.Offset, 0, 0), 2);
+                    u["Scale"]        = Vec(glm::vec4(uv.Scale, 0, 0), 2);
+                    u["LeadingEdge"]  = uv.LeadingEdge;
+                    u["TrailingEdge"] = uv.TrailingEdge;
+                    n["UVChannels"].push_back(u);
+                }
+            }
+            n["Meshes"] = YAML::Node(YAML::NodeType::Sequence);
             for (const auto& entry : x.Meshes)
             {
                 YAML::Node m;
@@ -293,8 +315,38 @@ namespace Kans::Vfx
             x.Material = n["Material"] ? ReadID(n["Material"]) : AssetID {};
             if (x.Kind == RendererKind::Mesh)
                 x.FacingMode = Facing::Default;
+            if (x.Kind == RendererKind::Ribbon)
+            {
+                constexpr const char* facing[] = {"Screen", "Custom", "CustomSide"};
+                constexpr const char* modes[]  = {"ScaledUniformly",
+                                                  "TiledOverRibbonLength",
+                                                  "TiledFromStartOverRibbonLength",
+                                                  "ScaledUsingRibbonSegmentLength"};
+                if (n["RibbonFacing"])
+                    x.RibbonFacingMode = Parse<RibbonFacing>(n["RibbonFacing"], facing);
+                x.TessellationFactor = n["TessellationFactor"].as<uint32_t>(1);
+                x.CurveTension       = n["CurveTension"].as<float>(0);
+                if (n["UVChannels"])
+                {
+                    Check(n["UVChannels"].size() == 2, "Ribbon requires two UV channels");
+                    for (size_t i = 0; i < 2; ++i)
+                    {
+                        auto  u  = n["UVChannels"][i];
+                        auto& uv = x.UVChannels[i];
+                        if (u["Mode"])
+                            uv.Mode = Parse<RibbonUVMode>(u["Mode"], modes);
+                        uv.TileSize = u["TileSize"].as<float>(1);
+                        if (u["Offset"])
+                            uv.Offset = ReadVec(u["Offset"], 2);
+                        if (u["Scale"])
+                            uv.Scale = ReadVec(u["Scale"], 2);
+                        uv.LeadingEdge  = u["LeadingEdge"].as<float>(0);
+                        uv.TrailingEdge = u["TrailingEdge"].as<float>(0);
+                    }
+                }
+            }
             x.SortAscending    = n["SortAscending"].as<bool>(false);
-            x.CastShadows      = n["CastShadows"].as<bool>(true);
+            x.CastShadows      = n["CastShadows"].as<bool>(x.Kind != RendererKind::Ribbon);
             x.LockedAxisEnable = n["LockedAxisEnable"].as<bool>(false);
             if (n["LockedAxis"])
                 x.LockedAxis = ReadVec(n["LockedAxis"], 3);
@@ -1081,6 +1133,12 @@ namespace Kans::Vfx
         add("Particles.MeshOrientation", Type::Quat, {0, 0, 0, 1});
         add("Particles.Scale", Type::Vec3, glm::vec4(1));
         r["Particles.MeshIndex"] = {"Particles.MeshIndex", Type::Int, Value::Int(0), {}};
+        r["Particles.RibbonID"]  = {"Particles.RibbonID", Type::Int, Value::Int(0), {}};
+        add("Particles.RibbonLinkOrder", Type::Float);
+        add("Particles.RibbonWidth", Type::Float, glm::vec4(1));
+        add("Particles.RibbonTwist", Type::Float);
+        add("Particles.RibbonFacing", Type::Vec3, {0, 0, 1, 0});
+        add("Particles.RibbonUVDistance", Type::Float);
         add("Particles.Mass", Type::Float, glm::vec4(1));
         add("Particles.Age", Type::Float);
         add("Particles.Lifetime", Type::Float, glm::vec4(1));

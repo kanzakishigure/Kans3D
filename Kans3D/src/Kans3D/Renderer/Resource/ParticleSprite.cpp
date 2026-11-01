@@ -13,7 +13,7 @@ uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 mes
 } sprite;
 )";
     }
-    std::variant<ShaderData, AssetError> MakeParticleSpriteShader(const ShaderData& data, bool mesh)
+    std::variant<ShaderData, AssetError> MakeParticleSpriteShader(const ShaderData& data, bool mesh, bool ribbon)
     {
         try
         {
@@ -78,7 +78,7 @@ uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 mes
                                 auto line = source.rfind('\n', pos);
                                 source.replace(line + 1, end - line - 1, type + " " + name + ";");
                             }
-                        if (!mesh)
+                        if (!mesh && !ribbon)
                             source += R"(
 layout(set=2,binding=0,std430) readonly buffer KansSpriteAttributes{uvec4 attributes[];};
 layout(set=2,binding=1,std430) readonly buffer KansSpriteAlive{uint alive[];};
@@ -106,6 +106,18 @@ vec2 atlasUV=(cell+uv)/sprite.pivotGrid.zw;
 kans_ParticleColor=particle(sprite.offsets0.y,slot);
 kans_ParticleDynamic=particle(sprite.offsets1.z,slot);
 kans_ParticleSubUV=vec3((cellNext+uv)/sprite.pivotGrid.zw,fract(frame)*sprite.options.z);
+)";
+                        if (ribbon)
+                            source += R"(
+layout(set=2,binding=0,std430) readonly buffer KansRibbonVertices{vec4 vertices[];};
+layout(location=11) out vec4 kans_ParticleColor;
+layout(location=12) out vec4 kans_ParticleDynamic;
+layout(location=13) out vec3 kans_ParticleSubUV;
+layout(location=14) out vec2 kans_RibbonUV1;
+void main(){uint at=uint(gl_VertexIndex)*6;
+vec3 position=vertices[at].xyz,normal=vertices[at+1].xyz,right=vertices[at+5].xyz;
+vec2 atlasUV=vertices[at+2].xy;kans_RibbonUV1=vertices[at+2].zw;
+kans_ParticleColor=vertices[at+3];kans_ParticleDynamic=vertices[at+4];kans_ParticleSubUV=vec3(0);
 )";
                         if (mesh)
                         {
@@ -184,7 +196,8 @@ kans_ParticleColor=particle(sprite.offsets0.y,slot);kans_ParticleDynamic=particl
                                 else if (loc == 2)
                                     source += name + "=atlasUV;\n";
                                 else if (loc == 3)
-                                    source += name + "=particle(sprite.offsets0.y,slot);\n";
+                                    source += name + (ribbon ? "=kans_ParticleColor;\n" :
+                                                               "=particle(sprite.offsets0.y,slot);\n");
                                 else if (loc == 4)
                                     source += name + "=vec4(right,1);\n";
                                 else
@@ -198,6 +211,9 @@ kans_ParticleColor=particle(sprite.offsets0.y,slot);kans_ParticleDynamic=particl
                         source.insert(mainAt,
                                       "layout(location=11) in vec4 kans_ParticleColor;\nlayout(location=12) in vec4 "
                                       "kans_ParticleDynamic;\nlayout(location=13) in vec3 kans_ParticleSubUV;\n");
+                        if (ribbon)
+                            source.insert(source.find("void kans_SpriteMaterialMain()"),
+                                          "layout(location=14) in vec2 kans_RibbonUV1;\n");
                         if (!uvInput.empty())
                         {
                             auto declaration = std::string("in vec2 kans_MaterialUV;");
@@ -224,6 +240,12 @@ void main(){
 )";
                         if (!uvInput.empty())
                             source += "kans_MaterialUV=kans_RawMaterialUV;\n";
+                        if (ribbon)
+                        {
+                            auto pos = source.find("KansVertexUV1 = ");
+                            if (pos != std::string::npos)
+                                source.replace(pos, source.find(';', pos) - pos, "KansVertexUV1 = kans_RibbonUV1");
+                        }
                         source += "kans_SpriteMaterialMain();\n";
                         if (!uvInput.empty() && !colorOutput.empty())
                             source +=

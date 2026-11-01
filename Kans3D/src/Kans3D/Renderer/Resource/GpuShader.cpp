@@ -65,11 +65,11 @@ namespace Kans
                 return Failure("texture fallback '" + name + "' does not name a material sampler");
         GpuShader shader;
         shader.UsesSmoothNormals = ReadsSmoothNormals(reflection);
-        shader.OutputSpace = data.OutputSpace;
+        shader.OutputSpace       = data.OutputSpace;
         shader.Domain            = data.Domain;
         shader.PostStage         = data.PostStage;
-        shader.m_Source    = std::make_shared<const ShaderData>(data);
-        shader.m_Device = std::move(device);
+        shader.m_Source          = std::make_shared<const ShaderData>(data);
+        shader.m_Device          = std::move(device);
         try
         {
             shader.Program = shader.m_Device->CreateShader(data);
@@ -167,6 +167,22 @@ namespace Kans
         MeshLayout  = ParticleSpriteLayout(*m_Device);
         return true;
     }
+    bool GpuShader::PrepareParticleRibbon() const
+    {
+        if (RibbonProgram)
+            return true;
+        if (!m_Source)
+            return false;
+        auto converted = MakeParticleSpriteShader(*m_Source, false, true);
+        if (auto e = std::get_if<AssetError>(&converted))
+        {
+            CORE_ERROR("Particle mesh shader: {0}", e->Message);
+            return false;
+        }
+        RibbonProgram = m_Device->CreateShader(std::get<ShaderData>(converted));
+        RibbonLayout  = ParticleSpriteLayout(*m_Device);
+        return true;
+    }
     bool GpuShader::PrepareSkinning(bool smoothNormalFallback) const
     {
         auto& program = smoothNormalFallback ? SkinnedNormalFallbackProgram : SkinnedProgram;
@@ -180,14 +196,14 @@ namespace Kans
             CORE_ERROR("Skinning shader: {0}", error->Message);
             return false;
         }
-        auto& data     = std::get<ShaderData>(converted);
-        program        = m_Device->CreateShader(data);
+        auto& data = std::get<ShaderData>(converted);
+        program    = m_Device->CreateShader(data);
         if (!SkinLayout)
             SkinLayout = SkinningLayout(*m_Device);
         for (size_t i = 0; i < Passes.size(); ++i)
         {
             ShaderData pass;
-            pass.Code                = data.Passes[i].Code;
+            pass.Code = data.Passes[i].Code;
             auto& passProgram =
                 smoothNormalFallback ? Passes[i].SkinnedNormalFallbackProgram : Passes[i].SkinnedProgram;
             passProgram = m_Device->CreateShader(pass);
@@ -204,27 +220,30 @@ namespace Kans
     GpuShader GpuShader::Snapshot() const
     {
         GpuShader copy;
-        copy.m_Device           = m_Device;
-        copy.Program            = Program;
+        copy.m_Device                     = m_Device;
+        copy.Program                      = Program;
+        copy.RibbonProgram                = RibbonProgram;
+        copy.RibbonDepthProgram           = RibbonDepthProgram;
+        copy.RibbonLayout                 = RibbonLayout;
         copy.MeshDepthProgram             = MeshDepthProgram;
         copy.MeshProgram                  = MeshProgram;
         copy.MeshLayout                   = MeshLayout;
         copy.SpriteProgram                = SpriteProgram;
         copy.SpriteLayout                 = SpriteLayout;
-        copy.m_Source           = m_Source;
+        copy.m_Source                     = m_Source;
         copy.SkinnedNormalFallbackProgram = SkinnedNormalFallbackProgram;
-        copy.SkinnedProgram     = SkinnedProgram;
-        copy.SkinLayout         = SkinLayout;
-        copy.EngineLayout       = EngineLayout;
-        copy.MaterialLayout     = MaterialLayout;
-        copy.EngineResources    = EngineResources;
-        copy.Pipelines          = Pipelines;
-        copy.Passes             = Passes;
+        copy.SkinnedProgram               = SkinnedProgram;
+        copy.SkinLayout                   = SkinLayout;
+        copy.EngineLayout                 = EngineLayout;
+        copy.MaterialLayout               = MaterialLayout;
+        copy.EngineResources              = EngineResources;
+        copy.Pipelines                    = Pipelines;
+        copy.Passes                       = Passes;
         copy.UsesSmoothNormals            = UsesSmoothNormals;
-        copy.OutputSpace        = OutputSpace;
+        copy.OutputSpace                  = OutputSpace;
         copy.Domain                       = Domain;
         copy.PostStage                    = PostStage;
-        copy.m_SamplerFallbacks = m_SamplerFallbacks;
+        copy.m_SamplerFallbacks           = m_SamplerFallbacks;
         return copy;
     }
 } // namespace Kans

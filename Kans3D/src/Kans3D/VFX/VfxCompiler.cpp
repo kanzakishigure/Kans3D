@@ -925,6 +925,40 @@ namespace Kans::Vfx
                         p.Target           = ce.Settings.Target;
                         ce.Programs[stage] = p;
                     }
+                const bool hasRibbon =
+                    std::any_of(ce.Settings.Renderers.begin(), ce.Settings.Renderers.end(), [](const auto& renderer) {
+                        return renderer.Kind == RendererKind::Ribbon;
+                    });
+                const bool writesRibbonOrder =
+                    std::any_of(ce.Programs.begin(), ce.Programs.end(), [](const auto& entry) {
+                        return entry.second.Writes.count("Particles.RibbonLinkOrder") != 0;
+                    });
+                if (hasRibbon && !writesRibbonOrder)
+                {
+                    // Dynamic defaults are ordinary bytecode, so CPU and GPU retain identical products.
+                    auto&      update    = ce.Programs.at(Stage::ParticleUpdate);
+                    const auto parameter = [&](const std::string& name) {
+                        for (uint32_t n = 0; n < update.Parameters.size(); ++n)
+                            if (update.Parameters[n].Name == name)
+                                return n;
+                        update.Parameters.push_back(k.at(name));
+                        return uint32_t(update.Parameters.size() - 1);
+                    };
+                    Instruction read;
+                    read.Op        = "Get";
+                    read.Kind      = Type::Float;
+                    read.Parameter = parameter("Particles.NormalizedAge");
+                    uint32_t value = uint32_t(update.Code.size());
+                    update.Code.push_back(read);
+                    Instruction write;
+                    write.Op        = "Set";
+                    write.Kind      = Type::Float;
+                    write.Parameter = parameter("Particles.RibbonLinkOrder");
+                    write.Args      = {value};
+                    update.Code.push_back(write);
+                    update.Reads.insert("Particles.NormalizedAge");
+                    update.Writes.insert("Particles.RibbonLinkOrder");
+                }
                 for (const auto& [stage, p] : ce.Programs)
                 {
                     for (const auto& a : p.Reads)
@@ -936,9 +970,10 @@ namespace Kans::Vfx
                 }
                 for (auto& renderer : ce.Settings.Renderers)
                 {
-                    const bool mesh = renderer.Kind == RendererKind::Mesh;
-                    if (renderer.Kind == RendererKind::Ribbon || renderer.Kind == RendererKind::Light)
-                        r.Errors.push_back({asset, renderer.Guid, "", "Ribbon or Light renderer not implemented"});
+                    const bool mesh   = renderer.Kind == RendererKind::Mesh;
+                    const bool ribbon = renderer.Kind == RendererKind::Ribbon;
+                    if (renderer.Kind == RendererKind::Light)
+                        r.Errors.push_back({asset, renderer.Guid, "", "Light renderer not implemented"});
                     if (mesh)
                     {
                         if (renderer.FacingMode == Facing::ViewPlane)
@@ -975,7 +1010,41 @@ namespace Kans::Vfx
                                                                 {"Color", Type::Color},
                                                                 {"Velocity", Type::Vec3},
                                                                 {"DynamicMaterialParameter", Type::Vec4}};
-                    if (mesh)
+                    if (ribbon)
+                    {
+                        bindingTypes.insert({{"RibbonID", Type::Int},
+                                             {"RibbonLinkOrder", Type::Float},
+                                             {"RibbonWidth", Type::Float},
+                                             {"RibbonTwist", Type::Float}});
+                        for (const auto& [binding, type] : bindingTypes)
+                            if (!renderer.Bindings.count(binding))
+                                renderer.Bindings[binding] = "Particles." + binding;
+                        if (renderer.Bindings.count("RibbonFacing"))
+                            bindingTypes["RibbonFacing"] = Type::Vec3;
+                        if (renderer.Bindings.count("RibbonUVDistance"))
+                            bindingTypes["RibbonUVDistance"] = Type::Float;
+                        if (renderer.RibbonFacingMode != RibbonFacing::Screen &&
+                            (!renderer.Bindings.count("RibbonFacing") || renderer.Bindings.at("RibbonFacing").empty()))
+                            r.Errors.push_back({asset,
+                                                renderer.Guid,
+                                                "RibbonFacing",
+                                                "Custom ribbon facing requires a RibbonFacing binding"});
+                        if (renderer.TessellationFactor < 1 || renderer.TessellationFactor > 16)
+                            r.Errors.push_back({asset,
+                                                renderer.Guid,
+                                                "TessellationFactor",
+                                                "Ribbon tessellation factor must be 1–16"});
+                        if (!std::isfinite(renderer.CurveTension))
+                            r.Errors.push_back(
+                                {asset, renderer.Guid, "CurveTension", "Ribbon curve tension must be finite"});
+                        for (const auto& uv : renderer.UVChannels)
+                            if ((uv.Mode == RibbonUVMode::TiledOverRibbonLength ||
+                                 uv.Mode == RibbonUVMode::TiledFromStartOverRibbonLength) &&
+                                (!std::isfinite(uv.TileSize) || uv.TileSize <= 0))
+                                r.Errors.push_back(
+                                    {asset, renderer.Guid, "TileSize", "Ribbon tiled UV TileSize must be positive"});
+                    }
+                    else if (mesh)
                     {
                         bindingTypes.insert(
                             {{"MeshOrientation", Type::Quat}, {"Scale", Type::Vec3}, {"MeshIndex", Type::Int}});
@@ -2246,8 +2315,8 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
         for (const auto& e : p.Emitters)
         {
             YAML::Node a;
-            a["Settings"]     = EncodeEmitter(e.Settings);
-            a["Handle"]       = e.Handle;
+            a["Settings"] = EncodeEmitter(e.Settings);
+            a["Handle"]   = e.Handle;
             for (const auto& [guid, radius] : e.MeshRadii)
                 a["MeshRadii"][guid] = radius;
             a["EventLayouts"] = YAML::Node(YAML::NodeType::Sequence);

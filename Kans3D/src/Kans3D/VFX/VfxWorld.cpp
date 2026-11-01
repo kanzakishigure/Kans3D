@@ -418,6 +418,10 @@ namespace Kans::Vfx
                                     std::max(e.SpriteRadius, radius->second * std::max({scale.x, scale.y, scale.z}));
                             }
                         }
+                        else if (renderer.Kind == RendererKind::Ribbon)
+                            e.SpriteRadius =
+                                std::max(e.SpriteRadius,
+                                         std::abs(e.Read(renderer.Bindings.at("RibbonWidth"), slot).Data.x) * .5f);
                         else if (renderer.Kind == RendererKind::Sprite)
                         {
                             auto size   = glm::vec2(e.Read(renderer.Bindings.at("SpriteSize"), slot).Data);
@@ -517,6 +521,10 @@ namespace Kans::Vfx
                                                               radius->second * std::max({scale.x, scale.y, scale.z}));
                                 }
                             }
+                            else if (renderer.Kind == RendererKind::Ribbon)
+                                e.SpriteRadius =
+                                    std::max(e.SpriteRadius,
+                                             std::abs(e.Read(renderer.Bindings.at("RibbonWidth"), slot).Data.x) * .5f);
                             else if (renderer.Kind == RendererKind::Sprite)
                             {
                                 auto size = glm::vec2(e.Read(renderer.Bindings.at("SpriteSize"), slot).Data);

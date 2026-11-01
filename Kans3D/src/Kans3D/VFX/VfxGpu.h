@@ -20,6 +20,17 @@ namespace Kans::Vfx
                                                                    const glm::mat4& view,
                                                                    const glm::mat4& owner,
                                                                    bool             transparent);
+        struct RibbonData
+        {
+            // Six vec4 words per generated vertex: position, normal, UV0/UV1, color, dynamic, tangent.
+            RenderHardware::Handle<RenderHardware::Buffer> Vertices, Arguments;
+        };
+        RibbonData                                     BuildRibbon(RenderGraph&,
+                                                                   const EmitterInstance&,
+                                                                   const Renderer&,
+                                                                   const glm::mat4& view,
+                                                                   const glm::mat4& owner);
+        RenderHardware::Handle<RenderHardware::Buffer> UploadUniform(RenderGraph&, const void*, size_t);
         struct MeshBin
         {
             RenderHardware::Handle<RenderHardware::Buffer> Indices, Arguments;
@@ -46,7 +57,7 @@ namespace Kans::Vfx
             RenderHardware::Buffer*                        Input       = nullptr;
             std::vector<MeshBin>                           Bins;
         };
-        std::vector<Workspace>                         SortWorkspaces, BinWorkspaces;
+        std::vector<Workspace> SortWorkspaces, BinWorkspaces, RibbonWorkspaces, UniformWorkspaces, ParameterWorkspaces;
         RenderHardware::Handle<RenderHardware::Buffer> BoundsPartials;
         Workspace&                                     Acquire(std::vector<Workspace>&, RenderGraph&);
         struct Kernel
@@ -55,6 +66,7 @@ namespace Kans::Vfx
             RenderHardware::Handle<RenderHardware::BindGroupLayout> Layout;
         };
         Kernel SortPrepare, SortKeys, SortStep, SortOutput, BinCount, BinScan, BinScatter, BinArguments;
+        Kernel RibbonDetect, RibbonScan, RibbonVertices;
         Kernel Spawn, Update, Prepare, PrepareEvent, Compact, BoundsKernel, BoundsFinish;
         std::map<Stage, Kernel>                                                  StageKernels;
         std::vector<Kernel>                                                      HandlerKernels;

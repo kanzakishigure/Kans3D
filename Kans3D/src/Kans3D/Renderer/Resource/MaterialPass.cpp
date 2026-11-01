@@ -33,7 +33,7 @@ namespace Kans
                                                       data.Render.AlphaMode == MaterialAlphaMode::Dithered);
         const bool transparent = IsTransparentMaterial(data.Render.AlphaMode);
         // Include attachment formats as well as count: display and HDR share a shader cache.
-        uint32_t key = (uint32_t(skinned) << 7) | uint32_t(transparent) | (uint32_t(data.Render.DoubleSided) << 1) |
+        uint64_t key = (uint32_t(skinned) << 7) | uint32_t(transparent) | (uint32_t(data.Render.DoubleSided) << 1) |
                        (uint32_t(data.Wireframe) << 2) | (uint32_t(data.WriteStencil) << 3) |
                        (uint32_t(data.ColorFormats.size()) << 8) |
                        ((data.Samples == 8 ? 3u :
@@ -49,6 +49,8 @@ namespace Kans
         key |= uint32_t(data.Render.AlphaMode == MaterialAlphaMode::Premultiplied) << 29;
         key |= uint32_t(bool(data.VertexSource)) << 30;
         key |= uint32_t(data.ParticleMesh) << 27;
+        // Ribbons and sprites both use procedural vertices, but have different storage contracts.
+        key |= uint64_t(data.VertexSource && data.VertexSource == shader.RibbonProgram) << 32;
         Handle<Pipeline> shadowPipeline;
         auto&            pipeline = (data.ShadowDepth || data.CustomDepth) ? shadowPipeline :
                                     extraPass                              ? extraPass->Pipelines[key] :

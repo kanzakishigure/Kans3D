@@ -20,7 +20,7 @@ namespace Kans
         GpuUniformBuffer& operator=(const GpuUniformBuffer&) = delete;
 
         GpuUniformBuffer Snapshot() const { return GpuUniformBuffer(m_Device, m_Buffer); }
-        void Update(const void* data, size_t bytes);
+        void             Update(const void* data, size_t bytes);
         const RenderHardware::Handle<RenderHardware::Buffer>& Resource() const { return m_Buffer; }
 
     private:
@@ -38,7 +38,7 @@ namespace Kans
         ShaderPassState                                                              State;
         RenderHardware::Handle<RenderHardware::Shader>                               Program;
         mutable RenderHardware::Handle<RenderHardware::Shader>                       SkinnedProgram;
-        mutable std::map<uint32_t, RenderHardware::Handle<RenderHardware::Pipeline>> Pipelines;
+        mutable std::map<uint64_t, RenderHardware::Handle<RenderHardware::Pipeline>> Pipelines;
         mutable RenderHardware::Handle<RenderHardware::Shader>                       SkinnedNormalFallbackProgram;
         bool                                                                         UsesSmoothNormals = false;
     };
@@ -53,15 +53,18 @@ namespace Kans
         [[nodiscard]] static std::variant<GpuShader, AssetError>
         Create(const ShaderData& data, std::shared_ptr<RenderHardware::Device> device = {});
 
-        GpuShader Snapshot() const;
+        GpuShader                                                       Snapshot() const;
         std::shared_ptr<const ShaderData>                               Source() const { return m_Source; }
         bool                                                            PrepareParticleSprite() const;
         bool                                                            PrepareParticleMesh() const;
+        bool                                                            PrepareParticleRibbon() const;
+        mutable RenderHardware::Handle<RenderHardware::Shader>          RibbonProgram, RibbonDepthProgram;
+        mutable RenderHardware::Handle<RenderHardware::BindGroupLayout> RibbonLayout;
         mutable RenderHardware::Handle<RenderHardware::Shader>          MeshProgram, MeshDepthProgram;
         mutable RenderHardware::Handle<RenderHardware::BindGroupLayout> MeshLayout;
         mutable RenderHardware::Handle<RenderHardware::Shader>          SpriteProgram;
         mutable RenderHardware::Handle<RenderHardware::BindGroupLayout> SpriteLayout;
-        bool      PrepareSkinning(bool smoothNormalFallback = false) const;
+        bool PrepareSkinning(bool smoothNormalFallback = false) const;
         ~GpuShader();
         GpuShader(GpuShader&& other) noexcept;
         GpuShader& operator=(GpuShader&& other) noexcept;
@@ -71,16 +74,16 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Shader>                               Program;
         RenderHardware::Handle<RenderHardware::BindGroupLayout>                      EngineLayout, MaterialLayout;
         std::vector<ShaderResourceBinding>                                           EngineResources;
-        mutable std::map<uint32_t, RenderHardware::Handle<RenderHardware::Pipeline>> Pipelines;
+        mutable std::map<uint64_t, RenderHardware::Handle<RenderHardware::Pipeline>> Pipelines;
 
         mutable RenderHardware::Handle<RenderHardware::Shader>          SkinnedProgram;
         mutable RenderHardware::Handle<RenderHardware::BindGroupLayout> SkinLayout;
-        std::vector<GpuShaderPass> Passes;
+        std::vector<GpuShaderPass>                                      Passes;
         mutable RenderHardware::Handle<RenderHardware::Shader>          SkinnedNormalFallbackProgram;
         bool                                                            UsesSmoothNormals = false;
         ShaderDomain                                                    Domain            = ShaderDomain::Surface;
         PostProcessStage                                                PostStage   = PostProcessStage::BeforeToneMap;
-        ShaderOutputSpace          OutputSpace = ShaderOutputSpace::Display;
+        ShaderOutputSpace                                               OutputSpace = ShaderOutputSpace::Display;
 
         const std::map<uint32_t, ShaderTextureFallback>& MaterialSamplerFallbacks() const { return m_SamplerFallbacks; }
 

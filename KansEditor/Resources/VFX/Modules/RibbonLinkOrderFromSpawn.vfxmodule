@@ -1,0 +1,35 @@
+Version: 1
+AssetID: 91b2b00000000002:0000000000000001
+Usage: Module
+AllowedStages: 16
+Category: Built-in
+Description: Newest-first persistent spawn order for a moving source ribbon.
+Inputs: []
+Nodes:
+- Guid: ribbon-order-id
+  Op: Get
+  Type: int
+  Parameter: Particles.UniqueID
+  Outputs: [{Name: Value, Type: int}]
+- Guid: ribbon-order-float
+  Op: ToFloat
+  Type: float
+  Inputs: [{Name: Value, Type: int}]
+  Outputs: [{Name: Value, Type: float}]
+- Guid: ribbon-order-set
+  Op: Set
+  Type: float
+  Parameter: Particles.RibbonLinkOrder
+  Inputs: [{Name: Value, Type: float}]
+  Outputs: [{Name: Value, Type: float}]
+- Guid: ribbon-order-negate
+  Op: Sub
+  Type: float
+  Inputs:
+  - {Name: A, Type: float, Default: {Type: float, Value: 0}}
+  - {Name: B, Type: float}
+  Outputs: [{Name: Value, Type: float}]
+Links:
+- {From: ribbon-order-id, Output: Value, To: ribbon-order-float, Input: Value}
+- {From: ribbon-order-float, Output: Value, To: ribbon-order-negate, Input: B}
+- {From: ribbon-order-negate, Output: Value, To: ribbon-order-set, Input: Value}

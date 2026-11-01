@@ -1,0 +1,24 @@
+Version: 1
+AssetID: 91b2b00000000001:0000000000000001
+Usage: Module
+AllowedStages: 48
+Category: Built-in
+Description: Set ribbon group from an input, including linked emitter counters.
+Inputs:
+- Name: Module.ID
+  Type: int
+  Default: {Type: int, Value: 0}
+Nodes:
+- Guid: ribbon-id-input
+  Op: Input
+  Type: int
+  Parameter: Module.ID
+  Outputs: [{Name: Value, Type: int}]
+- Guid: ribbon-id-set
+  Op: Set
+  Type: int
+  Parameter: Particles.RibbonID
+  Inputs: [{Name: Value, Type: int}]
+  Outputs: [{Name: Value, Type: int}]
+Links:
+- {From: ribbon-id-input, Output: Value, To: ribbon-id-set, Input: Value}

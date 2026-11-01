@@ -178,6 +178,7 @@ vec3 KansSmoothNormal() { return a_SmoothNormal; }
 vec4 KansVertexColor = vec4(1);
 vec4 KansVertexDynamicMaterialParameter = vec4(0);
 vec3 KansVertexSubUV = vec3(0);
+vec2 KansVertexUV1 = vec2(0);
 #endif
 )"},
                 {"Kans3D/VertexInput.glsl", R"(#ifndef KANS3D_VERTEX_INPUT_GLSL
@@ -473,10 +474,10 @@ vec4 KansToneMap(vec3 color)
         };
         struct ExpectedBinding
         {
-            ShaderBindingKind              Kind;
-            ShaderImageDimension           Dimension;
-            uint64_t                       BlockBytes;
-            std::vector<ExpectedMember>    Members;
+            ShaderBindingKind           Kind;
+            ShaderImageDimension        Dimension;
+            uint64_t                    BlockBytes;
+            std::vector<ExpectedMember> Members;
         };
 
         const ExpectedBinding& Expected(EngineBinding binding)
@@ -541,7 +542,7 @@ vec4 KansToneMap(vec3 color)
         }
 
         // Published shaders before DebugView contain only the original KansFrame members.
-        constexpr size_t LegacyFrameMemberCount = 6;
+        constexpr size_t LegacyFrameMemberCount  = 6;
         constexpr size_t LegacyObjectMemberCount = 2;
 
         std::optional<AssetError> CheckEngineBinding(const ShaderResourceBinding& binding)
@@ -564,9 +565,9 @@ vec4 KansToneMap(vec3 color)
             {
                 const auto& member = binding.Members[i];
                 const auto& want   = expected.Members[i];
-                matches = member.Name == want.Name && member.Offset == want.Offset &&
-                          member.Type == ShaderUniformType::Float && member.Components == want.Components &&
-                          member.Columns == want.Columns && member.ArrayCount == want.ArrayCount;
+                matches            = member.Name == want.Name && member.Offset == want.Offset &&
+                                     member.Type == ShaderUniformType::Float && member.Components == want.Components &&
+                                     member.Columns == want.Columns && member.ArrayCount == want.ArrayCount;
             }
             if (!matches)
                 return Contract("engine binding '" + binding.Name +

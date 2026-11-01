@@ -198,22 +198,58 @@ namespace Kans::Vfx
         glm::vec3                   Scale {1}, PivotOffset {0};
         std::map<uint32_t, AssetID> MaterialOverrides;
     };
+    enum class RibbonFacing
+    {
+        Screen,
+        Custom,
+        CustomSide
+    };
+    enum class RibbonUVMode
+    {
+        ScaledUniformly,
+        TiledOverRibbonLength,
+        TiledFromStartOverRibbonLength,
+        ScaledUsingRibbonSegmentLength
+    };
+    struct RibbonUVSettings
+    {
+        RibbonUVMode Mode     = RibbonUVMode::ScaledUniformly;
+        float        TileSize = 1, LeadingEdge = 0, TrailingEdge = 0;
+        glm::vec2    Offset {0}, Scale {1};
+    };
+    // An unspecified shadow setting follows the renderer kind; assignments retain explicit opt-ins/outs.
+    struct RendererShadows
+    {
+        std::optional<bool> Value;
+        RendererShadows&    operator=(bool value)
+        {
+            Value = value;
+            return *this;
+        }
+        operator bool() const { return Value.value_or(true); }
+    };
     struct Renderer
     {
-        std::string                        Guid;
-        RendererKind                       Kind = RendererKind::Sprite;
-        AssetID                            Material;
-        std::vector<MeshEntry>             Meshes;
-        bool                               CastShadows = true, SortAscending = false;
-        bool                               LockedAxisEnable = false;
-        glm::vec3                          LockedAxis {0, 0, 1};
-        Facing                             FacingMode = Facing::ViewPlane;
-        Sort                               Sorting    = Sort::EmitterOrder;
-        glm::vec2                          Pivot {0.5f};
-        glm::vec3                          FacingVector {0, 0, 1}, AlignmentVector {0, 1, 0};
-        uint32_t                           Rows = 1, Columns = 1;
-        bool                               FrameBlending     = false;
-        float                              DepthFadeDistance = 0;
+        std::string                     Guid;
+        RendererKind                    Kind = RendererKind::Sprite;
+        AssetID                         Material;
+        std::vector<MeshEntry>          Meshes;
+        RendererShadows                 CastShadows;
+        bool                            SortAscending      = false;
+        RibbonFacing                    RibbonFacingMode   = RibbonFacing::Screen;
+        uint32_t                        TessellationFactor = 1;
+        float                           CurveTension       = 0;
+        std::array<RibbonUVSettings, 2> UVChannels;
+        bool      CastsShadows() const { return CastShadows.Value.value_or(Kind != RendererKind::Ribbon); }
+        bool      LockedAxisEnable = false;
+        glm::vec3 LockedAxis {0, 0, 1};
+        Facing    FacingMode = Facing::ViewPlane;
+        Sort      Sorting    = Sort::EmitterOrder;
+        glm::vec2 Pivot {0.5f};
+        glm::vec3 FacingVector {0, 0, 1}, AlignmentVector {0, 1, 0};
+        uint32_t  Rows = 1, Columns = 1;
+        bool      FrameBlending     = false;
+        float     DepthFadeDistance = 0;
         std::map<std::string, std::string> Bindings {
             {"Position", "Particles.Position"},
             {"Color", "Particles.Color"},

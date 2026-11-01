@@ -10,9 +10,9 @@ namespace Kans::Vfx
         void
         Upload(Device& device, CommandList& commands, const Handle<Buffer>& destination, const void* data, size_t bytes)
         {
-            auto staging = device.CreateBuffer({bytes, BufferUsage::CopySource, MemoryUsage::Upload});
-            staging->Write(0, data, bytes);
-            commands.CopyBuffer(staging, 0, destination, 0, bytes);
+            const auto* words = static_cast<const uint8_t*>(data);
+            for (size_t first = 0; first < bytes; first += 65536)
+                commands.UpdateBuffer(destination, first, words + first, std::min(size_t(65536), bytes - first));
         }
         Handle<BindGroup> Group(Device& d, const Handle<BindGroupLayout>& layout, std::vector<Handle<Buffer>> buffers)
         {
@@ -203,6 +203,12 @@ void main(){uint i=gl_GlobalInvocationID.x,lane=gl_LocalInvocationID.x;vec3 lo=v
                                   "u*p.capacity+alive[i]]).xyz);radius=max(radius," + std::to_string(radius->second) +
                                   "*max(scale.x,max(scale.y,scale.z)));}";
             }
+        for (const auto& renderer : compiled.Settings.Renderers)
+            if (renderer.Kind == RendererKind::Ribbon)
+                for (const auto& a : compiled.Attributes)
+                    if (a.Name == renderer.Bindings.at("RibbonWidth"))
+                        source += "if(i<c[1])radius=max(radius,abs(uintBitsToFloat(a[" + std::to_string(a.Offset) +
+                                  "u*p.capacity+alive[i]]).x)*0.5);";
         source += R"(
 lower[lane]=vec4(lo,radius);upper[lane]=vec4(hi,0);barrier();
 for(uint stride=32;stride>0;stride/=2){if(lane<stride){lower[lane].xyz=min(lower[lane].xyz,lower[lane+stride].xyz);lower[lane].w=max(lower[lane].w,lower[lane+stride].w);upper[lane].xyz=max(upper[lane].xyz,upper[lane+stride].xyz);}barrier();}
@@ -346,9 +352,14 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                     std::memcpy(&v, &tick.Context.LocalToWorld[k], 16);
                     words.push_back(v);
                 }
-                auto params = Device.CreateBuffer(
-                    {words.size() * 16, BufferUsage::Storage | BufferUsage::CopyDestination, MemoryUsage::DeviceLocal});
-                auto                  gp = graph.ImportBuffer("VFX stage parameters", params);
+                auto& parameterWorkspace = Acquire(ParameterWorkspaces, graph);
+                if (!parameterWorkspace.Output || parameterWorkspace.Output->GetDesc().Bytes < words.size() * 16)
+                    parameterWorkspace.Output =
+                        Device.CreateBuffer({words.size() * 16,
+                                             BufferUsage::Storage | BufferUsage::CopyDestination,
+                                             MemoryUsage::DeviceLocal});
+                auto                  params = parameterWorkspace.Output;
+                auto                  gp     = graph.ImportBuffer("VFX stage parameters", params);
                 auto                  a = Attributes, f = Flags, fr = Free, c = Counters, al = Alive, di = DispatchArgs;
                 Push                  push {cap,
                                             tick.Context.Seed,
@@ -596,6 +607,36 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                                               const glm::mat4&       owner)
     {
         auto indices = emitter.Alive;
+        if (renderer.Kind == RendererKind::Ribbon)
+        {
+            struct Key
+            {
+                int      RibbonID;
+                float    Order;
+                uint32_t UniqueID;
+            };
+            std::vector<Key> keys(emitter.Compiled->Settings.Capacity);
+            for (auto slot : indices)
+            {
+                float order = emitter.Read(renderer.Bindings.at("RibbonLinkOrder"), slot).Data.x;
+                keys[slot]  = {emitter.Read(renderer.Bindings.at("RibbonID"), slot).Integer,
+                               std::isnan(order) ? 0.f : order,
+                               uint32_t(emitter.Read("Particles.UniqueID", slot).Integer)};
+            }
+            std::sort(indices.begin(), indices.end(), [&](uint32_t a, uint32_t b) {
+                const auto& x = keys[a];
+                const auto& y = keys[b];
+                if (x.RibbonID != y.RibbonID)
+                    return x.RibbonID < y.RibbonID;
+                if (x.Order != y.Order)
+                    return x.Order < y.Order;
+                // Newest first, including when float spawn keys round to the same value.
+                if (x.UniqueID != y.UniqueID)
+                    return x.UniqueID > y.UniqueID;
+                return a < b;
+            });
+            return indices;
+        }
         if (renderer.Sorting <= Sort::EmitterOrder)
             return indices;
         auto       camera = glm::vec3(glm::inverse(view)[3]);
@@ -643,7 +684,7 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                                            const glm::mat4&       owner,
                                            bool                   transparent)
     {
-        if (!transparent || renderer.Sorting <= Sort::EmitterOrder)
+        if (renderer.Kind != RendererKind::Ribbon && (!transparent || renderer.Sorting <= Sort::EmitterOrder))
             return Alive;
         const auto cap       = Compiled.Settings.Capacity;
         auto&      workspace = Acquire(SortWorkspaces, graph);
@@ -688,8 +729,10 @@ layout(set=0,binding=2,std430) readonly buffer Count{uint count[];};
 layout(set=0,binding=3,std430) buffer Pairs{uvec4 pairs[];};
 layout(set=0,binding=4,std140) uniform Params{mat4 owner;mat4 view;vec4 camera;uvec4 data;uvec4 options;}p;
 void main(){uint padded=1;while(padded<count[1])padded*=2;uint i=gl_GlobalInvocationID.x;if(i>=padded)return;
-if(i>=count[1]){pairs[i]=uvec4(0,0xffffffffu,0,1);return;}
+if(i>=count[1]){pairs[i]=p.options.w!=0?uvec4(0,0,0xffffffffu,0):uvec4(0,0xffffffffu,0,1);return;}
 uint slot=alive[i];float key;
+if(p.options.w!=0){key=uintBitsToFloat(a[p.data.z*p.data.x+slot]).x;if(isnan(key))key=0;
+pairs[i]=uvec4(floatBitsToUint(key),a[p.data.w*p.data.x+slot].x,slot,a[p.data.y*p.data.x+slot].x);return;}
 if(p.options.x==4)key=uintBitsToFloat(a[p.data.z*p.data.x+slot]).x;
 else{vec4 pos=vec4(uintBitsToFloat(a[p.data.y*p.data.x+slot]).xyz,1);if(p.options.z!=0)pos=p.owner*pos;
 key=p.options.x==3?dot(pos.xyz-p.camera.xyz,pos.xyz-p.camera.xyz):-(p.view*pos).z;}
@@ -706,13 +749,16 @@ pairs[i]=uvec4(floatBitsToUint(key),i,slot,0);}
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) buffer Pairs{uvec4 pairs[];};
 layout(set=0,binding=1,std430) readonly buffer Count{uint count[];};
-layout(push_constant) uniform P{uint width;uint stride;}p;
-bool before(uvec4 a,uvec4 b){if(a.w!=b.w)return a.w<b.w;float x=uintBitsToFloat(a.x),y=uintBitsToFloat(b.x);return x<y||(x==y&&a.y<b.y);}
+layout(push_constant) uniform P{uint width;uint stride;uint ribbon;}p;
+bool before(uvec4 a,uvec4 b){if(p.ribbon!=0){if(a.z==0xffffffffu||b.z==0xffffffffu)return a.z!=0xffffffffu;
+if(a.w!=b.w)return int(a.w)<int(b.w);float x=uintBitsToFloat(a.x),y=uintBitsToFloat(b.x);
+return x<y||(x==y&&(a.y>b.y||(a.y==b.y&&a.z<b.z)));}
+if(a.w!=b.w)return a.w<b.w;float x=uintBitsToFloat(a.x),y=uintBitsToFloat(b.x);return x<y||(x==y&&a.y<b.y);}
 void main(){uint padded=1;while(padded<count[1])padded*=2;uint i=gl_GlobalInvocationID.x,j=i^p.stride;if(i>=padded||j<=i||j>=padded)return;
 uvec4 a=pairs[i],b=pairs[j];if(before(b,a)==((i&p.width)==0)){pairs[i]=b;pairs[j]=a;}}
 )",
                                {{0, BindingType::StorageBuffer}, {1, BindingType::ReadOnlyStorageBuffer}},
-                               8);
+                               12);
             SortOutput  = Make(R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) readonly buffer Pairs{uvec4 pairs[];};
@@ -761,14 +807,22 @@ void main(){uint i=gl_GlobalInvocationID.x;if(i<count[1])indices[i]=pairs[i].z;}
                     return a.Offset;
             return 0u;
         };
-        params.Owner   = owner;
-        params.View    = view;
-        params.Camera  = glm::inverse(view)[3];
-        params.Data    = {cap, offset("Position"), renderer.Sorting == Sort::Custom ? offset("SortKey") : 0, 0};
+        params.Owner  = owner;
+        params.View   = view;
+        params.Camera = glm::inverse(view)[3];
+        params.Data   = {cap, offset("Position"), renderer.Sorting == Sort::Custom ? offset("SortKey") : 0, 0};
+        if (renderer.Kind == RendererKind::Ribbon)
+        {
+            uint32_t unique = 0;
+            for (const auto& a : Compiled.Attributes)
+                if (a.Name == "Particles.UniqueID")
+                    unique = a.Offset;
+            params.Data = {cap, offset("RibbonID"), offset("RibbonLinkOrder"), unique};
+        }
         params.Options = {uint32_t(renderer.Sorting),
                           uint32_t(renderer.Sorting == Sort::Custom && renderer.SortAscending),
                           uint32_t(Compiled.Settings.SimulationSpace == Space::Local),
-                          0};
+                          uint32_t(renderer.Kind == RendererKind::Ribbon)};
         if (!workspace.Uniform)
             workspace.Uniform =
                 Device.CreateBuffer({sizeof(params), BufferUsage::Uniform | BufferUsage::CopyDestination});
@@ -806,11 +860,12 @@ void main(){uint i=gl_GlobalInvocationID.x;if(i<count[1])indices[i]=pairs[i].z;}
                     {{pairId, GraphAccess::StorageReadWrite},
                      {countId, GraphAccess::StorageRead},
                      {dispatchId, GraphAccess::IndirectRead}},
-                    [step, pairs, count, dispatch, width, stride](auto& c) {
-                        glm::uvec2 push(width, stride);
+                    [step, pairs, count, dispatch, width, stride, ribbon = renderer.Kind == RendererKind::Ribbon](
+                        auto& c) {
+                        glm::uvec3 push(width, stride, uint32_t(ribbon));
                         c.Commands.BindComputePipeline(step.Pipeline);
                         c.Commands.BindGroup(Group(c.Device, step.Layout, {pairs, count}));
-                        c.Commands.PushConstants(0, &push, 8);
+                        c.Commands.PushConstants(0, &push, 12);
                         c.Commands.DispatchIndirect(dispatch);
                     },
                     true);
@@ -1023,6 +1078,238 @@ void main(){uint s=gl_GlobalInvocationID.x;if(s<p.sections)args[s*5+1]=counts[(p
             },
             true);
         return result;
+    }
+    Handle<Buffer> GpuEmitter::UploadUniform(RenderGraph& graph, const void* data, size_t bytes)
+    {
+        auto& w = Acquire(UniformWorkspaces, graph);
+        if (!w.Uniform || w.Uniform->GetDesc().Bytes < bytes)
+            w.Uniform = Device.CreateBuffer({bytes, BufferUsage::Uniform | BufferUsage::CopyDestination});
+        std::vector<uint8_t> copy(bytes);
+        std::memcpy(copy.data(), data, bytes);
+        auto out = w.Uniform;
+        graph.AddPass(
+            "VFX render uniform upload",
+            GraphPassKind::Transfer,
+            {{graph.ImportBuffer("VFX render uniform", out), GraphAccess::TransferWrite}},
+            [out, copy = std::move(copy)](auto& c) { c.Commands.UpdateBuffer(out, 0, copy.data(), copy.size()); },
+            true);
+        return out;
+    }
+    GpuEmitter::RibbonData GpuEmitter::BuildRibbon(RenderGraph&           graph,
+                                                   const EmitterInstance& emitter,
+                                                   const Renderer&        renderer,
+                                                   const glm::mat4&       view,
+                                                   const glm::mat4&       owner)
+    {
+        auto           indices = SortForView(graph, emitter, renderer, view, owner, true);
+        const uint32_t cap = Compiled.Settings.Capacity, factor = renderer.TessellationFactor;
+        auto&          w      = Acquire(RibbonWorkspaces, graph);
+        const auto     ensure = [&](Handle<Buffer>& b, size_t bytes, BufferUsage usage) {
+            if (!b || b->GetDesc().Bytes < bytes)
+                b = Device.CreateBuffer({bytes, usage});
+        };
+        ensure(w.Output, size_t(cap) * factor * 6 * 96, BufferUsage::Storage | BufferUsage::CopySource);
+        ensure(w.Dispatch, 32, BufferUsage::Storage | BufferUsage::Indirect | BufferUsage::CopySource);
+        ensure(w.Counts, size_t(cap) * 16, BufferUsage::Storage);
+        ensure(w.Scan, size_t(cap) * 16, BufferUsage::Storage);
+        struct Params
+        {
+            glm::mat4  Owner, InverseView;
+            glm::uvec4 Offsets0, Offsets1, Config;
+            glm::vec4  Curve;
+            glm::vec4  UV[6];
+        } params {};
+        const auto offset = [&](const char* name) {
+            auto b = renderer.Bindings.find(name);
+            if (b != renderer.Bindings.end())
+                for (const auto& a : Compiled.Attributes)
+                    if (a.Name == b->second)
+                        return a.Offset;
+            return 0u;
+        };
+        params.Owner       = owner;
+        params.InverseView = glm::inverse(view);
+        params.Offsets0    = {offset("Position"), offset("RibbonWidth"), offset("RibbonTwist"), offset("RibbonFacing")};
+        params.Offsets1    = {offset("Color"), offset("DynamicMaterialParameter"), offset("RibbonUVDistance"), cap};
+        params.Config      = {offset("RibbonID"),
+                              factor,
+                              uint32_t(renderer.RibbonFacingMode),
+                              uint32_t(Compiled.Settings.SimulationSpace == Space::Local)};
+        params.Curve       = {renderer.CurveTension, float(renderer.Bindings.count("RibbonUVDistance")), 0, 0};
+        for (uint32_t c = 0; c < 2; ++c)
+        {
+            const auto& uv       = renderer.UVChannels[c];
+            params.UV[c * 3]     = {float(uv.Mode), uv.TileSize, uv.LeadingEdge, uv.TrailingEdge};
+            params.UV[c * 3 + 1] = {uv.Offset, uv.Scale};
+        }
+        ensure(w.Uniform, sizeof(params), BufferUsage::Uniform | BufferUsage::CopyDestination);
+        auto uniform   = w.Uniform;
+        auto uniformId = graph.ImportBuffer("VFX ribbon parameters", uniform);
+        graph.AddPass(
+            "VFX ribbon parameters",
+            GraphPassKind::Transfer,
+            {{uniformId, GraphAccess::TransferWrite}},
+            [uniform, params](auto& c) { c.Commands.UpdateBuffer(uniform, 0, &params, sizeof(params)); },
+            true);
+        const std::string common = R"(
+layout(set=0,binding=0,std430) readonly buffer Attributes{uvec4 a[];};
+layout(set=0,binding=1,std430) readonly buffer Indices{uint indices[];};
+layout(set=0,binding=2,std430) readonly buffer Count{uint count[];};
+layout(set=0,binding=3,std140) uniform Params{mat4 owner;mat4 inverseView;uvec4 offsets0;uvec4 offsets1;uvec4 config;vec4 curve;vec4 uv[6];}p;
+vec4 particle(uint attr,uint i){return uintBitsToFloat(a[attr*p.offsets1.w+indices[i]]);}
+uint id(uint i){return a[p.config.x*p.offsets1.w+indices[i]].x;}
+vec3 position(uint i){return particle(p.offsets0.x,i).xyz;}
+struct Scan{uint start;uint end;uint segments;float distance;};
+)";
+        if (!RibbonDetect.Pipeline)
+        {
+            std::vector<BindGroupLayoutEntry> base {{0, BindingType::ReadOnlyStorageBuffer},
+                                                    {1, BindingType::ReadOnlyStorageBuffer},
+                                                    {2, BindingType::ReadOnlyStorageBuffer},
+                                                    {3, BindingType::UniformBuffer},
+                                                    {4, BindingType::StorageBuffer}};
+            RibbonDetect = Make("#version 450\nlayout(local_size_x=64) in;\n" + common + R"(
+layout(set=0,binding=4,std430) buffer Output{Scan outScan[];};
+void main(){uint i=gl_GlobalInvocationID.x;if(i>=p.offsets1.w)return;
+bool segment=i<count[1]&&i>0&&id(i)==id(i-1);
+outScan[i]=Scan(i,i,uint(segment),segment?distance(position(i),position(i-1)):0);}
+)",
+                                base,
+                                0);
+            base[4].Type = BindingType::ReadOnlyStorageBuffer;
+            base.push_back({5, BindingType::StorageBuffer});
+            RibbonScan = Make("#version 450\nlayout(local_size_x=64) in;\n" + common + R"(
+layout(set=0,binding=4,std430) readonly buffer Input{Scan inputScan[];};
+layout(set=0,binding=5,std430) buffer Output{Scan outScan[];};
+layout(push_constant) uniform Step{uint stride;}step;
+void main(){uint i=gl_GlobalInvocationID.x;if(i>=p.offsets1.w)return;Scan v=inputScan[i];
+if(i>=step.stride){Scan left=inputScan[i-step.stride];v.segments+=left.segments;
+if(i<count[1]&&id(i)==id(i-step.stride)){v.start=left.start;v.distance+=left.distance;}}
+if(i+step.stride<count[1]&&id(i)==id(i+step.stride))v.end=inputScan[i+step.stride].end;
+outScan[i]=v;}
+)",
+                              base,
+                              4);
+            base.push_back({6, BindingType::StorageBuffer});
+            RibbonVertices = Make("#version 450\nlayout(local_size_x=64) in;\n" + common + R"(
+layout(set=0,binding=4,std430) readonly buffer Input{Scan scan[];};
+layout(set=0,binding=5,std430) buffer Vertices{vec4 vertices[];};
+layout(set=0,binding=6,std430) buffer Args{uint args[];};
+vec3 safe(vec3 v,vec3 fallback){return dot(v,v)>1e-12?normalize(v):fallback;}
+vec3 curve(vec3 a,vec3 b,vec3 c,vec3 d,float t){float t2=t*t,t3=t2*t;float k=(1-p.curve.x)*0.5;
+return (2*t3-3*t2+1)*b+(t3-2*t2+t)*k*(c-a)+(-2*t3+3*t2)*c+(t3-t2)*k*(d-b);}
+vec3 derivative(vec3 a,vec3 b,vec3 c,vec3 d,float t){float t2=t*t;float k=(1-p.curve.x)*0.5;
+return (6*t2-6*t)*b+(3*t2-4*t+1)*k*(c-a)+(-6*t2+6*t)*c+(3*t2-2*t)*k*(d-b);}
+float coordinate(uint channel,uint i,float t){uint j=i-1,start=scan[i].start,end=scan[i].end;
+vec4 settings=p.uv[channel*3];int mode=int(settings.x);float total=scan[end].distance;
+float dist=mix(scan[j].distance,scan[i].distance,t);
+float u=(float(j-start)+t)/max(1.0,float(end-start));
+if(mode==1)u=dist/settings.y;
+if(mode==2)u=(p.curve.y>0.5?mix(particle(p.offsets1.z,j).x,particle(p.offsets1.z,i).x,t):dist)/settings.y;
+if(mode==3)u=dist/max(total,1e-8);
+return mix(settings.z,1-settings.w,u);}
+void main(){uint n=count[1],v=gl_GlobalInvocationID.x,i=v/p.config.y,k=v%p.config.y;
+if(v==0){uint segments=n>0?scan[n-1].segments:0;args[0]=segments*p.config.y*6;args[1]=1;args[2]=0;args[3]=0;args[4]=segments;}
+if(i>=n||i==0||id(i)!=id(i-1))return;
+uint j=i-1,start=scan[i].start,end=scan[i].end;
+vec3 a=position(j>start?j-1:j),b=position(j),c=position(i),d=position(i<end?i+1:i);
+uint corners[6]=uint[](0,2,3,0,3,1);
+for(uint q=0;q<6;++q){uint corner=corners[q];float t=float(k+(corner>>1))/float(p.config.y);
+vec3 pos=p.config.y==1?mix(b,c,t):curve(a,b,c,d,t);
+vec3 tangent=safe(derivative(a,b,c,d,t),vec3(1,0,0));
+vec3 facing=p.config.z==0?p.inverseView[3].xyz-pos:mix(particle(p.offsets0.w,j).xyz,particle(p.offsets0.w,i).xyz,t);
+// Build the camera-facing frame in world space, then return the displacement to simulation space.
+vec3 worldPos=pos,worldTangent=tangent;
+if(p.config.w!=0){worldPos=(p.owner*vec4(pos,1)).xyz;worldTangent=safe(mat3(p.owner)*tangent,vec3(1,0,0));}
+vec3 side;
+if(p.config.z==0){vec3 normal=p.inverseView[3].xyz-worldPos;
+side=safe(cross(normal,worldTangent),safe(cross(worldTangent,p.inverseView[1].xyz),p.inverseView[0].xyz));
+if(p.config.w!=0)side=safe(inverse(mat3(p.owner))*side,vec3(0,1,0));}
+else {vec3 perpendicular=safe(cross(vec3(0,0,1),tangent),vec3(1,0,0));
+if(p.config.z==2)side=safe(facing-tangent*dot(facing,tangent),perpendicular);
+else side=safe(cross(facing,tangent),perpendicular);}
+float twist=mix(particle(p.offsets0.z,j).x,particle(p.offsets0.z,i).x,t);
+side=side*cos(twist)+cross(tangent,side)*sin(twist);
+float width=mix(particle(p.offsets0.y,j).x,particle(p.offsets0.y,i).x,t);
+pos+=side*(float(corner&1u)-0.5)*abs(width);
+vec3 normal=safe(cross(tangent,side),vec3(0,0,1));
+if(p.config.w!=0){pos=(p.owner*vec4(pos,1)).xyz;normal=safe(transpose(inverse(mat3(p.owner)))*normal,vec3(0,0,1));tangent=worldTangent;}
+float across=float(corner&1u);vec2 uv0=vec2(coordinate(0,i,t),across)*p.uv[1].zw+p.uv[1].xy;
+vec2 uv1=vec2(coordinate(1,i,t),across)*p.uv[4].zw+p.uv[4].xy;
+uint at=((scan[i].segments-1)*p.config.y*6+k*6+q)*6;
+vertices[at]=vec4(pos,1);vertices[at+1]=vec4(normal,0);vertices[at+2]=vec4(uv0,uv1);
+vertices[at+3]=mix(particle(p.offsets1.x,j),particle(p.offsets1.x,i),t);
+vertices[at+4]=mix(particle(p.offsets1.y,j),particle(p.offsets1.y,i),t);
+vertices[at+5]=vec4(tangent,1);}}
+)",
+                                  base,
+                                  0);
+        }
+        auto           attrs = Attributes, count = DrawArgs, scan = w.Counts, scratch = w.Scan;
+        auto           vertices = w.Output, args = w.Dispatch;
+        auto           attrId    = graph.ImportBuffer("VFX attributes", attrs),
+                       indexId   = graph.ImportBuffer("VFX ribbon order", indices);
+        auto           countId   = graph.ImportBuffer("VFX draw indirect", count);
+        auto           scanId    = graph.ImportBuffer("VFX ribbon scan", scan),
+                       scratchId = graph.ImportBuffer("VFX ribbon scratch", scratch);
+        const uint32_t groups    = (cap + 63) / 64;
+        auto           kernel    = RibbonDetect;
+        graph.AddPass(
+            "VFX ribbon adjacent ID detection",
+            GraphPassKind::Compute,
+            {{attrId, GraphAccess::StorageRead},
+             {indexId, GraphAccess::StorageRead},
+             {countId, GraphAccess::StorageRead},
+             {uniformId, GraphAccess::UniformRead},
+             {scanId, GraphAccess::StorageWrite}},
+            [kernel, attrs, indices, count, uniform, scan, groups](auto& c) {
+                c.Commands.BindComputePipeline(kernel.Pipeline);
+                c.Commands.BindGroup(Group(c.Device, kernel.Layout, {attrs, indices, count, uniform, scan}));
+                c.Commands.Dispatch(groups);
+            },
+            true);
+        kernel = RibbonScan;
+        for (uint32_t stride = 1; stride < cap; stride *= 2)
+        {
+            graph.AddPass(
+                "VFX ribbon segmented prefix and suffix scan",
+                GraphPassKind::Compute,
+                {{attrId, GraphAccess::StorageRead},
+                 {indexId, GraphAccess::StorageRead},
+                 {countId, GraphAccess::StorageRead},
+                 {uniformId, GraphAccess::UniformRead},
+                 {scanId, GraphAccess::StorageRead},
+                 {scratchId, GraphAccess::StorageWrite}},
+                [kernel, attrs, indices, count, uniform, scan, scratch, groups, stride](auto& c) {
+                    c.Commands.BindComputePipeline(kernel.Pipeline);
+                    c.Commands.BindGroup(
+                        Group(c.Device, kernel.Layout, {attrs, indices, count, uniform, scan, scratch}));
+                    c.Commands.PushConstants(0, &stride, 4);
+                    c.Commands.Dispatch(groups);
+                },
+                true);
+            std::swap(scan, scratch);
+            std::swap(scanId, scratchId);
+        }
+        kernel = RibbonVertices;
+        graph.AddPass(
+            "VFX ribbon vertices and indirect count",
+            GraphPassKind::Compute,
+            {{attrId, GraphAccess::StorageRead},
+             {indexId, GraphAccess::StorageRead},
+             {countId, GraphAccess::StorageRead},
+             {uniformId, GraphAccess::UniformRead},
+             {scanId, GraphAccess::StorageRead},
+             {graph.ImportBuffer("VFX ribbon vertices", vertices), GraphAccess::StorageWrite},
+             {graph.ImportBuffer("VFX ribbon arguments", args), GraphAccess::StorageWrite}},
+            [kernel, attrs, indices, count, uniform, scan, vertices, args, cap, factor](auto& c) {
+                c.Commands.BindComputePipeline(kernel.Pipeline);
+                c.Commands.BindGroup(
+                    Group(c.Device, kernel.Layout, {attrs, indices, count, uniform, scan, vertices, args}));
+                c.Commands.Dispatch((cap * factor + 63) / 64);
+            },
+            true);
+        return {vertices, args};
     }
     void GpuEmitter::Poll(EmitterInstance& emitter)
     {

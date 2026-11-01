@@ -47,8 +47,8 @@ namespace Kans
             b->Write(0, data, bytes);
             return b;
         };
-        auto       frameBuffer = upload(&lighting, sizeof(lighting));
-        const auto use         = [&](GraphUse u) {
+        Handle<RenderHardware::Buffer> frameBuffer;
+        const auto                     use = [&](GraphUse u) {
             if (std::none_of(uses.begin(), uses.end(), [&](const auto& v) {
                     return u.IsBuffer == v.IsBuffer && u.Texture == v.Texture;
                 }))
@@ -62,7 +62,8 @@ namespace Kans
                 auto gpu = e.GPU.get();
                 for (const auto& renderer : e.Compiled->Settings.Renderers)
                 {
-                    if (renderer.Kind != Vfx::RendererKind::Mesh || !renderer.CastShadows)
+                    if ((renderer.Kind != Vfx::RendererKind::Mesh && renderer.Kind != Vfx::RendererKind::Ribbon) ||
+                        !renderer.CastsShadows())
                         continue;
                     const auto offset = [&](const char* name) {
                         for (const auto& a : e.Compiled->Attributes)
@@ -70,6 +71,104 @@ namespace Kans
                                 return a.Offset;
                         return 0u;
                     };
+                    if (renderer.Kind == Vfx::RendererKind::Ribbon)
+                    {
+                        auto bindings = frame.GetBindings(renderer.Material, false);
+                        auto shader   = bindings ? frame.GetShader(renderer.Material, bindings->Shader) : nullptr;
+                        if (!bindings || !shader || IsTransparentMaterial(bindings->Render.AlphaMode))
+                            continue;
+                        const GpuShaderPass* caster    = nullptr;
+                        bool                 hasCaster = false;
+                        for (const auto& pass : shader->Passes)
+                            if (pass.Tag == "ShadowCaster")
+                            {
+                                hasCaster = true;
+                                if (bindings->PassEnabled(pass.Name))
+                                {
+                                    caster = &pass;
+                                    break;
+                                }
+                            }
+                        if (hasCaster && !caster)
+                            continue;
+                        if (!caster)
+                        {
+                            bindings = frame.GetBindings(renderer.Material, true);
+                            shader   = bindings ? frame.GetShader(renderer.Material, bindings->Shader) : nullptr;
+                        }
+                        if (!bindings || !shader)
+                            continue;
+                        if (!shader->RibbonDepthProgram)
+                        {
+                            auto source = depthSource;
+                            if (caster && shader->Source())
+                                for (const auto& pass : shader->Source()->Passes)
+                                    if (pass.Name == caster->Name)
+                                        source.Code = pass.Code;
+                            source.Passes.clear();
+                            auto converted = MakeParticleSpriteShader(source, false, true);
+                            if (auto error = std::get_if<AssetError>(&converted))
+                                throw std::invalid_argument(error->Message);
+                            shader->RibbonDepthProgram = device->CreateShader(std::get<ShaderData>(converted));
+                        }
+                        auto ribbon = gpu->BuildRibbon(
+                            graph, e, renderer, frame.View.Scene.sceneCamera.viewMatrix, instance->OwnerTransform());
+                        ParticleSpriteUniforms uniform;
+                        EngineObjectUniforms   object;
+                        object.MaterialRender     = {float(bindings->Render.AlphaMode),
+                                                     bindings->Render.AlphaCutoff,
+                                                     float(bindings->Render.DoubleSided),
+                                                     0};
+                        auto             uniforms = gpu->UploadUniform(graph, &uniform, sizeof(uniform));
+                        MaterialPassData pass;
+                        pass.Frame             = gpu->UploadUniform(graph, &lighting, sizeof(lighting));
+                        pass.Object            = gpu->UploadUniform(graph, &object, sizeof(object));
+                        pass.Render            = bindings->Render;
+                        pass.VertexSource      = shader->RibbonDepthProgram;
+                        pass.VertexLayout      = ParticleSpriteLayout(*device);
+                        pass.IndirectArguments = ribbon.Arguments;
+                        pass.ShadowDepth       = true;
+                        pass.Shadows           = frame.Assets()->GetShadowFallback();
+                        pass.ColorFormats.clear();
+                        pass.DepthFront         = point ? FrontFace::Clockwise : FrontFace::CounterClockwise;
+                        pass.ConstantBias       = constantBias;
+                        pass.SlopeBias          = slopeBias;
+                        pass.Environment        = frame.GetMaterialEnvironment();
+                        pass.EnvironmentSampler = frame.Services.GetMaterialEnvironmentSampler();
+                        BindGroupDesc group;
+                        group.Layout  = pass.VertexLayout;
+                        group.Entries = {{0, ribbon.Vertices, 0, ribbon.Vertices->GetDesc().Bytes},
+                                         {1, gpu->Alive, 0, gpu->Alive->GetDesc().Bytes},
+                                         {2, uniforms, 0, sizeof(uniform)}};
+                        BindGroupEntry image;
+                        image.Slot            = 3;
+                        image.TextureResource = pass.Shadows->Directional;
+                        image.SamplerResource = pass.Shadows->Raw;
+                        group.Entries.push_back(image);
+                        pass.VertexGroup = device->CreateBindGroup(group);
+                        use({graph.ImportBuffer("VFX ribbon shadow vertices", ribbon.Vertices),
+                             GraphAccess::StorageRead});
+                        use({graph.ImportBuffer("VFX ribbon shadow arguments", ribbon.Arguments),
+                             GraphAccess::IndirectRead});
+                        for (auto u : {pass.Frame, pass.Object, uniforms})
+                            use({graph.ImportBuffer("VFX ribbon shadow uniform", u), GraphAccess::UniformRead});
+                        for (auto image : bindings->Images)
+                            use({graph.ImportTexture("VFX ribbon shadow material", image), GraphAccess::SampledRead});
+                        use({graph.ImportTexture("VFX ribbon shadow fallback", pass.Shadows->Directional),
+                             GraphAccess::SampledRead});
+                        GpuMesh empty;
+                        bool    recorded = false;
+                        RecordMaterialDraw(
+                            *frame.Assets(), commands, *shader, *bindings, empty, pass, caster, &recorded);
+                        if (recorded)
+                        {
+                            ++frame.Stats.DrawCalls;
+                            ++frame.View.ShadowStats.DrawCalls;
+                        }
+                        continue;
+                    }
+                    if (!frameBuffer)
+                        frameBuffer = upload(&lighting, sizeof(lighting));
                     for (uint32_t entry = 0; entry < renderer.Meshes.size(); ++entry)
                     {
                         const auto& item = renderer.Meshes[entry];
@@ -261,6 +360,14 @@ namespace Kans
                             draws.push_back(
                                 {instance.get(), &e, &renderer, distance, nullptr, 0, 0, renderer.Material});
                     }
+                    else if (renderer.Kind == Vfx::RendererKind::Ribbon)
+                    {
+                        auto bindings = frame->GetBindings(renderer.Material, false);
+                        if (bindings && IsTransparentMaterial(bindings->Render.AlphaMode) ==
+                                            (point == RenderExtensionPoint::AfterTransparent))
+                            draws.push_back(
+                                {instance.get(), &e, &renderer, distance, nullptr, 0, 0, renderer.Material});
+                    }
                     else if (renderer.Kind == Vfx::RendererKind::Mesh)
                         for (uint32_t entry = 0; entry < renderer.Meshes.size(); ++entry)
                         {
@@ -323,8 +430,11 @@ namespace Kans
             auto        bindings = frame->GetBindings(draw.Material, false);
             if (!bindings)
                 continue;
-            auto shader = frame->GetShader(draw.Material, bindings->Shader);
-            if (!shader || !(draw.Mesh ? shader->PrepareParticleMesh() : shader->PrepareParticleSprite()))
+            auto       shader = frame->GetShader(draw.Material, bindings->Shader);
+            const bool ribbon = r.Kind == Vfx::RendererKind::Ribbon;
+            if (!shader || !(ribbon    ? shader->PrepareParticleRibbon() :
+                             draw.Mesh ? shader->PrepareParticleMesh() :
+                                         shader->PrepareParticleSprite()))
                 continue;
             auto                   gpu = draw.Emitter->GPU.get();
             ParticleSpriteUniforms uniforms;
@@ -340,21 +450,23 @@ namespace Kans
                         return a.Offset;
                 throw std::invalid_argument("Particle renderer binding has no attribute: " + name);
             };
-            uniforms.Attributes0 = {offset("Position"),
-                                    offset("Color"),
-                                    offset(draw.Mesh ? "Scale" : "SpriteSize"),
-                                    offset(draw.Mesh ? "MeshOrientation" : "SpriteRotation")};
-            uniforms.Attributes1 = {offset("Velocity"),
-                                    draw.Mesh ? 0 : offset("SubImageIndex"),
-                                    offset("DynamicMaterialParameter"),
-                                    draw.Emitter->Compiled->Settings.Capacity};
+            if (!ribbon)
+                uniforms.Attributes0 = {offset("Position"),
+                                        offset("Color"),
+                                        offset(draw.Mesh ? "Scale" : "SpriteSize"),
+                                        offset(draw.Mesh ? "MeshOrientation" : "SpriteRotation")};
+            if (!ribbon)
+                uniforms.Attributes1 = {offset("Velocity"),
+                                        draw.Mesh ? 0 : offset("SubImageIndex"),
+                                        offset("DynamicMaterialParameter"),
+                                        draw.Emitter->Compiled->Settings.Capacity};
             if (draw.Mesh)
             {
                 uniforms.MeshScale  = glm::vec4(r.Meshes[draw.Entry].Scale, 0);
                 uniforms.MeshPivot  = glm::vec4(r.Meshes[draw.Entry].PivotOffset, 0);
                 uniforms.LockedAxis = glm::vec4(r.LockedAxis, float(r.LockedAxisEnable));
             }
-            uniforms.PivotGrid   = {r.Pivot.x, r.Pivot.y, float(r.Columns), float(r.Rows)};
+            uniforms.PivotGrid = {r.Pivot.x, r.Pivot.y, float(r.Columns), float(r.Rows)};
             uniforms.Facing =
                 glm::vec4(r.FacingVector, float(bindings->Render.AlphaMode == MaterialAlphaMode::Premultiplied));
             uniforms.Alignment     = glm::vec4(r.AlignmentVector, 0);
@@ -382,25 +494,29 @@ namespace Kans
                                      float(bindings->Render.DoubleSided),
                                      bindings->Render.ReceiveShadows ? 0.f : 1.f};
             const auto upload     = [&](const void* data, size_t bytes) {
+                if (ribbon)
+                    return gpu->UploadUniform(graph, data, bytes);
                 auto b = frame->GetDevice()->CreateBuffer({bytes, BufferUsage::Uniform, MemoryUsage::Upload});
                 b->Write(0, data, bytes);
                 return b;
             };
             MaterialPassData pass;
-            pass.Frame              = upload(&ef, sizeof(ef));
-            pass.Object             = upload(&object, sizeof(object));
-            auto sprite             = upload(&uniforms, sizeof(uniforms));
-            pass.Render             = bindings->Render;
-            auto& indices           = sorted[{draw.Emitter, &r}];
-            if (!indices)
+            pass.Frame    = upload(&ef, sizeof(ef));
+            pass.Object   = upload(&object, sizeof(object));
+            auto sprite   = upload(&uniforms, sizeof(uniforms));
+            pass.Render   = bindings->Render;
+            auto& indices = sorted[{draw.Emitter, &r}];
+            if (!indices && !ribbon)
                 indices = gpu->SortForView(graph,
                                            *draw.Emitter,
                                            r,
                                            camera.viewMatrix,
                                            draw.System->OwnerTransform(),
                                            IsTransparentMaterial(bindings->Render.AlphaMode));
-            pass.VertexSource      = draw.Mesh ? shader->MeshProgram : shader->SpriteProgram;
-            pass.VertexLayout      = draw.Mesh ? shader->MeshLayout : shader->SpriteLayout;
+            pass.VertexSource = ribbon    ? shader->RibbonProgram :
+                                draw.Mesh ? shader->MeshProgram :
+                                            shader->SpriteProgram;
+            pass.VertexLayout = ribbon ? shader->RibbonLayout : draw.Mesh ? shader->MeshLayout : shader->SpriteLayout;
             pass.IndirectArguments = gpu->DrawArgs;
             pass.ParticleMesh      = bool(draw.Mesh);
             pass.Section           = draw.Section;
@@ -411,6 +527,14 @@ namespace Kans
                     bin = gpu->BinMesh(graph, r, draw.Entry, draw.Mesh->Sections, indices);
                 pass.IndirectArguments = bin.Arguments;
                 pass.IndirectOffset    = draw.Section * 20;
+            }
+            auto attributes = gpu->Attributes;
+            if (ribbon)
+            {
+                auto data = gpu->BuildRibbon(graph, *draw.Emitter, r, camera.viewMatrix, draw.System->OwnerTransform());
+                attributes             = data.Vertices;
+                pass.IndirectArguments = data.Arguments;
+                indices                = gpu->Alive;
             }
             auto drawIndices        = draw.Mesh ? bins.at({draw.Emitter, &r, draw.Entry}).Indices : indices;
             pass.Environment        = frame->GetMaterialEnvironment();
@@ -438,7 +562,10 @@ namespace Kans
                            frame->MSHDR :
                            graph.ImportTexture("SceneHDR", frame->Output.GetHDR());
             use({hdr, GraphAccess::ColorReadWrite});
-            use({graph.ImportBuffer("VFX attributes", gpu->Attributes), GraphAccess::StorageRead});
+            use({graph.ImportBuffer("VFX attributes", attributes), GraphAccess::StorageRead});
+            if (ribbon)
+                for (auto u : {pass.Frame, pass.Object, sprite})
+                    use({graph.ImportBuffer("VFX ribbon render uniform", u), GraphAccess::UniformRead});
             use({graph.ImportBuffer("VFX draw indices", drawIndices), GraphAccess::StorageRead});
             use({graph.ImportBuffer("VFX draw indirect", pass.IndirectArguments), GraphAccess::IndirectRead});
             if (draw.Mesh)
@@ -463,13 +590,16 @@ namespace Kans
             for (auto image : pass.Environment)
                 if (image)
                     use({graph.ImportTexture("VFX environment", image), GraphAccess::SampledRead});
-            auto a = gpu->Attributes, al = drawIndices;
+            auto a = attributes, al = drawIndices;
             auto sampler = frame->GetDevice()->CreateSampler({Filter::Nearest,
                                                               Filter::Nearest,
                                                               Filter::Nearest,
                                                               AddressMode::ClampToEdge,
                                                               AddressMode::ClampToEdge});
-            graph.AddPass(std::string(draw.Mesh ? "VFX mesh " : "VFX sprite ") + draw.Emitter->Compiled->Settings.Name,
+            graph.AddPass(std::string(ribbon    ? "VFX ribbon " :
+                                      draw.Mesh ? "VFX mesh " :
+                                                  "VFX sprite ") +
+                              draw.Emitter->Compiled->Settings.Name,
                           std::move(uses),
                           [frame,
                            mesh = draw.Mesh,
