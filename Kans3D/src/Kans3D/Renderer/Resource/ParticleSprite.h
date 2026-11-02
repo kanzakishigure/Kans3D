@@ -11,7 +11,8 @@ namespace Kans
         glm::vec4  PivotGrid {.5f, .5f, 1, 1};
         glm::vec4  Facing {0, 0, 1, 0}, Alignment {0, 1, 0, 0};
         glm::vec4  MeshScale {1}, MeshPivot {0}, LockedAxis {0, 0, 1, 0};
-        glm::vec4  Options {0}; // facing mode, depth fade, frame blending, local space
+        glm::vec4  Lighting {0, 1, 0, 0}; // normal mode, curvature, evaluation, normal attribute offset
+        glm::vec4  Options {0};           // facing mode, depth fade, frame blending, local space
     };
     std::variant<ShaderData, AssetError>
     MakeParticleSpriteShader(const ShaderData&, bool mesh = false, bool ribbon = false);

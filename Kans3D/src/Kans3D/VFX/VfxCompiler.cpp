@@ -1652,6 +1652,19 @@ namespace Kans::Vfx
                 }
                 for (auto& renderer : ce.Settings.Renderers)
                 {
+                    if (!std::isfinite(renderer.Curvature) || renderer.Curvature < 0 || renderer.Curvature > 1)
+                        r.Errors.push_back({asset, renderer.Guid, "Curvature", "Curvature must be in [0, 1]"});
+                    if (renderer.Kind == RendererKind::Sprite && renderer.NormalMode == LightingNormal::ParticleNormal)
+                    {
+                        renderer.Bindings["Normal"] = "Particles.Normal";
+                        auto normal                 = k.find("Particles.Normal");
+                        if (normal == k.end() || normal->second.Kind != Type::Vec3)
+                            r.Errors.push_back(
+                                {asset,
+                                 renderer.Guid,
+                                 "LightingNormal",
+                                 "Renderer " + renderer.Guid + ": ParticleNormal requires Particles.Normal (Vec3)"});
+                    }
                     const bool mesh   = renderer.Kind == RendererKind::Mesh;
                     const bool ribbon = renderer.Kind == RendererKind::Ribbon;
                     if (renderer.Kind == RendererKind::Light)

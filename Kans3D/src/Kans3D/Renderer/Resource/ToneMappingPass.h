@@ -1,5 +1,6 @@
 #pragma once
 #include <map>
+#include <glm/glm.hpp>
 #include "Kans3D/RHI/RHI.h"
 #include "Kans3D/Renderer/Resource/PostProcessSettings.h"
 namespace Kans
@@ -19,9 +20,11 @@ namespace Kans
         static float EffectiveExposure(float exposure);
 
     private:
-        RenderHardware::Handle<RenderHardware::Shader>                                                  m_Programs[2];
-        RenderHardware::Handle<RenderHardware::BindGroupLayout>                                         m_Layout;
-        RenderHardware::Handle<RenderHardware::Sampler>                                                 m_Sampler;
+        // Matching settings are immutable and can be shared across submitted command lists.
+        std::vector<std::pair<glm::vec4, RenderHardware::Handle<RenderHardware::Buffer>>> m_Uniforms;
+        RenderHardware::Handle<RenderHardware::Shader>                                    m_Programs[2];
+        RenderHardware::Handle<RenderHardware::BindGroupLayout>                           m_Layout;
+        RenderHardware::Handle<RenderHardware::Sampler>                                   m_Sampler;
         std::map<std::pair<std::vector<RenderHardware::Format>, uint32_t>,
                  RenderHardware::Handle<RenderHardware::Pipeline>>
             m_Pipelines;

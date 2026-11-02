@@ -299,13 +299,19 @@ namespace Kans::Vfx
                 }
                 n["Meshes"].push_back(m);
             }
-            n["Pivot"]             = Vec(glm::vec4(x.Pivot, 0, 0), 2);
-            n["FacingVector"]      = Vec(glm::vec4(x.FacingVector, 0), 3);
-            n["AlignmentVector"]   = Vec(glm::vec4(x.AlignmentVector, 0), 3);
-            n["Rows"]              = x.Rows;
-            n["Columns"]           = x.Columns;
-            n["FrameBlending"]     = x.FrameBlending;
-            n["DepthFadeDistance"] = x.DepthFadeDistance;
+            n["Pivot"]                         = Vec(glm::vec4(x.Pivot, 0, 0), 2);
+            n["FacingVector"]                  = Vec(glm::vec4(x.FacingVector, 0), 3);
+            n["AlignmentVector"]               = Vec(glm::vec4(x.AlignmentVector, 0), 3);
+            n["Rows"]                          = x.Rows;
+            n["Columns"]                       = x.Columns;
+            constexpr const char* normals[]    = {"CameraFacing", "Spherical", "ParticleNormal"};
+            constexpr const char* evaluation[] = {"PerPixel", "PerVertex"};
+            n["LightingNormal"]                = normals[int(x.NormalMode)];
+            n["LightingEvaluation"]            = evaluation[int(x.Lighting)];
+            n["Curvature"]                     = x.Curvature;
+            n["ReceiveShadows"]                = x.ReceiveShadows;
+            n["FrameBlending"]                 = x.FrameBlending;
+            n["DepthFadeDistance"]             = x.DepthFadeDistance;
             for (const auto& [k, v] : x.Bindings)
                 n["Bindings"][k] = v;
             return n;
@@ -379,6 +385,15 @@ namespace Kans::Vfx
             x.Rows    = n["Rows"].as<uint32_t>(1);
             x.Columns = n["Columns"].as<uint32_t>(1);
             Check(x.Rows && x.Columns && uint64_t(x.Rows) * x.Columns <= 65536, "Invalid VFX SubUV grid");
+            constexpr const char* normals[]    = {"CameraFacing", "Spherical", "ParticleNormal"};
+            constexpr const char* evaluation[] = {"PerPixel", "PerVertex"};
+            if (n["LightingNormal"])
+                x.NormalMode = Parse<LightingNormal>(n["LightingNormal"], normals);
+            if (n["LightingEvaluation"])
+                x.Lighting = Parse<LightingEvaluation>(n["LightingEvaluation"], evaluation);
+            x.Curvature      = n["Curvature"].as<float>(1);
+            x.ReceiveShadows = n["ReceiveShadows"].as<bool>(true);
+            Check(std::isfinite(x.Curvature) && x.Curvature >= 0 && x.Curvature <= 1, "Invalid VFX Curvature");
             x.FrameBlending     = n["FrameBlending"].as<bool>(false);
             x.DepthFadeDistance = n["DepthFadeDistance"].as<float>(0);
             Check(std::isfinite(x.DepthFadeDistance) && x.DepthFadeDistance >= 0, "Invalid VFX depth fade");

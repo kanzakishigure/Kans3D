@@ -194,6 +194,153 @@ vec3 kans_RestPosition = a_Position;
 vec3 KansRestPosition() { return kans_RestPosition; }
 #endif
 )"},
+                {"Kans3D/ParticleLighting.glsl", R"(#ifndef KANS3D_PARTICLE_LIGHTING_GLSL
+#define KANS3D_PARTICLE_LIGHTING_GLSL
+#include <Kans3D/Lighting.glsl>
+// Shader programs have no shading-model enum. This opt-in extends their lit path;
+// ordinary meshes keep PBR, and procedural particle sources select diffuse vertex evaluation.
+#ifndef KANS_PARTICLE_PIXEL_ONLY
+#ifdef KANS_FRAGMENT_STAGE
+layout(location = 15) in vec3 kans_ParticleDiffuse;
+#ifndef KANS_PARTICLE_DIFFUSE_ONLY
+layout(location = 16) in vec3 kans_ParticleAmbient;
+layout(location = 17) in vec3 kans_ParticlePositiveX;
+layout(location = 18) in vec3 kans_ParticlePositiveY;
+layout(location = 19) in vec3 kans_ParticlePositiveZ;
+layout(location = 20) in vec3 kans_ParticleNegativeX;
+layout(location = 21) in vec3 kans_ParticleNegativeY;
+layout(location = 22) in vec3 kans_ParticleNegativeZ;
+#endif
+layout(location = 23) flat in float kans_ParticleLightingMode;
+#else
+float KansParticleEvaluation = 0.0;
+layout(location = 15) out vec3 kans_ParticleDiffuse;
+#ifndef KANS_PARTICLE_DIFFUSE_ONLY
+layout(location = 16) out vec3 kans_ParticleAmbient;
+layout(location = 17) out vec3 kans_ParticlePositiveX;
+layout(location = 18) out vec3 kans_ParticlePositiveY;
+layout(location = 19) out vec3 kans_ParticlePositiveZ;
+layout(location = 20) out vec3 kans_ParticleNegativeX;
+layout(location = 21) out vec3 kans_ParticleNegativeY;
+layout(location = 22) out vec3 kans_ParticleNegativeZ;
+#endif
+layout(location = 23) flat out float kans_ParticleLightingMode;
+#endif
+#endif
+mat3 KansParticleFrame(vec3 normal, vec3 tangent)
+{
+    vec3 N = normalize(normal);
+    vec3 T = tangent - N * dot(N, tangent);
+    if (dot(T, T) < 1e-10)
+        T = cross(abs(N.y) < .99 ? vec3(0, 1, 0) : vec3(1, 0, 0), N);
+    T = normalize(T);
+    return mat3(T, cross(N, T), N);
+}
+void KansParticleAddLight(vec3 L, vec3 radiance, mat3 frame, inout vec3 diffuse, inout vec3 axes[6])
+{
+    diffuse += radiance * max(dot(frame[2], L), 0.0);
+#ifndef KANS_PARTICLE_DIFFUSE_ONLY
+    vec3 local = transpose(frame) * L;
+    for (int i = 0; i < 3; ++i)
+    {
+        axes[i] += radiance * max(local[i], 0.0);
+        axes[i + 3] += radiance * max(-local[i], 0.0);
+    }
+#endif
+}
+void KansEvaluateParticleLighting(vec3     worldPos,
+                                  vec3     normal,
+                                  vec3     tangent,
+                                  out vec3 diffuse,
+                                  out vec3 ambient,
+                                  out vec3 axes[6])
+{
+    mat3 frame = KansParticleFrame(normal, tangent);
+    ambient    = KansEnvironmentDiffuse(frame[2]) + KansDirectionalAmbient();
+    diffuse    = ambient;
+    for (int i = 0; i < 6; ++i)
+        axes[i] = vec3(0);
+    if (u_Frame.DirectionalDirection.w != 0.0)
+        KansParticleAddLight(
+            KansDirectionalToLight(), KansDirectionalRadiance() * KansShadow(worldPos, frame[2]), frame, diffuse, axes);
+    for (int i = 0; i < KansPointLightCount(); ++i)
+    {
+        vec3  delta = KansPointLightPosition(i) - worldPos;
+        float d2    = dot(delta, delta);
+        if (d2 <= 1e-8)
+            continue;
+        float shadow = 1.0;
+#ifdef KANS_FRAGMENT_STAGE
+        shadow = KansPointShadow(i, worldPos, frame[2]);
+#endif
+        // Vertex mode omits point PCF: each cube receiver requires 9 or 25 taps.
+        KansParticleAddLight(
+            delta * inversesqrt(d2), KansPointLightRadiance(i) * shadow / max(d2, 1e-4), frame, diffuse, axes);
+    }
+}
+#if !defined(KANS_FRAGMENT_STAGE) && !defined(KANS_PARTICLE_PIXEL_ONLY)
+void KansBuildParticleLighting(vec3 worldPos, vec3 normal, vec3 tangent)
+{
+    kans_ParticleLightingMode = KansParticleEvaluation;
+    kans_ParticleDiffuse      = vec3(0);
+#ifndef KANS_PARTICLE_DIFFUSE_ONLY
+    kans_ParticleAmbient      = vec3(0);
+    kans_ParticlePositiveX = kans_ParticlePositiveY = kans_ParticlePositiveZ = kans_ParticleNegativeX =
+        kans_ParticleNegativeY = kans_ParticleNegativeZ = vec3(0);
+#endif
+    // Sample directional shadows at each actual vertex, with the geometric normal
+    // as the receiver plane. Interpolation smooths the result over the two triangles.
+    if (KansParticleEvaluation > 0.5)
+    {
+        vec3 axes[6];
+#ifdef KANS_PARTICLE_DIFFUSE_ONLY
+        vec3 ambient;
+        KansEvaluateParticleLighting(worldPos, normal, tangent, kans_ParticleDiffuse, ambient, axes);
+#else
+        KansEvaluateParticleLighting(worldPos, normal, tangent, kans_ParticleDiffuse, kans_ParticleAmbient, axes);
+        kans_ParticlePositiveX = axes[0];
+        kans_ParticlePositiveY = axes[1];
+        kans_ParticlePositiveZ = axes[2];
+        kans_ParticleNegativeX = axes[3];
+        kans_ParticleNegativeY = axes[4];
+        kans_ParticleNegativeZ = axes[5];
+#endif
+    }
+}
+#endif
+#if defined(KANS_FRAGMENT_STAGE) && !defined(KANS_PARTICLE_DIFFUSE_ONLY)
+vec3 KansSixWayLighting(vec4 positiveAxes,
+                        vec4 negativeAxes,
+                        vec3 absorptionTint,
+                        vec3 normal,
+                        vec3 tangent,
+                        vec3 worldPos)
+{
+    vec3 diffuse, ambient, axes[6];
+#ifndef KANS_PARTICLE_PIXEL_ONLY
+    if (kans_ParticleLightingMode > 0.5)
+    {
+        ambient = kans_ParticleAmbient;
+        axes[0] = kans_ParticlePositiveX;
+        axes[1] = kans_ParticlePositiveY;
+        axes[2] = kans_ParticlePositiveZ;
+        axes[3] = kans_ParticleNegativeX;
+        axes[4] = kans_ParticleNegativeY;
+        axes[5] = kans_ParticleNegativeZ;
+    }
+    else
+#endif
+        KansEvaluateParticleLighting(worldPos, normal, tangent, diffuse, ambient, axes);
+    vec3 result =
+        ambient *
+        (positiveAxes.r + positiveAxes.g + positiveAxes.b + negativeAxes.r + negativeAxes.g + negativeAxes.b) / 6.0;
+    for (int i = 0; i < 3; ++i)
+        result += axes[i] * positiveAxes[i] + axes[i + 3] * negativeAxes[i];
+    return result * absorptionTint;
+}
+#endif
+#endif
+)"},
                 {"Kans3D/Lighting.glsl", R"(#ifndef KANS3D_LIGHTING_GLSL
 #define KANS3D_LIGHTING_GLSL
 #include <Kans3D/Engine.glsl>
@@ -237,8 +384,12 @@ vec2 KansShadowUV(int cascade, vec2 localUV)
 // Use the geometric receiver plane, including on meshes with interpolated shading normals.
 vec3 KansReceiverNormal(vec3 worldPos, vec3 normal)
 {
+    #ifndef KANS_FRAGMENT_STAGE
+    return normalize(normal); // Vertex receivers have no derivatives.
+    #else
     vec3 n = cross(dFdx(worldPos), dFdy(worldPos));
     return dot(n,n) > 1e-16 ? normalize(n) : normalize(normal);
+    #endif
 }
 vec2 KansReceiverGradient(int cascade, vec3 normal)
 {
@@ -300,7 +451,12 @@ float KansCascadeShadow(int cascade, vec3 worldPos, vec3 normal)
             }
         return result / total;
     }
+    #ifndef KANS_FRAGMENT_STAGE
+    // Stable world-space rotation; no screen-space noise on translucent vertex receivers.
+    float angle = 0.0;
+    #else
     float angle = 6.28318530718 * fract(52.9829189 * fract(dot(floor(gl_FragCoord.xy), vec2(.06711056,.00583715))));
+    #endif
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
     vec4 texel = u_Frame.CascadeTexel[cascade];
     float searchRadius = clamp(texel.y * u_Frame.ShadowInfo.w / texel.x, 1.0, 64.0);

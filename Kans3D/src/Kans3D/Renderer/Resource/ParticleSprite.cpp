@@ -2,6 +2,7 @@
 #include "ParticleSprite.h"
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
+#include "Kans3D/Asset/Runtime/StandardShader.h"
 namespace Kans
 {
     namespace
@@ -9,7 +10,7 @@ namespace Kans
         const char* Uniforms = R"(
 layout(set=2,binding=2,std140) uniform KansSprite {
 mat4 owner;mat4 view;mat4 projection;mat4 inverseView;mat4 inverseProjection;
-uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 meshScale;vec4 meshPivot;vec4 lockedAxis;vec4 options;
+uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 meshScale;vec4 meshPivot;vec4 lockedAxis;vec4 lighting;vec4 options;
 } sprite;
 )";
     }
@@ -17,7 +18,23 @@ uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 mes
     {
         try
         {
-            auto result  = data;
+            auto result = data;
+            // Built-in particle lighting is absent from their ordinary mesh SPIR-V.
+            // Select the matching source in the shared sprite/mesh/ribbon path.
+            const auto matches = [&](const ShaderData& shader) {
+                const auto& modules = shader.Code.Modules;
+                return data.Code.Modules.size() == modules.size() &&
+                       std::equal(data.Code.Modules.begin(),
+                                  data.Code.Modules.end(),
+                                  modules.begin(),
+                                  [](const auto& a, const auto& b) {
+                                      return a.Stage == b.Stage && a.EntryPoint == b.EntryPoint && a.Words == b.Words;
+                                  });
+            };
+            if (matches(GetStandardShader()))
+                result.Code = GetStandardShader(true).Code;
+            else if (matches(GetSixWaySmokeShader()))
+                result.Code = GetSixWaySmokeShader(true).Code;
             auto convert = [&](ShaderProgramCode& code) {
                 for (auto& module : code.Modules)
                 {
@@ -61,7 +78,15 @@ uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 mes
                     if (at == std::string::npos)
                         throw std::invalid_argument("Particle sprite material has no main");
                     source.replace(at, 11, "void kans_SpriteMaterialMain()");
-                    source += Uniforms;
+                    source.insert(at, Uniforms);
+                    if (module.Stage == ShaderProductStage::Vertex)
+                    {
+                        auto evaluation = source.find("KansParticleEvaluation = 0.0;");
+                        if (evaluation != std::string::npos)
+                            source.replace(evaluation,
+                                           std::string("KansParticleEvaluation = 0.0;").size(),
+                                           "KansParticleEvaluation = sprite.lighting.z;");
+                    }
                     if (module.Stage == ShaderProductStage::Vertex)
                     {
                         if (!mesh)
@@ -96,8 +121,18 @@ vec3 projected=velocity-normal*dot(normal,velocity);if(dot(projected,projected)>
 if(mode==3){normal=normalize(sprite.facing.xyz);up=normalize(sprite.alignment.xyz);right=normalize(cross(up,normal));up=normalize(cross(normal,right));}
 vec2 corners[6]=vec2[](vec2(0,0),vec2(1,0),vec2(1,1),vec2(0,0),vec2(1,1),vec2(0,1));vec2 uv=corners[gl_VertexIndex%6];
 vec2 corner=(uv-sprite.pivotGrid.xy)*particle(sprite.offsets0.z,slot).xy;float rotation=particle(sprite.offsets0.w,slot).x;
-corner=mat2(cos(rotation),sin(rotation),-sin(rotation),cos(rotation))*corner;
+vec3 rotatedRight=right*cos(rotation)+up*sin(rotation);
+up=up*cos(rotation)-right*sin(rotation);right=rotatedRight;
 position+=right*corner.x+up*corner.y;
+// Curvature is bend strength: 0 is flat, 1 is normalize(right*u + up*v + toCamera).
+// Leave this unnormalized for exact per-pixel normalization after interpolation.
+if(sprite.lighting.x==1.0)normal+=sprite.lighting.y*(right*(uv.x*2-1)+up*(uv.y*2-1));
+if(sprite.lighting.x==2.0){normal=particle(uint(sprite.lighting.w),slot).xyz;
+if(sprite.options.w>0.5)normal=transpose(inverse(mat3(sprite.owner)))*normal;
+normal=dot(normal,normal)>1e-12?normalize(normal):normalize(cross(right,up));}
+vec3 lightingTangent=right-normal*dot(right,normal)/max(dot(normal,normal),1e-12);
+if(dot(lightingTangent,lightingTangent)<1e-12)lightingTangent=cross(up,normal);
+right=normalize(lightingTangent);
 float frame=particle(sprite.offsets1.y,slot).x;float total=sprite.pivotGrid.z*sprite.pivotGrid.w;
 float current=mod(floor(frame),total),next=mod(current+1,total);
 vec2 cell=vec2(mod(current,sprite.pivotGrid.z),floor(current/sprite.pivotGrid.z));

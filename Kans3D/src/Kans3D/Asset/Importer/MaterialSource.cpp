@@ -481,7 +481,9 @@ namespace Kans
     {
         if (parent.Parent.IsValid() || !instance.Parent.IsValid() || instance.Shader.IsValid())
             return Invalid("overrides require an effective parent and an instance without its own Shader");
-        auto described = DescribeMaterial(IsStandardShader(parent.Shader) ? nullptr : shader);
+        auto described = DescribeMaterial(IsStandardShader(parent.Shader)        ? nullptr :
+                                          parent.Shader == SixWaySmokeShaderID() ? &GetSixWaySmokeShader() :
+                                                                                   shader);
         if (const auto* error = std::get_if<AssetError>(&described))
             return *error;
         const auto&    schema     = std::get<MaterialSchema>(described);
@@ -537,6 +539,8 @@ namespace Kans
             return Invalid(error.what());
         }
         const bool standard = IsStandardShader(source.Shader);
+        if (source.Shader == SixWaySmokeShaderID())
+            shader = &GetSixWaySmokeShader();
         if ((!standard && !shader) || (!source.Shader.IsValid() && shader && shader != &GetStandardShader() &&
                                        shader != &GetStandardShaderAsset()->GetData()))
             return AssetError {AssetErrorCode::InvalidArgument, "Material source and Shader do not match"};

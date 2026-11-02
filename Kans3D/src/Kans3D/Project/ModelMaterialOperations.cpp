@@ -164,7 +164,9 @@ namespace Kans
                 }
                 const auto& material = std::get<MaterialData>(decoded);
                 ShaderData  shader   = GetStandardShader();
-                if (!IsStandardShader(material.Shader))
+                if (material.Shader == SixWaySmokeShaderID())
+                    shader = GetSixWaySmokeShader();
+                else if (!IsStandardShader(material.Shader))
                 {
                     const auto shaderRecord = registry->Find(material.Shader, target);
                     if (!shaderRecord || shaderRecord->Metadata.Type != AssetType::Shader)

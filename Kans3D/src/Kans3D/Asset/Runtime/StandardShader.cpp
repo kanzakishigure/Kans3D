@@ -8,12 +8,13 @@
 namespace Kans
 {
     AssetID StandardShaderID() { return AssetID {SourceAssetID::FromString("ffffffffffffffff"), 1}; }
+    AssetID SixWaySmokeShaderID() { return AssetID {SourceAssetID::FromString("ffffffffffffffff"), 2}; }
     bool    IsStandardShader(AssetID id) { return !id.IsValid() || id == StandardShaderID(); }
 
-    const ShaderData& GetStandardShader()
+    const ShaderData& GetStandardShader(bool particle)
     {
-        static const ShaderData shader = [] {
-            const std::string manifest = R"(KansShaderProgram 1
+        static const auto build = [](bool particle) {
+            const std::string                  manifest = R"(KansShaderProgram 1
 vertex=Standard.vert
 fragment=Standard.frag
 output_space=linear_hdr
@@ -45,8 +46,7 @@ group Emission = EmissiveColor EmissiveIntensity EmissiveMap
 group UV = UVTiling UVOffset
 group Advanced = VertexColorStrength
 )";
-            auto              compiled = CompileEmbeddedShaderProgram(manifest,
-                                                                      {{"Standard.vert", R"(#version 450
+            std::map<std::string, std::string> stages   = {{"Standard.vert", R"(#version 450
 #include <Kans3D/Engine.glsl>
 #include <Kans3D/VertexInput.glsl>
 layout(location = 0) out vec2 v_UV;
@@ -67,7 +67,7 @@ void main()
     gl_Position = u_Frame.ViewProjection * vec4(v_WorldPosition, 1);
 }
 )"},
-                                                                       {"Standard.frag", R"(#version 450
+                                                           {"Standard.frag", R"(#version 450
 #include <Kans3D/Lighting.glsl>
 #include <Kans3D/Alpha.glsl>
 layout(set = 1, binding = 0, std140) uniform StandardParameters
@@ -161,7 +161,26 @@ void main()
     o_Color.a = alpha;
     if(u_Object.MaterialRender.x==7.0)o_Color.rgb*=alpha;
 }
-)"}});
+)"}};
+            // Keep the ordinary mesh sources identical to Standard's original program.
+            // Only procedural particle variants opt into vertex diffuse lighting.
+            if (particle)
+            {
+                auto&             vertex   = stages.at("Standard.vert");
+                const std::string lighting = "#define KANS_PARTICLE_DIFFUSE_ONLY\n"
+                                             "#include <Kans3D/ParticleLighting.glsl>\n";
+                vertex.insert(vertex.find("layout(location = 0)"), lighting);
+                vertex.insert(vertex.find("    gl_Position"),
+                              "    KansBuildParticleLighting(v_WorldPosition, v_Normal, v_Tangent.xyz);\n");
+                auto& fragment = stages.at("Standard.frag");
+                fragment.insert(fragment.find("#include"), lighting);
+                const auto shade = fragment.find("    vec3 color = KansShadePbr");
+                fragment.insert(shade,
+                                "    vec3 color;\n    if (kans_ParticleLightingMode > 0.5)\n"
+                                "        color = albedo * kans_ParticleDiffuse * ao;\n    else\n");
+                fragment.replace(fragment.find("    vec3 color = KansShadePbr"), 17, "        color = ");
+            }
+            auto compiled = CompileEmbeddedShaderProgram(manifest, stages);
             if (auto* error = std::get_if<AssetError>(&compiled))
                 throw std::runtime_error("Standard shader: " + error->Message);
             auto value    = std::get<ShaderData>(std::move(compiled));
@@ -169,8 +188,12 @@ void main()
             if (auto* error = std::get_if<AssetError>(&contract))
                 throw std::runtime_error("Standard shader: " + error->Message);
             return value;
-        }();
-        return shader;
+        };
+        static const ShaderData shader = build(false);
+        if (!particle)
+            return shader;
+        static const ShaderData particleShader = build(true);
+        return particleShader;
     }
 
     Ref<const ShaderDataAsset> GetStandardShaderAsset()
@@ -178,6 +201,125 @@ void main()
         static const Ref<const ShaderDataAsset> asset = [] {
             auto value     = CreateRef<ShaderDataAsset>(GetStandardShader());
             value->assetID = StandardShaderID();
+            return value;
+        }();
+        return asset;
+    }
+
+    const ShaderData& GetSixWaySmokeShader(bool particle)
+    {
+        static const auto build = [](bool particle) {
+            const std::string                  manifest = R"(KansShaderProgram 1
+vertex=SixWaySmoke.vert
+fragment=SixWaySmoke.frag
+output_space=linear_hdr
+default AbsorptionTint = 1 1 1
+default EmissiveColor = 0 0 0
+default EmissiveIntensity = 1
+default Alpha = 1
+default UVTiling = 1 1
+default UVOffset = 0 0
+hint AbsorptionTint = color
+hint EmissiveColor = color
+hint Alpha = range 0 1
+texture PositiveAxes = white
+texture NegativeAxes = black
+group Smoke = PositiveAxes NegativeAxes AbsorptionTint Alpha
+group Emission = EmissiveColor EmissiveIntensity
+group UV = UVTiling UVOffset
+)";
+            std::map<std::string, std::string> stages   = {{"SixWaySmoke.vert", R"(#version 450
+#include <Kans3D/Engine.glsl>
+#include <Kans3D/VertexInput.glsl>
+#ifdef KANS_PARTICLE_VARIANT
+#include <Kans3D/ParticleLighting.glsl>
+#endif
+layout(location = 0) out vec2 v_UV;
+layout(location = 1) out vec3 v_WorldPosition;
+layout(location = 2) out vec3 v_Normal;
+layout(location = 4) out vec4 v_Tangent;
+void main()
+{
+    v_UV = a_UV;
+    v_WorldPosition = vec3(u_Object.Transform * vec4(a_Position, 1));
+    v_Normal = mat3(u_Object.NormalMatrix) * a_Normal;
+    v_Tangent = vec4(mat3(u_Object.Transform) * a_Tangent.xyz,
+                     a_Tangent.w * sign(determinant(mat3(u_Object.Transform))));
+#ifdef KANS_PARTICLE_VARIANT
+    KansBuildParticleLighting(v_WorldPosition, v_Normal, v_Tangent.xyz);
+#endif
+    gl_Position = u_Frame.ViewProjection * vec4(v_WorldPosition, 1);
+}
+)"},
+                                                           {"SixWaySmoke.frag", R"(#version 450
+#ifndef KANS_PARTICLE_VARIANT
+// Ordinary meshes are supported through per-pixel six-way evaluation. They
+// neither produce nor consume particle varyings (including the mode selector).
+#define KANS_PARTICLE_PIXEL_ONLY
+#endif
+#include <Kans3D/ParticleLighting.glsl>
+#include <Kans3D/Alpha.glsl>
+layout(set = 1, binding = 0, std140) uniform SixWaySmokeParameters
+{
+    vec3 AbsorptionTint;
+    vec3 EmissiveColor;
+    float EmissiveIntensity;
+    float Alpha;
+    vec2 UVTiling;
+    vec2 UVOffset;
+} p;
+layout(set = 1, binding = 1) uniform sampler2D PositiveAxes;
+layout(set = 1, binding = 2) uniform sampler2D NegativeAxes;
+layout(location = 0) in vec2 v_UV;
+layout(location = 1) in vec3 v_WorldPosition;
+layout(location = 2) in vec3 v_Normal;
+layout(location = 4) in vec4 v_Tangent;
+layout(location = 0) out vec4 o_Color;
+void main()
+{
+    // The particle wrapper invokes the whole material for both atlas frames,
+    // blending both axes textures, opacity and emission together.
+    vec2 uv = v_UV * p.UVTiling + p.UVOffset;
+    vec4 positiveAxes = texture(PositiveAxes, uv);
+    vec4 negativeAxes = texture(NegativeAxes, uv);
+    float opacity = positiveAxes.a * p.Alpha;
+    KansAlphaClip(opacity);
+    float alpha = KansOutputAlpha(opacity);
+    vec3 normal = normalize(v_Normal);
+    if (u_Object.MaterialRender.z != 0.0 && !gl_FrontFacing)
+        normal = -normal;
+    vec3 color = KansSixWayLighting(positiveAxes, negativeAxes, p.AbsorptionTint,
+                                    normal, v_Tangent.xyz, v_WorldPosition)
+               + negativeAxes.a * p.EmissiveColor * p.EmissiveIntensity;
+    o_Color = u_Frame.DebugView == 3 ? KansToneMap(color) : vec4(color, alpha);
+    o_Color.a = alpha;
+    if(u_Object.MaterialRender.x==7.0)o_Color.rgb*=alpha;
+}
+)"}};
+            if (particle)
+                for (auto& [name, source] : stages)
+                    source.insert(source.find('\n') + 1, "#define KANS_PARTICLE_VARIANT\n");
+            auto compiled = CompileEmbeddedShaderProgram(manifest, stages);
+            if (auto* error = std::get_if<AssetError>(&compiled))
+                throw std::runtime_error("Kans3D/SixWaySmoke shader: " + error->Message);
+            auto value    = std::get<ShaderData>(std::move(compiled));
+            auto contract = ValidateMaterialShaderInterface(value.Reflection);
+            if (auto* error = std::get_if<AssetError>(&contract))
+                throw std::runtime_error("Kans3D/SixWaySmoke shader: " + error->Message);
+            return value;
+        };
+        static const ShaderData shader = build(false);
+        if (!particle)
+            return shader;
+        static const ShaderData particleShader = build(true);
+        return particleShader;
+    }
+
+    Ref<const ShaderDataAsset> GetSixWaySmokeShaderAsset()
+    {
+        static const Ref<const ShaderDataAsset> asset = [] {
+            auto value     = CreateRef<ShaderDataAsset>(GetSixWaySmokeShader());
+            value->assetID = SixWaySmokeShaderID();
             return value;
         }();
         return asset;

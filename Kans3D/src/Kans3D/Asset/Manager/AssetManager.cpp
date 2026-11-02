@@ -70,13 +70,16 @@ namespace Kans
 
     std::variant<Ref<const Asset>, AssetError> AssetManager::ReadAndDecode(AssetID id, AssetType type)
     {
-        if (id == StandardShaderID())
+        if (id == StandardShaderID() || id == SixWaySmokeShaderID())
         {
             if (type != AssetType::Shader)
-                return AssetError {AssetErrorCode::InvalidArgument, "Standard is a Shader asset"};
+                return AssetError {AssetErrorCode::InvalidArgument,
+                                   id == StandardShaderID() ? "Standard is a Shader asset" :
+                                                              "Kans3D/SixWaySmoke is a Shader asset"};
             try
             {
-                return Ref<const Asset>(GetStandardShaderAsset());
+                return Ref<const Asset>(id == StandardShaderID() ? GetStandardShaderAsset() :
+                                                                   GetSixWaySmokeShaderAsset());
             }
             catch (const std::exception& error)
             {
@@ -358,7 +361,8 @@ namespace Kans
             {
                 // Part views have no Registry entry. Their bindings may change on reimport.
                 if (it->second.State == AssetLoadState::Failed ||
-                    (it->first != StandardShaderID() && !registry->Find(it->first, m_Target)))
+                    (it->first != StandardShaderID() && it->first != SixWaySmokeShaderID() &&
+                     !registry->Find(it->first, m_Target)))
                 {
                     NotifyChange(it->first);
                     retired.push_back(std::move(it->second.Value));

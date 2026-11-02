@@ -705,19 +705,20 @@ namespace Kans
 
     const GpuShader* RenderAssetCache::GetShader(AssetID id)
     {
-        if (IsStandardShader(id))
+        if (IsStandardShader(id) || id == SixWaySmokeShaderID())
         {
-            auto& entry         = m_Shaders[StandardShaderID()];
+            const bool standard = IsStandardShader(id);
+            auto&      entry    = m_Shaders[standard ? StandardShaderID() : id];
             entry.LastUsedFrame = m_Frame;
             if (!entry.Source)
-                entry.Source = GetStandardShaderAsset();
+                entry.Source = standard ? GetStandardShaderAsset() : GetSixWaySmokeShaderAsset();
             if (!entry.Value && !entry.ReportedError)
             {
                 auto built = GpuShader::Create(entry.Source->GetData(), GetDevice());
                 if (auto* error = std::get_if<AssetError>(&built))
                 {
                     entry.ReportedError = *error;
-                    CORE_ERROR("Standard Shader: {}", error->Message);
+                    CORE_ERROR("{} Shader: {}", standard ? "Standard" : "Kans3D/SixWaySmoke", error->Message);
                 }
                 else
                     entry.Value = CreateScope<GpuShader>(std::get<GpuShader>(std::move(built)));

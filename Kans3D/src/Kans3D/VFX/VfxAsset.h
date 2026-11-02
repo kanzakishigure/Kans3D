@@ -287,6 +287,17 @@ namespace Kans::Vfx
         }
         operator bool() const { return Value.value_or(true); }
     };
+    enum class LightingNormal
+    {
+        CameraFacing,
+        Spherical,
+        ParticleNormal
+    };
+    enum class LightingEvaluation
+    {
+        PerPixel,
+        PerVertex
+    };
     struct Renderer
     {
         std::string                     Guid;
@@ -299,16 +310,20 @@ namespace Kans::Vfx
         uint32_t                        TessellationFactor = 1;
         float                           CurveTension       = 0;
         std::array<RibbonUVSettings, 2> UVChannels;
-        bool      CastsShadows() const { return CastShadows.Value.value_or(Kind != RendererKind::Ribbon); }
-        bool      LockedAxisEnable = false;
-        glm::vec3 LockedAxis {0, 0, 1};
-        Facing    FacingMode = Facing::ViewPlane;
-        Sort      Sorting    = Sort::EmitterOrder;
-        glm::vec2 Pivot {0.5f};
-        glm::vec3 FacingVector {0, 0, 1}, AlignmentVector {0, 1, 0};
-        uint32_t  Rows = 1, Columns = 1;
-        bool      FrameBlending     = false;
-        float     DepthFadeDistance = 0;
+        bool               CastsShadows() const { return CastShadows.Value.value_or(Kind != RendererKind::Ribbon); }
+        bool               LockedAxisEnable = false;
+        glm::vec3          LockedAxis {0, 0, 1};
+        Facing             FacingMode = Facing::ViewPlane;
+        Sort               Sorting    = Sort::EmitterOrder;
+        glm::vec2          Pivot {0.5f};
+        glm::vec3          FacingVector {0, 0, 1}, AlignmentVector {0, 1, 0};
+        uint32_t           Rows = 1, Columns = 1;
+        LightingNormal     NormalMode        = LightingNormal::CameraFacing;
+        LightingEvaluation Lighting          = LightingEvaluation::PerPixel;
+        float              Curvature         = 1;
+        bool               ReceiveShadows    = true;
+        bool               FrameBlending     = false;
+        float              DepthFadeDistance = 0;
         std::map<std::string, std::string> Bindings {
             {"Position", "Particles.Position"},
             {"Color", "Particles.Color"},

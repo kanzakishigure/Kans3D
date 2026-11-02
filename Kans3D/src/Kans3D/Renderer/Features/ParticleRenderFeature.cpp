@@ -42,12 +42,7 @@ namespace Kans
         auto world = frame.World.GetVfxWorld();
         if (!world || !frame.Assets())
             return;
-        auto device = frame.GetDevice();
-        auto upload = [&](const void* data, size_t bytes) {
-            auto b = device->CreateBuffer({bytes, BufferUsage::Uniform, MemoryUsage::Upload});
-            b->Write(0, data, bytes);
-            return b;
-        };
+        auto                           device = frame.GetDevice();
         Handle<RenderHardware::Buffer> frameBuffer;
         const auto                     use = [&](GraphUse u) {
             if (std::none_of(uses.begin(), uses.end(), [&](const auto& v) {
@@ -169,7 +164,7 @@ namespace Kans
                         continue;
                     }
                     if (!frameBuffer)
-                        frameBuffer = upload(&lighting, sizeof(lighting));
+                        frameBuffer = gpu->UploadUniform(graph, &lighting, sizeof(lighting));
                     for (uint32_t entry = 0; entry < renderer.Meshes.size(); ++entry)
                     {
                         const auto& item = renderer.Meshes[entry];
@@ -239,7 +234,7 @@ namespace Kans
                                                    0,
                                                    0,
                                                    float(e.Compiled->Settings.SimulationSpace == Vfx::Space::Local)};
-                            auto                 uniforms = upload(&uniform, sizeof(uniform));
+                            auto                 uniforms = gpu->UploadUniform(graph, &uniform, sizeof(uniform));
                             EngineObjectUniforms object;
                             object.MaterialRender = {float(bindings->Render.AlphaMode),
                                                      bindings->Render.AlphaCutoff,
@@ -247,7 +242,7 @@ namespace Kans
                                                      0};
                             MaterialPassData pass;
                             pass.Frame             = frameBuffer;
-                            pass.Object            = upload(&object, sizeof(object));
+                            pass.Object            = gpu->UploadUniform(graph, &object, sizeof(object));
                             pass.Render            = bindings->Render;
                             pass.ParticleMesh      = true;
                             pass.VertexSource      = shader->MeshDepthProgram;
@@ -274,6 +269,8 @@ namespace Kans
                             image.SamplerResource = pass.Shadows->Raw;
                             group.Entries.push_back(image);
                             pass.VertexGroup = device->CreateBindGroup(group);
+                            for (auto u : {pass.Frame, pass.Object, uniforms})
+                                use({graph.ImportBuffer("VFX mesh shadow uniform", u), GraphAccess::UniformRead});
                             use({graph.ImportBuffer("VFX shadow attributes", gpu->Attributes),
                                  GraphAccess::StorageRead});
                             use({graph.ImportBuffer("VFX shadow alive", bin.Indices), GraphAccess::StorageRead});
@@ -504,6 +501,13 @@ namespace Kans
                 uniforms.MeshPivot  = glm::vec4(r.Meshes[draw.Entry].PivotOffset, 0);
                 uniforms.LockedAxis = glm::vec4(r.LockedAxis, float(r.LockedAxisEnable));
             }
+            uniforms.Lighting  = {float(r.NormalMode),
+                                  r.Curvature,
+                                  float(r.Lighting),
+                                  r.Kind == Vfx::RendererKind::Sprite &&
+                                          r.NormalMode == Vfx::LightingNormal::ParticleNormal ?
+                                      float(offset("Normal")) :
+                                      0.f};
             uniforms.PivotGrid = {r.Pivot.x, r.Pivot.y, float(r.Columns), float(r.Rows)};
             uniforms.Facing =
                 glm::vec4(r.FacingVector, float(bindings->Render.AlphaMode == MaterialAlphaMode::Premultiplied));
@@ -530,14 +534,8 @@ namespace Kans
             object.MaterialRender = {float(bindings->Render.AlphaMode),
                                      bindings->Render.AlphaCutoff,
                                      float(bindings->Render.DoubleSided),
-                                     bindings->Render.ReceiveShadows ? 0.f : 1.f};
-            const auto upload     = [&](const void* data, size_t bytes) {
-                if (ribbon)
-                    return gpu->UploadUniform(graph, data, bytes);
-                auto b = frame->GetDevice()->CreateBuffer({bytes, BufferUsage::Uniform, MemoryUsage::Upload});
-                b->Write(0, data, bytes);
-                return b;
-            };
+                                     bindings->Render.ReceiveShadows && r.ReceiveShadows ? 0.f : 1.f};
+            const auto upload = [&](const void* data, size_t bytes) { return gpu->UploadUniform(graph, data, bytes); };
             MaterialPassData pass;
             pass.Frame    = upload(&ef, sizeof(ef));
             pass.Object   = upload(&object, sizeof(object));
@@ -601,9 +599,8 @@ namespace Kans
                            graph.ImportTexture("SceneHDR", frame->Output.GetHDR());
             use({hdr, GraphAccess::ColorReadWrite});
             use({graph.ImportBuffer("VFX attributes", attributes), GraphAccess::StorageRead});
-            if (ribbon)
-                for (auto u : {pass.Frame, pass.Object, sprite})
-                    use({graph.ImportBuffer("VFX ribbon render uniform", u), GraphAccess::UniformRead});
+            for (auto u : {pass.Frame, pass.Object, sprite})
+                use({graph.ImportBuffer("VFX render uniform", u), GraphAccess::UniformRead});
             use({graph.ImportBuffer("VFX draw indices", drawIndices), GraphAccess::StorageRead});
             use({graph.ImportBuffer("VFX draw indirect", pass.IndirectArguments), GraphAccess::IndirectRead});
             if (draw.Mesh)

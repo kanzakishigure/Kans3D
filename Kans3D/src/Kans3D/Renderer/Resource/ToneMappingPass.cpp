@@ -70,8 +70,8 @@ void main() {
                 }());
             if (auto* error = std::get_if<AssetError>(&built))
                 throw std::runtime_error(error->Message);
-            program   = std::get<Handle<RenderHardware::Shader>>(std::move(built));
-            m_Layout  = device.CreateBindGroupLayout(
+            program  = std::get<Handle<RenderHardware::Shader>>(std::move(built));
+            m_Layout = device.CreateBindGroupLayout(
                 {0, {{0, BindingType::UniformBuffer}, {1, BindingType::CombinedTextureSampler}}});
             m_Sampler = device.CreateSampler({});
         }
@@ -97,9 +97,30 @@ void main() {
                 desc.Blends[i].WriteMask = 0;
             pipeline = device.CreatePipeline(desc);
         }
-        glm::vec4 settings {EffectiveExposure(exposure), inverse ? 1.0f : 0.0f, float(mode), 0};
-        auto      buffer = device.CreateBuffer({sizeof(settings), BufferUsage::Uniform, MemoryUsage::Upload});
-        buffer->Write(0, &settings, sizeof(settings));
+        glm::vec4      settings {EffectiveExposure(exposure), inverse ? 1.0f : 0.0f, float(mode), 0};
+        Handle<Buffer> buffer;
+        for (const auto& entry : m_Uniforms)
+            if (entry.first == settings)
+            {
+                buffer = entry.second;
+                break;
+            }
+        if (!buffer)
+        {
+            // Recycle only a snapshot no command list can still reference. This also
+            // avoids unbounded caching while an exposure slider changes every frame.
+            auto reusable = std::find_if(
+                m_Uniforms.begin(), m_Uniforms.end(), [](const auto& entry) { return entry.second.use_count() == 1; });
+            if (reusable == m_Uniforms.end())
+            {
+                m_Uniforms.emplace_back(
+                    settings, device.CreateBuffer({sizeof(settings), BufferUsage::Uniform, MemoryUsage::Upload}));
+                reusable = std::prev(m_Uniforms.end());
+            }
+            reusable->first = settings;
+            buffer          = reusable->second;
+            buffer->Write(0, &settings, sizeof(settings));
+        }
         BindGroupDesc group;
         group.Layout  = m_Layout;
         group.Entries = {{0, buffer}, {1, {}, 0, 0, source, m_Sampler}};

@@ -164,6 +164,8 @@ namespace Kans
 
     std::string MaterialEditorPanel::ChoiceName(AssetID id) const
     {
+        if (id == SixWaySmokeShaderID())
+            return "Kans3D/SixWaySmoke";
         for (const auto& choice : m_Choices)
             if (choice.ID == id)
                 return choice.Name;
@@ -1156,6 +1158,11 @@ namespace Kans
             if (ImGui::Selectable("Standard", IsStandardShader(m_Source.Shader)))
             {
                 m_Source.Shader = {};
+                m_Dirty         = true;
+            }
+            if (ImGui::Selectable("Kans3D/SixWaySmoke", m_Source.Shader == SixWaySmokeShaderID()))
+            {
+                m_Source.Shader = SixWaySmokeShaderID();
                 m_Dirty         = true;
             }
             for (const auto& choice : m_Choices)

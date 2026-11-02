@@ -31,7 +31,7 @@ namespace Kans
         ImportInputs inputs;
         if (source.Parent.IsValid())
             inputs.ProductsWithDependencies.emplace(source.Parent, AssetType::Material);
-        else if (!IsStandardShader(source.Shader))
+        else if (!IsStandardShader(source.Shader) && source.Shader != SixWaySmokeShaderID())
             inputs.Products.push_back(source.Shader);
         for (const auto& texture : source.Textures)
             if (texture.second.IsValid() &&
@@ -79,7 +79,9 @@ namespace Kans
             }
             const auto                shaderID = parent ? parent->Shader : source.Shader;
             std::optional<ShaderData> shader;
-            if (!IsStandardShader(shaderID))
+            if (shaderID == SixWaySmokeShaderID())
+                shader = GetSixWaySmokeShader();
+            else if (!IsStandardShader(shaderID))
             {
                 const auto* shaderBytes = decoded(shaderID);
                 if (!shaderBytes)
@@ -112,7 +114,7 @@ namespace Kans
                 for (const auto& binding : data.Textures)
                     sampled.insert(binding.Texture);
             std::vector<AssetID> dependencies;
-            if (!IsStandardShader(data.Shader))
+            if (!IsStandardShader(data.Shader) && data.Shader != SixWaySmokeShaderID())
                 dependencies.push_back(data.Shader);
             for (const auto& binding : data.Textures)
             {
