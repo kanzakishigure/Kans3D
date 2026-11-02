@@ -1,0 +1,163 @@
+# The explicit empty-cell branch preserves the old velocity bit for bit.
+Version: 1
+AssetID: 732d200000000003:0000000000000001
+Usage: Module
+AllowedStages: 128
+Category: Built-in
+Description: GridResolveSplat
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Accumulation
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Amount
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+Nodes:
+- Guid: 945f9865-5768-521e-b170-f73fddf87ec1
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Amount
+- Guid: c118d0e5-efa3-5b53-98e7-a1149e18548b
+  Op: Get
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Grid.ExecutionIndex
+- Guid: 6c3efd54-bb6f-5d7c-a059-86836968fd7c
+  Op: GridIndexToWorld
+  Type: position
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Module.Grid
+- Guid: 00c31a40-26b2-5875-b788-626804fa397f
+  Op: GridGet
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Grid
+- Guid: a3e1d6de-a602-5b1a-9835-46e30053fcc1
+  Op: GridGet
+  Type: vec4
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: vec4
+  Parameter: Module.Accumulation
+- Guid: 8257da2f-19f4-5de5-b2fd-7f358fa82f98
+  Op: CustomGLSL
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: vec4
+  - Name: Arg2
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Code: ($Arg1.w>0.0)?mix($Arg0,$Arg1.xyz/max($Arg1.w,1e-4),$Arg2*clamp($Arg1.w,0.0,1.0)):$Arg0
+- Guid: 7373bc10-0dd1-5f55-8b43-df8003e14aff
+  Op: GridSet
+  Type: vec3
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Value
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Grid
+- Guid: 079714ba-fb48-5ad9-a8a5-d6bd2b5420d3
+  Op: Constant
+  Type: vec4
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec4
+  Constant:
+    Type: vec4
+    Value:
+    - 0
+    - 0
+    - 0
+    - 0
+- Guid: d2401644-9d2d-5712-9502-4f1397413006
+  Op: GridSet
+  Type: vec4
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Value
+    Type: vec4
+  Outputs:
+  - Name: Value
+    Type: vec4
+  Parameter: Module.Accumulation
+Links:
+- From: c118d0e5-efa3-5b53-98e7-a1149e18548b
+  Output: Value
+  To: 6c3efd54-bb6f-5d7c-a059-86836968fd7c
+  Input: Arg0
+- From: c118d0e5-efa3-5b53-98e7-a1149e18548b
+  Output: Value
+  To: 00c31a40-26b2-5875-b788-626804fa397f
+  Input: Arg0
+- From: c118d0e5-efa3-5b53-98e7-a1149e18548b
+  Output: Value
+  To: a3e1d6de-a602-5b1a-9835-46e30053fcc1
+  Input: Arg0
+- From: 00c31a40-26b2-5875-b788-626804fa397f
+  Output: Value
+  To: 8257da2f-19f4-5de5-b2fd-7f358fa82f98
+  Input: Arg0
+- From: a3e1d6de-a602-5b1a-9835-46e30053fcc1
+  Output: Value
+  To: 8257da2f-19f4-5de5-b2fd-7f358fa82f98
+  Input: Arg1
+- From: 945f9865-5768-521e-b170-f73fddf87ec1
+  Output: Value
+  To: 8257da2f-19f4-5de5-b2fd-7f358fa82f98
+  Input: Arg2
+- From: c118d0e5-efa3-5b53-98e7-a1149e18548b
+  Output: Value
+  To: 7373bc10-0dd1-5f55-8b43-df8003e14aff
+  Input: Index
+- From: 8257da2f-19f4-5de5-b2fd-7f358fa82f98
+  Output: Value
+  To: 7373bc10-0dd1-5f55-8b43-df8003e14aff
+  Input: Value
+- From: c118d0e5-efa3-5b53-98e7-a1149e18548b
+  Output: Value
+  To: d2401644-9d2d-5712-9502-4f1397413006
+  Input: Index
+- From: 079714ba-fb48-5ad9-a8a5-d6bd2b5420d3
+  Output: Value
+  To: d2401644-9d2d-5712-9502-4f1397413006
+  Input: Value

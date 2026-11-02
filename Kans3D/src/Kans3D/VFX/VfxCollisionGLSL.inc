@@ -11,6 +11,21 @@ float collisionDistanceV(uint at,vec3 p,out vec3 normal){
  if(len>1e-8)n=outside/len;else{int axis=q.x>q.y?(q.x>q.z?0:2):(q.y>q.z?1:2);n[axis]=1;}
  for(int axis=0;axis<3;++axis)if(local[axis]<0)n[axis]=-n[axis];normal=axes*n;return len+min(max(q.x,max(q.y,q.z)),0.0);
 }
+vec4 colliderVelocityV(vec3 p,float radius,uint mask){
+ vec4 result=vec4(0);uint count=min(floatBitsToUint(collisionWords[0]).x,256u);
+ for(uint shape=0u;shape<count;++shape){
+  uint at=1u+shape*7u;uvec4 meta=floatBitsToUint(collisionWords[at+6u]);
+  // Infinite planes intentionally do not inject a half-space of occupancy.
+  if(meta.x==0u||meta.y>31u||(mask&(1u<<meta.y))==0u)continue;
+  vec3 normal;float d=collisionDistanceV(at,p,normal);
+  float coverage=d<=0?1.0:(radius>0?clamp(1.0-d/radius,0.0,1.0):0.0);
+  if(coverage>result.w){
+   // Rigid-body velocity at the sample point, using the same angular term as a V2c contact.
+   result=vec4(collisionWords[at+4u].xyz+cross(collisionWords[at+5u].xyz,p-collisionWords[at].xyz),coverage);
+  }
+ }
+ return result;
+}
 struct CollisionResultV{vec3 Position;vec3 Velocity;vec3 Normal;vec3 Contact;bool Hit;};
 CollisionResultV collideParticleV(vec3 previous,vec3 position,vec3 velocity,vec2 size,vec3 scale,int mode,float restitution,float friction,float radiusScale,float radiusOverride,float resting,float dt,float mesh,mat4 owner,bool local,uint mask,mat4 depthVP,mat4 depthInverse,bool depthValid){
  mat4 inv=local?inverse(owner):mat4(1);

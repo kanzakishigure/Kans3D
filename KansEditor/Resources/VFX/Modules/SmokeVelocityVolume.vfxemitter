@@ -1,0 +1,266 @@
+Version: 1
+AssetID: 732d200000000010:0000000000000001
+Name: SmokeVelocityVolume
+Target: GPU
+Space: World
+Capacity: 1024
+DataInterfaces:
+  Emitter.Velocity:
+    Kind: Grid3D
+    Resolution:
+    - 32
+    - 32
+    - 32
+    WorldBounds:
+    - 8
+    - 8
+    - 8
+    Attributes:
+    - Name: Velocity
+      Type: vec3
+    - Name: Splat
+      Type: vec4
+    - Name: Occupancy
+      Type: float
+Stages:
+  EmitterUpdate:
+  - Guid: 2d3198ba-27ba-5f41-b0b9-8661d1b6eec0
+    Script: b0a6b05789834e6d:0000000000000001
+    Enabled: true
+    Inputs:
+      Module.Rate:
+        Kind: Literal
+        Value:
+          Type: float
+          Value: 20
+  ParticleSpawn:
+  - Guid: 6c60d728-2659-5779-a8bc-bbe273ce1ece
+    Script: 82f92b6d396e781e:0000000000000001
+    Enabled: true
+    Inputs:
+      Module.Lifetime:
+        Kind: Literal
+        Value:
+          Type: float
+          Value: 10
+  ParticleUpdate:
+  - Guid: 7a28baf6-f133-5e6c-bd46-33a666b03e63
+    Script: 81ec57d7f6b9dad0:0000000000000001
+    Enabled: true
+    Inputs: {}
+  - Guid: 5ccbc429-361b-51b4-a2cf-bfa57931e503
+    Script: 732d200000000006:0000000000000001
+    Enabled: true
+    Inputs:
+      Module.Grid:
+        Kind: DataInterface
+        Binding:
+          Kind: Grid3D
+          Source: Emitter.Velocity
+          Channel: Velocity
+          Resolution:
+          - 32
+          - 32
+          - 32
+          WorldBounds:
+          - 8
+          - 8
+          - 8
+          Attributes: []
+  - Guid: 7ce19551-cefa-51d0-9599-fe2dbcb4d5bb
+    Script: b86ec98ca2055941:0000000000000001
+    Enabled: true
+    Inputs: {}
+  SimulationStage:
+  - Guid: 9101d122-65cc-52a3-9ea5-a0e774eb7893
+    Name: SplatParticleVelocity
+    IterationSource:
+      Kind: Particles
+    Iterations: 1
+    Modules:
+    - Guid: bbede409-d263-5219-9acd-272495053069
+      Script: 732d200000000002:0000000000000001
+      Enabled: true
+      Inputs:
+        Module.Grid:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Velocity
+            Channel: Splat
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+  - Guid: c12f5493-e041-526c-8535-568074b0dc01
+    Name: GridResolveSplat
+    IterationSource:
+      Kind: DataInterface
+      Parameter: Emitter.Velocity
+    Iterations: 1
+    Modules:
+    - Guid: 1b780fa1-90e5-5684-b478-a3cef22358db
+      Script: 732d200000000003:0000000000000001
+      Enabled: true
+      Inputs:
+        Module.Grid:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Velocity
+            Channel: Velocity
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+  - Guid: fbedf0a4-2e6a-5ac0-ad0a-0a1e24aa0ab6
+    Name: GridApplyForceFields
+    IterationSource:
+      Kind: DataInterface
+      Parameter: Emitter.Velocity
+    Iterations: 1
+    Modules:
+    - Guid: 54f8297f-2ea3-5a08-8fc0-f7a77df54a70
+      Script: 732d200000000005:0000000000000001
+      Enabled: true
+      Inputs:
+        Module.Grid:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Velocity
+            Channel: Velocity
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+  - Guid: 54f5cb0d-ca24-5a06-aa8d-3d64df9bc168
+    Name: GridInjectColliders
+    IterationSource:
+      Kind: DataInterface
+      Parameter: Emitter.Velocity
+    Iterations: 1
+    Modules:
+    - Guid: 0d5cac94-39bd-57c0-bbce-d4bc9ae2f93c
+      Script: 732d200000000001:0000000000000001
+      Enabled: true
+      Inputs:
+        Module.Grid:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Velocity
+            Channel: Velocity
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+  - Guid: c7fb22a2-27aa-57f3-a352-916a7223f419
+    Name: GridAdvect
+    IterationSource:
+      Kind: DataInterface
+      Parameter: Emitter.Velocity
+    Iterations: 1
+    Modules:
+    - Guid: 7b03b7ea-979c-5194-828a-1164447086d4
+      Script: 732d200000000004:0000000000000001
+      Enabled: true
+      Inputs:
+        Module.Grid:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Velocity
+            Channel: Velocity
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+  - Guid: b2f2df71-8291-5a62-8248-e5b477d4e702
+    Name: GridDecay
+    IterationSource:
+      Kind: DataInterface
+      Parameter: Emitter.Velocity
+    Iterations: 1
+    Modules:
+    - Guid: b58db9e4-1254-54dc-b388-2caa4b087d15
+      Script: 233b8dd42ad050aa:0000000000000001
+      Enabled: true
+      Inputs:
+        Module.Grid:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Velocity
+            Channel: Velocity
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+        Module.Rate:
+          Kind: Literal
+          Value:
+            Type: float
+            Value: 0.2
+  - Guid: ac39fea2-ca3b-55d8-969a-b6a44e925178
+    Name: GridDiffuse
+    IterationSource:
+      Kind: DataInterface
+      Parameter: Emitter.Velocity
+    Iterations: 2
+    Modules:
+    - Guid: ca78afd1-fc55-5296-8a38-605661fa4f46
+      Script: b5f3f10bb437548f:0000000000000001
+      Enabled: true
+      Inputs:
+        Module.Grid:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Velocity
+            Channel: Velocity
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+        Module.Amount:
+          Kind: Literal
+          Value:
+            Type: float
+            Value: 0.15
+Renderers: []

@@ -1,0 +1,183 @@
+Version: 1
+AssetID: 732d200000000001:0000000000000001
+Usage: Module
+AllowedStages: 128
+Category: Built-in
+Description: GridInjectColliders
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Occupancy
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Falloff
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+- Name: Module.Strength
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+  Range:
+  - 0
+  - 1
+Nodes:
+- Guid: 8f838ff2-2b31-5d73-9b18-96410c136146
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Falloff
+- Guid: cbf69f18-d167-5005-b362-b7de0a1119b6
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Strength
+- Guid: 95437358-aeb0-5773-93e1-a2de770313fa
+  Op: Get
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Grid.ExecutionIndex
+- Guid: 430204ec-7d19-5cd7-89a5-e1d75876b3f0
+  Op: GridIndexToWorld
+  Type: position
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Module.Grid
+- Guid: bddd7615-61a0-517d-888a-cca94fa37a4b
+  Op: GridGet
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Grid
+- Guid: 9c570310-b36e-5dd8-a00d-840a6d266ea2
+  Op: ColliderVelocity
+  Type: vec4
+  Inputs:
+  - Name: Arg0
+    Type: position
+  - Name: Arg1
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec4
+- Guid: 8bca3263-f118-53d2-b4f0-9fe620a5482e
+  Op: CustomGLSL
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: vec4
+  - Name: Arg2
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Code: mix($Arg0,$Arg1.xyz,$Arg1.w*clamp($Arg2,0.0,1.0))
+- Guid: fc2ea14f-01c3-56c1-8955-20b968c15e1d
+  Op: GridSet
+  Type: vec3
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Value
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Grid
+- Guid: 91ea1e9e-8de4-589c-a0db-0e90da31de6a
+  Op: CustomGLSL
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: vec4
+  Outputs:
+  - Name: Value
+    Type: float
+  Code: $Arg0.w
+- Guid: e4609a92-74bb-5e7c-8ffb-b08b6155f22e
+  Op: GridSet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Value
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Occupancy
+Links:
+- From: 95437358-aeb0-5773-93e1-a2de770313fa
+  Output: Value
+  To: 430204ec-7d19-5cd7-89a5-e1d75876b3f0
+  Input: Arg0
+- From: 95437358-aeb0-5773-93e1-a2de770313fa
+  Output: Value
+  To: bddd7615-61a0-517d-888a-cca94fa37a4b
+  Input: Arg0
+- From: 430204ec-7d19-5cd7-89a5-e1d75876b3f0
+  Output: Value
+  To: 9c570310-b36e-5dd8-a00d-840a6d266ea2
+  Input: Arg0
+- From: 8f838ff2-2b31-5d73-9b18-96410c136146
+  Output: Value
+  To: 9c570310-b36e-5dd8-a00d-840a6d266ea2
+  Input: Arg1
+- From: bddd7615-61a0-517d-888a-cca94fa37a4b
+  Output: Value
+  To: 8bca3263-f118-53d2-b4f0-9fe620a5482e
+  Input: Arg0
+- From: 9c570310-b36e-5dd8-a00d-840a6d266ea2
+  Output: Value
+  To: 8bca3263-f118-53d2-b4f0-9fe620a5482e
+  Input: Arg1
+- From: cbf69f18-d167-5005-b362-b7de0a1119b6
+  Output: Value
+  To: 8bca3263-f118-53d2-b4f0-9fe620a5482e
+  Input: Arg2
+- From: 95437358-aeb0-5773-93e1-a2de770313fa
+  Output: Value
+  To: fc2ea14f-01c3-56c1-8955-20b968c15e1d
+  Input: Index
+- From: 8bca3263-f118-53d2-b4f0-9fe620a5482e
+  Output: Value
+  To: fc2ea14f-01c3-56c1-8955-20b968c15e1d
+  Input: Value
+- From: 9c570310-b36e-5dd8-a00d-840a6d266ea2
+  Output: Value
+  To: 91ea1e9e-8de4-589c-a0db-0e90da31de6a
+  Input: Arg0
+- From: 95437358-aeb0-5773-93e1-a2de770313fa
+  Output: Value
+  To: e4609a92-74bb-5e7c-8ffb-b08b6155f22e
+  Input: Index
+- From: 91ea1e9e-8de4-589c-a0db-0e90da31de6a
+  Output: Value
+  To: e4609a92-74bb-5e7c-8ffb-b08b6155f22e
+  Input: Value

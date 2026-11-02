@@ -36,6 +36,7 @@ namespace Kans::Vfx
             return from == to || (from == Type::Float && (to == Type::Vec2 || to == Type::Vec3 || to == Type::Vec4));
         }
         const std::map<std::string, uint32_t> Arity = {{"Collision", 13},
+                                                       {"ColliderVelocity", 2},
                                                        {"Add", 2},
                                                        {"Sub", 2},
                                                        {"Mul", 2},
@@ -78,6 +79,7 @@ namespace Kans::Vfx
                                                        {"FieldVector", 2},
                                                        {"EmitterSeedOffset", 0},
                                                        {"ToSimulationVector", 1},
+                                                       {"ToWorldVector", 1},
                                                        {"SampleForceFields", 2},
                                                        {"Sample", 1},
                                                        {"TransformPosition", 1},
@@ -96,6 +98,60 @@ namespace Kans::Vfx
                                                                    const std::map<std::string, Input>&            inputs,
                                                                    const std::map<std::string, InterfaceBinding>* Grids)
         {
+            static const std::set<AssetID> smokeModules = {AssetID::FromString("732d200000000001:0000000000000001"),
+                                                           AssetID::FromString("732d200000000002:0000000000000001"),
+                                                           AssetID::FromString("732d200000000003:0000000000000001"),
+                                                           AssetID::FromString("732d200000000004:0000000000000001"),
+                                                           AssetID::FromString("732d200000000005:0000000000000001"),
+                                                           AssetID::FromString("732d200000000006:0000000000000001")};
+            if (smokeModules.count(m.Identity))
+            {
+                // Secondary attributes default to the selected grid, but accept explicit bindings.
+                const auto binding = inputs.find("Module.Grid");
+                if (Grids && binding != inputs.end() && binding->second.Kind == InputKind::DataInterface)
+                {
+                    const auto grid = Grids->find(binding->second.Interface.Source);
+                    if (grid != Grids->end() && m.Identity == AssetID::FromString("732d200000000004:0000000000000001"))
+                        for (const auto& attribute : grid->second.GridAttributes)
+                            if (attribute.Name == binding->second.Interface.Channel)
+                                for (auto& node : m.Nodes)
+                                    if ((node.Op == "GridSample" || node.Op == "GridSet") &&
+                                        node.Parameter == "Module.Grid")
+                                    {
+                                        node.Kind            = attribute.Kind;
+                                        node.Outputs[0].Kind = attribute.Kind;
+                                        if (node.Op == "GridSet")
+                                            node.Inputs[1].Kind = attribute.Kind;
+                                    }
+                    for (auto& node : m.Nodes)
+                        for (const auto& [parameter, attribute] :
+                             std::map<std::string, std::string> {{"Module.Velocity", "Velocity"},
+                                                                 {"Module.Accumulation", "Splat"},
+                                                                 {"Module.Occupancy", "Occupancy"}})
+                            if (node.Parameter == parameter && !inputs.count(parameter))
+                            {
+                                node.Parameter = "Module.Grid";
+                                node.Code      = attribute;
+                            }
+                    if (grid != Grids->end() && !inputs.count("Module.Occupancy") &&
+                        std::none_of(grid->second.GridAttributes.begin(),
+                                     grid->second.GridAttributes.end(),
+                                     [](const auto& a) { return a.Name == "Occupancy"; }))
+                        m.Nodes.erase(
+                            std::remove_if(m.Nodes.begin(),
+                                           m.Nodes.end(),
+                                           [](const auto& n) { return n.Op == "GridSet" && n.Code == "Occupancy"; }),
+                            m.Nodes.end());
+                    m.Links.erase(std::remove_if(m.Links.begin(),
+                                                 m.Links.end(),
+                                                 [&](const auto& l) {
+                                                     return std::none_of(m.Nodes.begin(),
+                                                                         m.Nodes.end(),
+                                                                         [&](const auto& n) { return n.Guid == l.To; });
+                                                 }),
+                                  m.Links.end());
+                }
+            }
             // Grid module graphs are attribute-polymorphic: infer their value branch from the binding.
             // Coordinate branches and scalar controls (Rate, Amount, dt) retain their declared types.
             static const auto              clearID = AssetID::FromString("c0d609763e645cfd:0000000000000001");
@@ -239,6 +295,8 @@ namespace Kans::Vfx
                 if (i.Op == "GridIndexToWorld")
                     i.PositionSpace = Space::World;
                 if (i.Op == "ToSimulationVector")
+                    i.PositionSpace = SimulationSpace;
+                if (i.Op == "ToWorldVector")
                     i.PositionSpace = SimulationSpace;
                 Out.Code.push_back(std::move(i));
                 return uint32_t(Out.Code.size() - 1);
@@ -675,11 +733,8 @@ namespace Kans::Vfx
                                 }
                             }
                             if (sample && Out.StageKind != Stage::ParticleUpdate &&
-                                !(Out.StageKind == Stage::SimulationStage && Out.IterationGrid.empty()))
-                                Error(id,
-                                      guid,
-                                      "Position",
-                                      "GridSample requires ParticleUpdate or a particle simulation stage");
+                                Out.StageKind != Stage::SimulationStage)
+                                Error(id, guid, "Position", "GridSample requires ParticleUpdate or a simulation stage");
                             if ((n.Op == "GridNumCells" || n.Op == "GridWorldToIndex") && i.Kind != Type::IVec3)
                                 Error(id, guid, output, "Grid index output requires ivec3");
                             if (n.Op == "GridCellSize" && i.Kind != Type::Vec3)
@@ -940,6 +995,8 @@ namespace Kans::Vfx
                             if (i.Interface.Kind != "ForceFields")
                                 Error(id, guid, output, "SampleForceFields requires ForceFields data interface");
                         }
+                        if (i.Op == "ColliderVelocity" && !i.Args.empty())
+                            i.Args[0] = PositionTo(i.Args[0], Space::World);
                         if (i.Op == "Select" && i.Kind == Type::Position && i.Args.size() == 3)
                         {
                             i.Args[1] = PositionTo(i.Args[1], SimulationSpace);
@@ -977,7 +1034,22 @@ namespace Kans::Vfx
                 const auto error = [&](size_t k, const char* message) {
                     Error(id, n.Guid, k < n.Inputs.size() ? n.Inputs[k].Name : "Value", message);
                 };
-                if (i.Op == "Collision")
+                if (i.Op == "ColliderVelocity")
+                {
+                    if (Out.Target != SimTarget::GPU)
+                        Error(id, n.Guid, "Value", "ColliderVelocity requires GPU; switch the emitter to GPU");
+                    if (t(0) != Type::Position || t(1) != Type::Float || i.Kind != Type::Vec4)
+                        error(0, "ColliderVelocity requires Position, float -> vec4");
+                    if (Out.StageKind != Stage::SimulationStage && Out.StageKind != Stage::ParticleUpdate &&
+                        Out.StageKind != Stage::ParticleSpawn)
+                        error(0, "ColliderVelocity requires a grid or particle stage");
+                }
+                else if (i.Op == "ToWorldVector" || i.Op == "ToSimulationVector")
+                {
+                    if (t(0) != Type::Vec3 || i.Kind != Type::Vec3)
+                        error(0, "Vector space conversion requires vec3 -> vec3");
+                }
+                else if (i.Op == "Collision")
                 {
                     if (Out.StageKind != Stage::ParticleUpdate)
                         Error(id, n.Guid, "Mode", "Collision requires ParticleUpdate after SolveForcesAndVelocity");
@@ -2121,6 +2193,12 @@ namespace Kans::Vfx
             out.Data = glm::vec4(v, 0);
             return out;
         }
+        if (op == "ToWorldVector")
+        {
+            out.Data = glm::vec4(
+                (i.PositionSpace == Space::Local ? glm::mat3(c.LocalToWorld) : glm::mat3(1)) * glm::vec3(x.Data), 0);
+            return out;
+        }
         if (op == "ToSimulationVector")
         {
             out.Data =
@@ -2452,7 +2530,9 @@ namespace Kans::Vfx
     }
     bool UsesCollision(const Program& p)
     {
-        return std::any_of(p.Code.begin(), p.Code.end(), [](const auto& i) { return i.Op == "Collision"; });
+        return std::any_of(p.Code.begin(), p.Code.end(), [](const auto& i) {
+            return i.Op == "Collision" || i.Op == "ColliderVelocity";
+        });
     }
     bool UsesDepthCollision(const Program& p)
     {
@@ -2776,6 +2856,9 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                     s += "p" + std::to_string(i.Parameter) + "=mat3(owner)*p" + std::to_string(i.Parameter) + ";\n";
                 e = "0.0";
             }
+            else if (op == "ColliderVelocity")
+                e = "colliderVelocityV(" + a + "," + b + ",parameters[" + std::to_string(p.Parameters.size() + 4) +
+                    "].z)";
             else if (op == "Collision")
             {
                 auto at = collisionResults.find(i.Args);
@@ -2964,6 +3047,8 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
             }
             else if (op == "ToSimulationVector")
                 e = "(pc.worldSpace!=0u?" + a + ":inverse(mat3(owner))*" + a + ")";
+            else if (op == "ToWorldVector")
+                e = "(pc.worldSpace!=0u?" + a + ":mat3(owner)*" + a + ")";
             else if (op == "EmitterSeedOffset")
                 e = "seedOffsetV()";
             else if (op == "FieldPosition")

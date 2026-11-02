@@ -1,0 +1,330 @@
+# Nearest-cell splat: weight 1 at floor(grid coordinate), zero outside the volume.
+# Each component uses the existing 65536 fixed-point GridAddFloat atomic.
+Version: 1
+AssetID: 732d200000000002:0000000000000001
+Usage: Module
+AllowedStages: 128
+Category: Built-in
+Description: SplatParticleVelocity
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Weight
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+Nodes:
+- Guid: 8570d143-638f-5bc7-af4a-76bd6ae0e9d4
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Weight
+- Guid: 0fc86801-c87b-59ee-9856-222785303454
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: 1b5b0375-8953-53aa-8129-33b3d15979b5
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: 78193db4-d418-5f64-a903-a19753c5c250
+  Op: ToWorldVector
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: bba8c137-ed71-5cc2-a99e-579219db16c0
+  Op: GridWorldToIndex
+  Type: ivec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Module.Grid
+- Guid: ba18009f-ac0e-5bd5-8bbb-85eaee575a19
+  Op: GridNumCells
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Module.Grid
+- Guid: c1c29942-de11-5926-aa9a-bcec00992c35
+  Op: CustomGLSL
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  - Name: Arg1
+    Type: ivec3
+  - Name: Arg2
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Code: (all(greaterThanEqual($Arg0,ivec3(0)))&&all(lessThan($Arg0,$Arg1)))?max(0.0,$Arg2):0.0
+- Guid: 1c578ce6-b402-5067-9f1b-ecdb24764929
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 0
+- Guid: 197db0b9-9992-5368-8ce7-86c1edff61aa
+  Op: CustomGLSL
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Code: $Arg0[0]*$Arg1
+- Guid: 74349da3-bc87-5bec-883f-3e49ea840878
+  Op: GridAddFloat
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Component
+    Type: int
+  - Name: Value
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: c7f4c31e-ca9c-5652-a316-65034088b0bb
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 1
+- Guid: 435310c5-4aab-50a2-bf95-1d3acd139fdc
+  Op: CustomGLSL
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Code: $Arg0[1]*$Arg1
+- Guid: ad3a9770-644c-50ef-9096-1f2a1572fc45
+  Op: GridAddFloat
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Component
+    Type: int
+  - Name: Value
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: dab08ec9-fe9e-531e-9110-e2bb00e83da1
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 2
+- Guid: 8399cd1c-11aa-5c0b-8812-0b774dea984c
+  Op: CustomGLSL
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Code: $Arg0[2]*$Arg1
+- Guid: da1a9583-69ca-538c-8267-765bccc79d35
+  Op: GridAddFloat
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Component
+    Type: int
+  - Name: Value
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: 79e1e452-8cee-59c9-b3c6-bca9330ba8dd
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 3
+- Guid: 30d102e7-09df-5593-8b19-b4ccc1ad8ea6
+  Op: CustomGLSL
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Code: $Arg1
+- Guid: 043494ff-925e-5e44-bf72-6b1e000d7110
+  Op: GridAddFloat
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Component
+    Type: int
+  - Name: Value
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+Links:
+- From: 1b5b0375-8953-53aa-8129-33b3d15979b5
+  Output: Value
+  To: 78193db4-d418-5f64-a903-a19753c5c250
+  Input: Arg0
+- From: 0fc86801-c87b-59ee-9856-222785303454
+  Output: Value
+  To: bba8c137-ed71-5cc2-a99e-579219db16c0
+  Input: Arg0
+- From: bba8c137-ed71-5cc2-a99e-579219db16c0
+  Output: Value
+  To: c1c29942-de11-5926-aa9a-bcec00992c35
+  Input: Arg0
+- From: ba18009f-ac0e-5bd5-8bbb-85eaee575a19
+  Output: Value
+  To: c1c29942-de11-5926-aa9a-bcec00992c35
+  Input: Arg1
+- From: 8570d143-638f-5bc7-af4a-76bd6ae0e9d4
+  Output: Value
+  To: c1c29942-de11-5926-aa9a-bcec00992c35
+  Input: Arg2
+- From: 78193db4-d418-5f64-a903-a19753c5c250
+  Output: Value
+  To: 197db0b9-9992-5368-8ce7-86c1edff61aa
+  Input: Arg0
+- From: c1c29942-de11-5926-aa9a-bcec00992c35
+  Output: Value
+  To: 197db0b9-9992-5368-8ce7-86c1edff61aa
+  Input: Arg1
+- From: bba8c137-ed71-5cc2-a99e-579219db16c0
+  Output: Value
+  To: 74349da3-bc87-5bec-883f-3e49ea840878
+  Input: Index
+- From: 1c578ce6-b402-5067-9f1b-ecdb24764929
+  Output: Value
+  To: 74349da3-bc87-5bec-883f-3e49ea840878
+  Input: Component
+- From: 197db0b9-9992-5368-8ce7-86c1edff61aa
+  Output: Value
+  To: 74349da3-bc87-5bec-883f-3e49ea840878
+  Input: Value
+- From: 78193db4-d418-5f64-a903-a19753c5c250
+  Output: Value
+  To: 435310c5-4aab-50a2-bf95-1d3acd139fdc
+  Input: Arg0
+- From: c1c29942-de11-5926-aa9a-bcec00992c35
+  Output: Value
+  To: 435310c5-4aab-50a2-bf95-1d3acd139fdc
+  Input: Arg1
+- From: bba8c137-ed71-5cc2-a99e-579219db16c0
+  Output: Value
+  To: ad3a9770-644c-50ef-9096-1f2a1572fc45
+  Input: Index
+- From: c7f4c31e-ca9c-5652-a316-65034088b0bb
+  Output: Value
+  To: ad3a9770-644c-50ef-9096-1f2a1572fc45
+  Input: Component
+- From: 435310c5-4aab-50a2-bf95-1d3acd139fdc
+  Output: Value
+  To: ad3a9770-644c-50ef-9096-1f2a1572fc45
+  Input: Value
+- From: 78193db4-d418-5f64-a903-a19753c5c250
+  Output: Value
+  To: 8399cd1c-11aa-5c0b-8812-0b774dea984c
+  Input: Arg0
+- From: c1c29942-de11-5926-aa9a-bcec00992c35
+  Output: Value
+  To: 8399cd1c-11aa-5c0b-8812-0b774dea984c
+  Input: Arg1
+- From: bba8c137-ed71-5cc2-a99e-579219db16c0
+  Output: Value
+  To: da1a9583-69ca-538c-8267-765bccc79d35
+  Input: Index
+- From: dab08ec9-fe9e-531e-9110-e2bb00e83da1
+  Output: Value
+  To: da1a9583-69ca-538c-8267-765bccc79d35
+  Input: Component
+- From: 8399cd1c-11aa-5c0b-8812-0b774dea984c
+  Output: Value
+  To: da1a9583-69ca-538c-8267-765bccc79d35
+  Input: Value
+- From: 78193db4-d418-5f64-a903-a19753c5c250
+  Output: Value
+  To: 30d102e7-09df-5593-8b19-b4ccc1ad8ea6
+  Input: Arg0
+- From: c1c29942-de11-5926-aa9a-bcec00992c35
+  Output: Value
+  To: 30d102e7-09df-5593-8b19-b4ccc1ad8ea6
+  Input: Arg1
+- From: bba8c137-ed71-5cc2-a99e-579219db16c0
+  Output: Value
+  To: 043494ff-925e-5e44-bf72-6b1e000d7110
+  Input: Index
+- From: 79e1e452-8cee-59c9-b3c6-bca9330ba8dd
+  Output: Value
+  To: 043494ff-925e-5e44-bf72-6b1e000d7110
+  Input: Component
+- From: 30d102e7-09df-5593-8b19-b4ccc1ad8ea6
+  Output: Value
+  To: 043494ff-925e-5e44-bf72-6b1e000d7110
+  Input: Value

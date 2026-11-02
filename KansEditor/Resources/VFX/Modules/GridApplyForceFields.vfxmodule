@@ -1,0 +1,245 @@
+# Field sampling is shared with ApplyForceFields; impulses are velocity changes, so omit dt for them.
+Version: 1
+AssetID: 732d200000000005:0000000000000001
+Usage: Module
+AllowedStages: 128
+Category: Built-in
+Description: GridApplyForceFields
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Intensity
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+- Name: Module.IncludeImpulses
+  Type: bool
+  Default:
+    Type: bool
+    Value: true
+Nodes:
+- Guid: d80a50a4-434b-5068-8366-0338d7e17488
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Intensity
+- Guid: dd710298-020c-5867-82e5-d278192740c4
+  Op: Input
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Module.IncludeImpulses
+- Guid: 5468acb8-2320-503c-976b-edbde9df5af6
+  Op: Get
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Grid.ExecutionIndex
+- Guid: 95d0c79a-a1d8-5a64-a91a-3ff7bab4fb17
+  Op: GridIndexToWorld
+  Type: position
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Module.Grid
+- Guid: fe91f806-0efe-538a-9308-c4f65291e751
+  Op: GridGet
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Grid
+- Guid: eb3bef5c-d716-57e7-a4ab-5cdb13a2fbac
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: cc7c1157-b593-5795-92f8-68d6b818e94d
+  Op: SampleForceFields
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Wind
+    Type: vec3
+  Interface:
+    Kind: ForceFields
+- Guid: ddcd19fc-0269-5579-af09-84489b02f6a4
+  Op: SampleForceFields
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Force
+    Type: vec3
+  Interface:
+    Kind: ForceFields
+- Guid: 8ae9c248-1114-5260-a0c2-60d19957fd60
+  Op: SampleForceFields
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Acceleration
+    Type: vec3
+  Interface:
+    Kind: ForceFields
+- Guid: 9077f759-5b15-5bd5-8bf2-286eaae62d1c
+  Op: SampleForceFields
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Impulse
+    Type: vec3
+  Interface:
+    Kind: ForceFields
+- Guid: 47a51c82-0039-5772-bdcc-230fc540cefe
+  Op: CustomGLSL
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: vec3
+  - Name: Arg2
+    Type: vec3
+  - Name: Arg3
+    Type: vec3
+  - Name: Arg4
+    Type: vec3
+  - Name: Arg5
+    Type: float
+  - Name: Arg6
+    Type: float
+  - Name: Arg7
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Code: $Arg0+($Arg1+$Arg2+$Arg3)*$Arg5*$Arg6+($Arg7?$Arg4:vec3(0))*$Arg6
+- Guid: 3b4357d6-6b5a-5cfa-959b-88de723eb34e
+  Op: GridSet
+  Type: vec3
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Value
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Grid
+Links:
+- From: 5468acb8-2320-503c-976b-edbde9df5af6
+  Output: Value
+  To: 95d0c79a-a1d8-5a64-a91a-3ff7bab4fb17
+  Input: Arg0
+- From: 5468acb8-2320-503c-976b-edbde9df5af6
+  Output: Value
+  To: fe91f806-0efe-538a-9308-c4f65291e751
+  Input: Arg0
+- From: 95d0c79a-a1d8-5a64-a91a-3ff7bab4fb17
+  Output: Value
+  To: cc7c1157-b593-5795-92f8-68d6b818e94d
+  Input: Arg0
+- From: fe91f806-0efe-538a-9308-c4f65291e751
+  Output: Value
+  To: cc7c1157-b593-5795-92f8-68d6b818e94d
+  Input: Arg1
+- From: 95d0c79a-a1d8-5a64-a91a-3ff7bab4fb17
+  Output: Value
+  To: ddcd19fc-0269-5579-af09-84489b02f6a4
+  Input: Arg0
+- From: fe91f806-0efe-538a-9308-c4f65291e751
+  Output: Value
+  To: ddcd19fc-0269-5579-af09-84489b02f6a4
+  Input: Arg1
+- From: 95d0c79a-a1d8-5a64-a91a-3ff7bab4fb17
+  Output: Value
+  To: 8ae9c248-1114-5260-a0c2-60d19957fd60
+  Input: Arg0
+- From: fe91f806-0efe-538a-9308-c4f65291e751
+  Output: Value
+  To: 8ae9c248-1114-5260-a0c2-60d19957fd60
+  Input: Arg1
+- From: 95d0c79a-a1d8-5a64-a91a-3ff7bab4fb17
+  Output: Value
+  To: 9077f759-5b15-5bd5-8bf2-286eaae62d1c
+  Input: Arg0
+- From: fe91f806-0efe-538a-9308-c4f65291e751
+  Output: Value
+  To: 9077f759-5b15-5bd5-8bf2-286eaae62d1c
+  Input: Arg1
+- From: fe91f806-0efe-538a-9308-c4f65291e751
+  Output: Value
+  To: 47a51c82-0039-5772-bdcc-230fc540cefe
+  Input: Arg0
+- From: cc7c1157-b593-5795-92f8-68d6b818e94d
+  Output: Wind
+  To: 47a51c82-0039-5772-bdcc-230fc540cefe
+  Input: Arg1
+- From: ddcd19fc-0269-5579-af09-84489b02f6a4
+  Output: Force
+  To: 47a51c82-0039-5772-bdcc-230fc540cefe
+  Input: Arg2
+- From: 8ae9c248-1114-5260-a0c2-60d19957fd60
+  Output: Acceleration
+  To: 47a51c82-0039-5772-bdcc-230fc540cefe
+  Input: Arg3
+- From: 9077f759-5b15-5bd5-8bf2-286eaae62d1c
+  Output: Impulse
+  To: 47a51c82-0039-5772-bdcc-230fc540cefe
+  Input: Arg4
+- From: eb3bef5c-d716-57e7-a4ab-5cdb13a2fbac
+  Output: Value
+  To: 47a51c82-0039-5772-bdcc-230fc540cefe
+  Input: Arg5
+- From: d80a50a4-434b-5068-8366-0338d7e17488
+  Output: Value
+  To: 47a51c82-0039-5772-bdcc-230fc540cefe
+  Input: Arg6
+- From: dd710298-020c-5867-82e5-d278192740c4
+  Output: Value
+  To: 47a51c82-0039-5772-bdcc-230fc540cefe
+  Input: Arg7
+- From: 5468acb8-2320-503c-976b-edbde9df5af6
+  Output: Value
+  To: 3b4357d6-6b5a-5cfa-959b-88de723eb34e
+  Input: Index
+- From: 47a51c82-0039-5772-bdcc-230fc540cefe
+  Output: Value
+  To: 3b4357d6-6b5a-5cfa-959b-88de723eb34e
+  Input: Value

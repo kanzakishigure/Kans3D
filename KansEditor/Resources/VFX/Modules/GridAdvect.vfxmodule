@@ -1,0 +1,124 @@
+# Semi-Lagrangian backtrace in world space; GridSample reads the previous buffer and clamps borders.
+Version: 1
+AssetID: 732d200000000004:0000000000000001
+Usage: Module
+AllowedStages: 128
+Category: Built-in
+Description: GridAdvect
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Velocity
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+Nodes:
+- Guid: 05059765-5bda-579d-8581-c79a65924c42
+  Op: Get
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Grid.ExecutionIndex
+- Guid: 6d3e7a73-4517-5d3d-8103-90b1196bc770
+  Op: GridIndexToWorld
+  Type: position
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Module.Grid
+- Guid: 010c8363-7dec-52a0-8f3e-1cc228616f83
+  Op: GridGet
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Velocity
+- Guid: 1501b7b2-8199-5fda-9f1c-890474b17981
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: b519a271-3cd3-5f70-8937-1c447b79fd04
+  Op: CustomGLSL
+  Type: position
+  Inputs:
+  - Name: Arg0
+    Type: position
+  - Name: Arg1
+    Type: vec3
+  - Name: Arg2
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: position
+  Code: $Arg0-$Arg1*$Arg2
+- Guid: 1f2bcf07-a30b-5fdb-afc1-d77309a8b907
+  Op: GridSample
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: dd55601a-9ac4-54b0-b818-9cacb6215412
+  Op: GridSet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Value
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+Links:
+- From: 05059765-5bda-579d-8581-c79a65924c42
+  Output: Value
+  To: 6d3e7a73-4517-5d3d-8103-90b1196bc770
+  Input: Arg0
+- From: 05059765-5bda-579d-8581-c79a65924c42
+  Output: Value
+  To: 010c8363-7dec-52a0-8f3e-1cc228616f83
+  Input: Arg0
+- From: 6d3e7a73-4517-5d3d-8103-90b1196bc770
+  Output: Value
+  To: b519a271-3cd3-5f70-8937-1c447b79fd04
+  Input: Arg0
+- From: 010c8363-7dec-52a0-8f3e-1cc228616f83
+  Output: Value
+  To: b519a271-3cd3-5f70-8937-1c447b79fd04
+  Input: Arg1
+- From: 1501b7b2-8199-5fda-9f1c-890474b17981
+  Output: Value
+  To: b519a271-3cd3-5f70-8937-1c447b79fd04
+  Input: Arg2
+- From: b519a271-3cd3-5f70-8937-1c447b79fd04
+  Output: Value
+  To: 1f2bcf07-a30b-5fdb-afc1-d77309a8b907
+  Input: Arg0
+- From: 05059765-5bda-579d-8581-c79a65924c42
+  Output: Value
+  To: dd55601a-9ac4-54b0-b818-9cacb6215412
+  Input: Index
+- From: 1f2bcf07-a30b-5fdb-afc1-d77309a8b907
+  Output: Value
+  To: dd55601a-9ac4-54b0-b818-9cacb6215412
+  Input: Value

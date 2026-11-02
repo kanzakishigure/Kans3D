@@ -1,0 +1,178 @@
+# Check the unclamped index explicitly so particles outside the volume keep their velocity.
+Version: 1
+AssetID: 732d200000000006:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: FollowVelocityVolume
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Tightness
+  Type: float
+  Default:
+    Type: float
+    Value: 4
+- Name: Module.ForceScale
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+Nodes:
+- Guid: a7598df4-7ad3-5ddd-8644-8fafcb7fb9ab
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Tightness
+- Guid: 2a5b86e7-d682-554c-b153-a4cc4eb7adbd
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.ForceScale
+- Guid: d762fb32-39f2-51d5-af90-6bae657e2dd4
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: 5d6dbed2-c675-5f17-abde-5a9a3650bfbf
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: a941b10c-cb37-56b3-85d3-0d35236ff05c
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: 34858d9f-84d6-57af-8f22-fa628d654eb1
+  Op: GridSample
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Grid
+- Guid: 1a1dfa82-3582-5d21-9661-205b46cb42e4
+  Op: ToSimulationVector
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: a266557e-91c4-5e5b-89a8-f00954119b13
+  Op: GridWorldToIndex
+  Type: ivec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Module.Grid
+- Guid: 6100fb77-26ef-58de-8246-c3cf6f1ead15
+  Op: GridNumCells
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Module.Grid
+- Guid: 4d1f63ef-36a3-59fc-b45a-56660ff1c794
+  Op: CustomGLSL
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  - Name: Arg1
+    Type: ivec3
+  - Name: Arg2
+    Type: vec3
+  - Name: Arg3
+    Type: vec3
+  - Name: Arg4
+    Type: float
+  - Name: Arg5
+    Type: float
+  - Name: Arg6
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Code: (all(greaterThanEqual($Arg0,ivec3(0)))&&all(lessThan($Arg0,$Arg1)))?($Arg4>0.0?mix($Arg2,$Arg3,1.0-exp(-$Arg4*$Arg6)):$Arg2+$Arg3*$Arg5*$Arg6):$Arg2
+- Guid: fee71673-a2cb-557c-94e6-640d666c5e68
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+Links:
+- From: d762fb32-39f2-51d5-af90-6bae657e2dd4
+  Output: Value
+  To: 34858d9f-84d6-57af-8f22-fa628d654eb1
+  Input: Arg0
+- From: 34858d9f-84d6-57af-8f22-fa628d654eb1
+  Output: Value
+  To: 1a1dfa82-3582-5d21-9661-205b46cb42e4
+  Input: Arg0
+- From: d762fb32-39f2-51d5-af90-6bae657e2dd4
+  Output: Value
+  To: a266557e-91c4-5e5b-89a8-f00954119b13
+  Input: Arg0
+- From: a266557e-91c4-5e5b-89a8-f00954119b13
+  Output: Value
+  To: 4d1f63ef-36a3-59fc-b45a-56660ff1c794
+  Input: Arg0
+- From: 6100fb77-26ef-58de-8246-c3cf6f1ead15
+  Output: Value
+  To: 4d1f63ef-36a3-59fc-b45a-56660ff1c794
+  Input: Arg1
+- From: 5d6dbed2-c675-5f17-abde-5a9a3650bfbf
+  Output: Value
+  To: 4d1f63ef-36a3-59fc-b45a-56660ff1c794
+  Input: Arg2
+- From: 1a1dfa82-3582-5d21-9661-205b46cb42e4
+  Output: Value
+  To: 4d1f63ef-36a3-59fc-b45a-56660ff1c794
+  Input: Arg3
+- From: a7598df4-7ad3-5ddd-8644-8fafcb7fb9ab
+  Output: Value
+  To: 4d1f63ef-36a3-59fc-b45a-56660ff1c794
+  Input: Arg4
+- From: 2a5b86e7-d682-554c-b153-a4cc4eb7adbd
+  Output: Value
+  To: 4d1f63ef-36a3-59fc-b45a-56660ff1c794
+  Input: Arg5
+- From: a941b10c-cb37-56b3-85d3-0d35236ff05c
+  Output: Value
+  To: 4d1f63ef-36a3-59fc-b45a-56660ff1c794
+  Input: Arg6
+- From: 4d1f63ef-36a3-59fc-b45a-56660ff1c794
+  Output: Value
+  To: fee71673-a2cb-557c-94e6-640d666c5e68
+  Input: Arg0
