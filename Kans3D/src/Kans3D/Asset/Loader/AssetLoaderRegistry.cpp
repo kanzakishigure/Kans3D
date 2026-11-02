@@ -31,6 +31,37 @@ namespace Kans
 
     namespace
     {
+        // Library products are import dependencies; running systems retain compiled bytecode.
+        class VfxLibraryAsset final : public Asset
+        {
+        public:
+            std::variant<Vfx::Emitter, Vfx::Module> Data;
+            AssetType                               GetAssetType() const override
+            {
+                return std::holds_alternative<Vfx::Emitter>(Data) ? AssetType::VfxEmitter : AssetType::VfxModule;
+            }
+        };
+        std::variant<Ref<Asset>, AssetError> DecodeVfxLibrary(const AssetLoadContext& context)
+        {
+            if (!context.ID.IsValid() || !context.Data || !context.Size ||
+                (context.Type != AssetType::VfxEmitter && context.Type != AssetType::VfxModule))
+                return AssetError {AssetErrorCode::InvalidArgument, "Invalid VFX library product input"};
+            try
+            {
+                auto node  = YAML::Load(std::string(reinterpret_cast<const char*>(context.Data), context.Size));
+                auto asset = CreateRef<VfxLibraryAsset>();
+                if (context.Type == AssetType::VfxEmitter)
+                    asset->Data = Vfx::DecodeEmitter(node);
+                else
+                    asset->Data = Vfx::DecodeModule(node);
+                asset->assetID = context.ID;
+                return std::static_pointer_cast<Asset>(asset);
+            }
+            catch (const std::exception& e)
+            {
+                return AssetError {AssetErrorCode::InvalidData, e.what()};
+            }
+        }
         template<typename T>
         std::variant<Ref<Asset>, AssetError> Decode(const AssetLoadContext& context)
         {
@@ -45,6 +76,9 @@ namespace Kans
     {
         AssetLoaderRegistry registry;
         registry.m_Decoders.emplace(VfxSystemAsset::GetStaticType(), Decode<VfxSystemAsset>);
+        registry.m_Decoders.emplace(VectorFieldAsset::GetStaticType(), Decode<VectorFieldAsset>);
+        registry.m_Decoders.emplace(AssetType::VfxEmitter, DecodeVfxLibrary);
+        registry.m_Decoders.emplace(AssetType::VfxModule, DecodeVfxLibrary);
         registry.m_Decoders.emplace(MeshAsset::GetStaticType(), Decode<MeshAsset>);
         registry.m_Decoders.emplace(MaterialDataAsset::GetStaticType(), Decode<MaterialDataAsset>);
         registry.m_Decoders.emplace(ModelAsset::GetStaticType(), Decode<ModelAsset>);

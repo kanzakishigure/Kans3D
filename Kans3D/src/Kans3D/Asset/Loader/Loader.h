@@ -20,6 +20,13 @@ namespace Kans
 
     template<typename T>
     class Loader;
+    class VectorFieldAsset;
+    template<>
+    class Loader<VectorFieldAsset>
+    {
+    public:
+        std::variant<Ref<VectorFieldAsset>, AssetError> Load(const AssetLoadContext&) const;
+    };
     class VfxSystemAsset;
     template<>
     class Loader<VfxSystemAsset>

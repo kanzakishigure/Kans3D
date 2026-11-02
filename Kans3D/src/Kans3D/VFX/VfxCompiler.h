@@ -140,8 +140,10 @@ namespace Kans::Vfx
     std::vector<std::pair<const InterfaceBinding*, uint32_t>> MeshGpuBindings(const Program&);
     std::shared_ptr<const MeshSamplingGeometry>               InternMeshGeometry(std::vector<glm::vec4>);
     std::string                                               MeshBindingKey(const InterfaceBinding&);
-    Value Evaluate(const Instruction&, const std::vector<Value>&, const ExecutionContext&);
-    void  Execute(const Program&, ParameterMap&, const ExecutionContext& = {});
+    glm::vec3 CurlNoise(glm::vec3 position, float frequency, glm::vec3 offset, int octaves);
+    glm::vec3 CurlSeedOffset(uint32_t seed, uint32_t emitter = 0);
+    Value     Evaluate(const Instruction&, const std::vector<Value>&, const ExecutionContext&);
+    void      Execute(const Program&, ParameterMap&, const ExecutionContext& = {});
     // Compiled products contain bytecode, generated source and SPIR-V; no module source is needed at runtime.
     YAML::Node     EncodeProduct(const CompiledSystem&);
     CompiledSystem DecodeProduct(const YAML::Node&);

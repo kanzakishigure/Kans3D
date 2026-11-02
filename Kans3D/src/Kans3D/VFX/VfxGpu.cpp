@@ -302,7 +302,7 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
     }
     Handle<Buffer> GpuEmitter::GeometryBuffer(const InterfaceBinding& binding, const ExecutionContext& context)
     {
-        auto snapshot = context.MeshTable ? context.MeshTable(binding) : nullptr;
+        auto snapshot = binding.Kind != "VectorField" && context.MeshTable ? context.MeshTable(binding) : nullptr;
         auto geometry = snapshot ? snapshot->Geometry : binding.Geometry;
         // Unavailable sources still need a legal binding; validity prevents shader reads.
         if (!geometry)

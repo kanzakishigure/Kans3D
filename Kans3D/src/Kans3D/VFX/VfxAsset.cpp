@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include "VfxAsset.h"
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <glm/gtc/type_ptr.hpp>
@@ -597,10 +598,17 @@ namespace Kans::Vfx
             Check(r.emplace(v.first.as<std::string>(), DecodeValue(v.second)).second, "Duplicate VFX override");
         return r;
     }
+#include "VfxVectorField.inc"
     YAML::Node EncodeInterface(const InterfaceBinding& x)
     {
         YAML::Node n;
         n["Kind"] = x.Kind;
+        if (x.Kind == "VectorField")
+        {
+            for (bool repeat : x.Tiling)
+                n["Tiling"].push_back(repeat ? "Repeat" : "Clamp");
+            n["Intensity"] = x.Intensity;
+        }
         if (!x.SourceEmitter.empty())
             n["SourceEmitter"] = x.SourceEmitter;
         if (!x.Channel.empty())
@@ -629,7 +637,22 @@ namespace Kans::Vfx
     InterfaceBinding DecodeInterface(const YAML::Node& n)
     {
         InterfaceBinding x;
-        x.Kind          = n["Kind"].as<std::string>();
+        x.Kind = n["Kind"].as<std::string>();
+        if (x.Kind == "VectorField")
+        {
+            x.Intensity = n["Intensity"].as<float>(1);
+            Check(std::isfinite(x.Intensity), "Non-finite VectorField intensity");
+            if (auto tiling = n["Tiling"])
+            {
+                Check(tiling.IsSequence() && tiling.size() == 3, "VectorField Tiling requires three axes");
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    auto mode = tiling[axis].as<std::string>();
+                    Check(mode == "Repeat" || mode == "Clamp", "VectorField Tiling requires Repeat or Clamp");
+                    x.Tiling[axis] = mode == "Repeat";
+                }
+            }
+        }
         x.SourceEmitter = n["SourceEmitter"].as<std::string>("");
         x.Channel       = n["Channel"].as<std::string>("");
         x.Asset         = ReadID(n["Asset"]);
@@ -656,8 +679,10 @@ namespace Kans::Vfx
         for (const auto& v : n["Values"])
             x.Values.push_back(ReadVec(v, 4));
         Check(x.Times.empty() || x.Times.size() == x.Values.size(), "VFX curve time/value count mismatch");
-        if ((x.Kind == "StaticMesh" || x.Kind == "SkeletalMesh") && !x.Values.empty())
+        if ((x.Kind == "StaticMesh" || x.Kind == "SkeletalMesh" || x.Kind == "VectorField") && !x.Values.empty())
             x.Geometry = InternMeshGeometry(std::exchange(x.Values, {}));
+        if (x.Kind == "VectorField" && x.Geometry)
+            ValidateVectorField(x);
         return x;
     }
     YAML::Node EncodeEventLayout(const EventLayout& x)
@@ -1111,6 +1136,7 @@ namespace Kans::Vfx
         Register("EmitterParticles", {Type::Vec4, true});
         Register("Events", {Type::Vec4, true});
         Register("ForceFields", {Type::Vec3, true});
+        Register("VectorField", {Type::Vec3, true});
         for (const char* s : {"SkeletalMesh", "StaticMesh"})
             Register(s, {Type::Vec4, true});
     }

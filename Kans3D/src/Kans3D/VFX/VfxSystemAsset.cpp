@@ -3,6 +3,23 @@
 #include "Kans3D/Asset/Loader/Loader.h"
 namespace Kans
 {
+    std::variant<Ref<VectorFieldAsset>, AssetError> Loader<VectorFieldAsset>::Load(const AssetLoadContext& c) const
+    {
+        if (!c.ID.IsValid() || c.Type != AssetType::VectorField || !c.Data || !c.Size)
+            return AssetError {AssetErrorCode::InvalidArgument, "Invalid VectorField product input"};
+        try
+        {
+            auto data      = Vfx::DecodeVectorFieldProduct(c.Data, c.Size);
+            data.Asset     = c.ID;
+            auto asset     = CreateRef<VectorFieldAsset>(std::move(data));
+            asset->assetID = c.ID;
+            return asset;
+        }
+        catch (const std::exception& e)
+        {
+            return AssetError {AssetErrorCode::InvalidData, e.what()};
+        }
+    }
     std::variant<Ref<VfxSystemAsset>, AssetError> Loader<VfxSystemAsset>::Load(const AssetLoadContext& c) const
     {
         if (!c.ID.IsValid() || c.Type != AssetType::VfxSystem || !c.Data || !c.Size)

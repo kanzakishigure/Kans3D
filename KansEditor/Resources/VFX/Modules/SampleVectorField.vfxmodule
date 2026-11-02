@@ -1,0 +1,199 @@
+Version: 1
+AssetID: d8fc30c4fff65934:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: SampleVectorField
+Inputs:
+- Name: Module.Field
+  Type: vec3
+  Default:
+    Type: vec3
+    Value:
+    - 0
+    - 0
+    - 0
+- Name: Module.FieldTranslate
+  Type: vec3
+  Default:
+    Type: vec3
+    Value:
+    - 0
+    - 0
+    - 0
+- Name: Module.FieldRotation
+  Type: quat
+  Default:
+    Type: quat
+    Value:
+    - 0
+    - 0
+    - 0
+    - 1
+- Name: Module.FieldScale
+  Type: vec3
+  Default:
+    Type: vec3
+    Value:
+    - 1
+    - 1
+    - 1
+- Name: Module.Intensity
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+Nodes:
+- Guid: 5be6ccad-d958-5f55-b1bd-0a74a224ebc7
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.FieldTranslate
+- Guid: 9c4c809f-18fe-52eb-b4e1-589d4f0d494e
+  Op: Input
+  Type: quat
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: quat
+  Parameter: Module.FieldRotation
+- Guid: d6707d13-bcd0-52fd-9cf3-399bb1466c93
+  Op: Input
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.FieldScale
+- Guid: 092b79ed-a9e2-5daf-bcd2-3775b13abcfc
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Intensity
+- Guid: 98769431-2cb7-56e8-83f4-160544914bef
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: 565ee764-2226-5061-90d2-1fdb32b4e263
+  Op: FieldPosition
+  Type: position
+  Inputs:
+  - Name: Arg0
+    Type: position
+  - Name: Arg1
+    Type: vec3
+  - Name: Arg2
+    Type: quat
+  - Name: Arg3
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: position
+- Guid: 4a25c884-9cd5-5d32-8ac3-ad6c32ae7216
+  Op: SampleVectorField
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Module.Field
+  Interface:
+    Kind: VectorField
+- Guid: 9db7f1b6-809a-5cc8-adab-67db4fe66b75
+  Op: FieldVector
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: quat
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: c5604ce0-53a6-5ca9-b186-5f3887e4969d
+  Op: Splat
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: c77fd331-4ae6-56df-b90c-5759ec12cacb
+  Op: Mul
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  - Name: Arg1
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+- Guid: 8525f919-ce1c-536f-aee1-c98d0756e0f3
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: Arg0
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.SampledVectorField
+Links:
+- From: 98769431-2cb7-56e8-83f4-160544914bef
+  Output: Value
+  To: 565ee764-2226-5061-90d2-1fdb32b4e263
+  Input: Arg0
+- From: 5be6ccad-d958-5f55-b1bd-0a74a224ebc7
+  Output: Value
+  To: 565ee764-2226-5061-90d2-1fdb32b4e263
+  Input: Arg1
+- From: 9c4c809f-18fe-52eb-b4e1-589d4f0d494e
+  Output: Value
+  To: 565ee764-2226-5061-90d2-1fdb32b4e263
+  Input: Arg2
+- From: d6707d13-bcd0-52fd-9cf3-399bb1466c93
+  Output: Value
+  To: 565ee764-2226-5061-90d2-1fdb32b4e263
+  Input: Arg3
+- From: 565ee764-2226-5061-90d2-1fdb32b4e263
+  Output: Value
+  To: 4a25c884-9cd5-5d32-8ac3-ad6c32ae7216
+  Input: Arg0
+- From: 4a25c884-9cd5-5d32-8ac3-ad6c32ae7216
+  Output: Value
+  To: 9db7f1b6-809a-5cc8-adab-67db4fe66b75
+  Input: Arg0
+- From: 9c4c809f-18fe-52eb-b4e1-589d4f0d494e
+  Output: Value
+  To: 9db7f1b6-809a-5cc8-adab-67db4fe66b75
+  Input: Arg1
+- From: 092b79ed-a9e2-5daf-bcd2-3775b13abcfc
+  Output: Value
+  To: c5604ce0-53a6-5ca9-b186-5f3887e4969d
+  Input: Arg0
+- From: 9db7f1b6-809a-5cc8-adab-67db4fe66b75
+  Output: Value
+  To: c77fd331-4ae6-56df-b90c-5759ec12cacb
+  Input: Arg0
+- From: c5604ce0-53a6-5ca9-b186-5f3887e4969d
+  Output: Value
+  To: c77fd331-4ae6-56df-b90c-5759ec12cacb
+  Input: Arg1
+- From: c77fd331-4ae6-56df-b90c-5759ec12cacb
+  Output: Value
+  To: 8525f919-ce1c-536f-aee1-c98d0756e0f3
+  Input: Arg0

@@ -2,6 +2,17 @@
 #include "VfxCompiler.h"
 namespace Kans
 {
+    class VectorFieldAsset final : public Asset
+    {
+    public:
+        explicit VectorFieldAsset(Vfx::InterfaceBinding data) : m_Data(std::move(data)) {}
+        static AssetType             GetStaticType() { return AssetType::VectorField; }
+        AssetType                    GetAssetType() const override { return GetStaticType(); }
+        const Vfx::InterfaceBinding& GetData() const { return m_Data; }
+
+    private:
+        Vfx::InterfaceBinding m_Data;
+    };
     class VfxSystemAsset final : public Asset
     {
     public:

@@ -45,6 +45,8 @@ namespace Kans
                                 key == "Material"                     ? AssetType::Material :
                                 key == "Mesh"                         ? AssetType::StaticMesh :
                                 key == "Skeleton"                     ? AssetType::Skeleton :
+                                n["Kind"] && n["Kind"].as<std::string>() == "VectorField" ?
+                                                    AssetType::VectorField :
                                 n["Kind"] && (n["Kind"].as<std::string>() == "StaticMesh" ||
                                               n["Kind"].as<std::string>() == "SkeletalMesh") ?
                                                     AssetType::StaticMesh :
@@ -66,12 +68,19 @@ namespace Kans
         {
             auto         n = ReadVfx(c.SourceFile);
             ImportInputs inputs;
-            Dependencies(n, inputs, Vfx::FindBuiltinModules());
+            if (c.SourceFile.extension() == ".vfxfield")
+            {
+                auto source = Vfx::DecodeVectorField(n);
+                if (source.Source == "File")
+                    inputs.SourceFiles.push_back(c.SourceFile.parent_path() / source.File);
+            }
+            else
+                Dependencies(n, inputs, Vfx::FindBuiltinModules());
             return inputs;
         }
         catch (const std::exception& e)
         {
-            return AssetError {AssetErrorCode::InvalidData, e.what()};
+            return AssetError {AssetErrorCode::InvalidData, c.SourceFile.string() + ": " + e.what()};
         }
     }
     std::variant<SourceInventory, AssetError> VfxImporter::Inspect(const ImportContext& c) const
@@ -80,7 +89,9 @@ namespace Kans
         {
             auto n   = ReadVfx(c.SourceFile);
             auto ext = c.SourceFile.extension().string();
-            if (ext == ".vfxsystem")
+            if (ext == ".vfxfield")
+                Vfx::DecodeVectorField(n);
+            else if (ext == ".vfxsystem")
                 Vfx::DecodeSystem(n);
             else if (ext == ".vfxemitter")
                 Vfx::DecodeEmitter(n);
@@ -90,7 +101,7 @@ namespace Kans
         }
         catch (const std::exception& e)
         {
-            return AssetError {AssetErrorCode::InvalidData, e.what()};
+            return AssetError {AssetErrorCode::InvalidData, c.SourceFile.string() + ": " + e.what()};
         }
     }
     std::variant<ImportResult, AssetError> VfxImporter::Import(const ImportContext& c) const
@@ -104,8 +115,25 @@ namespace Kans
             if (!std::filesystem::is_directory(status) || std::filesystem::is_symlink(status) ||
                 !std::filesystem::is_empty(c.StagingDirectory))
                 return AssetError {AssetErrorCode::InvalidArgument, "VFX staging must be empty and exclusive"};
-            auto                          n   = ReadVfx(c.SourceFile);
-            auto                          ext = c.SourceFile.extension().string();
+            auto n   = ReadVfx(c.SourceFile);
+            auto ext = c.SourceFile.extension().string();
+            if (ext == ".vfxfield")
+            {
+                auto binding = Vfx::ImportVectorField(Vfx::DecodeVectorField(n), c.SourceFile);
+                auto ids     = AllocateLocalIDs(c.PreviousLocalIDs, {"vectorfield:root"});
+                if (auto error = std::get_if<AssetError>(&ids))
+                    return *error;
+                ImportResult result;
+                result.LocalIDs         = std::get<LocalIDMap>(ids);
+                auto              local = result.LocalIDs.at("vectorfield:root");
+                ProductDescriptor product {local, AssetType::VectorField, std::to_string(local) + ".kvfxfield", {}};
+                auto              bytes   = Vfx::EncodeVectorFieldProduct(binding);
+                auto              written = WriteProductFile(c.StagingDirectory / product.StagedFile, bytes);
+                if (auto error = std::get_if<AssetError>(&written))
+                    return *error;
+                result.Products.push_back(product);
+                return result;
+            }
             AssetType                     type;
             std::string                   key;
             std::map<AssetID, YAML::Node> dependencies;
@@ -144,6 +172,18 @@ namespace Kans
                     {
                         auto kind = node["Kind"].as<std::string>();
                         auto id   = AssetID::FromString(node["Asset"].as<std::string>());
+                        if (id.IsValid() && kind == "VectorField")
+                        {
+                            auto at = c.ProductBytes.find(id);
+                            if (at == c.ProductBytes.end())
+                                throw std::invalid_argument("Missing VectorField " + id.ToString());
+                            auto binding = Vfx::DecodeInterface(node);
+                            binding.Geometry =
+                                Vfx::DecodeVectorFieldProduct(at->second.data(), at->second.size()).Geometry;
+                            auto baked = Vfx::EncodeInterface(binding);
+                            for (const auto& field : baked)
+                                node[field.first.as<std::string>()] = field.second;
+                        }
                         if (id.IsValid() && (kind == "Curve" || kind == "Gradient" || kind == "Texture2D"))
                         {
                             Vfx::InterfaceBinding binding;
@@ -293,7 +333,7 @@ namespace Kans
         }
         catch (const std::exception& e)
         {
-            return AssetError {AssetErrorCode::InvalidData, e.what()};
+            return AssetError {AssetErrorCode::InvalidData, c.SourceFile.string() + ": " + e.what()};
         }
     }
 } // namespace Kans

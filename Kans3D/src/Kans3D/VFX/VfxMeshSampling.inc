@@ -29,6 +29,8 @@ std::string MeshBindingKey(const InterfaceBinding& b)
     append(std::to_string(b.Region.size()));
     for (const auto& name : b.Region)
         append(name);
+    if (b.Kind == "VectorField")
+        append(std::to_string(reinterpret_cast<uintptr_t>(b.Geometry.get())));
     return key;
 }
 std::shared_ptr<const MeshSamplingGeometry> InternMeshGeometry(std::vector<glm::vec4> values)
@@ -261,7 +263,7 @@ std::vector<std::pair<const InterfaceBinding*, uint32_t>> MeshGpuBindings(const 
     for (const auto& table : p.Interfaces)
     {
         const auto& i = p.Code.at(table.Instruction);
-        if (IsMeshOperation(i.Op) && keys.insert(MeshBindingKey(i.Interface)).second)
+        if ((IsMeshOperation(i.Op) || IsVectorFieldOperation(i.Op)) && keys.insert(MeshBindingKey(i.Interface)).second)
             result.emplace_back(&i.Interface, binding++);
     }
     return result;
@@ -272,7 +274,7 @@ std::vector<glm::vec4> GpuInterfaceTable(const Program& p, const ExecutionContex
     for (const auto& table : p.Interfaces)
     {
         const auto& i = p.Code.at(table.Instruction);
-        if (IsMeshOperation(i.Op))
+        if (IsMeshOperation(i.Op) || IsVectorFieldOperation(i.Op))
             data.emplace_back(0);
         else
             data.insert(data.end(), i.Interface.Values.begin(), i.Interface.Values.end());

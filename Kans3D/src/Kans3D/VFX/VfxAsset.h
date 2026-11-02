@@ -122,9 +122,11 @@ namespace Kans::Vfx
     };
     struct InterfaceBinding
     {
-        std::string Kind = "Curve";
-        AssetID     Asset;
-        std::string SourceEmitter, Channel;
+        std::string         Kind = "Curve";
+        std::array<bool, 3> Tiling {false, false, false}; // true repeats; false clamps to border.
+        float               Intensity = 1;
+        AssetID             Asset;
+        std::string         SourceEmitter, Channel;
         // Mesh sources use an asset, the owner, or a child path relative to the owner.
         std::string              Source, EntityPath;
         AssetID                  Skeleton;
@@ -136,6 +138,23 @@ namespace Kans::Vfx
         std::shared_ptr<const MeshSamplingGeometry> Geometry;
         uint32_t                                    Width = 0, Height = 0;
     };
+    struct VectorFieldSource
+    {
+        glm::vec3   Min {0}, Max {1};
+        std::string Source = "Bake", File;
+        glm::uvec3  Resolution {2};
+        float       Frequency = 1, Strength = 1;
+        uint32_t    Octaves = 1, Seed = 1;
+    };
+    YAML::Node        EncodeVectorField(const VectorFieldSource&);
+    VectorFieldSource DecodeVectorField(const YAML::Node&);
+    // Packed immutable grid: min, max, resolution, then x-fastest vec4 vectors (w=0).
+    InterfaceBinding       ImportVectorField(const VectorFieldSource&, const std::filesystem::path&);
+    std::vector<std::byte> EncodeVectorFieldProduct(const InterfaceBinding&);
+    InterfaceBinding       DecodeVectorFieldProduct(const std::byte*, size_t);
+    void                   ValidateVectorField(const InterfaceBinding&);
+    glm::vec3              SampleVectorField(const InterfaceBinding&, glm::vec3);
+    bool                   IsVectorFieldOperation(const std::string&);
     struct Input
     {
         InputKind                    Kind = InputKind::Literal;

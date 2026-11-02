@@ -67,6 +67,11 @@ namespace Kans::Vfx
                                                        {"RandomUnitVector", 0},
                                                        {"Noise3D", 1},
                                                        {"CurlNoise", 4},
+                                                       {"SampleVectorField", 1},
+                                                       {"VectorFieldBounds", 0},
+                                                       {"VectorFieldResolution", 0},
+                                                       {"FieldPosition", 4},
+                                                       {"FieldVector", 2},
                                                        {"EmitterSeedOffset", 0},
                                                        {"ToSimulationVector", 1},
                                                        {"SampleForceFields", 2},
@@ -661,6 +666,20 @@ namespace Kans::Vfx
                                 i.Interface.Values.size() != i.Interface.Times.size())
                                 Error(id, guid, output, "Curve sample time/value count mismatch");
                         }
+                        if (IsVectorFieldOperation(i.Op))
+                        {
+                            auto binding = inputs.find(n.Parameter);
+                            if (binding != inputs.end() && binding->second.Kind == InputKind::DataInterface)
+                                i.Interface = binding->second.Interface;
+                            try
+                            {
+                                ValidateVectorField(i.Interface);
+                            }
+                            catch (const std::exception& e)
+                            {
+                                Error(id, guid, output, e.what());
+                            }
+                        }
                         if (i.Op == "SampleForceFields")
                         {
                             auto binding = inputs.find(n.Parameter);
@@ -763,6 +782,32 @@ namespace Kans::Vfx
                 {
                     if (t(0) != Type::Int || i.Kind != Type::Float)
                         error(0, "ToFloat requires int -> float");
+                }
+                else if (i.Op == "SampleVectorField")
+                {
+                    if (t(0) != Type::Position || i.Kind != Type::Vec3)
+                        error(0, "SampleVectorField requires field-local Position -> vec3");
+                }
+                else if (i.Op == "VectorFieldBounds")
+                {
+                    if (i.Kind != Type::Vec3 || (i.Output != "Min" && i.Output != "Max"))
+                        Error(id, n.Guid, i.Output, "VectorFieldBounds requires Min and Max vec3 outputs");
+                }
+                else if (i.Op == "VectorFieldResolution")
+                {
+                    if (i.Kind != Type::Int || (i.Output != "X" && i.Output != "Y" && i.Output != "Z"))
+                        Error(id, n.Guid, i.Output, "VectorFieldResolution requires X, Y, Z int outputs");
+                }
+                else if (i.Op == "FieldPosition")
+                {
+                    if (t(0) != Type::Position || t(1) != Type::Vec3 || t(2) != Type::Quat || t(3) != Type::Vec3 ||
+                        i.Kind != Type::Position)
+                        error(0, "FieldPosition requires Position, vec3, quat, vec3 -> Position");
+                }
+                else if (i.Op == "FieldVector")
+                {
+                    if (t(0) != Type::Vec3 || t(1) != Type::Quat || i.Kind != Type::Vec3)
+                        error(0, "FieldVector requires vec3, quat -> vec3");
                 }
                 else if (i.Op == "CurlNoise")
                 {
@@ -953,11 +998,13 @@ namespace Kans::Vfx
             c.Out.Parameters      = std::move(layout);
             uint32_t valuesOffset = 0;
             for (uint32_t index = 0; index < c.Out.Code.size(); ++index)
-                if (c.Out.Code[index].Op == "Sample" || IsMeshOperation(c.Out.Code[index].Op))
+                if (c.Out.Code[index].Op == "Sample" || IsMeshOperation(c.Out.Code[index].Op) ||
+                    IsVectorFieldOperation(c.Out.Code[index].Op))
                 {
-                    auto count                  = IsMeshOperation(c.Out.Code[index].Op) ?
-                                                      1u :
-                                                      uint32_t(c.Out.Code[index].Interface.Values.size());
+                    auto count =
+                        (IsMeshOperation(c.Out.Code[index].Op) || IsVectorFieldOperation(c.Out.Code[index].Op)) ?
+                            1u :
+                            uint32_t(c.Out.Code[index].Interface.Values.size());
                     c.Out.Code[index].Parameter = uint32_t(c.Out.Interfaces.size());
                     c.Out.Interfaces.push_back({index, 6, valuesOffset, count});
                     valuesOffset += count;
@@ -1381,10 +1428,12 @@ namespace Kans::Vfx
             p.Interfaces.clear();
             uint32_t offset = 0;
             for (uint32_t i = 0; i < p.Code.size(); ++i)
-                if (p.Code[i].Op == "Sample" || IsMeshOperation(p.Code[i].Op))
+                if (p.Code[i].Op == "Sample" || IsMeshOperation(p.Code[i].Op) || IsVectorFieldOperation(p.Code[i].Op))
                 {
                     p.Code[i].Parameter = uint32_t(p.Interfaces.size());
-                    auto count = IsMeshOperation(p.Code[i].Op) ? 1u : uint32_t(p.Code[i].Interface.Values.size());
+                    auto count          = (IsMeshOperation(p.Code[i].Op) || IsVectorFieldOperation(p.Code[i].Op)) ?
+                                              1u :
+                                              uint32_t(p.Code[i].Interface.Values.size());
                     p.Interfaces.push_back({i, 6, offset, count});
                     offset += count;
                 }
@@ -1622,6 +1671,30 @@ namespace Kans::Vfx
             s += e.Asset.ToString() + " node=" + e.Node + " pin=" + e.Pin + ": " + e.Message + "\n";
         return s;
     }
+    glm::vec3 CurlSeedOffset(uint32_t seed, uint32_t emitter)
+    {
+        uint32_t h = Hash(seed ^ Hash(emitter));
+        return {float(h & 255u) / 17.f, float((h >> 8) & 255u) / 17.f, float((h >> 16) & 255u) / 17.f};
+    }
+    glm::vec3 CurlNoise(glm::vec3 position, float frequency, glm::vec3 offset, int octaves)
+    {
+        auto potential = [&](glm::vec3 p) {
+            return glm::vec3(Noise3D(p), Noise3D(p + glm::vec3(19, 37, 11)), Noise3D(p + glm::vec3(47, 7, 29)));
+        };
+        glm::vec3 result(0), p = position * frequency + offset;
+        float     amplitude = 1;
+        for (int octave = 0; octave < octaves; ++octave)
+        {
+            constexpr float e  = .01f;
+            auto            dx = (potential(p + glm::vec3(e, 0, 0)) - potential(p - glm::vec3(e, 0, 0))) / (2 * e);
+            auto            dy = (potential(p + glm::vec3(0, e, 0)) - potential(p - glm::vec3(0, e, 0))) / (2 * e);
+            auto            dz = (potential(p + glm::vec3(0, 0, e)) - potential(p - glm::vec3(0, 0, e))) / (2 * e);
+            result += amplitude * glm::vec3(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x);
+            p *= 2;
+            amplitude *= .5f;
+        }
+        return result;
+    }
     Value Evaluate(const Instruction& i, const std::vector<Value>& r, const ExecutionContext& c)
     {
         Value      out = Value::Vector({}, i.Kind);
@@ -1630,6 +1703,38 @@ namespace Kans::Vfx
         const auto op = i.Op;
         if (IsMeshOperation(op))
             return EvaluateMesh(i, r, c);
+        if (IsVectorFieldOperation(op))
+        {
+            const auto& d = i.Interface.Geometry->Values;
+            if (op == "SampleVectorField")
+                out.Data = glm::vec4(SampleVectorField(i.Interface, glm::vec3(x.Data)), 0);
+            else if (op == "VectorFieldBounds")
+                out.Data = d[i.Output == "Max" ? 1 : 0];
+            else
+                out = Value::Int(int(d[2][i.Output == "X" ? 0 : i.Output == "Y" ? 1 : 2]));
+            return out;
+        }
+        if (op == "FieldPosition" || op == "FieldVector")
+        {
+            auto  q     = op == "FieldPosition" ? z.Data : y.Data;
+            float norm  = glm::dot(q, q);
+            q           = norm > 1e-20f ? q / std::sqrt(norm) : glm::vec4(0, 0, 0, 1);
+            glm::vec3 v = glm::vec3(x.Data);
+            if (op == "FieldPosition")
+            {
+                v -= glm::vec3(y.Data);
+                q = glm::vec4(-glm::vec3(q), q.w);
+            }
+            v += 2.f * glm::cross(glm::vec3(q), glm::cross(glm::vec3(q), v) + q.w * v);
+            if (op == "FieldPosition")
+            {
+                auto scale = a(3).Data;
+                for (int axis = 0; axis < 3; ++axis)
+                    v[axis] /= std::abs(scale[axis]) >= 1e-6f ? scale[axis] : (scale[axis] < 0 ? -1e-6f : 1e-6f);
+            }
+            out.Data = glm::vec4(v, 0);
+            return out;
+        }
         if (op == "ToSimulationVector")
         {
             out.Data =
@@ -1640,29 +1745,13 @@ namespace Kans::Vfx
         }
         if (op == "EmitterSeedOffset")
         {
-            uint32_t h = Hash(c.Seed ^ Hash(c.EmitterIndex));
-            out.Data =
-                glm::vec4(float(h & 255u) / 17.f, float((h >> 8) & 255u) / 17.f, float((h >> 16) & 255u) / 17.f, 0);
+            out.Data = glm::vec4(CurlSeedOffset(c.Seed, c.EmitterIndex), 0);
             return out;
         }
         if (op == "CurlNoise")
         {
-            auto potential = [&](glm::vec3 p) {
-                return glm::vec3(Noise3D(p), Noise3D(p + glm::vec3(19, 37, 11)), Noise3D(p + glm::vec3(47, 7, 29)));
-            };
-            glm::vec3 result(0), p = glm::vec3(x.Data) * y.Data.x + glm::vec3(z.Data);
-            float     amplitude = 1;
-            for (int octave = 0; octave < a(3).Integer; ++octave)
-            {
-                constexpr float e  = .01f;
-                auto            dx = (potential(p + glm::vec3(e, 0, 0)) - potential(p - glm::vec3(e, 0, 0))) / (2 * e);
-                auto            dy = (potential(p + glm::vec3(0, e, 0)) - potential(p - glm::vec3(0, e, 0))) / (2 * e);
-                auto            dz = (potential(p + glm::vec3(0, 0, e)) - potential(p - glm::vec3(0, 0, e))) / (2 * e);
-                result += amplitude * glm::vec3(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x);
-                p *= 2;
-                amplitude *= .5f;
-            }
-            out.Data = glm::vec4(result, 0);
+            auto result = CurlNoise(glm::vec3(x.Data), y.Data.x, glm::vec3(z.Data), a(3).Integer);
+            out.Data    = glm::vec4(result, 0);
             return out;
         }
         if (op == "SampleForceFields")
@@ -2005,6 +2094,10 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
 #include "VfxCurlGLSL.inc"
             ;
         s.insert(s.find("void main()"), curlHelpers);
+        s.insert(s.find("void main()"), R"glsl(
+vec3 fieldRotate(vec3 v,vec4 q){float n=dot(q,q);q=n>1e-20?q*inversesqrt(n):vec4(0,0,0,1);return v+2.0*cross(q.xyz,cross(q.xyz,v)+q.w*v);}
+vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d[a]=abs(scale[a])>=1e-6?scale[a]:(scale[a]<0?-1e-6:1e-6);return fieldRotate(p-t,vec4(-q.xyz,q.w))/d;}
+)glsl");
         if (UsesForceFields(p))
         {
             std::string helpers = "layout(set=0,binding=" + std::to_string(ForceFieldsGpuBinding(p)) +
@@ -2014,7 +2107,9 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                 ;
             s.insert(s.find("void main()"), helpers);
         }
-        if (std::any_of(p.Code.begin(), p.Code.end(), [](const auto& i) { return IsMeshOperation(i.Op); }))
+        if (std::any_of(p.Code.begin(), p.Code.end(), [](const auto& i) {
+                return IsMeshOperation(i.Op) || IsVectorFieldOperation(i.Op);
+            }))
         {
             std::string geometryDeclarations, accessor = "vec4 meshStatic(int g,int o){switch(g){";
             auto        meshBindings = MeshGpuBindings(p);
@@ -2027,6 +2122,9 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                 accessor += "case " + id + ":return meshValues" + id + "[o];";
             }
             accessor += "}return vec4(0); }\n";
+            accessor +=
+#include "VfxVectorFieldGLSL.inc"
+                ;
             const std::string helper = geometryDeclarations + accessor +
 #include "VfxMeshSamplingGLSL.inc"
                 ;
@@ -2312,6 +2410,26 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                 e = "(pc.worldSpace!=0u?" + a + ":inverse(mat3(owner))*" + a + ")";
             else if (op == "EmitterSeedOffset")
                 e = "seedOffsetV()";
+            else if (op == "FieldPosition")
+                e = "fieldPosition(" + a + "," + b + "," + c + "," + arg(3) + ")";
+            else if (op == "FieldVector")
+                e = "fieldRotate(" + a + "," + b + ")";
+            else if (IsVectorFieldOperation(op))
+            {
+                auto   bindings = MeshGpuBindings(p);
+                size_t index    = 0;
+                while (MeshBindingKey(*bindings.at(index).first) != MeshBindingKey(i.Interface))
+                    ++index;
+                auto g = std::to_string(index);
+                if (op == "SampleVectorField")
+                    e = "sampleVectorField(" + g + "," + a + ",bvec3(" + (i.Interface.Tiling[0] ? "true" : "false") +
+                        "," + (i.Interface.Tiling[1] ? "true" : "false") + "," +
+                        (i.Interface.Tiling[2] ? "true" : "false") + "))*" + F(i.Interface.Intensity);
+                else if (op == "VectorFieldBounds")
+                    e = "meshStatic(" + g + "," + (i.Output == "Max" ? "1" : "0") + ").xyz";
+                else
+                    e = "int(meshStatic(" + g + ",2)." + (i.Output == "X" ? "x" : i.Output == "Y" ? "y" : "z") + ")";
+            }
             else if (op == "CurlNoise")
                 e = "curlV(" + a + "," + b + "," + c + "," + arg(3) + ")";
             else if (op == "SampleForceFields")
@@ -2664,9 +2782,11 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
                                              b["ValueCount"].as<uint32_t>()};
                     if (binding.Instruction >= p.Code.size() ||
                         (p.Code[binding.Instruction].Op != "Sample" &&
-                         !IsMeshOperation(p.Code[binding.Instruction].Op)) ||
+                         !IsMeshOperation(p.Code[binding.Instruction].Op) &&
+                         !IsVectorFieldOperation(p.Code[binding.Instruction].Op)) ||
                         binding.Binding != 6 || binding.ValueOffset != offset ||
-                        binding.ValueCount != (IsMeshOperation(p.Code[binding.Instruction].Op) ?
+                        binding.ValueCount != ((IsMeshOperation(p.Code[binding.Instruction].Op) ||
+                                                IsVectorFieldOperation(p.Code[binding.Instruction].Op)) ?
                                                    1u :
                                                    p.Code[binding.Instruction].Interface.Values.size()))
                         throw std::invalid_argument("Invalid VFX data interface binding");
