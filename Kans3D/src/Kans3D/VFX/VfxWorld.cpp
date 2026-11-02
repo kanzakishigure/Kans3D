@@ -121,7 +121,8 @@ namespace Kans::Vfx
         TimeScale   = c.TimeScale;
         if (c.FieldLayer > 31)
             throw std::invalid_argument("Invalid particle field layer");
-        FieldLayer = c.FieldLayer;
+        FieldLayer    = c.FieldLayer;
+        CollisionMask = c.CollisionMask;
         if (!std::isfinite(TimeScale) || TimeScale < 0)
             throw std::invalid_argument("VFX time scale must be finite and nonnegative");
         for (const auto& p : m_Asset->GetData().Settings.UserParameters)
@@ -406,10 +407,14 @@ namespace Kans::Vfx
         EngineValues(m_Parameters, dt, float(m_Time), owner, camera, velocity);
         m_Parameters["System.Age"] = Value::Float(float(m_Time));
         ExecutionContext context {m_Seed, 0, 0, owner};
-        context.Fields       = Fields;
-        context.FieldTime    = Fields ? FieldTime : m_Time;
-        context.FieldLayer   = FieldLayer;
-        context.FirstImpulse = m_LastImpulse + 1;
+        context.Colliders     = Colliders;
+        context.Depth         = Depth;
+        context.Physics       = Physics;
+        context.CollisionMask = CollisionMask;
+        context.Fields        = Fields;
+        context.FieldTime     = Fields ? FieldTime : m_Time;
+        context.FieldLayer    = FieldLayer;
+        context.FirstImpulse  = m_LastImpulse + 1;
         if (Fields)
             for (const auto& impulse : Fields->Fields.GetImpulses())
                 m_LastImpulse = std::max(m_LastImpulse, impulse.Sequence);
@@ -529,6 +534,7 @@ namespace Kans::Vfx
                      (!e.HasReadback || e.ReadbackSpawnRevision != e.SpawnRevision)))
                 {
                     auto gpuContext         = context;
+                    gpuContext.Physics      = nullptr;
                     gpuContext.ReadParticle = {};
                     gpuContext.WriteEvent   = {};
                     e.Pending.push_back({std::move(params), std::move(gpuContext), count});
@@ -741,6 +747,8 @@ namespace Kans::Vfx
         m_Instances.clear();
         m_Configurations.clear();
         m_FieldTime = 0;
+        m_PreviousColliderCenters.clear();
+        Depth.reset();
         m_Playing = false;
     }
     void VfxWorld::Start()
@@ -776,6 +784,101 @@ namespace Kans::Vfx
         Tick(0, !m_Playing);
         return Find(entity.GetUUID()) != nullptr;
     }
+    void VfxWorld::GatherColliders(CollisionSnapshot& snapshot, float delta)
+    {
+        std::map<std::pair<UUID, uint32_t>, glm::vec3> centers;
+        bool                                           exceeded = false;
+        auto                                           gather   = [&](auto tag) {
+            using T = decltype(tag);
+            m_Scene.m_Registry.view<T>().each([&](auto handle, const T& collider) {
+                Entity entity {handle, &m_Scene};
+                if (collider.IsTrigger || !m_Scene.IsEntityActive(entity))
+                    return;
+                Entity body = entity;
+                for (auto ancestor = entity; ancestor; ancestor = m_Scene.GetParent(ancestor))
+                    if (ancestor.HasComponent<RigidBodyComponent>() ||
+                        ancestor.HasComponent<CharacterControllerComponent>())
+                    {
+                        body = ancestor;
+                        break;
+                    }
+                uint32_t layer = body.HasComponent<RigidBodyComponent>() ?
+                                     body.GetComponent<RigidBodyComponent>().Layer :
+                                 body.HasComponent<CharacterControllerComponent>() ?
+                                     body.GetComponent<CharacterControllerComponent>().Layer :
+                                     0;
+                layer          = collider.Layer.value_or(layer);
+                auto                            transform = m_Scene.GetWorldTransform(entity);
+                std::optional<PhysicsBodyState> state;
+                if (auto physics = m_Scene.GetPhysicsWorld())
+                    state = physics->GetBodyState(body.GetUUID());
+                if (state)
+                {
+                    auto bodyTransform = m_Scene.GetWorldTransform(body);
+                    auto authored      = Physics::TransformShape({}, bodyTransform);
+                    auto current = glm::translate(glm::mat4(1), state->Position) * glm::mat4_cast(state->Rotation);
+                    auto old     = glm::translate(glm::mat4(1), authored.Position) * glm::mat4_cast(authored.Rotation);
+                    transform    = current * glm::inverse(old) * transform;
+                }
+                const auto     pose = Physics::TransformShape(collider.Shape.Offset, transform);
+                CollisionShape shape;
+                shape.CenterRadius = glm::vec4(pose.Position, 0);
+                shape.Meta.y       = layer;
+                if constexpr (std::is_same_v<T, BoxColliderComponent>)
+                {
+                    shape.Meta.x = uint32_t(ColliderKind::Box);
+                    auto axes    = glm::mat3_cast(pose.Rotation);
+                    auto half    = glm::abs(collider.Shape.HalfExtents) * pose.Scale;
+                    shape.AxisX  = glm::vec4(axes[0], half.x);
+                    shape.AxisY  = glm::vec4(axes[1], half.y);
+                    shape.AxisZ  = glm::vec4(axes[2], half.z);
+                }
+                else if constexpr (std::is_same_v<T, SphereColliderComponent>)
+                {
+                    shape.Meta.x         = uint32_t(ColliderKind::Sphere);
+                    shape.CenterRadius.w = Physics::ScaledRadius(collider.Shape, pose);
+                }
+                else
+                {
+                    shape.Meta.x = uint32_t(ColliderKind::Capsule);
+                    glm::vec3 a, b;
+                    Physics::CapsuleSegment(collider.Shape, pose, a, b, shape.CenterRadius.w);
+                    auto length = glm::length(b - a);
+                    shape.AxisY = glm::vec4(length > 1e-8f ? (b - a) / length : glm::vec3(0, 1, 0), length * .5f);
+                }
+                auto key     = std::make_pair(entity.GetUUID(), shape.Meta.x);
+                centers[key] = pose.Position;
+                if (state)
+                {
+                    shape.AngularVelocity = glm::vec4(state->AngularVelocity, 0);
+                    shape.Velocity        = glm::vec4(
+                        state->LinearVelocity + glm::cross(state->AngularVelocity, pose.Position - state->CenterOfMass),
+                        0);
+                }
+                else if (delta > 1e-8f && m_PreviousColliderCenters.count(key))
+                    shape.Velocity = glm::vec4((pose.Position - m_PreviousColliderCenters.at(key)) / delta, 0);
+                if (snapshot.Shapes.size() < CollisionSnapshot::Capacity)
+                    snapshot.Shapes.push_back(shape);
+                else
+                    exceeded = true;
+            });
+        };
+        gather(BoxColliderComponent {});
+        gather(SphereColliderComponent {});
+        gather(CapsuleColliderComponent {});
+        // Meshes and convex hulls are handled by CPU scene queries. GPU analytic
+        // mode skips them; DepthBuffer mode covers their visible geometry.
+        m_PreviousColliderCenters = std::move(centers);
+        if (exceeded && !m_CollisionCapWarned)
+        {
+            m_CollisionCapWarned = true;
+            std::string message  = "VFX collider snapshot exceeds 256 analytic shapes; excess shapes are skipped";
+            if (RuntimeWarning)
+                RuntimeWarning(message);
+            else if (Log::GetCoreLogger())
+                CORE_WARN("{}", message);
+        }
+    }
     void VfxWorld::Tick(float delta, bool preview, glm::vec3 camera)
     {
         m_FieldTime += std::max(0.f, delta);
@@ -783,7 +886,12 @@ namespace Kans::Vfx
         m_Scene.GatherForceFields(fields->Fields);
         if (!m_FieldGPU)
             m_FieldGPU = std::make_shared<FieldGpuStorage>();
-        fields->GPU = m_FieldGPU;
+        fields->GPU    = m_FieldGPU;
+        auto colliders = std::make_shared<CollisionSnapshot>();
+        GatherColliders(*colliders, delta);
+        if (!m_CollisionGPU)
+            m_CollisionGPU = std::make_shared<CollisionGpuStorage>();
+        colliders->GPU = m_CollisionGPU;
         std::set<UUID>    live;
         std::vector<UUID> destroy;
         m_Scene.m_Registry.view<ParticleSystemComponent>().each([&](auto handle, const ParticleSystemComponent& c) {
@@ -876,9 +984,13 @@ namespace Kans::Vfx
             auto instance = Find(id);
             if (instance)
             {
-                instance->Fields     = fields;
-                instance->FieldTime  = m_FieldTime;
-                instance->FieldLayer = c.FieldLayer;
+                instance->Colliders     = colliders;
+                instance->Depth         = Depth;
+                instance->Physics       = m_Scene.GetPhysicsWorld();
+                instance->CollisionMask = c.CollisionMask;
+                instance->Fields        = fields;
+                instance->FieldTime     = m_FieldTime;
+                instance->FieldLayer    = c.FieldLayer;
                 if (!instance->TimelineDesiredAge)
                     instance->Tick(delta, m_Scene.GetWorldTransform(entity), camera);
                 if (!preview && instance->AutoDestroy && instance->IsComplete())
@@ -927,6 +1039,7 @@ namespace Kans
             throw std::invalid_argument("Invalid particle field layer");
         YAML::Node n;
         n["FieldLayer"]        = c.FieldLayer;
+        n["CollisionMask"]     = c.CollisionMask;
         n["System"]            = c.System.ToString();
         n["AutoActivate"]      = c.AutoActivate;
         n["PreviewInEditMode"] = c.PreviewInEditMode;
@@ -960,7 +1073,8 @@ namespace Kans
         const auto fieldLayer = n["FieldLayer"].as<int64_t>(0);
         if (fieldLayer < 0 || fieldLayer > 31)
             throw std::invalid_argument("Invalid particle field layer");
-        c.FieldLayer = uint32_t(fieldLayer);
+        c.FieldLayer    = uint32_t(fieldLayer);
+        c.CollisionMask = n["CollisionMask"].as<uint32_t>(UINT32_MAX);
         if (n["FixedBounds"])
         {
             Bounds b;

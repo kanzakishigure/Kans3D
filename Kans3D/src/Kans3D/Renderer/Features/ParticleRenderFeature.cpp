@@ -22,6 +22,7 @@ namespace Kans
             return;
         for (const auto& [id, instance] : world->Instances())
         {
+            instance->Depth = world->Depth;
             Vfx::GpuEmitter::AddSystemPasses(graph, *instance, *frame.GetDevice());
             for (const auto& e : instance->Emitters())
                 frame.Stats.SimulatedParticles += e.ParticleCount;
@@ -320,14 +321,21 @@ namespace Kans
             AssetID               Material;
         };
         std::vector<Draw> draws;
-        const auto        camera = context.View.Scene.sceneCamera;
+        bool              needsCollisionDepth = false;
+        const auto        camera              = context.View.Scene.sceneCamera;
         const auto        projection =
             DeviceProjection(camera.camera.GetProjectionMatrix(), frame->GetDevice()->GetCoordinateConventions());
         Frustum frustum(projection * camera.viewMatrix);
         for (const auto& [id, instance] : world->Instances())
             for (auto& e : instance->Emitters())
             {
-                if (!e.GPU || e.HiddenByDistance)
+                if (!e.GPU)
+                    continue;
+                if (point == RenderExtensionPoint::AfterTransparent &&
+                    e.Compiled->Settings.Target == Vfx::SimTarget::GPU)
+                    for (const auto& [stage, program] : e.Compiled->Programs)
+                        needsCollisionDepth |= Vfx::UsesDepthCollision(program);
+                if (e.HiddenByDistance)
                     continue;
                 const auto& settings = e.Compiled->Settings;
                 Bounds      bounds   = settings.FixedBounds.value_or(e.DynamicBounds);
@@ -393,34 +401,64 @@ namespace Kans
                         }
                 }
             }
-        if (draws.empty())
+        if (draws.empty() && !needsCollisionDepth)
             return;
         std::stable_sort(
             draws.begin(), draws.end(), [](const auto& a, const auto& b) { return a.Distance > b.Distance; });
-        auto sourceDepth = graph.ImportTexture("VFX scene depth", frame->Output.GetDepth());
-        if (frame->Samples > 1 && !frame->MSAAResolved)
+        const bool needsSoftDepth = std::any_of(
+            draws.begin(), draws.end(), [](const auto& draw) { return draw.Renderer->DepthFadeDistance > 0; });
+        GraphTexture depth = uint32_t(-1);
+        if (needsSoftDepth || needsCollisionDepth)
         {
-            auto msDepth = frame->MSDepth;
-            graph.AddPass("VFX resolve scene depth",
-                          {{msDepth, GraphAccess::DepthReadWrite}, {sourceDepth, GraphAccess::DepthWrite}},
-                          [msDepth, sourceDepth](auto& c) {
-                              RenderingDesc resolve;
-                              resolve.Depth.Target        = c.Texture(msDepth);
-                              resolve.Depth.Load          = LoadOp::Load;
-                              resolve.Depth.Store         = StoreOp::Store;
-                              resolve.Depth.ResolveTarget = c.Texture(sourceDepth);
-                              c.Commands.BeginRendering(resolve);
-                              c.Commands.EndRendering();
-                          });
+            auto sourceDepth = graph.ImportTexture("VFX scene depth", frame->Output.GetDepth());
+            if (frame->Samples > 1 && !frame->MSAAResolved)
+            {
+                auto msDepth = frame->MSDepth;
+                graph.AddPass("VFX resolve scene depth",
+                              {{msDepth, GraphAccess::DepthReadWrite}, {sourceDepth, GraphAccess::DepthWrite}},
+                              [msDepth, sourceDepth](auto& c) {
+                                  RenderingDesc resolve;
+                                  resolve.Depth.Target        = c.Texture(msDepth);
+                                  resolve.Depth.Load          = LoadOp::Load;
+                                  resolve.Depth.Store         = StoreOp::Store;
+                                  resolve.Depth.ResolveTarget = c.Texture(sourceDepth);
+                                  c.Commands.BeginRendering(resolve);
+                                  c.Commands.EndRendering();
+                              });
+            }
+            auto desc  = frame->Output.GetDepth()->GetDesc();
+            desc.Usage = RenderHardware::TextureUsage::Sampled | RenderHardware::TextureUsage::CopyDestination;
+            if (!world->Depth)
+                world->Depth = std::make_shared<Vfx::CollisionDepthSnapshot>();
+            auto& snapshot = *world->Depth;
+            if (!snapshot.Texture || snapshot.Texture->GetDesc().Width != desc.Width ||
+                snapshot.Texture->GetDesc().Height != desc.Height ||
+                snapshot.Texture->GetDesc().PixelFormat != desc.PixelFormat)
+                snapshot.Texture = frame->GetDevice()->CreateTexture(desc);
+            snapshot.ViewProjection        = projection * camera.viewMatrix;
+            snapshot.InverseViewProjection = glm::inverse(snapshot.ViewProjection);
+            depth                          = graph.ImportTexture("VFX soft particle depth", snapshot.Texture);
+            graph.AddPass(
+                "VFX depth snapshot",
+                GraphPassKind::Transfer,
+                {{sourceDepth, GraphAccess::TransferRead}, {depth, GraphAccess::TransferWrite}},
+                [sourceDepth, depth](auto& c) { c.Commands.CopyTexture(c.Texture(sourceDepth), {}, c.Texture(depth)); },
+                true);
         }
-        auto desc  = frame->Output.GetDepth()->GetDesc();
-        desc.Usage = RenderHardware::TextureUsage::Sampled | RenderHardware::TextureUsage::CopyDestination;
-        auto depth = graph.CreateTexture("VFX soft particle depth", desc);
-        graph.AddPass(
-            "VFX depth snapshot",
-            GraphPassKind::Transfer,
-            {{sourceDepth, GraphAccess::TransferRead}, {depth, GraphAccess::TransferWrite}},
-            [sourceDepth, depth](auto& c) { c.Commands.CopyTexture(c.Texture(sourceDepth), {}, c.Texture(depth)); });
+        else if (!draws.empty())
+        {
+            // The shader layout always binds depth; zero fade never samples it.
+            if (!m_EmptyDepth)
+            {
+                TextureDesc empty;
+                empty.PixelFormat = Format::Depth32Float;
+                empty.Usage       = RenderHardware::TextureUsage::Sampled;
+                m_EmptyDepth      = frame->GetDevice()->CreateTexture(empty);
+            }
+            depth = graph.ImportTexture("VFX unused soft particle depth", m_EmptyDepth);
+        }
+        if (draws.empty())
+            return;
         bool workingHDR = frame->PostProcessHDR;
         std::map<std::pair<Vfx::EmitterInstance*, const Vfx::Renderer*>, Handle<RenderHardware::Buffer>>      sorted;
         std::map<std::tuple<Vfx::EmitterInstance*, const Vfx::Renderer*, uint32_t>, Vfx::GpuEmitter::MeshBin> bins;

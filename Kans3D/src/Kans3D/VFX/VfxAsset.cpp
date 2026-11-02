@@ -1177,6 +1177,12 @@ namespace Kans::Vfx
         add("Engine.Owner.Velocity", Type::Vec3);
         add("Engine.Camera.Position", Type::Position);
         add("Particles.Position", Type::Position);
+        add("Transient.PreviousPosition", Type::Position);
+        add("Transient.CollisionMeshRadius", Type::Float, glm::vec4(-1));
+        add("Particles.CollisionCount", Type::Int);
+        add("Particles.HasCollided", Type::Bool);
+        add("Particles.CollisionNormal", Type::Vec3);
+        add("Particles.CollisionPosition", Type::Position);
         add("Particles.MeshTriangle", Type::Int);
         add("Particles.MeshBarycentric", Type::Vec3, {1, 0, 0, 0});
         add("Particles.Velocity", Type::Vec3);

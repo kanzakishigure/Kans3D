@@ -14,6 +14,22 @@ namespace Kans::Vfx
         };
         std::vector<Slot> Slots;
     };
+    struct CollisionDepthSnapshot
+    {
+        RenderHardware::Handle<RenderHardware::Texture> Texture;
+        glm::mat4                                       ViewProjection {1}, InverseViewProjection {1};
+    };
+    struct CollisionGpuStorage
+    {
+        struct Slot
+        {
+            std::weak_ptr<const void>                      Graph;
+            std::weak_ptr<CollisionSnapshot>               Snapshot;
+            RenderHardware::Device*                        Device = nullptr;
+            RenderHardware::Handle<RenderHardware::Buffer> Buffer;
+        };
+        std::vector<Slot> Slots;
+    };
     // Storage is SoA: one 16-byte word per attribute per slot. Integers retain their bits.
     class GpuEmitter
     {
@@ -66,9 +82,13 @@ namespace Kans::Vfx
         RenderHardware::Device&                        Device;
 
     private:
-        std::shared_ptr<FieldSnapshot>                 EmptyFields = std::make_shared<FieldSnapshot>();
-        RenderHardware::Handle<RenderHardware::Buffer> FieldBuffer(RenderGraph&, const ExecutionContext&);
-        std::shared_ptr<const MeshSamplingGeometry>    EmptyGeometry;
+        std::shared_ptr<CollisionSnapshot>              EmptyColliders = std::make_shared<CollisionSnapshot>();
+        RenderHardware::Handle<RenderHardware::Texture> EmptyDepth;
+        RenderHardware::Handle<RenderHardware::Sampler> CollisionSampler;
+        RenderHardware::Handle<RenderHardware::Buffer>  ColliderBuffer(RenderGraph&, const ExecutionContext&);
+        std::shared_ptr<FieldSnapshot>                  EmptyFields = std::make_shared<FieldSnapshot>();
+        RenderHardware::Handle<RenderHardware::Buffer>  FieldBuffer(RenderGraph&, const ExecutionContext&);
+        std::shared_ptr<const MeshSamplingGeometry>     EmptyGeometry;
         std::map<std::weak_ptr<const MeshSamplingGeometry>,
                  RenderHardware::Handle<RenderHardware::Buffer>,
                  std::owner_less<std::weak_ptr<const MeshSamplingGeometry>>>

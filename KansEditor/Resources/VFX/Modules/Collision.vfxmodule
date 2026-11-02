@@ -1,0 +1,479 @@
+Version: 1
+AssetID: 91b2c00000000001:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: 'Collision: place after SolveForcesAndVelocity. Mode: 0 SceneQueries,
+  1 DepthBuffer, 2 AnalyticShapes. Negative RadiusOverride uses renderer size.'
+Inputs:
+- Name: Module.Mode
+  Type: int
+  Default:
+    Type: int
+    Value: 2
+- Name: Module.Restitution
+  Type: float
+  Default:
+    Type: float
+    Value: 0.3
+- Name: Module.Friction
+  Type: float
+  Default:
+    Type: float
+    Value: 0.2
+- Name: Module.RadiusScale
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+- Name: Module.RadiusOverride
+  Type: float
+  Default:
+    Type: float
+    Value: -1
+- Name: Module.RestingVelocity
+  Type: float
+  Default:
+    Type: float
+    Value: 0.1
+- Name: Module.KillOnCollision
+  Type: bool
+  Default:
+    Type: bool
+    Value: false
+Nodes:
+- Guid: input-Mode
+  Op: Input
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Mode
+- Guid: input-Restitution
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Restitution
+- Guid: input-Friction
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Friction
+- Guid: input-RadiusScale
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.RadiusScale
+- Guid: input-RadiusOverride
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.RadiusOverride
+- Guid: input-RestingVelocity
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.RestingVelocity
+- Guid: input-KillOnCollision
+  Op: Input
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Module.KillOnCollision
+- Guid: previous
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Transient.PreviousPosition
+- Guid: position
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: velocity
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: size
+  Op: Get
+  Type: vec2
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec2
+  Parameter: Particles.SpriteSize
+- Guid: scale
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Scale
+- Guid: dt
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Engine.DeltaTime
+- Guid: mesh
+  Op: Get
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Transient.CollisionMeshRadius
+- Guid: count
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Particles.CollisionCount
+- Guid: alive
+  Op: Get
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Particles.Alive
+- Guid: collision
+  Op: Collision
+  Type: position
+  Inputs:
+  - Name: Previous
+    Type: position
+  - Name: Position
+    Type: position
+  - Name: Velocity
+    Type: vec3
+  - Name: Size
+    Type: vec2
+  - Name: Scale
+    Type: vec3
+  - Name: Mode
+    Type: int
+  - Name: Restitution
+    Type: float
+  - Name: Friction
+    Type: float
+  - Name: RadiusScale
+    Type: float
+  - Name: RadiusOverride
+    Type: float
+  - Name: RestingVelocity
+    Type: float
+  - Name: DeltaTime
+    Type: float
+  - Name: MeshRadius
+    Type: float
+  Outputs:
+  - Name: Position
+    Type: position
+  - Name: Velocity
+    Type: vec3
+  - Name: Normal
+    Type: vec3
+  - Name: Contact
+    Type: position
+  - Name: Hit
+    Type: bool
+- Guid: set-position
+  Op: Set
+  Type: position
+  Inputs:
+  - Name: Value
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: set-velocity
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: Value
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: set-normal
+  Op: Set
+  Type: vec3
+  Inputs:
+  - Name: Value
+    Type: vec3
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.CollisionNormal
+- Guid: set-contact
+  Op: Set
+  Type: position
+  Inputs:
+  - Name: Value
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.CollisionPosition
+- Guid: set-hit
+  Op: Set
+  Type: bool
+  Inputs:
+  - Name: Value
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Particles.HasCollided
+- Guid: one
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 1
+- Guid: zero
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 0
+- Guid: increment
+  Op: Select
+  Type: int
+  Inputs:
+  - Name: Hit
+    Type: bool
+  - Name: 'Yes'
+    Type: int
+  - Name: 'No'
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: sum
+  Op: Add
+  Type: int
+  Inputs:
+  - Name: Count
+    Type: int
+  - Name: Increment
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: set-count
+  Op: Set
+  Type: int
+  Inputs:
+  - Name: Value
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Particles.CollisionCount
+- Guid: kill
+  Op: And
+  Type: bool
+  Inputs:
+  - Name: Hit
+    Type: bool
+  - Name: Kill
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: survive
+  Op: Not
+  Type: bool
+  Inputs:
+  - Name: Kill
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: alive-result
+  Op: And
+  Type: bool
+  Inputs:
+  - Name: Alive
+    Type: bool
+  - Name: Survive
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+- Guid: set-alive
+  Op: Set
+  Type: bool
+  Inputs:
+  - Name: Value
+    Type: bool
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Particles.Alive
+Links:
+- From: previous
+  Output: Value
+  To: collision
+  Input: Previous
+- From: position
+  Output: Value
+  To: collision
+  Input: Position
+- From: velocity
+  Output: Value
+  To: collision
+  Input: Velocity
+- From: size
+  Output: Value
+  To: collision
+  Input: Size
+- From: scale
+  Output: Value
+  To: collision
+  Input: Scale
+- From: input-Mode
+  Output: Value
+  To: collision
+  Input: Mode
+- From: input-Restitution
+  Output: Value
+  To: collision
+  Input: Restitution
+- From: input-Friction
+  Output: Value
+  To: collision
+  Input: Friction
+- From: input-RadiusScale
+  Output: Value
+  To: collision
+  Input: RadiusScale
+- From: input-RadiusOverride
+  Output: Value
+  To: collision
+  Input: RadiusOverride
+- From: input-RestingVelocity
+  Output: Value
+  To: collision
+  Input: RestingVelocity
+- From: dt
+  Output: Value
+  To: collision
+  Input: DeltaTime
+- From: mesh
+  Output: Value
+  To: collision
+  Input: MeshRadius
+- From: collision
+  Output: Position
+  To: set-position
+  Input: Value
+- From: collision
+  Output: Velocity
+  To: set-velocity
+  Input: Value
+- From: collision
+  Output: Normal
+  To: set-normal
+  Input: Value
+- From: collision
+  Output: Contact
+  To: set-contact
+  Input: Value
+- From: collision
+  Output: Hit
+  To: set-hit
+  Input: Value
+- From: collision
+  Output: Hit
+  To: increment
+  Input: Hit
+- From: one
+  Output: Value
+  To: increment
+  Input: 'Yes'
+- From: zero
+  Output: Value
+  To: increment
+  Input: 'No'
+- From: count
+  Output: Value
+  To: sum
+  Input: Count
+- From: increment
+  Output: Value
+  To: sum
+  Input: Increment
+- From: sum
+  Output: Value
+  To: set-count
+  Input: Value
+- From: collision
+  Output: Hit
+  To: kill
+  Input: Hit
+- From: input-KillOnCollision
+  Output: Value
+  To: kill
+  Input: Kill
+- From: kill
+  Output: Value
+  To: survive
+  Input: Kill
+- From: alive
+  Output: Value
+  To: alive-result
+  Input: Alive
+- From: survive
+  Output: Value
+  To: alive-result
+  Input: Survive
+- From: alive-result
+  Output: Value
+  To: set-alive
+  Input: Value

@@ -6,8 +6,10 @@
 #include <sstream>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <shaderc/shaderc.hpp>
+#include "Kans3D/Physics/PhysicsWorld.h"
 namespace Kans::Vfx
 {
+#include "VfxCollision.inc"
 #include "VfxMeshSampling.inc"
     namespace
     {
@@ -33,7 +35,8 @@ namespace Kans::Vfx
         {
             return from == to || (from == Type::Float && (to == Type::Vec2 || to == Type::Vec3 || to == Type::Vec4));
         }
-        const std::map<std::string, uint32_t> Arity = {{"Add", 2},
+        const std::map<std::string, uint32_t> Arity = {{"Collision", 13},
+                                                       {"Add", 2},
                                                        {"Sub", 2},
                                                        {"Mul", 2},
                                                        {"Div", 2},
@@ -118,6 +121,8 @@ namespace Kans::Vfx
                         i.PositionSpace = Space::Local;
                 }
                 if ((i.Op == "SampleForceFields" || i.Op == "CurlNoise") && !i.Args.empty())
+                    i.PositionSpace = Out.Code[i.Args[0]].PositionSpace;
+                if (i.Op == "Collision" && !i.Args.empty())
                     i.PositionSpace = Out.Code[i.Args[0]].PositionSpace;
                 if (i.Op == "ToSimulationVector")
                     i.PositionSpace = SimulationSpace;
@@ -726,7 +731,32 @@ namespace Kans::Vfx
                 const auto error = [&](size_t k, const char* message) {
                     Error(id, n.Guid, k < n.Inputs.size() ? n.Inputs[k].Name : "Value", message);
                 };
-                if (i.Op == "Select")
+                if (i.Op == "Collision")
+                {
+                    if (Out.StageKind != Stage::ParticleUpdate)
+                        Error(id, n.Guid, "Mode", "Collision requires ParticleUpdate after SolveForcesAndVelocity");
+                    if (i.Args.size() != 13)
+                        return;
+                    const auto& mode = Out.Code[i.Args[5]];
+                    if (mode.Op != "Constant" || mode.Kind != Type::Int || mode.Literal.Integer < 0 ||
+                        mode.Literal.Integer > 2)
+                        Error(id,
+                              n.Guid,
+                              "Mode",
+                              "Collision Mode requires a constant: SceneQueries (0), DepthBuffer (1), AnalyticShapes "
+                              "(2)");
+                    else if (Out.Target == SimTarget::GPU && mode.Literal.Integer == int(CollisionMode::SceneQueries))
+                        Error(id,
+                              n.Guid,
+                              "Mode",
+                              "Collision: SceneQueries is CPU only; use DepthBuffer or AnalyticShapes");
+                    else if (Out.Target == SimTarget::CPU && mode.Literal.Integer == int(CollisionMode::DepthBuffer))
+                        Error(id,
+                              n.Guid,
+                              "Mode",
+                              "Collision: DepthBuffer requires a GPU emitter; use SceneQueries or AnalyticShapes");
+                }
+                else if (i.Op == "Select")
                 {
                     if (t(0) != Type::Bool)
                         error(0, "Select condition must be bool");
@@ -1342,6 +1372,17 @@ namespace Kans::Vfx
                     }
                 }
 
+                float collisionMeshRadius = -1;
+                for (const auto& renderer : ce.Settings.Renderers)
+                    if (renderer.Kind == RendererKind::Mesh && ce.MeshRadii.count(renderer.Guid))
+                    {
+                        collisionMeshRadius = ce.MeshRadii.at(renderer.Guid);
+                        break;
+                    }
+                for (auto& [stage, program] : ce.Programs)
+                    for (auto& parameter : program.Parameters)
+                        if (parameter.Name == "Transient.CollisionMeshRadius")
+                            parameter.Default = Value::Float(collisionMeshRadius);
                 attributes.insert("Particles.UniqueID");
                 attributes.insert("Particles.Alive");
                 for (const auto& name : attributes)
@@ -1754,6 +1795,8 @@ namespace Kans::Vfx
             out.Data    = glm::vec4(result, 0);
             return out;
         }
+        if (op == "Collision")
+            return CollisionValue(i, CollideParticle(i, r, c));
         if (op == "SampleForceFields")
         {
             if (!c.Fields)
@@ -1989,7 +2032,14 @@ namespace Kans::Vfx
     }
     void Execute(const Program& p, ParameterMap& values, const ExecutionContext& c)
     {
-        std::vector<Value> r;
+        if (p.StageKind == Stage::ParticleUpdate)
+        {
+            auto at                              = values.find("Particles.Position");
+            values["Transient.PreviousPosition"] = at == values.end() ? Value::Vector({}, Type::Position) : at->second;
+            values["Particles.HasCollided"]      = Value::Bool(false);
+        }
+        std::map<std::vector<uint32_t>, CollisionResult> collisions;
+        std::vector<Value>                               r;
         r.reserve(p.Code.size());
         for (const auto& i : p.Code)
         {
@@ -2005,6 +2055,13 @@ namespace Kans::Vfx
                 }
                 else
                     r.push_back(at->second);
+            }
+            else if (i.Op == "Collision")
+            {
+                auto at = collisions.find(i.Args);
+                if (at == collisions.end())
+                    at = collisions.emplace(i.Args, CollideParticle(i, r, c)).first;
+                r.push_back(CollisionValue(i, at->second));
             }
             else if (i.Op == "SpawnBoundary")
             {
@@ -2046,7 +2103,19 @@ namespace Kans::Vfx
             binding = std::max(binding, entry.second + 1);
         return binding;
     }
-    void GenerateGpuProgram(Program& p, const std::vector<Attribute>& attributes)
+    bool UsesCollision(const Program& p)
+    {
+        return std::any_of(p.Code.begin(), p.Code.end(), [](const auto& i) { return i.Op == "Collision"; });
+    }
+    bool UsesDepthCollision(const Program& p)
+    {
+        return std::any_of(p.Code.begin(), p.Code.end(), [&](const auto& i) {
+            return i.Op == "Collision" && i.Args.size() == 13 &&
+                   p.Code[i.Args[5]].Literal.Integer == int(CollisionMode::DepthBuffer);
+        });
+    }
+    uint32_t CollisionGpuBinding(const Program& p) { return ForceFieldsGpuBinding(p) + (UsesForceFields(p) ? 1 : 0); }
+    void     GenerateGpuProgram(Program& p, const std::vector<Attribute>& attributes)
     {
         const auto attribute = [&](const std::string& n) -> const Attribute* {
             for (const auto& a : attributes)
@@ -2098,6 +2167,17 @@ void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
 vec3 fieldRotate(vec3 v,vec4 q){float n=dot(q,q);q=n>1e-20?q*inversesqrt(n):vec4(0,0,0,1);return v+2.0*cross(q.xyz,cross(q.xyz,v)+q.w*v);}
 vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d[a]=abs(scale[a])>=1e-6?scale[a]:(scale[a]<0?-1e-6:1e-6);return fieldRotate(p-t,vec4(-q.xyz,q.w))/d;}
 )glsl");
+        if (UsesCollision(p))
+        {
+            std::string helpers = "layout(set=0,binding=" + std::to_string(CollisionGpuBinding(p)) +
+                                  ",std430) readonly buffer SceneColliders {vec4 collisionWords[];};\n";
+            helpers += "layout(set=0,binding=" + std::to_string(CollisionGpuBinding(p) + 1) +
+                       ") uniform sampler2D collisionDepth;\n";
+            helpers +=
+#include "VfxCollisionGLSL.inc"
+                ;
+            s.insert(s.find("void main()"), helpers);
+        }
         if (UsesForceFields(p))
         {
             std::string helpers = "layout(set=0,binding=" + std::to_string(ForceFieldsGpuBinding(p)) +
@@ -2211,6 +2291,10 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
             auto        a = attribute(v.Name);
             std::string value =
                 a ? "a" + std::to_string(a->Offset) : decode(v.Kind, "parameters[" + std::to_string(k) + "]");
+            if (v.Name == "Transient.PreviousPosition" && attribute("Particles.Position"))
+                value = "a" + std::to_string(attribute("Particles.Position")->Offset);
+            if (v.Name == "Particles.HasCollided" && p.StageKind == Stage::ParticleUpdate)
+                value = "false";
             if (v.Name == "Transient.SpawnIndex")
                 value = "int(invocation)";
             if (emitter && v.Name.rfind("Emitter.", 0) == 0 && v.Name != "Emitter.SpawnCountThisFrame")
@@ -2232,7 +2316,8 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
             }
             s += GType(v.Kind) + " p" + std::to_string(k) + "=" + value + ";\n";
         }
-        std::string customHelpers;
+        std::map<std::vector<uint32_t>, std::string> collisionResults;
+        std::string                                  customHelpers;
         for (uint32_t k = 0; k < p.Code.size(); ++k)
         {
             const auto& i   = p.Code[k];
@@ -2244,6 +2329,31 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                 if (i.PositionSpace == Space::World)
                     s += "p" + std::to_string(i.Parameter) + "=mat3(owner)*p" + std::to_string(i.Parameter) + ";\n";
                 e = "0.0";
+            }
+            else if (op == "Collision")
+            {
+                auto at = collisionResults.find(i.Args);
+                if (at == collisionResults.end())
+                {
+                    auto name = "collision" + std::to_string(k);
+                    at        = collisionResults.emplace(i.Args, name).first;
+                    std::string args;
+                    for (size_t n = 0; n < i.Args.size(); ++n)
+                        args += (n ? "," : "") + arg(n);
+                    auto offset = uint32_t(p.Parameters.size()) + 6;
+                    auto matrix = [&](uint32_t first) {
+                        std::string m = "mat4(";
+                        for (uint32_t col = 0; col < 4; ++col)
+                            m += (col ? "," : "") + std::string("uintBitsToFloat(parameters[") +
+                                 std::to_string(first + col) + "])";
+                        return m + ")";
+                    };
+                    s += "CollisionResultV " + name + "=collideParticleV(" + args + ",owner," +
+                         (i.PositionSpace == Space::Local ? "true" : "false") + ",parameters[" +
+                         std::to_string(p.Parameters.size() + 4) + "].z," + matrix(offset) + "," + matrix(offset + 4) +
+                         ",parameters[" + std::to_string(offset + 8) + "].x!=0u);\n";
+                }
+                e = at->second + "." + i.Output;
             }
             else if (op == "WriteEvent")
             {

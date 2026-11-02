@@ -14,12 +14,24 @@ namespace Kans::Vfx
             for (size_t first = 0; first < bytes; first += 65536)
                 commands.UpdateBuffer(destination, first, words + first, std::min(size_t(65536), bytes - first));
         }
-        Handle<BindGroup> Group(Device& d, const Handle<BindGroupLayout>& layout, std::vector<Handle<Buffer>> buffers)
+        Handle<BindGroup> Group(Device&                        d,
+                                const Handle<BindGroupLayout>& layout,
+                                std::vector<Handle<Buffer>>    buffers,
+                                Handle<Texture>                depth   = {},
+                                Handle<Sampler>                sampler = {})
         {
             BindGroupDesc g;
             g.Layout = layout;
             for (uint32_t k = 0; k < buffers.size(); ++k)
                 g.Entries.push_back({k, buffers[k], 0, buffers[k]->GetDesc().Bytes});
+            if (depth)
+            {
+                BindGroupEntry entry;
+                entry.Slot            = uint32_t(buffers.size());
+                entry.TextureResource = depth;
+                entry.SamplerResource = sampler;
+                g.Entries.push_back(entry);
+            }
             return d.CreateBindGroup(g);
         }
         struct Push
@@ -120,6 +132,21 @@ namespace Kans::Vfx
                 bindings.push_back({slot, BindingType::ReadOnlyStorageBuffer});
             if (UsesForceFields(program))
                 bindings.push_back({ForceFieldsGpuBinding(program), BindingType::ReadOnlyStorageBuffer});
+            if (UsesCollision(program))
+            {
+                bindings.push_back({CollisionGpuBinding(program), BindingType::ReadOnlyStorageBuffer});
+                bindings.push_back({CollisionGpuBinding(program) + 1, BindingType::CombinedTextureSampler});
+                if (!EmptyDepth)
+                {
+                    TextureDesc desc;
+                    desc.PixelFormat = Format::R32Float;
+                    EmptyDepth       = Device.CreateTexture(desc);
+                    SamplerDesc sampler;
+                    sampler.Min = sampler.Mag = sampler.Mip = Filter::Nearest;
+                    sampler.U = sampler.V = AddressMode::ClampToEdge;
+                    CollisionSampler      = Device.CreateSampler(sampler);
+                }
+            }
             auto& data                 = InterfaceData[&program];
             data                       = GpuInterfaceTable(program, {});
             InterfaceBuffers[&program] = buffer(data.size() * 16);
@@ -233,6 +260,50 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                               4);
         for (auto& r : Readbacks)
             r = device.CreateBuffer({64, BufferUsage::CopyDestination, MemoryUsage::Readback});
+    }
+    Handle<Buffer> GpuEmitter::ColliderBuffer(RenderGraph& graph, const ExecutionContext& context)
+    {
+        auto snapshot = context.Colliders ? context.Colliders : EmptyColliders;
+        if (!snapshot->GPU)
+            snapshot->GPU = std::make_shared<CollisionGpuStorage>();
+        auto& slots    = snapshot->GPU->Slots;
+        auto  lifetime = graph.Lifetime();
+        for (auto& slot : slots)
+            if (slot.Device == &Device && slot.Graph.lock() == lifetime.lock() && slot.Snapshot.lock() == snapshot)
+                return slot.Buffer;
+        auto at = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) {
+            return slot.Device == &Device && slot.Graph.expired();
+        });
+        if (at == slots.end())
+        {
+            slots.emplace_back();
+            at = std::prev(slots.end());
+        }
+        auto& slot    = *at;
+        slot.Graph    = lifetime;
+        slot.Snapshot = snapshot;
+        slot.Device   = &Device;
+        static_assert(sizeof(CollisionShape) == 112);
+        if (!slot.Buffer)
+            slot.Buffer = Device.CreateBuffer({16 + CollisionSnapshot::Capacity * sizeof(CollisionShape),
+                                               BufferUsage::Storage | BufferUsage::CopyDestination,
+                                               MemoryUsage::DeviceLocal});
+        auto                   count = std::min(size_t(CollisionSnapshot::Capacity), snapshot->Shapes.size());
+        std::vector<glm::vec4> words(1 + count * (sizeof(CollisionShape) / sizeof(glm::vec4)));
+        glm::uvec4             header(uint32_t(count), 0, 0, 0);
+        std::memcpy(words.data(), &header, 16);
+        if (count)
+            std::memcpy(words.data() + 1, snapshot->Shapes.data(), count * sizeof(CollisionShape));
+        auto buffer = slot.Buffer;
+        graph.AddPass(
+            "VFX collider snapshot",
+            GraphPassKind::Transfer,
+            {{graph.ImportBuffer("VFX shared colliders", buffer), GraphAccess::TransferWrite}},
+            [buffer, words = std::move(words)](auto& ctx) {
+                Upload(ctx.Device, ctx.Commands, buffer, words.data(), words.size() * 16);
+            },
+            true);
+        return buffer;
     }
     Handle<Buffer> GpuEmitter::FieldBuffer(RenderGraph& graph, const ExecutionContext& context)
     {
@@ -455,8 +526,22 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                     words.push_back(v);
                 }
                 auto config = Pack(Value::Float(float(tick.Context.FieldTime)));
-                words.push_back({tick.Context.FieldLayer, config.x, 0, 0});
+                words.push_back({tick.Context.FieldLayer, config.x, tick.Context.CollisionMask, 0});
                 words.push_back({uint32_t(tick.Context.FirstImpulse), uint32_t(tick.Context.FirstImpulse >> 32), 0, 0});
+                auto depth = UsesDepthCollision(program) ? tick.Context.Depth : nullptr;
+                if (UsesCollision(program))
+                {
+                    auto vp        = depth ? depth->ViewProjection : glm::mat4(1);
+                    auto inverseVP = depth ? depth->InverseViewProjection : glm::mat4(1);
+                    for (const auto& matrix : {vp, inverseVP})
+                        for (int col = 0; col < 4; ++col)
+                        {
+                            glm::uvec4 word;
+                            std::memcpy(&word, &matrix[col], 16);
+                            words.push_back(word);
+                        }
+                    words.emplace_back(depth && depth->Texture ? 1u : 0u, 0, 0, 0);
+                }
                 auto& parameterWorkspace = Acquire(ParameterWorkspaces, graph);
                 if (!parameterWorkspace.Output || parameterWorkspace.Output->GetDesc().Bytes < words.size() * 16)
                     parameterWorkspace.Output =
@@ -556,6 +641,17 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                     bound.push_back(buffer);
                     uses.push_back({graph.ImportBuffer("VFX scene fields", buffer), GraphAccess::StorageRead});
                 }
+                Handle<Texture> collisionDepth;
+                if (UsesCollision(program))
+                {
+                    auto buffer = ColliderBuffer(graph, tick.Context);
+                    bound.push_back(buffer);
+                    uses.push_back({graph.ImportBuffer("VFX shared colliders", buffer), GraphAccess::StorageRead});
+                    collisionDepth = depth && depth->Texture ? depth->Texture : EmptyDepth;
+                    uses.push_back(
+                        {graph.ImportTexture("VFX collision depth", collisionDepth), GraphAccess::SampledRead});
+                }
+                auto collisionSampler = CollisionSampler;
                 graph.AddPass(
                     spawn ? "VFX particle spawn" : "VFX particle update",
                     GraphPassKind::Compute,
@@ -564,6 +660,8 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                      params,
                      words = std::move(words),
                      bound,
+                     collisionDepth,
+                     collisionSampler,
                      di,
                      push,
                      spawn,
@@ -572,7 +670,8 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                      emitterStage](auto& ctx) {
                         Upload(ctx.Device, ctx.Commands, params, words.data(), words.size() * 16);
                         ctx.Commands.BindComputePipeline(kernel.Pipeline);
-                        ctx.Commands.BindGroup(Group(ctx.Device, kernel.Layout, bound));
+                        ctx.Commands.BindGroup(
+                            Group(ctx.Device, kernel.Layout, bound, collisionDepth, collisionSampler));
                         ctx.Commands.PushConstants(0, &push, sizeof(push));
                         if (emitterStage)
                             ctx.Commands.Dispatch(1, 1, 1);
@@ -704,6 +803,8 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
             {
                 if (!instance.TimelineDesiredAge)
                     e.GPU->Poll(e);
+                for (auto& tick : e.Pending)
+                    tick.Context.Depth = instance.Depth;
                 ticks[i] = std::move(e.Pending);
                 steps    = std::max(steps, ticks[i].size());
                 if (ticks[i].empty() && e.GPU->NeedsInitialization())

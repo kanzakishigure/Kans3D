@@ -6,7 +6,7 @@ namespace Kans
     class ParticleRenderFeature final : public RenderFeature
     {
     public:
-        void Prepare(RenderView&, RenderFrame&) override;
+        void        Prepare(RenderView&, RenderFrame&) override;
         static void Simulate(RenderGraph&, RenderFrame&);
         static void RecordMeshShadows(RenderGraph&,
                                       RenderFrame&,
@@ -17,10 +17,13 @@ namespace Kans
                                       bool  point,
                                       float constantBias,
                                       float slopeBias);
-        bool RunsAt(RenderExtensionPoint p) const override
+        bool        RunsAt(RenderExtensionPoint p) const override
         {
             return p == RenderExtensionPoint::BeforeOpaque || p == RenderExtensionPoint::AfterTransparent;
         }
         void AddPasses(RenderExtensionPoint, const RenderFeatureContext&) override;
+
+    private:
+        RenderHardware::Handle<RenderHardware::Texture> m_EmptyDepth;
     };
 } // namespace Kans

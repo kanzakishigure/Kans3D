@@ -60,33 +60,37 @@ namespace Kans::Vfx
                        const glm::mat4&   initialOwner = glm::mat4(1),
                        MeshSourceResolver meshSources  = {});
         ~SystemInstance();
-        SystemInstance(const SystemInstance&)                      = delete;
-        SystemInstance& operator=(const SystemInstance&)           = delete;
-        SystemInstance(SystemInstance&&)                           = delete;
-        SystemInstance&                operator=(SystemInstance&&) = delete;
-        void                           Activate(bool reset = true);
-        void                           Deactivate() { m_Spawning = false; }
-        void                           DeactivateImmediate();
-        void                           Pause() { m_Paused = true; }
-        void                           Resume() { m_Paused = false; }
-        bool                           IsActive() const { return m_Spawning && !m_Paused && !IsComplete(); }
-        bool                           IsComplete() const;
-        void                           Emit(const std::string& emitter, uint32_t count);
-        void                           Set(const std::string& name, const Value&);
-        Value                          Get(const std::string& name, Type) const;
-        uint32_t                       ParticleCount() const;
-        void                           Tick(float delta, const glm::mat4& owner = glm::mat4(1), glm::vec3 camera = {});
-        void                           SeekAge(double                             age,
-                                               float                              fixedTick,
-                                               double                             maxSimulationTime,
-                                               const glm::mat4&                   owner      = glm::mat4(1),
-                                               bool                               reset      = false,
-                                               const std::function<void(double)>& beforeTick = {});
-        std::shared_ptr<FieldSnapshot> Fields;
-        uint32_t                       FieldLayer = 0;
-        double                         FieldTime  = 0;
-        double                         Age() const { return m_Time; }
-        bool                           TimelineDesiredAge = false; // Timeline owns stepping until released.
+        SystemInstance(const SystemInstance&)            = delete;
+        SystemInstance& operator=(const SystemInstance&) = delete;
+        SystemInstance(SystemInstance&&)                 = delete;
+        SystemInstance& operator=(SystemInstance&&)      = delete;
+        void            Activate(bool reset = true);
+        void            Deactivate() { m_Spawning = false; }
+        void            DeactivateImmediate();
+        void            Pause() { m_Paused = true; }
+        void            Resume() { m_Paused = false; }
+        bool            IsActive() const { return m_Spawning && !m_Paused && !IsComplete(); }
+        bool            IsComplete() const;
+        void            Emit(const std::string& emitter, uint32_t count);
+        void            Set(const std::string& name, const Value&);
+        Value           Get(const std::string& name, Type) const;
+        uint32_t        ParticleCount() const;
+        void            Tick(float delta, const glm::mat4& owner = glm::mat4(1), glm::vec3 camera = {});
+        void            SeekAge(double                             age,
+                                float                              fixedTick,
+                                double                             maxSimulationTime,
+                                const glm::mat4&                   owner      = glm::mat4(1),
+                                bool                               reset      = false,
+                                const std::function<void(double)>& beforeTick = {});
+        std::shared_ptr<CollisionSnapshot>      Colliders;
+        std::shared_ptr<CollisionDepthSnapshot> Depth;
+        PhysicsWorld*                           Physics       = nullptr;
+        uint32_t                                CollisionMask = UINT32_MAX;
+        std::shared_ptr<FieldSnapshot>          Fields;
+        uint32_t                                FieldLayer = 0;
+        double                                  FieldTime  = 0;
+        double                                  Age() const { return m_Time; }
+        bool                                    TimelineDesiredAge = false; // Timeline owns stepping until released.
         const Ref<const VfxSystemAsset>&        Asset() const { return m_Asset; }
         std::vector<EmitterInstance>&           Emitters() { return m_Emitters; }
         const std::vector<EmitterInstance>&     Emitters() const { return m_Emitters; }
@@ -125,9 +129,11 @@ namespace Kans::Vfx
     {
     public:
         explicit VfxWorld(Scene& scene) : m_Scene(scene) {}
-        void            Tick(float delta, bool preview = false, glm::vec3 camera = {});
-        bool            Bind(Entity, Ref<const VfxSystemAsset>);
-        SystemInstance* Find(UUID);
+        void                                    Tick(float delta, bool preview = false, glm::vec3 camera = {});
+        std::shared_ptr<CollisionDepthSnapshot> Depth;
+        std::function<void(const std::string&)> RuntimeWarning;
+        bool                                    Bind(Entity, Ref<const VfxSystemAsset>);
+        SystemInstance*                         Find(UUID);
         const std::map<UUID, std::unique_ptr<SystemInstance>>& Instances() const { return m_Instances; }
         void                                                   Remove(UUID);
         void                                                   Clear();
@@ -137,6 +143,10 @@ namespace Kans::Vfx
         Entity                                                 Spawn(AssetID, glm::vec3, glm::quat, bool);
 
     private:
+        void                                            GatherColliders(CollisionSnapshot&, float delta);
+        std::map<std::pair<UUID, uint32_t>, glm::vec3>  m_PreviousColliderCenters;
+        std::shared_ptr<CollisionGpuStorage>            m_CollisionGPU;
+        bool                                            m_CollisionCapWarned = false;
         std::shared_ptr<FieldGpuStorage>                m_FieldGPU;
         double                                          m_FieldTime = 0;
         Scene&                                          m_Scene;

@@ -4,6 +4,10 @@
 #include "Kans3D/Asset/Runtime/ShaderData.h"
 #include "Kans3D/Physics/ForceFields.h"
 #include "VfxAsset.h"
+namespace Kans
+{
+    class PhysicsWorld;
+}
 namespace Kans::Vfx
 {
     struct Diagnostic
@@ -107,6 +111,45 @@ namespace Kans::Vfx
     };
     bool     UsesForceFields(const Program&);
     uint32_t ForceFieldsGpuBinding(const Program&);
+    enum class CollisionMode : int32_t
+    {
+        SceneQueries,
+        DepthBuffer,
+        AnalyticShapes
+    };
+    enum class ColliderKind : uint32_t
+    {
+        Plane,
+        Sphere,
+        Box,
+        Capsule
+    };
+    // Seven vec4 words, shared with GLSL. Axis w components hold box half extents;
+    // a capsule uses AxisY for its axis and half segment length.
+    struct CollisionShape
+    {
+        glm::vec4  CenterRadius {0};
+        glm::vec4  AxisX {1, 0, 0, .5f}, AxisY {0, 1, 0, .5f}, AxisZ {0, 0, 1, .5f};
+        glm::vec4  Velocity {0}; // Linear velocity at the shape centre.
+        glm::vec4  AngularVelocity {0};
+        glm::uvec4 Meta {uint32_t(ColliderKind::Box), 0, 0, 0};
+    };
+    struct CollisionGpuStorage;
+    struct CollisionDepthSnapshot;
+    struct CollisionSnapshot
+    {
+        static constexpr uint32_t            Capacity = 256;
+        std::vector<CollisionShape>          Shapes;
+        std::shared_ptr<CollisionGpuStorage> GPU;
+    };
+    struct CollisionResult
+    {
+        glm::vec3 Position {0}, Velocity {0}, Normal {0}, Contact {0};
+        bool      Hit = false;
+    };
+    bool     UsesCollision(const Program&);
+    bool     UsesDepthCollision(const Program&);
+    uint32_t CollisionGpuBinding(const Program&);
     struct ExecutionContext
     {
         uint32_t                                                            Seed = 1, EmitterIndex = 0, UniqueID = 0;
@@ -117,9 +160,13 @@ namespace Kans::Vfx
         std::function<void(const Instruction&, const std::vector<Value>&)>  WriteEvent;
         uint32_t                                                            SpawnIndex = 0;
         std::shared_ptr<FieldSnapshot>                                      Fields;
-        double                                                              FieldTime    = 0;
-        uint32_t                                                            FieldLayer   = 0;
-        uint64_t                                                            FirstImpulse = 0;
+        std::shared_ptr<CollisionSnapshot>                                  Colliders;
+        std::shared_ptr<CollisionDepthSnapshot>                             Depth;
+        PhysicsWorld*                                                       Physics       = nullptr;
+        uint32_t                                                            CollisionMask = UINT32_MAX;
+        double                                                              FieldTime     = 0;
+        uint32_t                                                            FieldLayer    = 0;
+        uint64_t                                                            FirstImpulse  = 0;
         std::function<std::shared_ptr<const MeshSamplingSnapshot>(const InterfaceBinding&)> MeshTable;
     };
     // Mesh sampling tables share the CPU/GPU vec4 layout. CDFs use bind-pose area,

@@ -1,0 +1,174 @@
+Version: 1
+AssetID: 91b2c00000000002:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: 'GenerateCollisionEvent: place after Collision.'
+Inputs:
+- Name: Module.Event
+  Type: vec4
+  Default:
+    Type: vec4
+    Value:
+    - 0
+    - 0
+    - 0
+    - 0
+- Name: Module.MaxEventsPerFrame
+  Type: int
+  Default:
+    Type: int
+    Value: 2147483647
+Nodes:
+- Guid: hit
+  Op: Get
+  Type: bool
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: bool
+  Parameter: Particles.HasCollided
+- Guid: one
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 1
+- Guid: zero
+  Op: Constant
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Constant:
+    Type: int
+    Value: 0
+- Guid: count
+  Op: Select
+  Type: int
+  Inputs:
+  - Name: Hit
+    Type: bool
+  - Name: 'Yes'
+    Type: int
+  - Name: 'No'
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+- Guid: limit
+  Op: Input
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.MaxEventsPerFrame
+- Guid: payload-Position
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.CollisionPosition
+- Guid: payload-Normal
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.CollisionNormal
+- Guid: payload-Velocity
+  Op: Get
+  Type: vec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec3
+  Parameter: Particles.Velocity
+- Guid: payload-ParticleUniqueID
+  Op: Get
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Particles.UniqueID
+- Guid: write
+  Op: WriteEvent
+  Type: int
+  Inputs:
+  - Name: Count
+    Type: int
+  - Name: Position
+    Type: position
+  - Name: Normal
+    Type: vec3
+  - Name: Velocity
+    Type: vec3
+  - Name: ParticleUniqueID
+    Type: int
+  - Name: MaxEventsPerFrame
+    Type: int
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Event
+  Interface:
+    Kind: Events
+    Channel: Collision
+Links:
+- From: hit
+  Output: Value
+  To: count
+  Input: Hit
+- From: one
+  Output: Value
+  To: count
+  Input: 'Yes'
+- From: zero
+  Output: Value
+  To: count
+  Input: 'No'
+- From: count
+  Output: Value
+  To: write
+  Input: Count
+- From: limit
+  Output: Value
+  To: write
+  Input: MaxEventsPerFrame
+- From: payload-Position
+  Output: Value
+  To: write
+  Input: Position
+- From: payload-Normal
+  Output: Value
+  To: write
+  Input: Normal
+- From: payload-Velocity
+  Output: Value
+  To: write
+  Input: Velocity
+- From: payload-ParticleUniqueID
+  Output: Value
+  To: write
+  Input: ParticleUniqueID
+EventLayouts:
+- Name: Collision
+  Fields:
+  - Name: Position
+    Type: position
+  - Name: Normal
+    Type: vec3
+  - Name: Velocity
+    Type: vec3
+  - Name: ParticleUniqueID
+    Type: int
