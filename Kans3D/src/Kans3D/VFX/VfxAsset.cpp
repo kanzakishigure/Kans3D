@@ -10,7 +10,8 @@ namespace Kans::Vfx
 {
     namespace
     {
-        constexpr const char* Types[]  = {"float", "vec2", "vec3", "vec4", "int", "bool", "color", "quat", "position"};
+        constexpr const char* Types[] =
+            {"float", "vec2", "vec3", "vec4", "int", "bool", "color", "quat", "position", "ivec3"};
         constexpr const char* Stages[] = {"SystemSpawn",
                                           "SystemUpdate",
                                           "EmitterSpawn",
@@ -227,7 +228,8 @@ namespace Kans::Vfx
                 }
                 if (s == Stage::SimulationStage)
                 {
-                    Check(x.second.size() == 0, std::string(StageName(s)) + " not implemented in V1a");
+                    Check(!system || x.second.size() == 0, "SimulationStage belongs to an emitter");
+                    continue; // Ordered simulation stage records are decoded separately.
                 }
                 else
                     Check(system ? s <= Stage::SystemUpdate : s >= Stage::EmitterSpawn,
@@ -398,7 +400,11 @@ namespace Kans::Vfx
                                            "ReplaceRenderer",
                                            "AddHandler",
                                            "RemoveHandler",
-                                           "MoveHandler"};
+                                           "MoveHandler",
+                                           "AddSimulationStage",
+                                           "RemoveSimulationStage",
+                                           "MoveSimulationStage",
+                                           "ReplaceSimulationStage"};
         YAML::Node            HandlerNode(const EventHandler& h)
         {
             YAML::Node n;
@@ -435,6 +441,45 @@ namespace Kans::Vfx
             }
             return h;
         }
+        YAML::Node SimulationNode(const SimulationStage& s)
+        {
+            YAML::Node n;
+            n["Guid"]                    = s.Guid;
+            n["Name"]                    = s.Name;
+            n["IterationSource"]["Kind"] = s.Source == IterationSource::Particles ? "Particles" : "DataInterface";
+            if (s.Source == IterationSource::DataInterface)
+                n["IterationSource"]["Parameter"] = s.DataInterface;
+            n["Iterations"] = s.Iterations;
+            if (!s.Enabled.empty())
+                n["Enabled"] = s.Enabled;
+            n["Modules"] = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& u : s.Modules)
+                n["Modules"].push_back(UseNode(u));
+            return n;
+        }
+        SimulationStage ReadSimulation(const YAML::Node& n)
+        {
+            SimulationStage s;
+            Check(bool(n["IterationSource"]), "SimulationStage requires ordered stage records with IterationSource");
+            s.Guid            = n["Guid"].as<std::string>();
+            s.Name            = n["Name"].as<std::string>();
+            const auto source = n["IterationSource"]["Kind"].as<std::string>();
+            Check(source == "Particles" || source == "DataInterface", "Invalid simulation iteration source");
+            s.Source        = source == "Particles" ? IterationSource::Particles : IterationSource::DataInterface;
+            s.DataInterface = n["IterationSource"]["Parameter"].as<std::string>("");
+            s.Iterations    = n["Iterations"].as<uint32_t>(1);
+            s.Enabled       = n["Enabled"].as<std::string>("");
+            Check(!s.Guid.empty() && !s.Name.empty(), "Simulation stage requires GUID and Name");
+            Check(s.Iterations >= 1 && s.Iterations <= 64, "Simulation Iterations must be 1–64: " + s.Guid);
+            std::set<std::string> ids;
+            for (const auto& u : n["Modules"])
+            {
+                auto use = ReadUse(u);
+                Check(ids.insert(use.Guid).second, "Duplicate VFX usage GUID: " + use.Guid);
+                s.Modules.push_back(use);
+            }
+            return s;
+        }
         YAML::Node OverridesNode(const std::vector<Override>& v)
         {
             YAML::Node n(YAML::NodeType::Sequence);
@@ -445,6 +490,11 @@ namespace Kans::Vfx
                 a["Stage"]  = StageName(x.StageKind);
                 a["Target"] = x.Target;
                 a["Before"] = x.Before;
+                if (!x.SimulationStageGuid.empty())
+                    a["SimulationStageGuid"] = x.SimulationStageGuid;
+                if (x.Action == Override::Kind::AddSimulationStage ||
+                    x.Action == Override::Kind::ReplaceSimulationStage)
+                    a["SimulationStage"] = SimulationNode(x.Simulation);
                 if (!x.HandlerGuid.empty())
                     a["HandlerGuid"] = x.HandlerGuid;
                 if (x.Action == Override::Kind::AddHandler)
@@ -473,9 +523,13 @@ namespace Kans::Vfx
                 x.Action = Parse<Override::Kind>(a["Action"], Actions);
                 if (a["Stage"])
                     x.StageKind = Parse<Stage>(a["Stage"], Stages);
-                x.Target      = a["Target"].as<std::string>("");
-                x.Before      = a["Before"].as<std::string>("");
-                x.HandlerGuid = a["HandlerGuid"].as<std::string>("");
+                x.Target              = a["Target"].as<std::string>("");
+                x.Before              = a["Before"].as<std::string>("");
+                x.HandlerGuid         = a["HandlerGuid"].as<std::string>("");
+                x.SimulationStageGuid = a["SimulationStageGuid"].as<std::string>("");
+                if (x.Action == Override::Kind::AddSimulationStage ||
+                    x.Action == Override::Kind::ReplaceSimulationStage)
+                    x.Simulation = ReadSimulation(a["SimulationStage"]);
                 if (x.Action == Override::Kind::AddHandler)
                     x.Handler = ReadHandler(a["Handler"]);
                 if (x.Action == Override::Kind::AddModule)
@@ -528,10 +582,10 @@ namespace Kans::Vfx
     } // namespace
     uint32_t Components(Type t)
     {
-        return t == Type::Vec2                                        ? 2 :
-               t == Type::Vec3 || t == Type::Position                 ? 3 :
-               t == Type::Vec4 || t == Type::Color || t == Type::Quat ? 4 :
-                                                                        1;
+        return t == Type::Vec2                                            ? 2 :
+               t == Type::Vec3 || t == Type::Position || t == Type::IVec3 ? 3 :
+               t == Type::Vec4 || t == Type::Color || t == Type::Quat     ? 4 :
+                                                                            1;
     }
     const char* TypeName(Type t) { return Types[int(t)]; }
     const char* StageName(Stage s) { return Stages[int(s)]; }
@@ -603,6 +657,21 @@ namespace Kans::Vfx
     {
         YAML::Node n;
         n["Kind"] = x.Kind;
+        if (x.Kind == "Grid3D")
+        {
+            if (!x.Source.empty())
+                n["Source"] = x.Source;
+            n["Resolution"]  = Vec(glm::vec4(x.Resolution, 0), 3);
+            n["WorldBounds"] = Vec(glm::vec4(x.WorldBounds, 0), 3);
+            n["Attributes"]  = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& a : x.GridAttributes)
+            {
+                YAML::Node attribute;
+                attribute["Name"] = a.Name;
+                attribute["Type"] = TypeName(a.Kind);
+                n["Attributes"].push_back(attribute);
+            }
+        }
         if (x.Kind == "VectorField")
         {
             for (bool repeat : x.Tiling)
@@ -638,6 +707,17 @@ namespace Kans::Vfx
     {
         InterfaceBinding x;
         x.Kind = n["Kind"].as<std::string>();
+        if (x.Kind == "Grid3D")
+        {
+            const auto resolution = ReadVec(n["Resolution"], 3);
+            for (int k = 0; k < 3; ++k)
+                Check(resolution[k] >= 1 && resolution[k] <= 128 && resolution[k] == std::floor(resolution[k]),
+                      "Grid3D Resolution must contain integers from 1 to 128");
+            x.Resolution  = glm::uvec3(resolution);
+            x.WorldBounds = ReadVec(n["WorldBounds"], 3);
+            for (const auto& a : n["Attributes"])
+                x.GridAttributes.push_back({a["Name"].as<std::string>(), Parse<Type>(a["Type"], Types)});
+        }
         if (x.Kind == "VectorField")
         {
             x.Intensity = n["Intensity"].as<float>(1);
@@ -656,9 +736,9 @@ namespace Kans::Vfx
         x.SourceEmitter = n["SourceEmitter"].as<std::string>("");
         x.Channel       = n["Channel"].as<std::string>("");
         x.Asset         = ReadID(n["Asset"]);
-        x.Source        = n["Source"].as<std::string>(x.Kind == "SkeletalMesh" ? "Owner" : "Asset");
-        x.EntityPath    = n["Entity"].as<std::string>("");
-        x.Skeleton      = ReadID(n["Skeleton"]);
+        x.Source = n["Source"].as<std::string>(x.Kind == "SkeletalMesh" ? "Owner" : x.Kind == "Grid3D" ? "" : "Asset");
+        x.EntityPath = n["Entity"].as<std::string>("");
+        x.Skeleton   = ReadID(n["Skeleton"]);
         if (n["Sections"])
             x.Sections = n["Sections"].as<std::vector<uint32_t>>();
         if (n["Bones"])
@@ -821,6 +901,13 @@ namespace Kans::Vfx
         if (!x.Parent.IsValid())
         {
             n["Stages"] = StageNode(x.Stages);
+            if (!x.SimulationStages.empty())
+                for (const auto& stage : x.SimulationStages)
+                    n["Stages"]["SimulationStage"].push_back(SimulationNode(stage));
+            if (!x.Parameters.empty())
+                n["Parameters"] = Parameters(x.Parameters);
+            for (const auto& [name, binding] : x.DataInterfaces)
+                n["DataInterfaces"][name] = EncodeInterface(binding);
             if (!x.Handlers.empty())
             {
                 n["Stages"]["EventHandler"] = YAML::Node(YAML::NodeType::Sequence);
@@ -870,7 +957,19 @@ namespace Kans::Vfx
         constexpr const char* policies[] = {"PauseSpawning", "Continue"};
         if (n["DistancePolicy"])
             x.DistancePolicy = Parse<CullPolicy>(n["DistancePolicy"], policies);
-        x.Stages = ReadStages(n["Stages"], false);
+        x.Stages     = ReadStages(n["Stages"], false);
+        x.Parameters = ReadParameters(n["Parameters"], "Emitter.");
+        for (const auto& pair : n["DataInterfaces"])
+            Check(x.DataInterfaces.emplace(pair.first.as<std::string>(), DecodeInterface(pair.second)).second,
+                  "Duplicate emitter data interface parameter");
+        std::set<std::string> simulationIDs;
+        if (n["Stages"])
+            for (const auto& node : n["Stages"]["SimulationStage"])
+            {
+                auto stage = ReadSimulation(node);
+                Check(simulationIDs.insert(stage.Guid).second, "Duplicate simulation stage GUID: " + stage.Guid);
+                x.SimulationStages.push_back(stage);
+            }
         std::set<std::string> handlerIDs, channelNames;
         if (n["Stages"])
             for (const auto& h : n["Stages"]["EventHandler"])
@@ -897,7 +996,8 @@ namespace Kans::Vfx
         }
         x.Overrides = ReadOverrides(n["Overrides"]);
         Check(!x.Parent.IsValid() || (x.Stages.empty() && x.Attributes.empty() && x.Renderers.empty() &&
-                                      x.Handlers.empty() && x.Channels.empty()),
+                                      x.Handlers.empty() && x.Channels.empty() && x.SimulationStages.empty() &&
+                                      x.DataInterfaces.empty() && x.Parameters.empty()),
               "Child VFX emitter must store only overrides");
         return x;
     }
@@ -967,6 +1067,44 @@ namespace Kans::Vfx
     {
         for (const auto& o : overrides)
         {
+            if (o.Action >= Override::Kind::AddSimulationStage)
+            {
+                auto& v  = e.SimulationStages;
+                auto  at = std::find_if(v.begin(), v.end(), [&](const auto& s) { return s.Guid == o.Target; });
+                if (o.Action == Override::Kind::AddSimulationStage)
+                {
+                    Check(!o.Simulation.Guid.empty() &&
+                              std::none_of(
+                                  v.begin(), v.end(), [&](const auto& s) { return s.Guid == o.Simulation.Guid; }),
+                          "Duplicate simulation stage GUID: " + o.Simulation.Guid);
+                    auto before = std::find_if(v.begin(), v.end(), [&](const auto& s) { return s.Guid == o.Before; });
+                    Check(o.Before.empty() || before != v.end(),
+                          "Missing simulation stage reorder target: " + o.Before);
+                    v.insert(before, o.Simulation);
+                }
+                else
+                {
+                    Check(at != v.end(), "Missing simulation stage override target: " + o.Target);
+                    if (o.Action == Override::Kind::RemoveSimulationStage)
+                        v.erase(at);
+                    else if (o.Action == Override::Kind::ReplaceSimulationStage)
+                    {
+                        Check(o.Simulation.Guid == o.Target, "Simulation stage replacement must preserve GUID");
+                        *at = o.Simulation;
+                    }
+                    else
+                    {
+                        auto item = *at;
+                        v.erase(at);
+                        auto before =
+                            std::find_if(v.begin(), v.end(), [&](const auto& s) { return s.Guid == o.Before; });
+                        Check(o.Before.empty() || before != v.end(),
+                              "Missing simulation stage reorder target: " + o.Before);
+                        v.insert(before, item);
+                    }
+                }
+                continue;
+            }
             if (o.Action >= Override::Kind::AddHandler ||
                 (o.StageKind == Stage::EventHandler && o.HandlerGuid.empty() &&
                  (o.Action == Override::Kind::SetEnabled || o.Action == Override::Kind::SetInput)))
@@ -1038,8 +1176,7 @@ namespace Kans::Vfx
                 continue;
             }
             Check(o.StageKind >= Stage::EmitterSpawn, "VFX emitter override cannot target a system stage");
-            Check(o.StageKind < Stage::SimulationStage,
-                  std::string(StageName(o.StageKind)) + " not implemented in V1a");
+
             Stack* stack = &e.Stages[o.StageKind];
             if (o.StageKind == Stage::EventHandler)
             {
@@ -1047,6 +1184,16 @@ namespace Kans::Vfx
                     e.Handlers.begin(), e.Handlers.end(), [&](const auto& h) { return h.Guid == o.HandlerGuid; });
                 Check(h != e.Handlers.end(), "Missing VFX handler override target: " + o.HandlerGuid);
                 stack = &h->Modules;
+            }
+            if (o.StageKind == Stage::SimulationStage)
+            {
+                auto s = std::find_if(e.SimulationStages.begin(), e.SimulationStages.end(), [&](const auto& s) {
+                    return s.Guid == o.SimulationStageGuid;
+                });
+                Check(s != e.SimulationStages.end(),
+                      "Missing simulation stage override target: " + o.SimulationStageGuid);
+                stack = &s->Modules;
+                e.Stages.erase(Stage::SimulationStage);
             }
             auto& v  = *stack;
             auto  at = std::find_if(v.begin(), v.end(), [&](const auto& x) { return x.Guid == o.Target; });
@@ -1058,6 +1205,11 @@ namespace Kans::Vfx
                 for (const auto& handler : e.Handlers)
                     Check(std::none_of(handler.Modules.begin(),
                                        handler.Modules.end(),
+                                       [&](const auto& x) { return x.Guid == o.Added.Guid; }),
+                          "Duplicate VFX usage GUID: " + o.Added.Guid);
+                for (const auto& simulation : e.SimulationStages)
+                    Check(std::none_of(simulation.Modules.begin(),
+                                       simulation.Modules.end(),
                                        [&](const auto& x) { return x.Guid == o.Added.Guid; }),
                           "Duplicate VFX usage GUID: " + o.Added.Guid);
                 auto before = std::find_if(v.begin(), v.end(), [&](const auto& x) { return x.Guid == o.Before; });
@@ -1137,6 +1289,7 @@ namespace Kans::Vfx
         Register("Events", {Type::Vec4, true});
         Register("ForceFields", {Type::Vec3, true});
         Register("VectorField", {Type::Vec3, true});
+        Register("Grid3D", {Type::Vec4, true});
         for (const char* s : {"SkeletalMesh", "StaticMesh"})
             Register(s, {Type::Vec4, true});
     }

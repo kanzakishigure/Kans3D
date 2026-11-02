@@ -44,6 +44,9 @@ namespace Kans::Vfx
         glm::uvec4 x(0);
         if (v.Kind == Type::Int || v.Kind == Type::Bool)
             x.x = uint32_t(v.Integer);
+        else if (v.Kind == Type::IVec3)
+            for (int k = 0; k < 3; ++k)
+                x[k] = uint32_t(int32_t(v.Data[k]));
         else
             std::memcpy(&x, &v.Data, 16);
         return x;
@@ -54,6 +57,9 @@ namespace Kans::Vfx
         v.Kind = t;
         if (t == Type::Int || t == Type::Bool)
             v.Integer = int32_t(x.x);
+        else if (t == Type::IVec3)
+            for (int k = 0; k < 3; ++k)
+                v.Data[k] = float(int32_t(x[k]));
         else
             std::memcpy(&v.Data, &x, 16);
         return v;
@@ -106,6 +112,27 @@ namespace Kans::Vfx
         }
         if (compiled.Settings.Target == SimTarget::CPU)
             return;
+        for (const auto& [name, grid] : compiled.Settings.DataInterfaces)
+        {
+            const size_t bytes =
+                size_t(grid.Resolution.x) * grid.Resolution.y * grid.Resolution.z * grid.GridAttributes.size() * 16;
+            auto& storage        = Grids[name];
+            storage.Values       = {buffer(bytes), buffer(bytes)};
+            storage.Accumulation = buffer(bytes);
+        }
+        if (!Grids.empty())
+            GridResolve = Make(R"(#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) readonly buffer Previous {vec4 previous[];};
+layout(set=0,binding=1,std430) buffer Next {vec4 nextValues[];};
+layout(set=0,binding=2,std430) readonly buffer Accumulation {ivec4 sums[];};
+layout(push_constant) uniform P {uint words;} p;
+void main(){uint i=gl_GlobalInvocationID.x;if(i>=p.words)return;nextValues[i]=previous[i]+vec4(sums[i])/65536.0;}
+)",
+                               {{0, BindingType::ReadOnlyStorageBuffer},
+                                {1, BindingType::StorageBuffer},
+                                {2, BindingType::ReadOnlyStorageBuffer}},
+                               4);
         auto makeStage = [&](const Program& program) {
             std::vector<BindGroupLayoutEntry> bindings = {{0, BindingType::StorageBuffer},
                                                           {1, BindingType::ReadOnlyStorageBuffer},
@@ -116,6 +143,13 @@ namespace Kans::Vfx
                                                           {6, BindingType::ReadOnlyStorageBuffer}};
             for (const auto& resource : program.Resources)
             {
+                if (resource.Kind == "Grid3D")
+                {
+                    bindings.push_back({resource.Binding, BindingType::ReadOnlyStorageBuffer});
+                    bindings.push_back({resource.Binding + 1, BindingType::StorageBuffer});
+                    bindings.push_back({resource.Binding + 2, BindingType::StorageBuffer});
+                    continue;
+                }
                 bindings.push_back({resource.Binding,
                                     (resource.Kind == "EventOutput" || resource.Kind == "EmitterState") ?
                                         BindingType::StorageBuffer :
@@ -157,6 +191,15 @@ namespace Kans::Vfx
                 StageKernels[stage] = makeStage(program);
         for (const auto& handler : compiled.Handlers)
             HandlerKernels.push_back(makeStage(handler.Bytecode));
+        for (const auto& stage : compiled.SimulationStages)
+        {
+            SimulationKernels.push_back(makeStage(stage.Bytecode));
+            std::set<std::string> splats;
+            for (const auto& instruction : stage.Bytecode.Code)
+                if (instruction.Op == "GridAddFloat")
+                    splats.insert(instruction.Interface.Source);
+            SimulationSplats.emplace_back(splats.begin(), splats.end());
+        }
         Spawn        = StageKernels.at(Stage::ParticleSpawn);
         Update       = StageKernels.at(Stage::ParticleUpdate);
         Prepare      = Make(R"(#version 450
@@ -431,6 +474,13 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
             if (EmitterState)
                 initialization.push_back(
                     {graph.ImportBuffer("VFX emitter state", EmitterState), GraphAccess::TransferWrite});
+            for (auto& [name, grid] : Grids)
+            {
+                grid.Read = 0;
+                for (auto buffer : {grid.Values[0], grid.Values[1], grid.Accumulation})
+                    initialization.push_back(
+                        {graph.ImportBuffer("VFX grid reset", buffer), GraphAccess::TransferWrite});
+            }
             std::vector<glm::uvec4> emitterValues;
             if (EmitterState)
                 for (const auto& p : Compiled.Programs.at(Stage::EmitterUpdate).Parameters)
@@ -454,7 +504,11 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                  buffers = InterfaceBuffers,
                  events  = EventBuffers,
                  state   = EmitterState,
+                 grids   = Grids,
                  emitterValues](auto& ctx) {
+                    for (const auto& [name, grid] : grids)
+                        for (auto buffer : {grid.Values[0], grid.Values[1], grid.Accumulation})
+                            ctx.Commands.FillBuffer(buffer, 0, buffer->GetDesc().Bytes, 0);
                     for (const auto& [stage, data] : tables)
                         Upload(ctx.Device, ctx.Commands, buffers.at(stage), data.data(), data.size() * 16);
                     for (const auto& [name, buffer] : events)
@@ -579,6 +633,9 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                         },
                         true);
                 }
+                const bool       gridStage = !program.IterationGrid.empty();
+                const glm::uvec3 gridResolution =
+                    gridStage ? Compiled.Settings.DataInterfaces.at(program.IterationGrid).Resolution : glm::uvec3(1);
                 bool                  spawn        = program.StageKind == Stage::ParticleSpawn;
                 bool                  emitterStage = program.StageKind == Stage::EmitterUpdate;
                 std::vector<GraphUse> uses         = {{attributes, GraphAccess::StorageReadWrite},
@@ -593,11 +650,25 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                     di = EventDispatchArgs;
                     uses.push_back({graph.ImportBuffer("VFX event dispatch", di), GraphAccess::IndirectRead});
                 }
-                else if (!spawn && !emitterStage)
+                else if (!spawn && !emitterStage && !gridStage)
                     uses.push_back({dispatch, GraphAccess::IndirectRead});
                 std::vector<Handle<Buffer>> bound = {a, params, f, fr, c, al, table};
                 for (const auto& resource : program.Resources)
                 {
+                    if (resource.Kind == "Grid3D")
+                    {
+                        const auto& grid = Grids.at(resource.Channel);
+                        bound.push_back(grid.Values[grid.Read]);
+                        bound.push_back(grid.Values[1 - grid.Read]);
+                        bound.push_back(grid.Accumulation);
+                        uses.push_back({graph.ImportBuffer("VFX grid previous", grid.Values[grid.Read]),
+                                        GraphAccess::StorageRead});
+                        uses.push_back({graph.ImportBuffer("VFX grid next", grid.Values[1 - grid.Read]),
+                                        GraphAccess::StorageReadWrite});
+                        uses.push_back(
+                            {graph.ImportBuffer("VFX grid atomic", grid.Accumulation), GraphAccess::StorageReadWrite});
+                        continue;
+                    }
                     if (resource.Kind == "EmitterState")
                     {
                         bound.push_back(EmitterState);
@@ -667,13 +738,18 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                      spawn,
                      cap,
                      eventDispatch,
-                     emitterStage](auto& ctx) {
+                     emitterStage,
+                     gridStage,
+                     gridResolution](auto& ctx) {
                         Upload(ctx.Device, ctx.Commands, params, words.data(), words.size() * 16);
                         ctx.Commands.BindComputePipeline(kernel.Pipeline);
                         ctx.Commands.BindGroup(
                             Group(ctx.Device, kernel.Layout, bound, collisionDepth, collisionSampler));
                         ctx.Commands.PushConstants(0, &push, sizeof(push));
-                        if (emitterStage)
+                        if (gridStage)
+                            ctx.Commands.Dispatch(
+                                (gridResolution.x + 3) / 4, (gridResolution.y + 3) / 4, (gridResolution.z + 3) / 4);
+                        else if (emitterStage)
                             ctx.Commands.Dispatch(1, 1, 1);
                         else if (eventDispatch)
                             ctx.Commands.DispatchIndirect(di);
@@ -731,6 +807,61 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
                     true);
                 stage(handler.Bytecode, HandlerKernels[h], true);
                 compact();
+            }
+            for (uint32_t s = 0; s < Compiled.SimulationStages.size(); ++s)
+            {
+                const auto& simulation = Compiled.SimulationStages[s];
+                if (!simulation.Settings.Enabled.empty())
+                {
+                    auto at = tick.Parameters.find(simulation.Settings.Enabled);
+                    if (at == tick.Parameters.end() || !at->second.Integer)
+                        continue;
+                }
+                for (uint32_t iteration = 0; iteration < simulation.Settings.Iterations; ++iteration)
+                {
+                    const auto& splats = SimulationSplats[s];
+                    for (const auto& name : splats)
+                    {
+                        auto buffer = Grids.at(name).Accumulation;
+                        graph.AddPass(
+                            "VFX grid clear accumulation",
+                            GraphPassKind::Transfer,
+                            {{graph.ImportBuffer("VFX grid atomic", buffer), GraphAccess::TransferWrite}},
+                            [buffer](auto& ctx) { ctx.Commands.FillBuffer(buffer, 0, buffer->GetDesc().Bytes, 0); },
+                            true);
+                    }
+                    stage(simulation.Bytecode, SimulationKernels[s]);
+                    if (!simulation.Bytecode.IterationGrid.empty())
+                    {
+                        auto& grid = Grids.at(simulation.Bytecode.IterationGrid);
+                        grid.Read  = 1 - grid.Read;
+                    }
+                    for (const auto& name : splats)
+                    {
+                        auto&          grid  = Grids.at(name);
+                        auto           input = grid.Values[grid.Read], output = grid.Values[1 - grid.Read],
+                                       sums   = grid.Accumulation;
+                        auto           kernel = GridResolve;
+                        const uint32_t words  = uint32_t(input->GetDesc().Bytes / 16);
+                        graph.AddPass(
+                            "VFX grid resolve",
+                            GraphPassKind::Compute,
+                            {{graph.ImportBuffer("VFX grid previous", input), GraphAccess::StorageRead},
+                             {graph.ImportBuffer("VFX grid next", output), GraphAccess::StorageWrite},
+                             {graph.ImportBuffer("VFX grid atomic", sums), GraphAccess::StorageRead}},
+                            [input, output, sums, kernel, words](auto& ctx) {
+                                ctx.Commands.BindComputePipeline(kernel.Pipeline);
+                                ctx.Commands.BindGroup(Group(ctx.Device, kernel.Layout, {input, output, sums}));
+                                ctx.Commands.PushConstants(0, &words, 4);
+                                ctx.Commands.Dispatch((words + 63) / 64);
+                            },
+                            true);
+                        grid.Read = 1 - grid.Read;
+                    }
+                    // Particle deaths take effect before the next iteration's indirect dispatch.
+                    if (simulation.Bytecode.IterationGrid.empty())
+                        compact();
+                }
             }
         }
         bool worked = !emitter.Pending.empty();

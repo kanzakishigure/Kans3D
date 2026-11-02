@@ -1,0 +1,494 @@
+Version: 1
+AssetID: b5f3f10bb437548f:0000000000000001
+Usage: Module
+AllowedStages: 128
+Category: Built-in
+Description: GridDiffuse
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Amount
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+Nodes:
+- Guid: 3b64618c-e68e-58bc-8e85-36b6245e8d65
+  Op: Get
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Grid.ExecutionIndex
+- Guid: 516ff751-9bef-5a7a-bb8b-2b6a648ed8e3
+  Op: GridGet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: 8f19fa23-77ef-5a93-b192-f9415c978125
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Amount
+- Guid: 585fb607-3264-52fc-9398-401878851437
+  Op: Constant
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Constant:
+    Type: ivec3
+    Value:
+    - -1
+    - 0
+    - 0
+- Guid: 3731b3d7-d4b6-51c6-beac-926c3639bef0
+  Op: Add
+  Type: ivec3
+  Inputs:
+  - Name: A
+    Type: ivec3
+  - Name: B
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: ivec3
+- Guid: cac94e20-6fa7-59eb-be9c-5d130f6efc55
+  Op: GridGet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: 698832b0-84f4-5263-ae47-7a0fd9c702ef
+  Op: Constant
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Constant:
+    Type: ivec3
+    Value:
+    - 1
+    - 0
+    - 0
+- Guid: e8edbc6b-ebc0-5572-b083-ec67a8e19d70
+  Op: Add
+  Type: ivec3
+  Inputs:
+  - Name: A
+    Type: ivec3
+  - Name: B
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: ivec3
+- Guid: 06f44da5-7805-5ce0-a321-11c15986f051
+  Op: GridGet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: 3fab27a0-2dd8-57d6-a67a-d457071ba0fa
+  Op: Constant
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Constant:
+    Type: ivec3
+    Value:
+    - 0
+    - -1
+    - 0
+- Guid: 9af1473f-6d59-5125-92e8-f84992549330
+  Op: Add
+  Type: ivec3
+  Inputs:
+  - Name: A
+    Type: ivec3
+  - Name: B
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: ivec3
+- Guid: dfe5106a-9d9c-5840-8146-da4d1e6f363f
+  Op: GridGet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: 9b222f2d-0232-5d63-8bcc-343a254bdfce
+  Op: Constant
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Constant:
+    Type: ivec3
+    Value:
+    - 0
+    - 1
+    - 0
+- Guid: 1180b708-288b-5693-8863-d4ff54fea5d5
+  Op: Add
+  Type: ivec3
+  Inputs:
+  - Name: A
+    Type: ivec3
+  - Name: B
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: ivec3
+- Guid: 9b0566d1-8558-5103-bdc2-ac4ca66b266e
+  Op: GridGet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: 85e60ef9-d81a-5b9c-856b-111059f9a855
+  Op: Constant
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Constant:
+    Type: ivec3
+    Value:
+    - 0
+    - 0
+    - -1
+- Guid: a41c6517-44db-55ef-a634-d8d0f63ca392
+  Op: Add
+  Type: ivec3
+  Inputs:
+  - Name: A
+    Type: ivec3
+  - Name: B
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: ivec3
+- Guid: af995971-0b6f-57f5-a952-9f968b27e768
+  Op: GridGet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: 516c37c6-9e51-58f3-9c16-e4d3d6554244
+  Op: Constant
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Constant:
+    Type: ivec3
+    Value:
+    - 0
+    - 0
+    - 1
+- Guid: dff868c2-2e3f-5c6c-ba5a-99b820d946f2
+  Op: Add
+  Type: ivec3
+  Inputs:
+  - Name: A
+    Type: ivec3
+  - Name: B
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: ivec3
+- Guid: 27192ef5-ea6f-5327-9860-4987b79c485d
+  Op: GridGet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: 731ddd00-3521-5450-a8de-a224a088e51a
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 91fde820-5993-56ee-b069-417de5fc7b05
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 6bab04e7-3897-5b03-8d46-d5518364efa5
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 964a29e2-775e-5f12-b8c5-0be894743ab5
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 9f998f1f-585d-5ca3-9333-707c6ad7dc33
+  Op: Add
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: d5207ee8-3bf6-50af-af0b-e88e0ff734bb
+  Op: Constant
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Constant:
+    Type: float
+    Value: 6
+- Guid: 65c362c5-cc7e-5dea-8df8-a0e7254156b6
+  Op: Div
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 67e37504-360f-5ac6-9834-2d85703219df
+  Op: Lerp
+  Type: float
+  Inputs:
+  - Name: A
+    Type: float
+  - Name: B
+    Type: float
+  - Name: Amount
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+- Guid: 1baa7e30-5829-57e9-89ab-1d348139d8ab
+  Op: GridSet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Value
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+Links:
+- From: 3b64618c-e68e-58bc-8e85-36b6245e8d65
+  Output: Value
+  To: 516ff751-9bef-5a7a-bb8b-2b6a648ed8e3
+  Input: Index
+- From: 3b64618c-e68e-58bc-8e85-36b6245e8d65
+  Output: Value
+  To: 3731b3d7-d4b6-51c6-beac-926c3639bef0
+  Input: A
+- From: 585fb607-3264-52fc-9398-401878851437
+  Output: Value
+  To: 3731b3d7-d4b6-51c6-beac-926c3639bef0
+  Input: B
+- From: 3731b3d7-d4b6-51c6-beac-926c3639bef0
+  Output: Value
+  To: cac94e20-6fa7-59eb-be9c-5d130f6efc55
+  Input: Index
+- From: 3b64618c-e68e-58bc-8e85-36b6245e8d65
+  Output: Value
+  To: e8edbc6b-ebc0-5572-b083-ec67a8e19d70
+  Input: A
+- From: 698832b0-84f4-5263-ae47-7a0fd9c702ef
+  Output: Value
+  To: e8edbc6b-ebc0-5572-b083-ec67a8e19d70
+  Input: B
+- From: e8edbc6b-ebc0-5572-b083-ec67a8e19d70
+  Output: Value
+  To: 06f44da5-7805-5ce0-a321-11c15986f051
+  Input: Index
+- From: 3b64618c-e68e-58bc-8e85-36b6245e8d65
+  Output: Value
+  To: 9af1473f-6d59-5125-92e8-f84992549330
+  Input: A
+- From: 3fab27a0-2dd8-57d6-a67a-d457071ba0fa
+  Output: Value
+  To: 9af1473f-6d59-5125-92e8-f84992549330
+  Input: B
+- From: 9af1473f-6d59-5125-92e8-f84992549330
+  Output: Value
+  To: dfe5106a-9d9c-5840-8146-da4d1e6f363f
+  Input: Index
+- From: 3b64618c-e68e-58bc-8e85-36b6245e8d65
+  Output: Value
+  To: 1180b708-288b-5693-8863-d4ff54fea5d5
+  Input: A
+- From: 9b222f2d-0232-5d63-8bcc-343a254bdfce
+  Output: Value
+  To: 1180b708-288b-5693-8863-d4ff54fea5d5
+  Input: B
+- From: 1180b708-288b-5693-8863-d4ff54fea5d5
+  Output: Value
+  To: 9b0566d1-8558-5103-bdc2-ac4ca66b266e
+  Input: Index
+- From: 3b64618c-e68e-58bc-8e85-36b6245e8d65
+  Output: Value
+  To: a41c6517-44db-55ef-a634-d8d0f63ca392
+  Input: A
+- From: 85e60ef9-d81a-5b9c-856b-111059f9a855
+  Output: Value
+  To: a41c6517-44db-55ef-a634-d8d0f63ca392
+  Input: B
+- From: a41c6517-44db-55ef-a634-d8d0f63ca392
+  Output: Value
+  To: af995971-0b6f-57f5-a952-9f968b27e768
+  Input: Index
+- From: 3b64618c-e68e-58bc-8e85-36b6245e8d65
+  Output: Value
+  To: dff868c2-2e3f-5c6c-ba5a-99b820d946f2
+  Input: A
+- From: 516c37c6-9e51-58f3-9c16-e4d3d6554244
+  Output: Value
+  To: dff868c2-2e3f-5c6c-ba5a-99b820d946f2
+  Input: B
+- From: dff868c2-2e3f-5c6c-ba5a-99b820d946f2
+  Output: Value
+  To: 27192ef5-ea6f-5327-9860-4987b79c485d
+  Input: Index
+- From: cac94e20-6fa7-59eb-be9c-5d130f6efc55
+  Output: Value
+  To: 731ddd00-3521-5450-a8de-a224a088e51a
+  Input: A
+- From: 06f44da5-7805-5ce0-a321-11c15986f051
+  Output: Value
+  To: 731ddd00-3521-5450-a8de-a224a088e51a
+  Input: B
+- From: 731ddd00-3521-5450-a8de-a224a088e51a
+  Output: Value
+  To: 91fde820-5993-56ee-b069-417de5fc7b05
+  Input: A
+- From: dfe5106a-9d9c-5840-8146-da4d1e6f363f
+  Output: Value
+  To: 91fde820-5993-56ee-b069-417de5fc7b05
+  Input: B
+- From: 91fde820-5993-56ee-b069-417de5fc7b05
+  Output: Value
+  To: 6bab04e7-3897-5b03-8d46-d5518364efa5
+  Input: A
+- From: 9b0566d1-8558-5103-bdc2-ac4ca66b266e
+  Output: Value
+  To: 6bab04e7-3897-5b03-8d46-d5518364efa5
+  Input: B
+- From: 6bab04e7-3897-5b03-8d46-d5518364efa5
+  Output: Value
+  To: 964a29e2-775e-5f12-b8c5-0be894743ab5
+  Input: A
+- From: af995971-0b6f-57f5-a952-9f968b27e768
+  Output: Value
+  To: 964a29e2-775e-5f12-b8c5-0be894743ab5
+  Input: B
+- From: 964a29e2-775e-5f12-b8c5-0be894743ab5
+  Output: Value
+  To: 9f998f1f-585d-5ca3-9333-707c6ad7dc33
+  Input: A
+- From: 27192ef5-ea6f-5327-9860-4987b79c485d
+  Output: Value
+  To: 9f998f1f-585d-5ca3-9333-707c6ad7dc33
+  Input: B
+- From: 9f998f1f-585d-5ca3-9333-707c6ad7dc33
+  Output: Value
+  To: 65c362c5-cc7e-5dea-8df8-a0e7254156b6
+  Input: A
+- From: d5207ee8-3bf6-50af-af0b-e88e0ff734bb
+  Output: Value
+  To: 65c362c5-cc7e-5dea-8df8-a0e7254156b6
+  Input: B
+- From: 516ff751-9bef-5a7a-bb8b-2b6a648ed8e3
+  Output: Value
+  To: 67e37504-360f-5ac6-9834-2d85703219df
+  Input: A
+- From: 65c362c5-cc7e-5dea-8df8-a0e7254156b6
+  Output: Value
+  To: 67e37504-360f-5ac6-9834-2d85703219df
+  Input: B
+- From: 8f19fa23-77ef-5a93-b192-f9415c978125
+  Output: Value
+  To: 67e37504-360f-5ac6-9834-2d85703219df
+  Input: Amount
+- From: 3b64618c-e68e-58bc-8e85-36b6245e8d65
+  Output: Value
+  To: 1baa7e30-5829-57e9-89ab-1d348139d8ab
+  Input: Index
+- From: 67e37504-360f-5ac6-9834-2d85703219df
+  Output: Value
+  To: 1baa7e30-5829-57e9-89ab-1d348139d8ab
+  Input: Value

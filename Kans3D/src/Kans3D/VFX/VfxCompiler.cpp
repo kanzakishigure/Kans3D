@@ -30,7 +30,7 @@ namespace Kans::Vfx
                     }
             return v;
         }
-        bool VectorType(Type t) { return t != Type::Int && t != Type::Bool; }
+        bool VectorType(Type t) { return t != Type::Int && t != Type::Bool && t != Type::IVec3; }
         bool Widen(Type from, Type to)
         {
             return from == to || (from == Type::Float && (to == Type::Vec2 || to == Type::Vec3 || to == Type::Vec4));
@@ -53,6 +53,7 @@ namespace Kans::Vfx
                                                        {"Floor", 1},
                                                        {"Frac", 1},
                                                        {"Pow", 2},
+                                                       {"Exp", 1},
                                                        {"Sin", 1},
                                                        {"Cos", 1},
                                                        {"Step", 2},
@@ -91,20 +92,131 @@ namespace Kans::Vfx
                                                        {"Not", 1},
                                                        {"Mod", 2}};
         std::string                           GType(Type);
+        void                                  SpecializeGridModule(Module&                                        m,
+                                                                   const std::map<std::string, Input>&            inputs,
+                                                                   const std::map<std::string, InterfaceBinding>* Grids)
+        {
+            // Grid module graphs are attribute-polymorphic: infer their value branch from the binding.
+            // Coordinate branches and scalar controls (Rate, Amount, dt) retain their declared types.
+            static const auto              clearID = AssetID::FromString("c0d609763e645cfd:0000000000000001");
+            static const std::set<AssetID> modules = {clearID,
+                                                      AssetID::FromString("233b8dd42ad050aa:0000000000000001"),
+                                                      AssetID::FromString("b5f3f10bb437548f:0000000000000001"),
+                                                      AssetID::FromString("5e23b1e61a875ac1:0000000000000001")};
+            if (modules.count(m.Identity))
+            {
+                auto binding = inputs.find("Module.Grid");
+                if (Grids && binding != inputs.end() && binding->second.Kind == InputKind::DataInterface)
+                {
+                    auto grid = Grids->find(binding->second.Interface.Source);
+                    if (grid != Grids->end())
+                    {
+                        // GridClear accepts a selected attribute list; an empty channel/list clears the collection.
+                        if (m.Identity == clearID && (binding->second.Interface.Channel.empty() ||
+                                                      !binding->second.Interface.GridAttributes.empty()))
+                        {
+                            const auto attributes = binding->second.Interface.GridAttributes.empty() ?
+                                                        grid->second.GridAttributes :
+                                                        binding->second.Interface.GridAttributes;
+                            const auto nodes      = m.Nodes;
+                            const auto links      = m.Links;
+                            m.Nodes.clear();
+                            m.Links.clear();
+                            for (const auto& attribute : attributes)
+                            {
+                                auto selected = std::find_if(grid->second.GridAttributes.begin(),
+                                                             grid->second.GridAttributes.end(),
+                                                             [&](const auto& a) { return a.Name == attribute.Name; });
+                                const auto type =
+                                    selected == grid->second.GridAttributes.end() ? Type::Float : selected->Kind;
+                                const auto suffix = "/" + attribute.Name;
+                                for (auto node : nodes)
+                                {
+                                    node.Guid += suffix;
+                                    if (node.Op == "GridSet")
+                                    {
+                                        node.Code            = attribute.Name;
+                                        node.Kind            = type;
+                                        node.Inputs[1].Kind  = type;
+                                        node.Outputs[0].Kind = type;
+                                    }
+                                    m.Nodes.push_back(node);
+                                }
+                                for (auto link : links)
+                                {
+                                    link.From += suffix;
+                                    link.To += suffix;
+                                    m.Links.push_back(link);
+                                }
+                            }
+                            return;
+                        }
+                        auto attr =
+                            std::find_if(grid->second.GridAttributes.begin(),
+                                         grid->second.GridAttributes.end(),
+                                         [&](const auto& a) { return a.Name == binding->second.Interface.Channel; });
+                        if (attr != grid->second.GridAttributes.end())
+                        {
+                            std::set<std::string> values;
+                            for (auto& p : m.Inputs)
+                                if (p.Name == "Module.Value")
+                                {
+                                    p.Kind = attr->Kind;
+                                    if (p.Default)
+                                        p.Default = Value::Vector(glm::vec4(p.Default->Data.x), attr->Kind);
+                                }
+                            for (auto& n : m.Nodes)
+                            {
+                                bool value = n.Op == "GridGet" || n.Op == "GridSample" || n.Op == "GridSet" ||
+                                             (n.Op == "Input" && n.Parameter == "Module.Value");
+                                for (const auto& l : m.Links)
+                                    if (l.To == n.Guid && values.count(l.From))
+                                        value = true;
+                                if (!value || n.Kind == Type::IVec3)
+                                    continue;
+                                values.insert(n.Guid);
+                                n.Kind = attr->Kind;
+                                for (auto& p : n.Outputs)
+                                    p.Kind = attr->Kind;
+                                for (size_t k = 0; k < n.Inputs.size(); ++k)
+                                    if (n.Inputs[k].Kind == Type::Float && !(n.Op == "Lerp" && k == 2))
+                                        n.Inputs[k].Kind = attr->Kind;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         struct Compiler
         {
-            const ModuleResolver&                    Resolve;
-            std::map<std::string, Parameter>         Known;
-            std::vector<Diagnostic>&                 Errors;
-            Program                                  Out;
-            std::vector<AssetID>                     Calls;
-            AssetID                                  Asset;
-            Space                                    SimulationSpace = Space::Local;
-            MeshResolver                             Meshes;
-            SkeletonResolver                         Skeletons;
-            std::map<std::string, InterfaceBinding>  MeshCache;
-            std::map<std::string, InterfaceBinding>* SharedMeshCache = nullptr;
-            uint32_t                                 Emit(Instruction i)
+            const ModuleResolver&                          Resolve;
+            std::map<std::string, Parameter>               Known;
+            std::vector<Diagnostic>&                       Errors;
+            Program                                        Out;
+            std::vector<AssetID>                           Calls;
+            AssetID                                        Asset;
+            Space                                          SimulationSpace = Space::Local;
+            MeshResolver                                   Meshes;
+            SkeletonResolver                               Skeletons;
+            std::map<std::string, InterfaceBinding>        MeshCache;
+            std::map<std::string, InterfaceBinding>*       SharedMeshCache = nullptr;
+            const std::map<std::string, InterfaceBinding>* Grids           = nullptr;
+            uint32_t GridResource(const std::string& name, const InterfaceBinding& grid)
+            {
+                for (uint32_t n = 0; n < Out.Resources.size(); ++n)
+                    if (Out.Resources[n].Kind == "Grid3D" && Out.Resources[n].Channel == name)
+                        return n;
+                ResourceBinding resource;
+                resource.Kind    = "Grid3D";
+                resource.Channel = name;
+                resource.Grid    = grid;
+                resource.Binding = 7;
+                for (const auto& r : Out.Resources)
+                    resource.Binding = std::max(resource.Binding, r.Binding + (r.Kind == "Grid3D" ? 3u : 1u));
+                Out.Resources.push_back(resource);
+                return uint32_t(Out.Resources.size() - 1);
+            }
+            uint32_t Emit(Instruction i)
             {
                 if (i.Kind == Type::Position && (i.Op == "ReadAttribute" || i.Op == "ReadAttributeByID"))
                     i.PositionSpace = SimulationSpace;
@@ -124,6 +236,8 @@ namespace Kans::Vfx
                     i.PositionSpace = Out.Code[i.Args[0]].PositionSpace;
                 if (i.Op == "Collision" && !i.Args.empty())
                     i.PositionSpace = Out.Code[i.Args[0]].PositionSpace;
+                if (i.Op == "GridIndexToWorld")
+                    i.PositionSpace = Space::World;
                 if (i.Op == "ToSimulationVector")
                     i.PositionSpace = SimulationSpace;
                 Out.Code.push_back(std::move(i));
@@ -179,6 +293,15 @@ namespace Kans::Vfx
             uint32_t
             Get(const std::string& name, Type type, AssetID asset, const std::string& node, const std::string& pin)
             {
+                if (name == "Grid.ExecutionIndex")
+                {
+                    if (Out.IterationGrid.empty() || type != Type::IVec3)
+                        Error(asset, node, pin, "Grid.ExecutionIndex requires a grid simulation stage and ivec3");
+                    Instruction i;
+                    i.Op   = "GridExecutionIndex";
+                    i.Kind = Type::IVec3;
+                    return Emit(i);
+                }
                 if (name == "Engine.Owner.LocalToWorld")
                 {
                     if (type != Type::Vec4)
@@ -226,7 +349,8 @@ namespace Kans::Vfx
                 auto s = Out.StageKind;
                 return (n.rfind("Transient.", 0) == 0) ||
                        (n.rfind("Particles.", 0) == 0 &&
-                        (s == Stage::ParticleSpawn || s == Stage::ParticleUpdate || s == Stage::EventHandler)) ||
+                        (s == Stage::ParticleSpawn || s == Stage::ParticleUpdate || s == Stage::EventHandler ||
+                         (s == Stage::SimulationStage && Out.IterationGrid.empty()))) ||
                        (n.rfind("Emitter.", 0) == 0 && (s == Stage::EmitterSpawn || s == Stage::EmitterUpdate)) ||
                        (n.rfind("System.", 0) == 0 && (s == Stage::SystemSpawn || s == Stage::SystemUpdate));
             }
@@ -256,6 +380,7 @@ namespace Kans::Vfx
                     Error(id, "", "", e.what());
                     return Constant(Value::Float(0));
                 }
+                SpecializeGridModule(m, inputs, Grids);
                 if (m.ScriptUsage != expected)
                     Error(id, "", "", "Script Usage does not match call site");
                 if (!(m.AllowedStages & (1u << uint32_t(Out.StageKind))))
@@ -284,7 +409,8 @@ namespace Kans::Vfx
                         if (x.Kind == InputKind::Literal)
                             v = Constant(x.Literal);
                         else if (x.Kind == InputKind::Link)
-                            v = Get(x.Link, p.Kind, id, "", p.Name);
+                            v = Grids && Grids->count(x.Link) ? Constant(Value::Vector({}, p.Kind)) :
+                                                                Get(x.Link, p.Kind, id, "", p.Name);
                         else if (x.Kind == InputKind::DynamicInput)
                             v = Inline(x.Script, Usage::DynamicInput, x.Inputs, scope + "/" + p.Name);
                         else
@@ -453,6 +579,125 @@ namespace Kans::Vfx
                                 if (Out.Code[i.Args[a]].Kind == Type::Position)
                                     i.Args[a] = PositionTo(i.Args[a], SimulationSpace);
                         reg = Emit(i);
+                    }
+                    else if (n.Op.rfind("Grid", 0) == 0)
+                    {
+                        std::string name      = n.Parameter;
+                        auto        binding   = inputs.find(n.Parameter);
+                        std::string attribute = n.Code;
+                        if (binding != inputs.end())
+                        {
+                            if (binding->second.Kind == InputKind::Link)
+                                name = binding->second.Link;
+                            else if (binding->second.Kind == InputKind::DataInterface)
+                            {
+                                name = binding->second.Interface.Source;
+                                if (attribute.empty())
+                                    attribute = binding->second.Interface.Channel;
+                            }
+                        }
+                        auto grid =
+                            Grids ? Grids->find(name) : std::map<std::string, InterfaceBinding>::const_iterator {};
+                        if (!Grids || grid == Grids->end() || grid->second.Kind != "Grid3D")
+                        {
+                            Error(id, guid, "Grid", "Grid operation requires a Grid3D emitter parameter: " + name);
+                            reg = Constant(Value::Vector({}, i.Kind));
+                        }
+                        else
+                        {
+                            i.Interface        = grid->second;
+                            i.Interface.Source = name;
+                            i.Code             = attribute;
+                            i.Resource         = GridResource(name, grid->second);
+                            if (Out.Target != SimTarget::GPU)
+                                Error(id, guid, "Grid", "Grid3D requires GPU; switch the emitter to GPU");
+                            const bool set = n.Op == "GridSet", add = n.Op == "GridAddFloat";
+                            const bool sample = n.Op == "GridSample";
+                            const bool attr   = set || add || sample || n.Op == "GridGet";
+                            auto       at     = std::find_if(i.Interface.GridAttributes.begin(),
+                                                             i.Interface.GridAttributes.end(),
+                                                             [&](const auto& a) { return a.Name == attribute; });
+                            if (attr)
+                            {
+                                if (at == i.Interface.GridAttributes.end())
+                                    Error(id, guid, "Attribute", "Unknown Grid3D attribute: " + attribute);
+                                else
+                                {
+                                    i.Parameter = uint32_t(at - i.Interface.GridAttributes.begin());
+                                    if (!add && i.Kind != at->Kind)
+                                        Error(id, guid, set ? "Value" : output, "Grid attribute type mismatch");
+                                }
+                            }
+                            const uint32_t count = set ? 2 :
+                                                   add ? 3 :
+                                                   (attr || n.Op == "GridIndexToWorld" || n.Op == "GridWorldToIndex") ?
+                                                         1 :
+                                                         0;
+                            if (i.Args.size() != count)
+                                Error(id, guid, "Index", "Wrong input count for " + n.Op);
+                            if (count && !i.Args.empty())
+                            {
+                                auto expected = sample || n.Op == "GridWorldToIndex" ? Type::Position : Type::IVec3;
+                                if (Out.Code[i.Args[0]].Kind != expected)
+                                    Error(id,
+                                          guid,
+                                          expected == Type::Position ? "Position" : "Index",
+                                          "Grid coordinate type mismatch");
+                                if (expected == Type::Position)
+                                    i.Args[0] = PositionTo(i.Args[0], Space::World);
+                            }
+                            if (set)
+                            {
+                                if (Out.StageKind != Stage::SimulationStage || Out.IterationGrid != name)
+                                    Error(id,
+                                          guid,
+                                          "Grid",
+                                          "GridSet requires a simulation stage whose iteration source is this grid");
+                                else if (!i.Args.empty() && Out.Code[i.Args[0]].Op != "GridExecutionIndex")
+                                    Error(id, guid, "Index", "GridSet may write only at Grid.ExecutionIndex");
+                                if (i.Args.size() == 2 && Out.Code[i.Args[1]].Kind != i.Kind)
+                                    Error(id, guid, "Value", "GridSet value type mismatch");
+                            }
+                            if (add)
+                            {
+                                if (Out.StageKind != Stage::SimulationStage || !Out.IterationGrid.empty())
+                                    Error(id, guid, "Grid", "GridAddFloat requires a particle simulation stage");
+                                if (i.Args.size() == 3)
+                                {
+                                    const auto& component = Out.Code[i.Args[1]];
+                                    if (component.Op != "Constant" || component.Kind != Type::Int ||
+                                        component.Literal.Integer < 0 || at == i.Interface.GridAttributes.end() ||
+                                        uint32_t(component.Literal.Integer) >= Components(at->Kind))
+                                        Error(
+                                            id, guid, "Component", "GridAddFloat requires a constant valid component");
+                                    if (Out.Code[i.Args[2]].Kind != Type::Float || i.Kind != Type::Float)
+                                        Error(id, guid, "Value", "GridAddFloat requires float");
+                                }
+                            }
+                            if (sample && Out.StageKind != Stage::ParticleUpdate &&
+                                !(Out.StageKind == Stage::SimulationStage && Out.IterationGrid.empty()))
+                                Error(id,
+                                      guid,
+                                      "Position",
+                                      "GridSample requires ParticleUpdate or a particle simulation stage");
+                            if ((n.Op == "GridNumCells" || n.Op == "GridWorldToIndex") && i.Kind != Type::IVec3)
+                                Error(id, guid, output, "Grid index output requires ivec3");
+                            if (n.Op == "GridCellSize" && i.Kind != Type::Vec3)
+                                Error(id, guid, output, "GridCellSize requires vec3");
+                            if (n.Op == "GridIndexToWorld" && i.Kind != Type::Position)
+                                Error(id, guid, output, "GridIndexToWorld requires Position");
+                            if (!std::set<std::string> {"GridNumCells",
+                                                        "GridCellSize",
+                                                        "GridIndexToWorld",
+                                                        "GridWorldToIndex",
+                                                        "GridGet",
+                                                        "GridSet",
+                                                        "GridSample",
+                                                        "GridAddFloat"}
+                                     .count(n.Op))
+                                Error(id, guid, output, "Unknown Grid3D operation");
+                            reg = Emit(i);
+                        }
                     }
                     else if (IsMeshOperation(n.Op))
                     {
@@ -712,7 +957,8 @@ namespace Kans::Vfx
                 };
                 // Node order is the parameter-map execution order. Links are expression dependencies.
                 for (const auto& n : m.Nodes)
-                    if ((n.Stages & (1u << uint32_t(Out.StageKind))) && (n.Op == "Set" || n.Op == "WriteEvent"))
+                    if ((n.Stages & (1u << uint32_t(Out.StageKind))) &&
+                        (n.Op == "Set" || n.Op == "WriteEvent" || n.Op == "GridSet" || n.Op == "GridAddFloat"))
                         visit(n.Guid, n.Outputs.empty() ? "Value" : n.Outputs.front().Name);
                 uint32_t result = Constant(Value::Float(0));
                 if (expected != Usage::Module)
@@ -774,7 +1020,7 @@ namespace Kans::Vfx
                 }
                 else if (i.Op == "Dot" || i.Op == "Length")
                 {
-                    if (i.Kind != Type::Float || Components(t(0)) < 2)
+                    if (i.Kind != (t(0) == Type::IVec3 ? Type::Int : Type::Float) || Components(t(0)) < 2)
                         error(0, "Vector reduction type mismatch");
                     if (i.Op == "Dot" && t(0) != t(1))
                         error(1, "Dot input type mismatch");
@@ -789,12 +1035,12 @@ namespace Kans::Vfx
                     if (Components(i.Kind) < 2)
                         error(0, "Make requires a vector or color output");
                     for (size_t k = 0; k < i.Args.size(); ++k)
-                        if (t(k) != Type::Float)
-                            error(k, "Make requires float components");
+                        if (t(k) != (i.Kind == Type::IVec3 ? Type::Int : Type::Float))
+                            error(k, "Make component type mismatch");
                 }
                 else if (i.Op == "Break")
                 {
-                    if (i.Kind != Type::Float || Components(t(0)) < 2)
+                    if (i.Kind != (t(0) == Type::IVec3 ? Type::Int : Type::Float) || Components(t(0)) < 2)
                         error(0, "Break requires a vector and float output");
                 }
                 else if (i.Op == "And" || i.Op == "Or" || i.Op == "Not")
@@ -910,63 +1156,72 @@ namespace Kans::Vfx
                     }
             }
         };
-        std::map<std::string, Parameter> Collect(const std::map<Stage, Stack>&    stages,
-                                                 const ModuleResolver&            resolve,
-                                                 std::map<std::string, Parameter> known)
+        std::map<std::string, Parameter> Collect(const std::map<Stage, Stack>&                  stages,
+                                                 const ModuleResolver&                          resolve,
+                                                 std::map<std::string, Parameter>               known,
+                                                 const std::map<std::string, InterfaceBinding>* grids = nullptr)
         {
-            std::set<AssetID>                         visited;
-            std::function<void(AssetID, std::string)> scan = [&](AssetID id, std::string scope) {
-                if (!visited.insert(id).second)
-                    return;
-                try
-                {
-                    const auto m = resolve(id);
-                    for (const auto& n : m.Nodes)
+            std::set<AssetID>                                                              visited;
+            std::function<void(AssetID, std::string, const std::map<std::string, Input>&)> scan =
+                [&](AssetID id, std::string scope, const std::map<std::string, Input>& inputs) {
+                    if (!visited.insert(id).second)
+                        return;
+                    try
                     {
-                        if (n.Op == "Set")
+                        auto m = resolve(id);
+                        SpecializeGridModule(m, inputs, grids);
+                        for (const auto& n : m.Nodes)
                         {
-                            auto name = n.Parameter;
-                            auto p    = name.find("$Usage");
-                            if (p != std::string::npos)
-                                name.replace(p, 6, scope);
-                            if (!known.count(name))
-                                known[name] = {name, n.Kind, Value::Vector({}, n.Kind), {}};
-                            else if (!known[name].Default)
-                                known[name].Default = Value::Vector({}, known[name].Kind);
+                            if (n.Op == "Set")
+                            {
+                                auto name = n.Parameter;
+                                auto p    = name.find("$Usage");
+                                if (p != std::string::npos)
+                                    name.replace(p, 6, scope);
+                                if (!known.count(name))
+                                    known[name] = {name, n.Kind, Value::Vector({}, n.Kind), {}};
+                                else if (!known[name].Default)
+                                    known[name].Default = Value::Vector({}, known[name].Kind);
+                            }
+                            if (n.Op == "Call")
+                                scan(n.Function, scope + "/" + n.Guid, {});
                         }
-                        if (n.Op == "Call")
-                            scan(n.Function, scope + "/" + n.Guid);
                     }
-                }
-                catch (const std::exception&)
-                {}
-                visited.erase(id);
-            };
+                    catch (const std::exception&)
+                    {}
+                    visited.erase(id);
+                };
             for (const auto& [s, stack] : stages)
                 for (const auto& use : stack)
                     if (use.Enabled)
-                        scan(use.Script, use.Guid);
+                        scan(use.Script, use.Guid, use.Inputs);
             return known;
         }
-        Program StageProgram(Stage                                    stage,
-                             const Stack&                             stack,
-                             SimTarget                                target,
-                             const ModuleResolver&                    resolve,
-                             std::map<std::string, Parameter>         known,
-                             std::vector<Diagnostic>&                 errors,
-                             AssetID                                  asset,
-                             Space                                    simulationSpace = Space::Local,
-                             const MeshResolver&                      meshes          = {},
-                             const SkeletonResolver&                  skeletons       = {},
-                             std::map<std::string, InterfaceBinding>* meshCache       = nullptr)
+        Program StageProgram(Stage                                          stage,
+                             const Stack&                                   stack,
+                             SimTarget                                      target,
+                             const ModuleResolver&                          resolve,
+                             std::map<std::string, Parameter>               known,
+                             std::vector<Diagnostic>&                       errors,
+                             AssetID                                        asset,
+                             Space                                          simulationSpace = Space::Local,
+                             const MeshResolver&                            meshes          = {},
+                             const SkeletonResolver&                        skeletons       = {},
+                             std::map<std::string, InterfaceBinding>*       meshCache       = nullptr,
+                             const std::map<std::string, InterfaceBinding>* grids           = nullptr,
+                             const std::string&                             iterationGrid   = "")
         {
             Compiler c {resolve, std::move(known), errors, {}, {}, asset};
-            c.SimulationSpace = simulationSpace;
-            c.Meshes          = meshes;
-            c.Skeletons       = skeletons;
-            c.SharedMeshCache = meshCache;
-            c.Out.StageKind   = stage;
-            c.Out.Target      = target;
+            c.SimulationSpace   = simulationSpace;
+            c.Meshes            = meshes;
+            c.Skeletons         = skeletons;
+            c.SharedMeshCache   = meshCache;
+            c.Out.StageKind     = stage;
+            c.Out.Target        = target;
+            c.Grids             = grids;
+            c.Out.IterationGrid = iterationGrid;
+            if (grids && grids->count(iterationGrid))
+                c.GridResource(iterationGrid, grids->at(iterationGrid));
             // Event-producing modules observe the final particle state, including kills later in the stack.
             for (bool eventPass : {false, true})
                 for (const auto& use : stack)
@@ -994,7 +1249,8 @@ namespace Kans::Vfx
                     mark(argument);
             };
             for (uint32_t index = 0; index < c.Out.Code.size(); ++index)
-                if (c.Out.Code[index].Op == "Set" || c.Out.Code[index].Op == "WriteEvent")
+                if (c.Out.Code[index].Op == "Set" || c.Out.Code[index].Op == "WriteEvent" ||
+                    c.Out.Code[index].Op == "GridSet" || c.Out.Code[index].Op == "GridAddFloat")
                     mark(index);
             std::vector<uint32_t>    registers(c.Out.Code.size()), parameters(c.Out.Parameters.size(), UINT32_MAX);
             std::vector<Instruction> code;
@@ -1071,7 +1327,7 @@ namespace Kans::Vfx
             {
                 if (k)
                     s += ",";
-                s += F(v.Data[k]);
+                s += v.Kind == Type::IVec3 ? std::to_string(int32_t(v.Data[k])) : F(v.Data[k]);
             }
             return s + ")";
         }
@@ -1099,8 +1355,9 @@ namespace Kans::Vfx
                     r.Errors.push_back({asset,
                                         "",
                                         "Stage",
-                                        s == Stage::SimulationStage ? "SimulationStage not implemented in V1a" :
-                                                                      "Stage belongs to an emitter"});
+                                        s == Stage::SimulationStage ?
+                                            "SimulationStage requires ordered emitter stage records" :
+                                            "Stage belongs to an emitter"});
                 continue;
             }
             r.Product.Programs[s] = StageProgram(
@@ -1127,10 +1384,41 @@ namespace Kans::Vfx
                 auto k = known;
                 for (const auto& p : ce.Settings.Attributes)
                     k[p.Name] = p;
-                k = Collect(ce.Settings.Stages, modules, std::move(k));
+                for (const auto& p : ce.Settings.Parameters)
+                    k[p.Name] = p;
+                for (const auto& [name, grid] : ce.Settings.DataInterfaces)
+                {
+                    if (name.rfind("Emitter.", 0) != 0 || grid.Kind != "Grid3D")
+                        r.Errors.push_back({asset, h.Guid, name, "Grid3D requires a named Emitter parameter"});
+                    if (ce.Settings.Target != SimTarget::GPU)
+                        r.Errors.push_back(
+                            {asset,
+                             h.Guid,
+                             name,
+                             "Grid3D on emitter " + h.Name + " requires GPU; switch the emitter to GPU"});
+                    if (glm::any(glm::lessThan(grid.Resolution, glm::uvec3(1))) ||
+                        glm::any(glm::greaterThan(grid.Resolution, glm::uvec3(128))) ||
+                        glm::any(glm::lessThanEqual(grid.WorldBounds, glm::vec3(0))) ||
+                        !std::isfinite(grid.WorldBounds.x + grid.WorldBounds.y + grid.WorldBounds.z))
+                        r.Errors.push_back({asset, h.Guid, name, "Invalid Grid3D Resolution or WorldBounds"});
+                    std::set<std::string> names;
+                    if (grid.GridAttributes.empty())
+                        r.Errors.push_back({asset, h.Guid, "Attributes", "Grid3D attributes must not be empty"});
+                    for (const auto& a : grid.GridAttributes)
+                        if (a.Name.empty() || !names.insert(a.Name).second || a.Kind > Type::Vec4)
+                            r.Errors.push_back(
+                                {asset, h.Guid, "Attributes", "Duplicate or invalid Grid3D attribute: " + a.Name});
+                }
+                k = Collect(ce.Settings.Stages, modules, std::move(k), &ce.Settings.DataInterfaces);
+                for (const auto& stage : ce.Settings.SimulationStages)
+                    k = Collect(
+                        {{Stage::SimulationStage, stage.Modules}}, modules, std::move(k), &ce.Settings.DataInterfaces);
                 for (const auto& handler : ce.Settings.Handlers)
                     if (handler.Enabled)
-                        k = Collect({{Stage::EventHandler, handler.Modules}}, modules, std::move(k));
+                        k = Collect({{Stage::EventHandler, handler.Modules}},
+                                    modules,
+                                    std::move(k),
+                                    &ce.Settings.DataInterfaces);
                 std::set<AssetID>            visited;
                 std::function<void(AssetID)> layouts = [&](AssetID id) {
                     if (!visited.insert(id).second)
@@ -1175,8 +1463,9 @@ namespace Kans::Vfx
                             r.Errors.push_back({asset,
                                                 h.Guid,
                                                 "",
-                                                s == Stage::SimulationStage ? "SimulationStage not implemented in V1a" :
-                                                                              "EventHandler requires handler entries"});
+                                                s == Stage::SimulationStage ?
+                                                    "SimulationStage requires ordered emitter stage records" :
+                                                    "EventHandler requires handler entries"});
                         continue;
                     }
                     ce.Programs[s] = StageProgram(s,
@@ -1189,7 +1478,8 @@ namespace Kans::Vfx
                                                   ce.Settings.SimulationSpace,
                                                   meshes,
                                                   skeletons,
-                                                  &meshCache);
+                                                  &meshCache,
+                                                  &ce.Settings.DataInterfaces);
                 }
                 for (auto stage : {Stage::ParticleSpawn, Stage::ParticleUpdate})
                     if (!ce.Programs.count(stage))
@@ -1199,6 +1489,52 @@ namespace Kans::Vfx
                         p.Target           = ce.Settings.Target;
                         ce.Programs[stage] = p;
                     }
+                std::set<std::string> stageIDs;
+                for (const auto& stage : ce.Settings.SimulationStages)
+                {
+                    const auto error = [&](const std::string& pin, const std::string& message) {
+                        r.Errors.push_back({asset, stage.Guid, pin, "Emitter " + h.Name + ": " + message});
+                    };
+                    if (ce.Settings.Target != SimTarget::GPU)
+                        error("IterationSource", "SimulationStage requires GPU; switch the emitter to GPU");
+                    if (stage.Guid.empty() || !stageIDs.insert(stage.Guid).second || stage.Name.empty())
+                        error("Name", "Duplicate or empty simulation stage GUID/Name");
+                    if (stage.Iterations < 1 || stage.Iterations > 64)
+                        error("Iterations", "Iterations must be 1–64");
+                    if (!stage.Enabled.empty() &&
+                        ((stage.Enabled.rfind("Emitter.", 0) != 0 && stage.Enabled.rfind("User.", 0) != 0) ||
+                         !k.count(stage.Enabled) || k.at(stage.Enabled).Kind != Type::Bool ||
+                         !k.at(stage.Enabled).Default))
+                        error("Enabled", "Enabled requires a bool emitter or user parameter");
+                    std::string grid;
+                    if (stage.Source == IterationSource::DataInterface)
+                    {
+                        grid = stage.DataInterface;
+                        if (!ce.Settings.DataInterfaces.count(grid) ||
+                            ce.Settings.DataInterfaces.at(grid).Kind != "Grid3D")
+                            error("IterationSource", "Iteration source requires a Grid3D emitter parameter");
+                    }
+                    auto p = StageProgram(Stage::SimulationStage,
+                                          stage.Modules,
+                                          ce.Settings.Target,
+                                          modules,
+                                          k,
+                                          r.Errors,
+                                          asset,
+                                          ce.Settings.SimulationSpace,
+                                          meshes,
+                                          skeletons,
+                                          &meshCache,
+                                          &ce.Settings.DataInterfaces,
+                                          grid);
+                    for (const auto& name : p.Reads)
+                        if (name.rfind("Particles.", 0) == 0)
+                            attributes.insert(name);
+                    for (const auto& name : p.Writes)
+                        if (name.rfind("Particles.", 0) == 0)
+                            attributes.insert(name);
+                    ce.SimulationStages.push_back({stage, std::move(p)});
+                }
                 const bool hasRibbon =
                     std::any_of(ce.Settings.Renderers.begin(), ce.Settings.Renderers.end(), [](const auto& renderer) {
                         return renderer.Kind == RendererKind::Ribbon;
@@ -1529,7 +1865,8 @@ namespace Kans::Vfx
                                               ce.Settings.SimulationSpace,
                                               meshes,
                                               skeletons,
-                                              &meshCache);
+                                              &meshCache,
+                                              &ce.Settings.DataInterfaces);
                 for (auto i = before; i < r.Errors.size(); ++i)
                 {
                     r.Errors[i].Asset   = asset;
@@ -1633,8 +1970,9 @@ namespace Kans::Vfx
                         {
                             resource.Binding = 7;
                             for (const auto& x : p.Resources)
-                                resource.Binding =
-                                    std::max(resource.Binding, x.Binding + (x.Kind == "ParticleReader" ? 3u : 1u));
+                                resource.Binding = std::max(
+                                    resource.Binding,
+                                    x.Binding + ((x.Kind == "ParticleReader" || x.Kind == "Grid3D") ? 3u : 1u));
                             i.Resource = uint32_t(p.Resources.size());
                             p.Resources.push_back(resource);
                         }
@@ -1647,7 +1985,10 @@ namespace Kans::Vfx
                     p.Target         = SimTarget::GPU;
                     uint32_t binding = 7;
                     for (const auto& resource : p.Resources)
-                        binding = std::max(binding, resource.Binding + (resource.Kind == "ParticleReader" ? 3u : 1u));
+                        binding =
+                            std::max(binding,
+                                     resource.Binding +
+                                         ((resource.Kind == "ParticleReader" || resource.Kind == "Grid3D") ? 3u : 1u));
                     ResourceBinding state;
                     state.Kind    = "EmitterState";
                     state.Binding = binding;
@@ -1658,6 +1999,8 @@ namespace Kans::Vfx
                 bind(p, ce.Handle);
             for (auto& h : ce.Handlers)
                 bind(h.Bytecode, h.Settings.Guid);
+            for (auto& s : ce.SimulationStages)
+                bind(s.Bytecode, s.Settings.Guid);
         }
         // Stable Kahn ordering: among available emitters choose the first handle in the asset.
         std::set<uint32_t> done;
@@ -1702,6 +2045,8 @@ namespace Kans::Vfx
                     generate(p);
                 for (auto& h : e.Handlers)
                     generate(h.Bytecode);
+                for (auto& s : e.SimulationStages)
+                    generate(s.Bytecode);
             }
         return r;
     }
@@ -2011,6 +2356,8 @@ namespace Kans::Vfx
                 v = av - std::floor(av);
             else if (op == "Pow")
                 v = std::pow(av, bv);
+            else if (op == "Exp")
+                v = std::exp(av);
             else if (op == "Sin")
                 v = std::sin(av);
             else if (op == "Cos")
@@ -2098,7 +2445,7 @@ namespace Kans::Vfx
     {
         uint32_t binding = 7;
         for (const auto& r : p.Resources)
-            binding = std::max(binding, r.Binding + (r.Kind == "ParticleReader" ? 3u : 1u));
+            binding = std::max(binding, r.Binding + ((r.Kind == "ParticleReader" || r.Kind == "Grid3D") ? 3u : 1u));
         for (const auto& entry : MeshGpuBindings(p))
             binding = std::max(binding, entry.second + 1);
         return binding;
@@ -2124,6 +2471,8 @@ namespace Kans::Vfx
             return nullptr;
         };
         const auto decode = [](Type t, std::string x) {
+            if (t == Type::IVec3)
+                return "ivec3(" + x + ".xyz)";
             if (t == Type::Int)
                 return "int(" + x + ".x)";
             if (t == Type::Bool)
@@ -2132,6 +2481,8 @@ namespace Kans::Vfx
             return v + (Components(t) == 1 ? ".x" : Components(t) == 2 ? ".xy" : Components(t) == 3 ? ".xyz" : "");
         };
         const auto encode = [](Type t, std::string x) {
+            if (t == Type::IVec3)
+                return "uvec4(uvec3(" + x + "),0u)";
             if (t == Type::Int)
                 return "uvec4(uint(" + x + "),0u,0u,0u)";
             if (t == Type::Bool)
@@ -2215,7 +2566,29 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
         {
             const auto& resource = p.Resources[r];
             auto        id = std::to_string(r), binding = std::to_string(resource.Binding);
-            if (resource.Kind == "ParticleReader")
+            if (resource.Kind == "Grid3D")
+            {
+                const auto  suffix = id;
+                const auto& g      = resource.Grid;
+                const auto  res    = "ivec3(" + std::to_string(g.Resolution.x) + "," + std::to_string(g.Resolution.y) +
+                                     "," + std::to_string(g.Resolution.z) + ")";
+                const auto  cells  = std::to_string(g.Resolution.x * g.Resolution.y * g.Resolution.z);
+                declarations += "layout(set=0,binding=" + binding + ",std430) readonly buffer GridRead" + id +
+                                "{vec4 gridRead" + id + "[];};\n";
+                declarations += "layout(set=0,binding=" + std::to_string(resource.Binding + 1) +
+                                ",std430) buffer GridWrite" + id + "{vec4 gridWrite" + id + "[];};\n";
+                declarations += "layout(set=0,binding=" + std::to_string(resource.Binding + 2) +
+                                ",std430) buffer GridAtomic" + id + "{int gridAtomic" + id + "[];};\n";
+                declarations += "int gridOffset" + id + "(int a,ivec3 p){p=clamp(p,ivec3(0)," + res + "-1);return a*" +
+                                cells + "+p.x+" + std::to_string(g.Resolution.x) + "*(p.y+" +
+                                std::to_string(g.Resolution.y) + "*p.z); }\n";
+                declarations += "vec4 gridSample" + id +
+                                "(int a,vec3 p){ivec3 lo=ivec3(floor(p));vec3 f=fract(p);vec4 v=vec4(0);for(int "
+                                "z=0;z<2;++z)for(int y=0;y<2;++y)for(int x=0;x<2;++x)v+=gridRead" +
+                                id + "[gridOffset" + id +
+                                "(a,lo+ivec3(x,y,z))]*(x==0?1-f.x:f.x)*(y==0?1-f.y:f.y)*(z==0?1-f.z:f.z);return v;}\n";
+            }
+            else if (resource.Kind == "ParticleReader")
             {
                 declarations += "layout(set=0,binding=" + binding + ",std430) readonly buffer ReaderAttributes" + id +
                                 "{uvec4 readerAttributes" + id + "[];};\n";
@@ -2234,9 +2607,32 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                                 "{uvec4 events" + id + "[];};\n";
         }
         s.insert(s.find("void main()"), declarations);
-        const bool emitter = p.StageKind == Stage::EmitterUpdate;
+        const bool gridStage = !p.IterationGrid.empty();
+        const bool emitter   = p.StageKind == Stage::EmitterUpdate;
+        if (gridStage)
+        {
+            s.replace(s.find("layout(local_size_x=64) in;"),
+                      std::string("layout(local_size_x=64) in;").size(),
+                      "layout(local_size_x=4,local_size_y=4,local_size_z=4) in;");
+        }
         const bool spawn = p.StageKind == Stage::ParticleSpawn || (p.Handler && p.Mode == EventMode::SpawnedParticles);
-        if (emitter)
+        if (gridStage)
+        {
+            auto        at  = std::find_if(p.Resources.begin(), p.Resources.end(), [&](const auto& r) {
+                return r.Kind == "Grid3D" && r.Channel == p.IterationGrid;
+            });
+            const auto& g   = at->Grid;
+            auto        id  = std::to_string(at - p.Resources.begin());
+            auto        res = "ivec3(" + std::to_string(g.Resolution.x) + "," + std::to_string(g.Resolution.y) + "," +
+                              std::to_string(g.Resolution.z) + ")";
+            s += "ivec3 gridExecutionIndex=ivec3(gl_GlobalInvocationID);if(any(greaterThanEqual(gridExecutionIndex," +
+                 res + ")))return;slot=0u;uniqueID=0u;\n";
+            for (uint32_t a = 0; a < g.GridAttributes.size(); ++a)
+                s += "gridWrite" + id + "[gridOffset" + id + "(" + std::to_string(a) +
+                     ",gridExecutionIndex)]=gridRead" + id + "[gridOffset" + id + "(" + std::to_string(a) +
+                     ",gridExecutionIndex)];\n";
+        }
+        else if (emitter)
             s += "if(invocation!=0u)return;slot=0u;uniqueID=0u;\n";
         else if (spawn)
             s += "if(invocation>=counters[2])return;slot=freeList[counters[4]+invocation];uniqueID=counters[5]+"
@@ -2254,11 +2650,11 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                 s += ",";
             s += "uintBitsToFloat(parameters[" + std::to_string(p.Parameters.size() + k) + "])";
         }
-        s += ");\n";
+        s += ");\nmat4 inverseOwner=inverse(owner);\n";
         for (const auto& a : attributes)
         {
             s += GType(a.Kind) + " a" + std::to_string(a.Offset) + "=" +
-                 ((spawn || emitter) ?
+                 ((spawn || emitter || gridStage) ?
                       Literal(a.Default) :
                       decode(a.Kind, "attributes[" + std::to_string(a.Offset) + "u*pc.capacity+slot]")) +
                  ";\n";
@@ -2310,7 +2706,7 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                                            "u+" + std::to_string(f) + "u]");
                         if (v.Kind == Type::Position)
                             value = event.PositionSpace == Space::World ?
-                                        "(pc.worldSpace==0u?(inverse(owner)*vec4(" + value + ",1)).xyz:" + value + ")" :
+                                        "(pc.worldSpace==0u?(inverseOwner*vec4(" + value + ",1)).xyz:" + value + ")" :
                                         "(pc.worldSpace!=0u?(owner*vec4(" + value + ",1)).xyz:" + value + ")";
                     }
             }
@@ -2324,7 +2720,57 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
             const auto  arg = [&](size_t a) { return a < i.Args.size() ? "r" + std::to_string(i.Args[a]) : "0.0"; };
             std::string e;
             auto        a = arg(0), b = arg(1), c = arg(2), op = i.Op;
-            if (op == "SpawnBoundary")
+            if (op == "GridExecutionIndex")
+                e = "gridExecutionIndex";
+            else if (op.rfind("Grid", 0) == 0)
+            {
+                const auto& g      = i.Interface;
+                auto        id     = std::to_string(i.Resource);
+                auto        attr   = std::to_string(i.Parameter);
+                const auto  res    = "ivec3(" + std::to_string(g.Resolution.x) + "," + std::to_string(g.Resolution.y) +
+                                     "," + std::to_string(g.Resolution.z) + ")";
+                const auto  bounds = Literal(Value::Vector(glm::vec4(g.WorldBounds, 0), Type::Vec3));
+                // Local grids follow the complete owner transform. World grids follow owner translation.
+                auto toLocal = [&](std::string v) {
+                    return "(pc.worldSpace==0u?(inverseOwner*vec4(" + v + ",1)).xyz:(" + v + "-owner[3].xyz))";
+                };
+                auto toWorld = [&](std::string v) {
+                    return "(pc.worldSpace==0u?(owner*vec4(" + v + ",1)).xyz:(" + v + "+owner[3].xyz))";
+                };
+                auto coordinate = [&](std::string v) {
+                    return "((" + toLocal(v) + "/" + bounds + "+0.5)*vec3(" + res + "))";
+                };
+                auto offset  = "gridOffset" + id + "(" + attr + "," + a + ")";
+                auto swizzle = Components(i.Kind) == 1 ? ".x" :
+                               Components(i.Kind) == 2 ? ".xy" :
+                               Components(i.Kind) == 3 ? ".xyz" :
+                                                         "";
+                if (op == "GridNumCells")
+                    e = res;
+                else if (op == "GridCellSize")
+                    e = bounds + "/vec3(" + res + ")";
+                else if (op == "GridIndexToWorld")
+                    e = toWorld("((vec3(" + a + ")+0.5)/vec3(" + res + ")-0.5)*" + bounds);
+                else if (op == "GridWorldToIndex")
+                    e = "ivec3(floor(" + coordinate(a) + "))";
+                else if (op == "GridGet")
+                    e = "gridRead" + id + "[" + offset + "]" + swizzle;
+                else if (op == "GridSample")
+                    e = "gridSample" + id + "(" + attr + "," + coordinate(a) + "-0.5)" + swizzle;
+                else if (op == "GridSet")
+                {
+                    s += "gridWrite" + id + "[" + offset + "]" + swizzle + "=" + b + ";\n";
+                    e = b;
+                }
+                else if (op == "GridAddFloat")
+                {
+                    // Signed fixed point, 16 fractional bits. Each component has an independent int32 channel.
+                    s += "atomicAdd(gridAtomic" + id + "[4*(" + offset + ")+" + b + "],int(round(" + c +
+                         "*65536.0)));\n";
+                    e = c;
+                }
+            }
+            else if (op == "SpawnBoundary")
             {
                 if (i.PositionSpace == Space::World)
                     s += "p" + std::to_string(i.Parameter) + "=mat3(owner)*p" + std::to_string(i.Parameter) + ";\n";
@@ -2413,7 +2859,7 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                                                 std::to_string(resource.Capacity) + "u+" + sourceSlot + "]");
                         if (i.Kind == Type::Position)
                             value = resource.PositionSpace == Space::World ?
-                                        "(pc.worldSpace==0u?(inverse(owner)*vec4(" + value + ",1)).xyz:" + value + ")" :
+                                        "(pc.worldSpace==0u?(inverseOwner*vec4(" + value + ",1)).xyz:" + value + ")" :
                                         "(pc.worldSpace!=0u?(owner*vec4(" + value + ",1)).xyz:" + value + ")";
                         e = "(" + found + "?" + value + ":" + GType(i.Kind) + "(0))";
                     }
@@ -2556,7 +3002,7 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
             else if (op == "Noise3D")
                 e = "noiseV(" + a + ")";
             else if (op.find("Transform") != std::string::npos)
-                e = "(" + std::string(op.rfind("Inverse", 0) == 0 ? "inverse(owner)" : "owner") + "*vec4(" + a + "," +
+                e = "(" + std::string(op.rfind("Inverse", 0) == 0 ? "inverseOwner" : "owner") + "*vec4(" + a + "," +
                     (op.find("Position") != std::string::npos ? "1" : "0") + ")).xyz";
             else if (op == "CustomGLSL")
             {
@@ -2714,6 +3160,8 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
             if (auto a = attribute("Particles.Velocity"))
                 s += "if(pc.worldSpace!=0u)a" + std::to_string(a->Offset) + "=mat3(owner)*a" +
                      std::to_string(a->Offset) + ";\n";
+        if (gridStage)
+            s += "return;\n";
         s += "if(pc.kill!=0u)a" + std::to_string(attribute("Particles.Alive")->Offset) + "=false;\n";
         for (const auto& a : attributes)
             s += "attributes[" + std::to_string(a.Offset) +
@@ -2747,6 +3195,8 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                 for (const auto& r : p.Resources)
                 {
                     YAML::Node resource;
+                    if (r.Kind == "Grid3D")
+                        resource["Grid"] = EncodeInterface(r.Grid);
                     resource["Kind"]         = r.Kind;
                     resource["Channel"]      = r.Channel;
                     resource["SourceHandle"] = r.SourceHandle;
@@ -2759,6 +3209,7 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                         resource["Layout"] = EncodeEventLayout(r.Layout);
                     n["Resources"].push_back(resource);
                 }
+                n["IterationGrid"]     = p.IterationGrid;
                 n["Target"]            = int(p.Target);
                 n["GLSL"]              = p.GLSL;
                 n["SpirV"]             = p.SpirV;
@@ -2824,7 +3275,9 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                 for (const auto& node : n["Resources"])
                 {
                     ResourceBinding resource;
-                    resource.Kind          = node["Kind"].as<std::string>();
+                    resource.Kind = node["Kind"].as<std::string>();
+                    if (resource.Kind == "Grid3D")
+                        resource.Grid = DecodeInterface(node["Grid"]);
                     resource.Channel       = node["Channel"].as<std::string>();
                     resource.SourceHandle  = node["SourceHandle"].as<std::string>();
                     resource.Source        = node["Source"].as<uint32_t>();
@@ -2836,17 +3289,18 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                         resource.Layout = DecodeEventLayout(node["Layout"]);
                     p.Resources.push_back(resource);
                 }
-                p.Target = SimTarget(n["Target"].as<int>());
-                p.GLSL   = n["GLSL"].as<std::string>();
-                p.SpirV  = n["SpirV"].as<std::vector<uint32_t>>();
-                if (p.StageKind > Stage::EventHandler || p.Target > SimTarget::GPU)
+                p.IterationGrid = n["IterationGrid"].as<std::string>("");
+                p.Target        = SimTarget(n["Target"].as<int>());
+                p.GLSL          = n["GLSL"].as<std::string>();
+                p.SpirV         = n["SpirV"].as<std::vector<uint32_t>>();
+                if (p.StageKind > Stage::SimulationStage || p.Target > SimTarget::GPU)
                     throw std::invalid_argument("Invalid VFX product stage");
                 for (const auto& a : n["Parameters"])
                 {
                     Parameter v;
                     v.Name = a["Name"].as<std::string>();
                     auto t = a["Type"].as<int>();
-                    if (t < 0 || t > int(Type::Position))
+                    if (t < 0 || t > int(Type::IVec3))
                         throw std::invalid_argument("Invalid VFX product type");
                     v.Kind = Type(t);
                     if (a["Default"])
@@ -2863,7 +3317,7 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                     i.Op       = a["Op"].as<std::string>();
                     i.Resource = a["Resource"].as<uint32_t>(0);
                     auto t     = a["Type"].as<int>();
-                    if (t < 0 || t > int(Type::Position))
+                    if (t < 0 || t > int(Type::IVec3))
                         throw std::invalid_argument("Invalid VFX bytecode type");
                     i.Kind = Type(t);
                     i.Args = a["Args"].as<std::vector<uint32_t>>();
@@ -2911,7 +3365,7 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
     YAML::Node EncodeProduct(const CompiledSystem& p)
     {
         YAML::Node n;
-        n["VfxProductVersion"] = 2;
+        n["VfxProductVersion"] = 3;
         n["TickOrder"]         = p.TickOrder;
         n["Settings"]          = EncodeSystem(p.Settings);
         n["Programs"]          = ProgramsNode(p.Programs);
@@ -2935,6 +3389,14 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                 handler["Programs"] = ProgramsNode({{Stage::EventHandler, h.Bytecode}});
                 a["Handlers"].push_back(handler);
             }
+            a["SimulationStages"] = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& s : e.SimulationStages)
+            {
+                YAML::Node stage;
+                stage["Guid"]     = s.Settings.Guid;
+                stage["Programs"] = ProgramsNode({{Stage::SimulationStage, s.Bytecode}});
+                a["SimulationStages"].push_back(stage);
+            }
             a["Programs"]   = ProgramsNode(e.Programs);
             a["Attributes"] = YAML::Node(YAML::NodeType::Sequence);
             for (const auto& v : e.Attributes)
@@ -2951,8 +3413,8 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
     }
     CompiledSystem DecodeProduct(const YAML::Node& n)
     {
-        if (n["VfxProductVersion"].as<int>() != 2)
-            throw std::invalid_argument("Unsupported VFX product version; reimport with VFX product version 2");
+        if (n["VfxProductVersion"].as<int>() != 3)
+            throw std::invalid_argument("Unsupported VFX product version; reimport with VFX product version 3");
         CompiledSystem p;
         p.Settings  = DecodeSystem(n["Settings"]);
         p.TickOrder = n["TickOrder"].as<std::vector<uint32_t>>();
@@ -2982,6 +3444,16 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                 handler.Source   = h["Source"].as<uint32_t>();
                 handler.Bytecode = ReadPrograms(h["Programs"]).at(Stage::EventHandler);
                 e.Handlers.push_back(handler);
+            }
+            for (const auto& s : a["SimulationStages"])
+            {
+                const auto guid = s["Guid"].as<std::string>();
+                auto       at   = std::find_if(e.Settings.SimulationStages.begin(),
+                                               e.Settings.SimulationStages.end(),
+                                               [&](const auto& x) { return x.Guid == guid; });
+                if (at == e.Settings.SimulationStages.end())
+                    throw std::invalid_argument("Invalid VFX product simulation stage GUID");
+                e.SimulationStages.push_back({*at, ReadPrograms(s["Programs"]).at(Stage::SimulationStage)});
             }
             e.Programs = ReadPrograms(a["Programs"]);
             std::set<std::string> names;

@@ -1,0 +1,55 @@
+Version: 1
+AssetID: c0d609763e645cfd:0000000000000001
+Usage: Module
+AllowedStages: 128
+Category: Built-in
+Description: GridClear
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Value
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+Nodes:
+- Guid: 2a502bc0-1dc0-5680-9fec-e4c60d501d95
+  Op: Get
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Grid.ExecutionIndex
+- Guid: 96a29fc7-ea60-5ecc-93aa-36281992f9f8
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Value
+- Guid: 05365625-0c95-5740-9fae-f8d276289144
+  Op: GridSet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Value
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+Links:
+- From: 2a502bc0-1dc0-5680-9fec-e4c60d501d95
+  Output: Value
+  To: 05365625-0c95-5740-9fae-f8d276289144
+  Input: Index
+- From: 96a29fc7-ea60-5ecc-93aa-36281992f9f8
+  Output: Value
+  To: 05365625-0c95-5740-9fae-f8d276289144
+  Input: Value

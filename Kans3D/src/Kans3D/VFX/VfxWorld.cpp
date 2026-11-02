@@ -66,6 +66,8 @@ namespace Kans::Vfx
             for (uint32_t i = e.Settings.Capacity; i > 0; --i)
                 Free.push_back(i - 1);
         }
+        for (const auto& p : e.Settings.Parameters)
+            Parameters[p.Name] = p.Default.value_or(Value::Vector({}, p.Kind));
         for (const auto& channel : e.Settings.Channels)
             Events[channel.Name] = {};
         for (const auto& [name, p] : BuiltinParameters())
@@ -76,6 +78,8 @@ namespace Kans::Vfx
     void EmitterInstance::Reset()
     {
         Parameters.clear();
+        for (const auto& p : Compiled->Settings.Parameters)
+            Parameters[p.Name] = p.Default.value_or(Value::Vector({}, p.Kind));
         for (const auto& [name, p] : BuiltinParameters())
             if (name.rfind("Emitter.", 0) == 0)
                 Parameters[name] = *p.Default;
@@ -526,7 +530,8 @@ namespace Kans::Vfx
                     e.GPU->Poll(e);
                 bool queued = std::any_of(
                     e.Pending.begin(), e.Pending.end(), [](const auto& tick) { return tick.SpawnCount > 0; });
-                if (TimelineDesiredAge || !compiled.Handlers.empty() || !compiled.EventLayouts.empty() ||
+                if (TimelineDesiredAge || !compiled.SimulationStages.empty() || !compiled.Handlers.empty() ||
+                    !compiled.EventLayouts.empty() ||
                     (emitterProgram != compiled.Programs.end() && emitterProgram->second.Target == SimTarget::GPU) ||
                     e.Siblings->size() > 1 || count || e.ParticleCount || queued ||
                     (e.SpawnRevision > 0 && !e.HasReadback) ||

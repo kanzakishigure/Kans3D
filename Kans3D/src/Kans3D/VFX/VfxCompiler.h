@@ -33,10 +33,11 @@ namespace Kans::Vfx
     };
     struct ResourceBinding
     {
-        std::string Kind, Channel, SourceHandle;
-        uint32_t    Source = 0, Binding = 7, Capacity = 0, IDOffset = 0;
-        Space       PositionSpace = Space::Local;
-        EventLayout Layout;
+        std::string      Kind, Channel, SourceHandle;
+        uint32_t         Source = 0, Binding = 7, Capacity = 0, IDOffset = 0;
+        Space            PositionSpace = Space::Local;
+        EventLayout      Layout;
+        InterfaceBinding Grid;
     };
     struct Program
     {
@@ -44,6 +45,7 @@ namespace Kans::Vfx
         bool                         Handler     = false;
         EventMode                    Mode        = EventMode::SpawnedParticles;
         uint32_t                     SpawnNumber = 1, MaxEventsPerFrame = UINT32_MAX;
+        std::string                  IterationGrid;
         Stage                        StageKind = Stage::ParticleUpdate;
         SimTarget                    Target    = SimTarget::CPU;
         std::vector<Parameter>       Parameters;
@@ -66,15 +68,21 @@ namespace Kans::Vfx
         Program      Bytecode;
         uint32_t     Source = 0;
     };
+    struct CompiledSimulationStage
+    {
+        SimulationStage Settings;
+        Program         Bytecode;
+    };
     struct CompiledEmitter
     {
-        Emitter                            Settings;
-        std::map<std::string, float>       MeshRadii;
-        std::string                        Handle;
-        std::vector<CompiledHandler>       Handlers;
-        std::map<std::string, EventLayout> EventLayouts;
-        std::map<Stage, Program>           Programs;
-        std::vector<Attribute>             Attributes;
+        Emitter                              Settings;
+        std::map<std::string, float>         MeshRadii;
+        std::string                          Handle;
+        std::vector<CompiledHandler>         Handlers;
+        std::vector<CompiledSimulationStage> SimulationStages;
+        std::map<std::string, EventLayout>   EventLayouts;
+        std::map<Stage, Program>             Programs;
+        std::vector<Attribute>               Attributes;
     };
     struct CompiledSystem
     {

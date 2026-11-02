@@ -1,0 +1,50 @@
+Version: 1
+AssetID: 5e23b1e61a875ac1:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: SampleGridToParticle
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+Nodes:
+- Guid: 80a299c1-03bd-5508-9d7b-0b968743e704
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: 447518d1-4eb3-52e2-8e75-10db4440986b
+  Op: GridSample
+  Type: float
+  Inputs:
+  - Name: Position
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: 020b62e4-3161-5dc3-b0b8-8521f4a889ad
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: Value
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.SampledGrid
+Links:
+- From: 80a299c1-03bd-5508-9d7b-0b968743e704
+  Output: Value
+  To: 447518d1-4eb3-52e2-8e75-10db4440986b
+  Input: Position
+- From: 447518d1-4eb3-52e2-8e75-10db4440986b
+  Output: Value
+  To: 020b62e4-3161-5dc3-b0b8-8521f4a889ad
+  Input: Value

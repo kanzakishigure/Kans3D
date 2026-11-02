@@ -35,7 +35,8 @@ namespace Kans::Vfx
         Bool,
         Color,
         Quat,
-        Position
+        Position,
+        IVec3
     };
     enum class Stage
     {
@@ -120,13 +121,21 @@ namespace Kans::Vfx
         std::optional<Value>     Default;
         std::optional<glm::vec2> Range;
     };
+    struct GridAttribute
+    {
+        std::string Name;
+        Type        Kind = Type::Float;
+    };
     struct InterfaceBinding
     {
-        std::string         Kind = "Curve";
-        std::array<bool, 3> Tiling {false, false, false}; // true repeats; false clamps to border.
-        float               Intensity = 1;
-        AssetID             Asset;
-        std::string         SourceEmitter, Channel;
+        std::string                Kind = "Curve";
+        glm::uvec3                 Resolution {1};
+        glm::vec3                  WorldBounds {1};
+        std::vector<GridAttribute> GridAttributes;
+        std::array<bool, 3>        Tiling {false, false, false}; // true repeats; false clamps to border.
+        float                      Intensity = 1;
+        AssetID                    Asset;
+        std::string                SourceEmitter, Channel;
         // Mesh sources use an asset, the owner, or a child path relative to the owner.
         std::string              Source, EntityPath;
         AssetID                  Skeleton;
@@ -215,6 +224,19 @@ namespace Kans::Vfx
         EventMode   Mode        = EventMode::SpawnedParticles;
         uint32_t    SpawnNumber = 1, MaxEventsPerFrame = UINT32_MAX;
         Stack       Modules;
+    };
+    enum class IterationSource
+    {
+        Particles,
+        DataInterface
+    };
+    struct SimulationStage
+    {
+        std::string     Guid, Name;
+        IterationSource Source = IterationSource::Particles;
+        std::string     DataInterface, Enabled; // Emitter parameter bindings. Empty Enabled means always enabled.
+        uint32_t        Iterations = 1;
+        Stack           Modules;
     };
     struct Module
     {
@@ -310,35 +332,43 @@ namespace Kans::Vfx
             ReplaceRenderer,
             AddHandler,
             RemoveHandler,
-            MoveHandler
+            MoveHandler,
+            AddSimulationStage,
+            RemoveSimulationStage,
+            MoveSimulationStage,
+            ReplaceSimulationStage
         };
-        Kind         Action    = Kind::SetInput;
-        Stage        StageKind = Stage::ParticleUpdate;
-        std::string  Target, Before, InputName;
-        ModuleUse    Added;
-        Input        InputValue;
-        bool         Enabled = true;
-        Renderer     Render;
-        EventHandler Handler;
-        std::string  HandlerGuid;
+        Kind            Action    = Kind::SetInput;
+        Stage           StageKind = Stage::ParticleUpdate;
+        std::string     Target, Before, InputName;
+        ModuleUse       Added;
+        Input           InputValue;
+        bool            Enabled = true;
+        Renderer        Render;
+        EventHandler    Handler;
+        std::string     HandlerGuid, SimulationStageGuid;
+        SimulationStage Simulation;
     };
     struct Emitter
     {
-        std::string               Name;
-        AssetID                   Parent;
-        SimTarget                 Target          = SimTarget::GPU;
-        Space                     SimulationSpace = Space::Local;
-        uint32_t                  Capacity        = 1024;
-        bool                      Deterministic   = true;
-        std::optional<Bounds>     FixedBounds;
-        float                     CullDistance   = 0;
-        CullPolicy                DistancePolicy = CullPolicy::PauseSpawning;
-        std::map<Stage, Stack>    Stages;
-        std::vector<Renderer>     Renderers;
-        std::vector<EventChannel> Channels;
-        std::vector<EventHandler> Handlers;
-        std::vector<Parameter>    Attributes;
-        std::vector<Override>     Overrides;
+        std::string                             Name;
+        AssetID                                 Parent;
+        SimTarget                               Target          = SimTarget::GPU;
+        Space                                   SimulationSpace = Space::Local;
+        uint32_t                                Capacity        = 1024;
+        bool                                    Deterministic   = true;
+        std::optional<Bounds>                   FixedBounds;
+        float                                   CullDistance   = 0;
+        CullPolicy                              DistancePolicy = CullPolicy::PauseSpawning;
+        std::map<Stage, Stack>                  Stages;
+        std::vector<Renderer>                   Renderers;
+        std::vector<EventChannel>               Channels;
+        std::vector<EventHandler>               Handlers;
+        std::vector<SimulationStage>            SimulationStages;
+        std::map<std::string, InterfaceBinding> DataInterfaces;
+        std::vector<Parameter>                  Parameters;
+        std::vector<Parameter>                  Attributes;
+        std::vector<Override>                   Overrides;
         // A child stores only settings explicitly named here, plus GUID-keyed Overrides.
         std::set<std::string> SettingOverrides;
     };

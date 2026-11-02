@@ -257,7 +257,7 @@ std::vector<std::pair<const InterfaceBinding*, uint32_t>> MeshGpuBindings(const 
 {
     uint32_t binding = 7;
     for (const auto& r : p.Resources)
-        binding = std::max(binding, r.Binding + (r.Kind == "ParticleReader" ? 3u : 1u));
+        binding = std::max(binding, r.Binding + ((r.Kind == "ParticleReader" || r.Kind == "Grid3D") ? 3u : 1u));
     std::vector<std::pair<const InterfaceBinding*, uint32_t>> result;
     std::set<std::string>                                     keys;
     for (const auto& table : p.Interfaces)

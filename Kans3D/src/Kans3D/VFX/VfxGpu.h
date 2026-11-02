@@ -77,6 +77,14 @@ namespace Kans::Vfx
         SortCpu(const EmitterInstance&, const Renderer&, const glm::mat4& view, const glm::mat4& owner);
         RenderHardware::Handle<RenderHardware::Buffer> MeshGeometryBuffer(const InterfaceBinding&) const;
         bool HasPendingReadback() const { return Pending[0] || Pending[1] || Pending[2]; }
+        struct GridStorage
+        {
+            std::array<RenderHardware::Handle<RenderHardware::Buffer>, 2> Values;
+            RenderHardware::Handle<RenderHardware::Buffer>                Accumulation;
+            uint32_t                                                      Read = 0;
+        };
+        // Exposed alongside particle buffers for explicit asynchronous consumers and test readback.
+        std::map<std::string, GridStorage>             Grids;
         RenderHardware::Handle<RenderHardware::Buffer> Attributes, Alive, DrawArgs, DispatchArgs, Counters;
         RenderHardware::Handle<RenderHardware::Buffer> Flags, Free;
         RenderHardware::Device&                        Device;
@@ -116,7 +124,9 @@ namespace Kans::Vfx
         Kernel RibbonDetect, RibbonScan, RibbonVertices;
         Kernel Spawn, Update, Prepare, PrepareEvent, Compact, BoundsKernel, BoundsFinish;
         std::map<Stage, Kernel>                                                  StageKernels;
-        std::vector<Kernel>                                                      HandlerKernels;
+        std::vector<Kernel>                                                      HandlerKernels, SimulationKernels;
+        std::vector<std::vector<std::string>>                                    SimulationSplats;
+        Kernel                                                                   GridResolve;
         std::map<const Program*, std::vector<glm::vec4>>                         InterfaceData;
         std::map<const Program*, RenderHardware::Handle<RenderHardware::Buffer>> InterfaceBuffers;
         RenderHardware::Handle<RenderHardware::Buffer>                           Count;
