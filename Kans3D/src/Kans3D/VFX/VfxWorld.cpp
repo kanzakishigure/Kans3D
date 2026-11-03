@@ -409,7 +409,8 @@ namespace Kans::Vfx
         m_Owner            = owner;
         m_Time += dt;
         EngineValues(m_Parameters, dt, float(m_Time), owner, camera, velocity);
-        m_Parameters["System.Age"] = Value::Float(float(m_Time));
+        m_Parameters["System.Age"]                = Value::Float(float(m_Time));
+        m_Parameters["Engine.MainLightDirection"] = Value::Vector(MainLightDirection, Type::Vec4);
         ExecutionContext context {m_Seed, 0, 0, owner};
         context.Colliders     = Colliders;
         context.Depth         = Depth;
@@ -989,13 +990,14 @@ namespace Kans::Vfx
             auto instance = Find(id);
             if (instance)
             {
-                instance->Colliders     = colliders;
-                instance->Depth         = Depth;
-                instance->Physics       = m_Scene.GetPhysicsWorld();
-                instance->CollisionMask = c.CollisionMask;
-                instance->Fields        = fields;
-                instance->FieldTime     = m_FieldTime;
-                instance->FieldLayer    = c.FieldLayer;
+                instance->MainLightDirection = MainLightDirection;
+                instance->Colliders          = colliders;
+                instance->Depth              = Depth;
+                instance->Physics            = m_Scene.GetPhysicsWorld();
+                instance->CollisionMask      = c.CollisionMask;
+                instance->Fields             = fields;
+                instance->FieldTime          = m_FieldTime;
+                instance->FieldLayer         = c.FieldLayer;
                 if (!instance->TimelineDesiredAge)
                     instance->Tick(delta, m_Scene.GetWorldTransform(entity), camera);
                 if (!preview && instance->AutoDestroy && instance->IsComplete())

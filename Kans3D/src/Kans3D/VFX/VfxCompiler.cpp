@@ -98,12 +98,21 @@ namespace Kans::Vfx
                                                                    const std::map<std::string, Input>&            inputs,
                                                                    const std::map<std::string, InterfaceBinding>* Grids)
         {
+            if (m.Identity == AssetID::FromString("732d200000000009:0000000000000001"))
+            {
+                auto target = inputs.find("Module.Target");
+                if (target != inputs.end() && target->second.Kind == InputKind::Link)
+                    for (auto& node : m.Nodes)
+                        if (node.Op == "Set" && node.Parameter == "Particles.LightTransmittance")
+                            node.Parameter = target->second.Link;
+            }
             static const std::set<AssetID> smokeModules = {AssetID::FromString("732d200000000001:0000000000000001"),
                                                            AssetID::FromString("732d200000000002:0000000000000001"),
                                                            AssetID::FromString("732d200000000003:0000000000000001"),
                                                            AssetID::FromString("732d200000000004:0000000000000001"),
                                                            AssetID::FromString("732d200000000005:0000000000000001"),
-                                                           AssetID::FromString("732d200000000006:0000000000000001")};
+                                                           AssetID::FromString("732d200000000006:0000000000000001"),
+                                                           AssetID::FromString("732d200000000008:0000000000000001")};
             if (smokeModules.count(m.Identity))
             {
                 // Secondary attributes default to the selected grid, but accept explicit bindings.
@@ -127,7 +136,8 @@ namespace Kans::Vfx
                         for (const auto& [parameter, attribute] :
                              std::map<std::string, std::string> {{"Module.Velocity", "Velocity"},
                                                                  {"Module.Accumulation", "Splat"},
-                                                                 {"Module.Occupancy", "Occupancy"}})
+                                                                 {"Module.Occupancy", "Occupancy"},
+                                                                 {"Module.Density", "Density"}})
                             if (node.Parameter == parameter && !inputs.count(parameter))
                             {
                                 node.Parameter = "Module.Grid";
@@ -579,8 +589,20 @@ namespace Kans::Vfx
                     }
                     else if (n.Op == "Constant")
                         reg = Convert(Constant(n.Constant), i.Kind, id, guid, output);
+                    else if (n.Op == "MainLightDirection")
+                    {
+                        if (Out.Target != SimTarget::GPU)
+                            Error(id, guid, output, "MainLightDirection requires GPU; switch the emitter to GPU");
+                        if (!i.Args.empty() || i.Kind != Type::Vec4)
+                            Error(id, guid, output, "MainLightDirection requires vec4 output and no inputs");
+                        reg = Get("Engine.MainLightDirection", Type::Vec4, id, guid, output);
+                    }
                     else if (n.Op == "Get")
+                    {
+                        if (n.Parameter == "Engine.MainLightDirection" && Out.Target != SimTarget::GPU)
+                            Error(id, guid, output, "MainLightDirection requires GPU; switch the emitter to GPU");
                         reg = Get(Scoped(n.Parameter, scope), i.Kind, id, guid, output);
+                    }
                     else if (n.Op == "Set")
                     {
                         const auto name = Scoped(n.Parameter, scope);
@@ -671,7 +693,8 @@ namespace Kans::Vfx
                                 Error(id, guid, "Grid", "Grid3D requires GPU; switch the emitter to GPU");
                             const bool set = n.Op == "GridSet", add = n.Op == "GridAddFloat";
                             const bool sample = n.Op == "GridSample";
-                            const bool attr   = set || add || sample || n.Op == "GridGet";
+                            const bool march  = n.Op == "GridLightMarch";
+                            const bool attr   = set || add || sample || march || n.Op == "GridGet";
                             auto       at     = std::find_if(i.Interface.GridAttributes.begin(),
                                                              i.Interface.GridAttributes.end(),
                                                              [&](const auto& a) { return a.Name == attribute; });
@@ -686,16 +709,20 @@ namespace Kans::Vfx
                                         Error(id, guid, set ? "Value" : output, "Grid attribute type mismatch");
                                 }
                             }
-                            const uint32_t count = set ? 2 :
-                                                   add ? 3 :
-                                                   (attr || n.Op == "GridIndexToWorld" || n.Op == "GridWorldToIndex") ?
+                            const uint32_t count = march ? 5 :
+                                                   set   ? 2 :
+                                                   add   ? 3 :
+                                                   (attr || n.Op == "GridIndexToWorld" || n.Op == "GridWorldToIndex" ||
+                                                    n.Op == "GridWorldToCell") ?
                                                          1 :
                                                          0;
                             if (i.Args.size() != count)
                                 Error(id, guid, "Index", "Wrong input count for " + n.Op);
                             if (count && !i.Args.empty())
                             {
-                                auto expected = sample || n.Op == "GridWorldToIndex" ? Type::Position : Type::IVec3;
+                                auto expected = sample || n.Op == "GridWorldToIndex" || n.Op == "GridWorldToCell" ?
+                                                    Type::Position :
+                                                    Type::IVec3;
                                 if (Out.Code[i.Args[0]].Kind != expected)
                                     Error(id,
                                           guid,
@@ -732,6 +759,30 @@ namespace Kans::Vfx
                                         Error(id, guid, "Value", "GridAddFloat requires float");
                                 }
                             }
+                            if (march)
+                            {
+                                if (Out.StageKind != Stage::SimulationStage || Out.IterationGrid != name)
+                                    Error(id, guid, "Grid", "GridLightMarch requires a grid simulation stage");
+                                if (i.Args.size() == 5)
+                                {
+                                    const auto& steps = Out.Code[i.Args[3]];
+                                    if (steps.Kind != Type::Int ||
+                                        (steps.Op == "Constant" &&
+                                         (steps.Literal.Integer < 1 || steps.Literal.Integer > 64)))
+                                        Error(id, guid, "Steps", "Steps must be in [1, 64]");
+                                    for (auto [arg, pin] :
+                                         {std::pair<size_t, const char*> {2, "Extinction"}, {4, "StepLength"}})
+                                    {
+                                        const auto& v = Out.Code[i.Args[arg]];
+                                        if (v.Kind != Type::Float ||
+                                            (v.Op == "Constant" &&
+                                             (!std::isfinite(v.Literal.Data.x) || v.Literal.Data.x < 0)))
+                                            Error(id, guid, pin, std::string(pin) + " must be >= 0");
+                                    }
+                                    if (Out.Code[i.Args[1]].Kind != Type::Vec4 || i.Kind != Type::Float)
+                                        Error(id, guid, output, "GridLightMarch requires vec4 light and float density");
+                                }
+                            }
                             if (sample && Out.StageKind != Stage::ParticleUpdate &&
                                 Out.StageKind != Stage::SimulationStage)
                                 Error(id, guid, "Position", "GridSample requires ParticleUpdate or a simulation stage");
@@ -745,10 +796,12 @@ namespace Kans::Vfx
                                                         "GridCellSize",
                                                         "GridIndexToWorld",
                                                         "GridWorldToIndex",
+                                                        "GridWorldToCell",
                                                         "GridGet",
                                                         "GridSet",
                                                         "GridSample",
-                                                        "GridAddFloat"}
+                                                        "GridAddFloat",
+                                                        "GridLightMarch"}
                                      .count(n.Op))
                                 Error(id, guid, output, "Unknown Grid3D operation");
                             reg = Emit(i);
@@ -1752,6 +1805,9 @@ namespace Kans::Vfx
                         bindingTypes.insert({{"SpriteSize", Type::Vec2},
                                              {"SpriteRotation", Type::Float},
                                              {"SubImageIndex", Type::Float}});
+                    if (!ribbon && renderer.Bindings.count("DirectionalTransmittance") &&
+                        !renderer.Bindings.at("DirectionalTransmittance").empty())
+                        bindingTypes["DirectionalTransmittance"] = Type::Float;
                     if (renderer.Bindings.count("SortKey"))
                         bindingTypes["SortKey"] = Type::Float;
                     if (renderer.Sorting == Sort::Custom)
@@ -1777,7 +1833,7 @@ namespace Kans::Vfx
                     }
                     for (const auto& [binding, name] : renderer.Bindings)
                     {
-                        if (name.empty() && mesh)
+                        if (name.empty() && (mesh || binding == "DirectionalTransmittance"))
                             continue;
                         auto at = k.find(name);
                         if (at == k.end())
@@ -2844,12 +2900,37 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                     e = bounds + "/vec3(" + res + ")";
                 else if (op == "GridIndexToWorld")
                     e = toWorld("((vec3(" + a + ")+0.5)/vec3(" + res + ")-0.5)*" + bounds);
+                else if (op == "GridWorldToCell")
+                    e = coordinate(a) + "-0.5";
                 else if (op == "GridWorldToIndex")
                     e = "ivec3(floor(" + coordinate(a) + "))";
                 else if (op == "GridGet")
                     e = "gridRead" + id + "[" + offset + "]" + swizzle;
                 else if (op == "GridSample")
                     e = "gridSample" + id + "(" + attr + "," + coordinate(a) + "-0.5)" + swizzle;
+                else if (op == "GridLightMarch")
+                {
+                    // March world-space distances even for rotated/scaled local grids.
+                    const auto cell      = "cell" + std::to_string(k);
+                    const auto tau       = "tau" + std::to_string(k);
+                    const auto h         = "step" + std::to_string(k);
+                    const auto localCell = bounds + "/vec3(" + res + ")";
+                    s += "vec3 " + cell + "=" + toWorld("((vec3(" + a + ")+0.5)/vec3(" + res + ")-0.5)*" + bounds) +
+                         ";\n";
+                    s += "vec3 cs" + std::to_string(k) + "=" + localCell + ";\n";
+                    for (int axis = 0; axis < 3; ++axis)
+                        s += "if(pc.worldSpace==0u)cs" + std::to_string(k) + "[" + std::to_string(axis) +
+                             "]*=length(owner[" + std::to_string(axis) + "].xyz);\n";
+                    auto cs = "cs" + std::to_string(k);
+                    s += "float " + h + "=" + arg(4) + ">0.0?" + arg(4) + ":min(" + cs + ".x,min(" + cs + ".y," + cs +
+                         ".z));\n";
+                    s += "float " + tau + "=0.0;if(" + b + ".w!=0.0){for(int stepIndex=1;stepIndex<=clamp(" + arg(3) +
+                         ",1,64);++stepIndex){vec3 samplePos=" + cell + "+" + b + ".xyz*(float(stepIndex)*" + h +
+                         ");vec3 q=" + coordinate("samplePos") +
+                         ";if(any(lessThan(q,vec3(0)))||any(greaterThanEqual(q,vec3(" + res + "))))break;" + tau +
+                         "+=gridSample" + id + "(" + attr + ",q-0.5).x*max(0.0," + c + ")*" + h + ";}}\n";
+                    e = "exp(-" + tau + ")";
+                }
                 else if (op == "GridSet")
                 {
                     s += "gridWrite" + id + "[" + offset + "]" + swizzle + "=" + b + ";\n";

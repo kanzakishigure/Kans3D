@@ -70,6 +70,12 @@ namespace Kans
 
     std::variant<Ref<const Asset>, AssetError> AssetManager::ReadAndDecode(AssetID id, AssetType type)
     {
+        if (id == SixWaySmokeMaterialID())
+        {
+            if (type != AssetType::Material)
+                return AssetError {AssetErrorCode::InvalidArgument, "SixWaySmoke is a Material asset"};
+            return Ref<const Asset>(GetSixWaySmokeMaterialAsset());
+        }
         if (id == StandardShaderID() || id == SixWaySmokeShaderID())
         {
             if (type != AssetType::Shader)
@@ -146,15 +152,15 @@ namespace Kans
                 const auto& section = shared.Sections[part->Section];
                 const auto& slot    = shared.MaterialSlots[section.MaterialSlot];
                 MeshData    view;
-                view.VertexFormat     = shared.VertexFormat;
+                view.VertexFormat      = shared.VertexFormat;
                 view.Skeleton          = shared.Skeleton;
                 view.JointBounds       = shared.JointBounds;
                 view.SkinBindTransform = shared.SkinBindTransform;
-                view.Material         = slot.DefaultMaterial;
-                view.AuthoredMaterial = slot.AuthoredMaterial;
-                view.MaterialSlots    = {slot};
-                view.LocalBounds      = section.LocalBounds;
-                view.Sections         = {{0, section.IndexCount, 0, section.LocalBounds}};
+                view.Material          = slot.DefaultMaterial;
+                view.AuthoredMaterial  = slot.AuthoredMaterial;
+                view.MaterialSlots     = {slot};
+                view.LocalBounds       = section.LocalBounds;
+                view.Sections          = {{0, section.IndexCount, 0, section.LocalBounds}};
                 std::unordered_map<uint32_t, uint32_t> vertices;
                 for (uint32_t i = section.FirstIndex; i < section.FirstIndex + section.IndexCount; ++i)
                 {
@@ -362,7 +368,7 @@ namespace Kans
                 // Part views have no Registry entry. Their bindings may change on reimport.
                 if (it->second.State == AssetLoadState::Failed ||
                     (it->first != StandardShaderID() && it->first != SixWaySmokeShaderID() &&
-                     !registry->Find(it->first, m_Target)))
+                     it->first != SixWaySmokeMaterialID() && !registry->Find(it->first, m_Target)))
                 {
                     NotifyChange(it->first);
                     retired.push_back(std::move(it->second.Value));

@@ -4,6 +4,7 @@
 #include "Kans3D/Animation/AnimationProduct.h"
 #include "Kans3D/Asset/Product/MeshProduct.h"
 #include "Kans3D/Asset/Product/TextureProduct.h"
+#include "Kans3D/Asset/Runtime/StandardShader.h"
 #include "Kans3D/Asset/Storage/ProductFiles.h"
 #include "Kans3D/VFX/VfxCompiler.h"
 namespace Kans
@@ -31,7 +32,7 @@ namespace Kans
                          key == "Material" || key == "Mesh" || key == "Asset" || key == "Skeleton"))
                     {
                         auto id = AssetID::FromString(p.second.as<std::string>());
-                        if (!id.IsValid())
+                        if (!id.IsValid() || (key == "Material" && id == SixWaySmokeMaterialID()))
                             continue;
                         if (auto b = builtins.find(id); b != builtins.end())
                         {

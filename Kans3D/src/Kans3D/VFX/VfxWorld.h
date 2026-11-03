@@ -82,6 +82,7 @@ namespace Kans::Vfx
                                 const glm::mat4&                   owner      = glm::mat4(1),
                                 bool                               reset      = false,
                                 const std::function<void(double)>& beforeTick = {});
+        glm::vec4                               MainLightDirection {0};
         std::shared_ptr<CollisionSnapshot>      Colliders;
         std::shared_ptr<CollisionDepthSnapshot> Depth;
         PhysicsWorld*                           Physics       = nullptr;
@@ -129,6 +130,7 @@ namespace Kans::Vfx
     {
     public:
         explicit VfxWorld(Scene& scene) : m_Scene(scene) {}
+        glm::vec4                                              MainLightDirection {0};
         void                                    Tick(float delta, bool preview = false, glm::vec3 camera = {});
         std::shared_ptr<CollisionDepthSnapshot> Depth;
         std::function<void(const std::string&)> RuntimeWarning;

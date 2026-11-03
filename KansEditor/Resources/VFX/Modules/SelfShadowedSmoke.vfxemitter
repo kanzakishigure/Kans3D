@@ -1,0 +1,164 @@
+Version: 1
+AssetID: 732d200000000011:0000000000000001
+Name: SelfShadowedSmoke
+Target: GPU
+Space: World
+Capacity: 1024
+DataInterfaces:
+  Emitter.Grid:
+    Kind: Grid3D
+    Resolution:
+    - 32
+    - 32
+    - 32
+    WorldBounds:
+    - 8
+    - 8
+    - 8
+    Attributes:
+    - Name: Density
+      Type: float
+    - Name: Transmittance
+      Type: float
+Stages:
+  EmitterUpdate:
+  - Guid: 2aa5cafd-2fbd-5a5d-b712-84631c036e62
+    Script: b0a6b05789834e6d:0000000000000001
+    Enabled: true
+    Inputs: {}
+  ParticleSpawn:
+  - Guid: 70e94fef-502c-58a7-9a34-3d73229cc2c6
+    Script: 82f92b6d396e781e:0000000000000001
+    Enabled: true
+    Inputs:
+      Module.Lifetime:
+        Kind: Literal
+        Value:
+          Type: float
+          Value: 10
+  ParticleUpdate:
+  - Guid: f3af39c2-2a63-5a6a-a024-4ce6b98d4aaf
+    Script: 732d200000000009:0000000000000001
+    Enabled: true
+    Inputs:
+      Module.Grid:
+        Kind: DataInterface
+        Binding:
+          Kind: Grid3D
+          Source: Emitter.Grid
+          Channel: Transmittance
+          Resolution:
+          - 32
+          - 32
+          - 32
+          WorldBounds:
+          - 8
+          - 8
+          - 8
+          Attributes: []
+  SimulationStage:
+  - Guid: 84ede3ed-e7ee-5c2b-a0ac-7fb705ce04ab
+    Name: GridClear
+    IterationSource:
+      Kind: DataInterface
+      Parameter: Emitter.Grid
+    Iterations: 1
+    Modules:
+    - Guid: cf311380-6f40-5788-9543-673cdfb8997e
+      Script: c0d609763e645cfd:0000000000000001
+      Enabled: true
+      Inputs:
+        Module.Grid:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Grid
+            Channel: Density
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+  - Guid: ec9fd537-0759-56ca-be68-ba31d85275e3
+    Name: SplatParticleDensity
+    IterationSource:
+      Kind: Particles
+    Iterations: 1
+    Modules:
+    - Guid: 0c32aa65-cfc3-5e27-a232-18b2ec522122
+      Script: 732d200000000007:0000000000000001
+      Enabled: true
+      Inputs:
+        Module.Grid:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Grid
+            Channel: Density
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+  - Guid: 78ebe1b3-3fcf-59eb-a49c-15d20901a935
+    Name: GridLightTransmittance
+    IterationSource:
+      Kind: DataInterface
+      Parameter: Emitter.Grid
+    Iterations: 1
+    Modules:
+    - Guid: edd04b76-fda5-5a36-90e2-f29322ffff5f
+      Script: 732d200000000008:0000000000000001
+      Enabled: true
+      Inputs:
+        Module.Grid:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Grid
+            Channel: Transmittance
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+        Module.Density:
+          Kind: DataInterface
+          Binding:
+            Kind: Grid3D
+            Source: Emitter.Grid
+            Channel: Density
+            Resolution:
+            - 32
+            - 32
+            - 32
+            WorldBounds:
+            - 8
+            - 8
+            - 8
+            Attributes: []
+Renderers:
+- Guid: self-shadowed-smoke-sprite
+  Kind: Sprite
+  Material: ffffffffffffffff:0000000000000003
+  Bindings:
+    DirectionalTransmittance: Particles.LightTransmittance
+    Position: Particles.Position
+    Color: Particles.Color
+    SpriteSize: Particles.SpriteSize
+    SpriteRotation: Particles.SpriteRotation
+    Velocity: Particles.Velocity
+    SubImageIndex: Particles.SubImageIndex
+    DynamicMaterialParameter: Particles.DynamicMaterialParameter

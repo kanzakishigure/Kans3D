@@ -501,13 +501,16 @@ namespace Kans
                 uniforms.MeshPivot  = glm::vec4(r.Meshes[draw.Entry].PivotOffset, 0);
                 uniforms.LockedAxis = glm::vec4(r.LockedAxis, float(r.LockedAxisEnable));
             }
-            uniforms.Lighting  = {float(r.NormalMode),
-                                  r.Curvature,
-                                  float(r.Lighting),
-                                  r.Kind == Vfx::RendererKind::Sprite &&
-                                          r.NormalMode == Vfx::LightingNormal::ParticleNormal ?
-                                      float(offset("Normal")) :
-                                      0.f};
+            uniforms.Lighting = {float(r.NormalMode),
+                                 r.Curvature,
+                                 float(r.Lighting),
+                                 r.Kind == Vfx::RendererKind::Sprite &&
+                                         r.NormalMode == Vfx::LightingNormal::ParticleNormal ?
+                                     float(offset("Normal")) :
+                                     0.f};
+            if (!ribbon && r.Bindings.count("DirectionalTransmittance") &&
+                !r.Bindings.at("DirectionalTransmittance").empty())
+                uniforms.SmokeShadow.x = float(offset("DirectionalTransmittance"));
             uniforms.PivotGrid = {r.Pivot.x, r.Pivot.y, float(r.Columns), float(r.Rows)};
             uniforms.Facing =
                 glm::vec4(r.FacingVector, float(bindings->Render.AlphaMode == MaterialAlphaMode::Premultiplied));

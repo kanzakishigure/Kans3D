@@ -4,12 +4,13 @@
 #include "Kans3D/Physics/ClothSolver.h"
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Scene/Scene.h"
+#include "Kans3D/VFX/VfxWorld.h"
 
 namespace Kans
 {
     Vfx::VfxWorld* RenderWorld::GetVfxWorld() const { return m_Scene ? &m_Scene->GetVfxWorld() : nullptr; }
-    AssetManager* RenderWorld::GetAssetManager() const { return m_Scene ? m_Scene->m_PrefabAssets : nullptr; }
-    void          RenderWorld::SetAssetManager(AssetManager* assets)
+    AssetManager*  RenderWorld::GetAssetManager() const { return m_Scene ? m_Scene->m_PrefabAssets : nullptr; }
+    void           RenderWorld::SetAssetManager(AssetManager* assets)
     {
         if (m_Scene)
             m_Scene->SetPrefabAssetManager(assets);
@@ -557,6 +558,17 @@ namespace Kans
             info.pointLights.push_back(candidates[i].Light);
         if (!info.pointLights.empty())
             info.pointLight = info.pointLights.front();
+        // Simulation may precede light collection, in which case it uses the previous frame's light.
+        // Reuse this renderer selection; VFX ticks never query the scene for lights.
+        CacheVfxLight(info);
+    }
+    void RenderWorld::CacheVfxLight(const SceneInfo& info) const
+    {
+        if (!m_Scene)
+            return;
+        const float length = glm::length(info.dirLight.Dirction);
+        m_Scene->GetVfxWorld().MainLightDirection =
+            info.HasDirectionalLight && length > 1e-6f ? glm::vec4(-info.dirLight.Dirction / length, 1) : glm::vec4(0);
     }
     void RenderWorld::Extract(RenderView& output, const RenderResource& settings) const
     {

@@ -1344,6 +1344,8 @@ namespace Kans::Vfx
         add("Engine.Owner.Scale", Type::Vec3, glm::vec4(1));
         add("Engine.Owner.Velocity", Type::Vec3);
         add("Engine.Camera.Position", Type::Position);
+        add("Engine.MainLightDirection", Type::Vec4);
+        add("Particles.LightTransmittance", Type::Float, glm::vec4(1));
         add("Particles.Position", Type::Position);
         add("Transient.PreviousPosition", Type::Position);
         add("Transient.CollisionMeshRadius", Type::Float, glm::vec4(-1));

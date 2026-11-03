@@ -5,9 +5,11 @@
 namespace Kans
 {
     // Reserved engine identity, never a project dependency or file.
-    [[nodiscard]] AssetID StandardShaderID();
-    [[nodiscard]] AssetID SixWaySmokeShaderID();
-    [[nodiscard]] bool    IsStandardShader(AssetID id);
+    [[nodiscard]] AssetID                      StandardShaderID();
+    [[nodiscard]] AssetID                      SixWaySmokeShaderID();
+    [[nodiscard]] AssetID                      SixWaySmokeMaterialID();
+    [[nodiscard]] Ref<const MaterialDataAsset> GetSixWaySmokeMaterialAsset();
+    [[nodiscard]] bool                         IsStandardShader(AssetID id);
     // Compiled and reflected once on the CPU; requires no graphics context.
     [[nodiscard]] const ShaderData&          GetStandardShader(bool particle = false);
     [[nodiscard]] Ref<const ShaderDataAsset> GetStandardShaderAsset();

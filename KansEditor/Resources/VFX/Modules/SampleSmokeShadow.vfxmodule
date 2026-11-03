@@ -1,0 +1,103 @@
+Version: 1
+AssetID: 732d200000000009:0000000000000001
+Usage: Module
+AllowedStages: 32
+Category: Built-in
+Description: SampleSmokeShadow
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Target
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+Nodes:
+- Guid: b9b59d00-c2ec-52fa-a33d-daf02635774e
+  Op: Get
+  Type: position
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: position
+  Parameter: Particles.Position
+- Guid: 62cecc0f-f412-56c4-b099-9a4dc024ee2c
+  Op: GridWorldToIndex
+  Type: ivec3
+  Inputs:
+  - Name: Arg0
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Module.Grid
+- Guid: efb64937-f2aa-5235-a189-b4f58cb2ef79
+  Op: GridNumCells
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Module.Grid
+- Guid: 0f596e27-b3d6-5e69-90cc-0ef538cfbd20
+  Op: GridSample
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: position
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+- Guid: 6a446c3f-cba3-5e13-9959-7d2d68548465
+  Op: CustomGLSL
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  - Name: Arg1
+    Type: ivec3
+  - Name: Arg2
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Code: (all(greaterThanEqual($Arg0,ivec3(0)))&&all(lessThan($Arg0,$Arg1)))?$Arg2:1.0
+- Guid: 1c73ec33-f620-525e-83b9-3fc0abaa6c5e
+  Op: Set
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Particles.LightTransmittance
+Links:
+- From: b9b59d00-c2ec-52fa-a33d-daf02635774e
+  Output: Value
+  To: 62cecc0f-f412-56c4-b099-9a4dc024ee2c
+  Input: Arg0
+- From: b9b59d00-c2ec-52fa-a33d-daf02635774e
+  Output: Value
+  To: 0f596e27-b3d6-5e69-90cc-0ef538cfbd20
+  Input: Arg0
+- From: 62cecc0f-f412-56c4-b099-9a4dc024ee2c
+  Output: Value
+  To: 6a446c3f-cba3-5e13-9959-7d2d68548465
+  Input: Arg0
+- From: efb64937-f2aa-5235-a189-b4f58cb2ef79
+  Output: Value
+  To: 6a446c3f-cba3-5e13-9959-7d2d68548465
+  Input: Arg1
+- From: 0f596e27-b3d6-5e69-90cc-0ef538cfbd20
+  Output: Value
+  To: 6a446c3f-cba3-5e13-9959-7d2d68548465
+  Input: Arg2
+- From: 6a446c3f-cba3-5e13-9959-7d2d68548465
+  Output: Value
+  To: 1c73ec33-f620-525e-83b9-3fc0abaa6c5e
+  Input: Arg0

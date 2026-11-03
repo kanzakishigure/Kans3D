@@ -1,0 +1,131 @@
+Version: 1
+AssetID: 732d200000000008:0000000000000001
+Usage: Module
+AllowedStages: 128
+Category: Built-in
+Description: GridLightTransmittance
+Inputs:
+- Name: Module.Grid
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Density
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+- Name: Module.Extinction
+  Type: float
+  Default:
+    Type: float
+    Value: 1
+- Name: Module.Steps
+  Type: int
+  Default:
+    Type: int
+    Value: 16
+- Name: Module.StepLength
+  Type: float
+  Default:
+    Type: float
+    Value: 0
+Nodes:
+- Guid: f80adee3-0aa1-5f57-bd55-2fa097d531c6
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Extinction
+- Guid: b4772ae1-6876-529d-9042-e49b74d011d5
+  Op: Input
+  Type: int
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: int
+  Parameter: Module.Steps
+- Guid: ceeab34b-d857-5611-96f0-4ab2712c317b
+  Op: Input
+  Type: float
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.StepLength
+- Guid: 0949a2b5-65a6-5763-ae6f-c5460337443b
+  Op: Get
+  Type: ivec3
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: ivec3
+  Parameter: Grid.ExecutionIndex
+- Guid: 2c82e6fd-0307-5e23-99e0-18be4e7dc37d
+  Op: MainLightDirection
+  Type: vec4
+  Inputs: []
+  Outputs:
+  - Name: Value
+    Type: vec4
+- Guid: 8e58ae67-1b88-53f6-a907-f50902d7e76c
+  Op: GridLightMarch
+  Type: float
+  Inputs:
+  - Name: Arg0
+    Type: ivec3
+  - Name: Arg1
+    Type: vec4
+  - Name: Arg2
+    Type: float
+  - Name: Arg3
+    Type: int
+  - Name: Arg4
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Density
+- Guid: 316435c6-493f-5463-a8ef-489291278ec2
+  Op: GridSet
+  Type: float
+  Inputs:
+  - Name: Index
+    Type: ivec3
+  - Name: Value
+    Type: float
+  Outputs:
+  - Name: Value
+    Type: float
+  Parameter: Module.Grid
+Links:
+- From: 0949a2b5-65a6-5763-ae6f-c5460337443b
+  Output: Value
+  To: 8e58ae67-1b88-53f6-a907-f50902d7e76c
+  Input: Arg0
+- From: 2c82e6fd-0307-5e23-99e0-18be4e7dc37d
+  Output: Value
+  To: 8e58ae67-1b88-53f6-a907-f50902d7e76c
+  Input: Arg1
+- From: f80adee3-0aa1-5f57-bd55-2fa097d531c6
+  Output: Value
+  To: 8e58ae67-1b88-53f6-a907-f50902d7e76c
+  Input: Arg2
+- From: b4772ae1-6876-529d-9042-e49b74d011d5
+  Output: Value
+  To: 8e58ae67-1b88-53f6-a907-f50902d7e76c
+  Input: Arg3
+- From: ceeab34b-d857-5611-96f0-4ab2712c317b
+  Output: Value
+  To: 8e58ae67-1b88-53f6-a907-f50902d7e76c
+  Input: Arg4
+- From: 0949a2b5-65a6-5763-ae6f-c5460337443b
+  Output: Value
+  To: 316435c6-493f-5463-a8ef-489291278ec2
+  Input: Index
+- From: 8e58ae67-1b88-53f6-a907-f50902d7e76c
+  Output: Value
+  To: 316435c6-493f-5463-a8ef-489291278ec2
+  Input: Value

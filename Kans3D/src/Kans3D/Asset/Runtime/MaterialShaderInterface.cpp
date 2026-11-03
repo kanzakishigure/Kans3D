@@ -196,7 +196,6 @@ vec3 KansRestPosition() { return kans_RestPosition; }
 )"},
                 {"Kans3D/ParticleLighting.glsl", R"(#ifndef KANS3D_PARTICLE_LIGHTING_GLSL
 #define KANS3D_PARTICLE_LIGHTING_GLSL
-#include <Kans3D/Lighting.glsl>
 // Shader programs have no shading-model enum. This opt-in extends their lit path;
 // ordinary meshes keep PBR, and procedural particle sources select diffuse vertex evaluation.
 #ifndef KANS_PARTICLE_PIXEL_ONLY
@@ -212,8 +211,10 @@ layout(location = 21) in vec3 kans_ParticleNegativeY;
 layout(location = 22) in vec3 kans_ParticleNegativeZ;
 #endif
 layout(location = 23) flat in float kans_ParticleLightingMode;
+layout(location = 24) flat in float kans_DirectionalTransmittance;
 #else
 float KansParticleEvaluation = 0.0;
+float KansParticleTransmittance = 1.0;
 layout(location = 15) out vec3 kans_ParticleDiffuse;
 #ifndef KANS_PARTICLE_DIFFUSE_ONLY
 layout(location = 16) out vec3 kans_ParticleAmbient;
@@ -225,8 +226,17 @@ layout(location = 21) out vec3 kans_ParticleNegativeY;
 layout(location = 22) out vec3 kans_ParticleNegativeZ;
 #endif
 layout(location = 23) flat out float kans_ParticleLightingMode;
+layout(location = 24) flat out float kans_DirectionalTransmittance;
 #endif
 #endif
+#ifndef KANS_PARTICLE_PIXEL_ONLY
+#ifdef KANS_FRAGMENT_STAGE
+#define KANS_DIRECTIONAL_TRANSMITTANCE clamp(kans_DirectionalTransmittance, 0.0, 1.0)
+#else
+#define KANS_DIRECTIONAL_TRANSMITTANCE clamp(KansParticleTransmittance, 0.0, 1.0)
+#endif
+#endif
+#include <Kans3D/Lighting.glsl>
 mat3 KansParticleFrame(vec3 normal, vec3 tangent)
 {
     vec3 N = normalize(normal);
@@ -262,7 +272,11 @@ void KansEvaluateParticleLighting(vec3     worldPos,
         axes[i] = vec3(0);
     if (u_Frame.DirectionalDirection.w != 0.0)
         KansParticleAddLight(
-            KansDirectionalToLight(), KansDirectionalRadiance() * KansShadow(worldPos, frame[2]), frame, diffuse, axes);
+            KansDirectionalToLight(), KansDirectionalRadiance() * KansShadow(worldPos, frame[2])
+#ifdef KANS_DIRECTIONAL_TRANSMITTANCE
+            * KANS_DIRECTIONAL_TRANSMITTANCE
+#endif
+            , frame, diffuse, axes);
     for (int i = 0; i < KansPointLightCount(); ++i)
     {
         vec3  delta = KansPointLightPosition(i) - worldPos;
@@ -282,6 +296,7 @@ void KansEvaluateParticleLighting(vec3     worldPos,
 void KansBuildParticleLighting(vec3 worldPos, vec3 normal, vec3 tangent)
 {
     kans_ParticleLightingMode = KansParticleEvaluation;
+    kans_DirectionalTransmittance = KansParticleTransmittance;
     kans_ParticleDiffuse      = vec3(0);
 #ifndef KANS_PARTICLE_DIFFUSE_ONLY
     kans_ParticleAmbient      = vec3(0);
@@ -600,7 +615,11 @@ vec3 KansShadePbr(vec3 albedo, float metallic, float roughness, float ao, vec3 N
     }
     if (u_Frame.DirectionalDirection.w != 0.0)
         Lo += KansDirectPbr(albedo, metallic, roughness, N, V, KansDirectionalToLight(),
-                            KansDirectionalRadiance(), u_Frame.DirectionalSpecular.rgb) * KansShadow(worldPos, N);
+                            KansDirectionalRadiance(), u_Frame.DirectionalSpecular.rgb) * KansShadow(worldPos, N)
+#ifdef KANS_DIRECTIONAL_TRANSMITTANCE
+            * KANS_DIRECTIONAL_TRANSMITTANCE
+#endif
+            ;
     vec3 F = F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - NdotV, 0.0, 1.0), 5.0);
     vec3 kD = (1.0 - F) * (1.0 - metallic);
     vec3 diffuse = KansEnvironmentDiffuse(N) * albedo;

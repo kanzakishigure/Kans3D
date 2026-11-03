@@ -9,7 +9,23 @@ namespace Kans
 {
     AssetID StandardShaderID() { return AssetID {SourceAssetID::FromString("ffffffffffffffff"), 1}; }
     AssetID SixWaySmokeShaderID() { return AssetID {SourceAssetID::FromString("ffffffffffffffff"), 2}; }
-    bool    IsStandardShader(AssetID id) { return !id.IsValid() || id == StandardShaderID(); }
+    AssetID SixWaySmokeMaterialID() { return AssetID {SourceAssetID::FromString("ffffffffffffffff"), 3}; }
+    Ref<const MaterialDataAsset> GetSixWaySmokeMaterialAsset()
+    {
+        static const auto asset = [] {
+            MaterialSource source;
+            source.Shader           = SixWaySmokeShaderID();
+            source.Render.AlphaMode = MaterialAlphaMode::Blend;
+            auto result             = ResolveMaterialSource(source, &GetSixWaySmokeShader());
+            if (auto error = std::get_if<AssetError>(&result))
+                throw std::runtime_error(error->Message);
+            auto value     = CreateRef<MaterialDataAsset>(std::get<MaterialData>(std::move(result)));
+            value->assetID = SixWaySmokeMaterialID();
+            return value;
+        }();
+        return asset;
+    }
+    bool IsStandardShader(AssetID id) { return !id.IsValid() || id == StandardShaderID(); }
 
     const ShaderData& GetStandardShader(bool particle)
     {

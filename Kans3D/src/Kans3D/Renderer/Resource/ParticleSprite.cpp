@@ -10,7 +10,7 @@ namespace Kans
         const char* Uniforms = R"(
 layout(set=2,binding=2,std140) uniform KansSprite {
 mat4 owner;mat4 view;mat4 projection;mat4 inverseView;mat4 inverseProjection;
-uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 meshScale;vec4 meshPivot;vec4 lockedAxis;vec4 lighting;vec4 options;
+uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 meshScale;vec4 meshPivot;vec4 lockedAxis;vec4 lighting;vec4 smokeShadow;vec4 options;
 } sprite;
 )";
     }
@@ -81,6 +81,21 @@ uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 mes
                     source.insert(at, Uniforms);
                     if (module.Stage == ShaderProductStage::Vertex)
                     {
+                        if (!ribbon)
+                            source.insert(source.find("void kans_SpriteMaterialMain()"), R"(
+layout(set=2,binding=0,std430) readonly buffer KansParticleAttributes{uvec4 attributes[];};
+layout(set=2,binding=1,std430) readonly buffer KansParticleAlive{uint alive[];};
+vec4 particle(uint attributeIndex,uint slot){return uintBitsToFloat(attributes[attributeIndex*sprite.offsets1.w+slot]);}
+)");
+                        auto transmittance = source.find("KansParticleTransmittance = 1.0;");
+                        if (!ribbon && transmittance != std::string::npos)
+                            // SPIRV-Cross places private-variable initializers inside the material main.
+                            // Load here so that main cannot overwrite the particle value with the default.
+                            source.replace(transmittance,
+                                           std::string("KansParticleTransmittance = 1.0;").size(),
+                                           "KansParticleTransmittance = "
+                                           "sprite.smokeShadow.x<0.0?1.0:particle(uint(sprite.smokeShadow.x),alive[gl_"
+                                           "InstanceIndex]).x;");
                         auto evaluation = source.find("KansParticleEvaluation = 0.0;");
                         if (evaluation != std::string::npos)
                             source.replace(evaluation,
@@ -89,6 +104,7 @@ uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 mes
                     }
                     if (module.Stage == ShaderProductStage::Vertex)
                     {
+                        source += "\n// Kans particle geometry\n";
                         if (!mesh)
                             for (const auto& [loc, name] : inputs)
                             {
@@ -105,12 +121,9 @@ uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 mes
                             }
                         if (!mesh && !ribbon)
                             source += R"(
-layout(set=2,binding=0,std430) readonly buffer KansSpriteAttributes{uvec4 attributes[];};
-layout(set=2,binding=1,std430) readonly buffer KansSpriteAlive{uint alive[];};
 layout(location=11) out vec4 kans_ParticleColor;
 layout(location=12) out vec4 kans_ParticleDynamic;
 layout(location=13) out vec3 kans_ParticleSubUV;
-vec4 particle(uint attributeIndex,uint slot){return uintBitsToFloat(attributes[attributeIndex*sprite.offsets1.w+slot]);}
 void main(){uint slot=alive[gl_InstanceIndex];vec3 position=particle(sprite.offsets0.x,slot).xyz;
 if(sprite.options.w>0.5)position=(sprite.owner*vec4(position,1)).xyz;
 vec3 right=sprite.inverseView[0].xyz,up=sprite.inverseView[1].xyz,normal=normalize(cross(right,up));
@@ -157,12 +170,9 @@ kans_ParticleColor=vertices[at+3];kans_ParticleDynamic=vertices[at+4];kans_Parti
                         if (mesh)
                         {
                             source += R"(
-layout(set=2,binding=0,std430) readonly buffer KansMeshAttributes{uvec4 attributes[];};
-layout(set=2,binding=1,std430) readonly buffer KansMeshAlive{uint alive[];};
 layout(location=11) out vec4 kans_ParticleColor;
 layout(location=12) out vec4 kans_ParticleDynamic;
 layout(location=13) out vec3 kans_ParticleSubUV;
-vec4 particle(uint attributeIndex,uint slot){return uintBitsToFloat(attributes[attributeIndex*sprite.offsets1.w+slot]);}
 vec3 rotateQ(vec4 q,vec3 v){return v+2*cross(q.xyz,cross(q.xyz,v)+q.w*v);}
 void main(){uint slot=alive[gl_InstanceIndex];vec3 position=particle(sprite.offsets0.x,slot).xyz;
 vec4 q=particle(sprite.offsets0.w,slot);float qlen=length(q);q=qlen>1e-8?q/qlen:vec4(0,0,0,1);
@@ -197,7 +207,7 @@ kans_ParticleColor=particle(sprite.offsets0.y,slot);kans_ParticleDynamic=particl
                                                                                              "vec4";
                                 std::string privateName = name + "Value";
                                 auto        main        = source.find("void kans_SpriteMaterialMain()");
-                                auto        end         = source.find("layout(set=2,binding=0", main);
+                                auto        end         = source.find("// Kans particle geometry", main);
                                 auto        body        = source.substr(main, end - main);
                                 size_t      at          = 0;
                                 while ((at = body.find(name, at)) != std::string::npos)

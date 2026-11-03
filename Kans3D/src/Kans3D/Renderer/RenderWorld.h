@@ -54,6 +54,7 @@ namespace Kans
         std::vector<ViewUI>              CollectUIs(const RenderCamera&) const;
         void                          Extract(RenderView& output, const RenderResource& settings) const;
         void                          CollectLights(SceneInfo& output) const;
+        void                             CacheVfxLight(const SceneInfo& info) const;
         std::vector<DrawProxy>        CollectDraws(UUID subtree = 0) const;
         bool                          MatchesSubtree(UUID entity, UUID instanceRoot, UUID subtree) const;
         // Whether a part using `slot` survives the view's isolate list.
