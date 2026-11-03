@@ -290,20 +290,7 @@ namespace Kans
         auto& particles =
             registry.Register<ParticleSystemComponent>("Particle System", ICON_FA_WAND_MAGIC_SPARKLES, "Rendering");
         particles.IconRank = 9;
-        particles.Draw     = [](Entity entity, ComponentUI& ui) {
-            auto c       = entity.GetComponent<ParticleSystemComponent>();
-            bool changed = false;
-            if (PropertyGrid::BeginGroup("Particle System"))
-            {
-                changed |= ui.AssetPicker("System", AssetType::VfxSystem, c.System);
-                changed |= PropertyGrid::Checkbox("Auto activate", c.AutoActivate);
-                changed |= PropertyGrid::Checkbox("Preview in edit mode", c.PreviewInEditMode);
-                changed |= PropertyGrid::Float("Time scale", c.TimeScale, .01f, 0, 100);
-                PropertyGrid::EndGroup();
-            }
-            if (changed)
-                entity.SetComponent<ParticleSystemComponent>(c);
-        };
+        particles.Draw     = DrawParticleSystem;
 
         auto& script    = registry.Register<ScriptComponent>("Script", ICON_FA_CODE, "Scripting");
         script.IconRank = 7;

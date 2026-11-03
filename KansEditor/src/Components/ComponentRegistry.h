@@ -72,6 +72,8 @@ namespace Kans
         // Ragdolls: open a .ragdoll in the ragdoll editor; generate one for a skinned entity (its
         // Animator's skeleton) and assign it once imported.
         virtual void OpenRagdollEditor(AssetID /*ragdoll*/) {}
+        // Particle systems: open a .vfxsystem in the VFX system editor.
+        virtual void OpenVfxSystem(AssetID /*system*/) {}
         virtual void CreateRagdoll(Entity) {}
         // Vehicles: the wheel row selected in the card, which the viewport highlights (-1: none).
         virtual int  GetSelectedWheel(Entity) { return -1; }

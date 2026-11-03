@@ -117,9 +117,11 @@ namespace Kans::Vfx
                                    const glm::mat4&               initialOwner,
                                    MeshSourceResolver             meshSources) :
         m_MeshSources(std::move(meshSources)), m_Asset(std::move(a)),
-        m_Seed(c.SeedOverride ? Hash(m_Asset->GetData().Settings.Seed ^ Hash(*c.SeedOverride)) :
+        m_Seed(c.RandomSeed     ? Hash(uint32_t(uint64_t(UUID {}))) :
+               c.SeedOverride ? Hash(m_Asset->GetData().Settings.Seed ^ Hash(*c.SeedOverride)) :
                                 m_Asset->GetData().Settings.Seed)
     {
+        Prewarm     = c.Prewarm;
         m_Owner     = initialOwner;
         FixedBounds = c.FixedBounds ? c.FixedBounds : m_Asset->GetData().Settings.FixedBounds;
         TimeScale   = c.TimeScale;
@@ -183,7 +185,7 @@ namespace Kans::Vfx
             Reset();
         m_Spawning = true;
         m_Paused   = false;
-        if (reset || m_Time == 0)
+        if ((reset || m_Time == 0) && Prewarm)
         {
             const auto& s     = m_Asset->GetData().Settings;
             uint32_t    ticks = uint32_t(std::floor(s.WarmupTime / s.WarmupTickDelta + 1e-5f));
@@ -433,7 +435,17 @@ namespace Kans::Vfx
         }
         for (auto emitterIndex : m_Asset->GetData().TickOrder)
         {
-            auto& e              = m_Emitters[emitterIndex];
+            auto& e = m_Emitters[emitterIndex];
+            // Times this emitter's share of the tick on every exit of the iteration.
+            struct Timer
+            {
+                double&                               Out;
+                std::chrono::steady_clock::time_point Start = std::chrono::steady_clock::now();
+                ~Timer()
+                {
+                    Out = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Start).count();
+                }
+            } timer {e.TickMilliseconds};
             context.EmitterIndex = emitterIndex;
             context.EventIndex   = 0;
             context.RandomID.reset();
@@ -981,8 +993,20 @@ namespace Kans::Vfx
                     result.Valid = true;
                     return result;
                 };
+                // Overrides the system no longer declares (renamed, removed or retyped) are dropped.
+                std::vector<std::string> dropped;
+                auto                     matched = c;
+                matched.UserParameters           = MatchUserParameters(source->GetData(), c.UserParameters, &dropped);
+                for (const auto& message : dropped)
+                {
+                    auto text = "Particle system " + entity.GetComponent<TagComponent>().Tag + ": " + message;
+                    if (RuntimeWarning)
+                        RuntimeWarning(text);
+                    else if (Log::GetCoreLogger())
+                        CORE_WARN("{}", text);
+                }
                 auto instance =
-                    std::make_unique<SystemInstance>(source, c, m_Scene.GetWorldTransform(entity), meshSources);
+                    std::make_unique<SystemInstance>(source, matched, m_Scene.GetWorldTransform(entity), meshSources);
                 instance->AutoDestroy = m_AutoDestroy.count(id) != 0;
                 m_Instances[id]       = std::move(instance);
                 m_Configurations[id]  = c;
@@ -999,7 +1023,11 @@ namespace Kans::Vfx
                 instance->FieldTime          = m_FieldTime;
                 instance->FieldLayer         = c.FieldLayer;
                 if (!instance->TimelineDesiredAge)
+                {
                     instance->Tick(delta, m_Scene.GetWorldTransform(entity), camera);
+                    if (c.Loop && delta > 0 && instance->IsSpawning() && instance->IsComplete())
+                        instance->Activate(true);
+                }
                 if (!preview && instance->AutoDestroy && instance->IsComplete())
                     destroy.push_back(id);
             }
@@ -1015,6 +1043,30 @@ namespace Kans::Vfx
                 ++i;
         for (auto id : destroy)
             m_Scene.DestroyEntity(m_Scene.GetEntityByUUID(id));
+    }
+    ParameterMap MatchUserParameters(const CompiledSystem&     system,
+                                     const ParameterMap&       parameters,
+                                     std::vector<std::string>* dropped)
+    {
+        ParameterMap kept;
+        for (const auto& [name, value] : parameters)
+        {
+            const auto& declared = system.Settings.UserParameters;
+            auto at = std::find_if(declared.begin(), declared.end(), [&](const auto& p) { return p.Name == name; });
+            if (at == declared.end())
+            {
+                if (dropped)
+                    dropped->push_back(name + " is not a user parameter of the system; its override is dropped");
+            }
+            else if (at->Kind != value.Kind)
+            {
+                if (dropped)
+                    dropped->push_back(name + " changed type; its override is dropped");
+            }
+            else
+                kept[name] = value;
+        }
+        return kept;
     }
     Entity VfxWorld::Spawn(AssetID asset, glm::vec3 position, glm::quat rotation, bool autoDestroy)
     {
@@ -1050,6 +1102,9 @@ namespace Kans
         n["System"]            = c.System.ToString();
         n["AutoActivate"]      = c.AutoActivate;
         n["PreviewInEditMode"] = c.PreviewInEditMode;
+        n["Loop"]              = c.Loop;
+        n["Prewarm"]           = c.Prewarm;
+        n["RandomSeed"]        = c.RandomSeed;
         if (c.SeedOverride)
             n["SeedOverride"] = *c.SeedOverride;
         n["UserParameters"] = Vfx::EncodeParameters(c.UserParameters);
@@ -1072,6 +1127,9 @@ namespace Kans
         c.System            = AssetID::FromString(n["System"].as<std::string>());
         c.AutoActivate      = n["AutoActivate"].as<bool>(true);
         c.PreviewInEditMode = n["PreviewInEditMode"].as<bool>(true);
+        c.Loop              = n["Loop"].as<bool>(false);
+        c.Prewarm           = n["Prewarm"].as<bool>(true);
+        c.RandomSeed        = n["RandomSeed"].as<bool>(false);
         if (n["SeedOverride"])
             c.SeedOverride = n["SeedOverride"].as<uint32_t>();
         c.UserParameters = Vfx::DecodeParameters(n["UserParameters"]);

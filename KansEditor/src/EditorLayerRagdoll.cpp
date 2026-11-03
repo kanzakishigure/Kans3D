@@ -27,6 +27,13 @@ namespace Kans
         actions.Open   = [this](AssetID ragdoll) { OpenRagdollAsset(ragdoll); };
         actions.Create = [this](Entity entity) { CreateRagdollFor(entity); };
         m_PropertiesPanel.SetRagdollActions(std::move(actions));
+        m_PropertiesPanel.SetOpenVfxSystem([this](AssetID system) {
+            const auto file = SourceFileOf(system);
+            if (file.empty())
+                Record(AssetError {AssetErrorCode::NotFound, "The VFX system has no source file to edit"});
+            else
+                m_PendingVfxSystems.push_back(file);
+        });
         m_RagdollEditor.SetSavedCallback([this](const std::filesystem::path& file) {
             CORE_INFO("{}: {}", file.filename().u8string(), BuildSavedSource(m_AssetImports.get(), file));
             m_ContentBrowserPanel.Refresh();

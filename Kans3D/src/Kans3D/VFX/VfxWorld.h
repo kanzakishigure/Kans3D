@@ -40,6 +40,8 @@ namespace Kans::Vfx
         Bounds                                           DynamicBounds;
         float                                            SpriteRadius     = 0;
         bool                                             HiddenByDistance = false;
+        // CPU time of this emitter's part of the last tick (spawn, update, handlers, GPU queuing).
+        double                                           TickMilliseconds = 0;
         Value                                            Read(const std::string& name, uint32_t slot) const;
         glm::vec3                                        WorldPosition(uint32_t slot, const glm::mat4& owner) const;
     };
@@ -71,6 +73,7 @@ namespace Kans::Vfx
         void            Resume() { m_Paused = false; }
         bool            IsActive() const { return m_Spawning && !m_Paused && !IsComplete(); }
         bool            IsComplete() const;
+        bool            IsSpawning() const { return m_Spawning; } // Activated and not deactivated.
         void            Emit(const std::string& emitter, uint32_t count);
         void            Set(const std::string& name, const Value&);
         Value           Get(const std::string& name, Type) const;
@@ -100,6 +103,7 @@ namespace Kans::Vfx
         std::optional<Bounds>                   FixedBounds;
         float                                   TimeScale   = 1;
         bool                                    AutoDestroy = false;
+        bool                                    Prewarm     = true; // Run the system's warmup on activation.
 
     private:
         struct MeshState
@@ -126,6 +130,11 @@ namespace Kans::Vfx
         bool                             m_ScrubCapWarned = false;
         glm::mat4                    m_Owner {1};
     };
+    // The overrides of `parameters` that the system declares with the same type; the names of the
+    // others (unknown, renamed or retyped) with the reason go to `dropped`.
+    ParameterMap MatchUserParameters(const CompiledSystem&,
+                                     const ParameterMap&       parameters,
+                                     std::vector<std::string>* dropped = nullptr);
     class VfxWorld
     {
     public:
@@ -142,6 +151,7 @@ namespace Kans::Vfx
         void                                                   Reset(UUID);
         void                                                   NotifyAssetChanged(AssetID);
         void                                                   Start();
+        bool IsPlaying() const { return m_Playing; } // Started for play mode (not the edit-mode preview).
         Entity                                                 Spawn(AssetID, glm::vec3, glm::quat, bool);
 
     private:

@@ -50,6 +50,9 @@ namespace Kans::ComponentEditors
     void DrawJoint(Entity entity, ComponentUI& ui);
     // Ragdolls, vehicles and fields (RagdollVehicleFieldEditors.cpp).
     void DrawRagdoll(Entity entity, ComponentUI& ui);
+    // Particle System: the system with Open, playback, user parameter overrides, layers and the
+    // in-editor preview (ParticleSystemEditors.cpp).
+    void DrawParticleSystem(Entity entity, ComponentUI& ui);
     void DrawVehicle(Entity entity, ComponentUI& ui);
     void DrawWindZone(Entity entity, ComponentUI& ui);
     void DrawForceField(Entity entity, ComponentUI& ui);

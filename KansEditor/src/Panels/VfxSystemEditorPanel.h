@@ -6,6 +6,10 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <memory>
+#include <imgui.h>
+#include "Kans3D/Editor/EditorCamera.h"
+#include "Panels/VfxPreview.h"
 #include "Panels/VfxSystemEditing.h"
 #include "UI/NodeCanvas.h"
 #include "UnsavedChanges.h"
@@ -15,9 +19,12 @@ namespace Kans
     class EditorAssetImportService;
 
     // Edits one .vfxsystem (or one .vfxemitter as a system with that emitter), in the manner of
-    // Niagara's system editor: the system overview (an emitter node graph) on top, the selected
-    // emitter's stack (Emitter Spawn/Update, Particle Spawn/Update, Event Handlers, Simulation
-    // Stages, Render) on the left, the parameters panel on the right and the compile output below.
+    // Niagara's system editor: the system overview (an emitter node graph) top-left, the preview
+    // viewport with its playback bar, time scrub and statistics top-right, the selected emitter's
+    // stack (Emitter Spawn/Update, Particle Spawn/Update, Event Handlers, Simulation Stages, Render)
+    // below the overview, the parameters panel (with preview values, solo, mute and emit) below the
+    // preview, and the compile output or the attribute spreadsheet at the bottom. The preview runs
+    // the latest successful compile; a failed compile keeps it and marks it outdated.
     // Each edit is an undo step; the system compiles in the background shortly after edits and its
     // errors badge the overview node and the stack row they point to. Ctrl+S writes canonical YAML
     // and rebuilds it. Built-in templates open read-only with "Duplicate to project".
@@ -28,6 +35,20 @@ namespace Kans
         using StackRef   = VfxSystemEditing::StackRef;
         using InputPath  = VfxSystemEditing::InputPath;
         using AssetList  = std::function<std::vector<std::pair<AssetID, std::filesystem::path>>()>;
+        // How the preview viewport looks besides its scene.
+        struct PreviewLook
+        {
+            bool Grid = true;
+        };
+        // A rendered preview frame: the image to show (0: none) and the GPU time of its VFX passes
+        // when the device has timestamps.
+        struct PreviewFrame
+        {
+            uintptr_t             Image = 0;
+            std::optional<double> VfxGpuMilliseconds;
+        };
+        using PreviewRenderer =
+            std::function<PreviewFrame(const Ref<Scene>&, const EditorCamera&, glm::uvec2, const PreviewLook&)>;
         static constexpr double CompileDelay = 0.3; // Seconds after the last edit.
 
         void Bind(EditorAssetImportService* service) { m_Service = service; }
@@ -40,6 +61,8 @@ namespace Kans
         void SetProjectDirectory(std::filesystem::path directory) { m_ProjectDirectory = std::move(directory); }
         void SetOpenCallback(std::function<void(const std::filesystem::path&)> open) { m_Open = std::move(open); }
         void SetOpenModuleCallback(std::function<void(const std::filesystem::path&)> open) { m_OpenModule = std::move(open); }
+        // Renders the preview scene (without one the preview draws its overlay on a backdrop).
+        void SetPreviewRenderer(PreviewRenderer render) { m_Render = std::move(render); }
 
         bool                                Open(const std::filesystem::path& file);
         bool                                IsOpen() const { return m_IsOpen; }
@@ -86,9 +109,33 @@ namespace Kans
         // Rows shown expanded (a module use GUID), and the row a diagnostic highlights.
         void Expand(const std::string& use) { m_ExpandPending.insert(use); }
 
+        // ---- Preview ----
+        VfxPreview::Session&       Preview() { return *m_Preview; }
+        EditorCamera&              PreviewCamera() { return m_PreviewCamera; }
+        VfxPreview::DebugOptions&  Debug() { return m_Debug; }
+        PreviewLook&               Look() { return m_Look; }
+        // Fits the camera to the effect's bounds (or a unit box around the origin).
+        void FramePreview();
+        // Mutes or solos an emitter in the preview (recompiles the preview, not the asset).
+        void SetMuted(const std::string& handle, bool muted);
+        void SetSolo(const std::string& handle);
+        // The bottom area: the compile output or the attribute spreadsheet.
+        void ShowSpreadsheet(bool shown) { m_ShowSpreadsheet = shown; }
+        bool IsShowingSpreadsheet() const { return m_ShowSpreadsheet; }
+        // Spreadsheet view state: sorted column and component, and a range filter on a column.
+        struct SheetState
+        {
+            int   SortColumn = -1, SortComponent = 0, FilterColumn = -1, FilterComponent = 0;
+            bool  Ascending  = true;
+            float FilterMin = -1, FilterMax = 1;
+        };
+        SheetState& Sheet() { return m_Sheet; }
+        // The rows the spreadsheet shows, in order (sorted and filtered).
+        std::vector<size_t> SheetRows() const;
+
         // Validation: call each frame with the time in seconds.
         void Tick(double now);
-        bool IsCompiling() const { return m_Compile.valid(); }
+        bool IsCompiling() const { return m_Compile.valid() || m_PreviewCompile.valid(); }
         void WaitForCompile();
         const std::vector<VfxSystemEditing::StackDiagnostic>& Diagnostics() const { return m_Diagnostics; }
         // Selects the diagnostic's emitter, expands and scrolls to its row and highlights it.
@@ -122,7 +169,15 @@ namespace Kans
         void Edited();
         void Refresh(); // Reloads the module library.
         void DrawToolbar();
-        void DrawOverview(float height);
+        void DrawOverview(float width, float height);
+        void DrawPreview(float height);
+        void DrawPreviewToolbar();
+        void DrawPreviewTimeline();
+        void DrawPreviewStats();
+        void DrawPreviewOverlay(ImVec2 min, ImVec2 size);
+        void DrawPreviewControls();
+        void DrawSpreadsheet();
+        void UpdatePreviewProduct();
         void DrawStack();
         void DrawSystemProperties();
         void DrawEmitterProperties(const Vfx::EmitterHandle& handle, const Vfx::Emitter& effective);
@@ -193,11 +248,32 @@ namespace Kans
         // Drag-and-drop of module rows.
         std::string m_DragUse;
 
-        // Compile: debounced after edits, run in the background.
+        // Compile: debounced after edits, run in the background; the product feeds the preview.
         size_t                                       m_SeenRevision = size_t(-1), m_CompiledRevision = size_t(-1);
         size_t                                       m_PendingRevision = 0;
         double                                       m_EditTime = 0, m_Now = 0;
-        std::future<std::vector<Vfx::Diagnostic>>    m_Compile;
+        std::future<Vfx::CompileResult>              m_Compile;
+        Vfx::System                                  m_PendingSystem, m_CompiledSystem;
+        std::optional<Vfx::CompiledSystem>           m_Product; // The last compile's product when it succeeded.
+        std::string                                  m_CompileFailure;
+        // The preview's own compile of the masked system (solo and mute), and what it is for.
+        std::future<Vfx::CompileResult>              m_PreviewCompile;
+        std::pair<size_t, uint64_t>                  m_PreviewKey {size_t(-1), 0}, m_PreviewCompileKey {size_t(-1), 0};
+
+        // Preview viewport.
+        PreviewRenderer                          m_Render;
+        std::unique_ptr<VfxPreview::Session>     m_Preview = std::make_unique<VfxPreview::Session>();
+        EditorCamera                             m_PreviewCamera;
+        VfxPreview::DebugOptions                 m_Debug;
+        PreviewLook                              m_Look;
+        bool                                     m_PreviewFramed = false, m_ShowSpreadsheet = false, m_SliceInset = true;
+        bool                                     m_SolidBackground = false;
+        glm::vec3                                m_Background {0.06f, 0.065f, 0.075f};
+        float                                    m_SunYaw = 40, m_SunPitch = -50;
+        bool                                     m_Sun = true;
+        int                                      m_EmitCount = 10;
+        SheetState                               m_Sheet;
+        int                                      m_SheetFrame = -10;
         std::vector<VfxSystemEditing::StackDiagnostic> m_Diagnostics;
 
         UnsavedChanges m_Closing;

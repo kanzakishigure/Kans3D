@@ -40,6 +40,11 @@ namespace Kans
             return t == Vfx::Type::Int ? Vfx::Value::Int(0) : t == Vfx::Type::Bool ? Vfx::Value::Bool(false) : Vfx::Value::Vector({}, t);
         }
         ImVec4 FromAbgr(uint32_t c) { return ImGui::ColorConvertU32ToFloat4(c); }
+        glm::vec3 SunDirection(float yaw, float pitch)
+        {
+            const float y = glm::radians(yaw), p = glm::radians(pitch);
+            return {std::cos(p) * std::sin(y), std::sin(p), std::cos(p) * std::cos(y)};
+        }
         const char* RendererName(Vfx::RendererKind k)
         {
             switch (k)
@@ -102,6 +107,11 @@ namespace Kans
         m_Overview.SetSelection({m_Selected});
         m_Diagnostics.clear();
         m_SeenRevision = m_CompiledRevision = size_t(-1);
+        m_Product.reset();
+        m_Preview       = std::make_unique<VfxPreview::Session>();
+        m_PreviewKey    = {size_t(-1), 0};
+        m_PreviewFramed = false;
+        m_Preview->SetSun(m_Sun, SunDirection(m_SunYaw, m_SunPitch));
         return true;
     }
 
@@ -114,6 +124,21 @@ namespace Kans
     NodeCanvas::Graph VfxSystemEditorPanel::BuildOverview() const
     {
         auto g = VfxSystemEditing::BuildOverview(m_Document.Data(), m_Context, m_Positions, m_Diagnostics);
+        // Runtime state from the preview: live counts on the nodes, and solo or mute.
+        const auto stats = m_Preview->Stats();
+        for (auto& n : g.Nodes)
+        {
+            if (m_Preview->IsMuted(n.Id) || (!m_Preview->Solo().empty() && m_Preview->Solo() != n.Id && n.Id != SystemNode))
+            {
+                n.Body.push_back(m_Preview->IsMuted(n.Id) ? "Muted in preview" : "Hidden by solo");
+                n.Accent = 0xff808080;
+            }
+            else if (m_Preview->Solo() == n.Id)
+                n.Body.push_back("Solo in preview");
+            for (const auto& x : stats)
+                if (x.Handle == n.Id)
+                    n.Body.push_back(std::to_string(x.Count) + " / " + std::to_string(x.Capacity) + " particles");
+        }
         if (m_Document.GetMode() == Mode::Emitter && !g.Nodes.empty())
             g.Nodes.erase(g.Nodes.begin()); // One emitter: no system node.
         return g;
@@ -319,9 +344,9 @@ namespace Kans
         m_Now = now;
         if (m_Compile.valid() && m_Compile.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
         {
-            auto errors = m_Compile.get();
+            auto result = m_Compile.get();
             m_Diagnostics.clear();
-            for (const auto& d : errors)
+            for (const auto& d : result.Errors)
                 m_Diagnostics.push_back(Locate(d, m_Document.Data(), m_Context));
             for (const auto& h : m_Document.Data().Emitters)
                 for (const auto& p : ListParameters(m_Document.Data(), m_Context, h.Guid))
@@ -334,6 +359,17 @@ namespace Kans
                         m_Diagnostics.push_back(std::move(w));
                     }
             m_CompiledRevision = m_PendingRevision;
+            m_CompiledSystem   = std::move(m_PendingSystem);
+            if (result)
+            {
+                m_Product = std::move(result.Product);
+                m_CompileFailure.clear();
+            }
+            else
+            {
+                m_Product.reset();
+                m_CompileFailure = result.Errors.empty() ? "The system does not compile" : result.Errors.front().Message;
+            }
         }
         if (m_Document.Revision() != m_SeenRevision)
         {
@@ -343,17 +379,70 @@ namespace Kans
         if (!m_Compile.valid() && m_CompiledRevision != m_SeenRevision && now - m_EditTime >= CompileDelay)
         {
             m_PendingRevision = m_SeenRevision;
+            m_PendingSystem   = m_Document.Data();
             m_Compile         = std::async(std::launch::async, [system = m_Document.Data(), modules = m_Library.Resolver(),
                                                         emitters = m_Context.ResolveEmitter()] {
                 try
                 {
-                    return Vfx::Compile(system, emitters, modules).Errors;
+                    return Vfx::Compile(system, emitters, modules);
                 }
                 catch (const std::exception& e)
                 {
-                    Vfx::Diagnostic d;
+                    Vfx::CompileResult r;
+                    Vfx::Diagnostic    d;
                     d.Message = e.what();
-                    return std::vector<Vfx::Diagnostic> {d};
+                    r.Errors  = {d};
+                    return r;
+                }
+            });
+        }
+        UpdatePreviewProduct();
+    }
+
+    void VfxSystemEditorPanel::UpdatePreviewProduct()
+    {
+        if (m_CompiledRevision == size_t(-1))
+            return;
+        const std::pair<size_t, uint64_t> key {m_CompiledRevision, m_Preview->MaskRevision()};
+        if (m_PreviewCompile.valid())
+        {
+            if (m_PreviewCompile.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+                return;
+            auto result  = m_PreviewCompile.get();
+            m_PreviewKey = m_PreviewCompileKey;
+            if (result)
+                m_Preview->SetProduct(std::move(result.Product));
+            else
+                m_Preview->SetOutdated(result.Errors.empty() ? "The preview does not compile" : result.Errors.front().Message);
+        }
+        if (m_PreviewKey == key)
+            return;
+        if (!m_Product)
+        {
+            m_Preview->SetOutdated(m_CompileFailure);
+            m_PreviewKey = key;
+        }
+        else if (!m_Preview->HasMask())
+        {
+            m_Preview->SetProduct(*m_Product);
+            m_PreviewKey = key;
+        }
+        else
+        {
+            m_PreviewCompileKey = key;
+            m_PreviewCompile    = std::async(std::launch::async, [system = m_Preview->Masked(m_CompiledSystem),
+                                                               modules = m_Library.Resolver(), emitters = m_Context.ResolveEmitter()] {
+                try
+                {
+                    return Vfx::Compile(system, emitters, modules);
+                }
+                catch (const std::exception& e)
+                {
+                    Vfx::CompileResult r;
+                    Vfx::Diagnostic    d;
+                    d.Message = e.what();
+                    r.Errors  = {d};
+                    return r;
                 }
             });
         }
@@ -364,6 +453,37 @@ namespace Kans
         if (m_Compile.valid())
             m_Compile.wait();
         Tick(m_EditTime);
+        if (m_PreviewCompile.valid())
+        {
+            m_PreviewCompile.wait();
+            Tick(m_EditTime);
+        }
+    }
+
+    void VfxSystemEditorPanel::SetMuted(const std::string& handle, bool muted)
+    {
+        m_Preview->SetMuted(handle, muted);
+        UpdatePreviewProduct();
+    }
+
+    void VfxSystemEditorPanel::SetSolo(const std::string& handle)
+    {
+        m_Preview->SetSolo(handle);
+        UpdatePreviewProduct();
+    }
+
+    std::vector<size_t> VfxSystemEditorPanel::SheetRows() const
+    {
+        const auto& capture = m_Preview->LastCapture();
+        if (!capture)
+            return {};
+        auto rows = m_Sheet.SortColumn >= 0 ?
+                        VfxPreview::SortRows(*capture, size_t(m_Sheet.SortColumn), uint32_t(m_Sheet.SortComponent), m_Sheet.Ascending) :
+                        VfxPreview::SortRows(*capture, size_t(-1), 0, true);
+        if (m_Sheet.FilterColumn >= 0)
+            rows = VfxPreview::FilterRows(*capture, rows, size_t(m_Sheet.FilterColumn), uint32_t(m_Sheet.FilterComponent),
+                                          m_Sheet.FilterMin, m_Sheet.FilterMax);
+        return rows;
     }
 
     void VfxSystemEditorPanel::ActivateDiagnostic(size_t index)
@@ -518,21 +638,38 @@ namespace Kans
         const ImVec2 avail    = ImGui::GetContentRegionAvail();
         const float  spacing  = ImGui::GetStyle().ItemSpacing.y;
         const float  overview = m_Document.GetMode() == Mode::Emitter ? Px(150.0f) : std::max(Px(160.0f), avail.y * 0.26f);
-        const float  output   = Px(76.0f);
-        DrawOverview(overview);
-        const float body = std::max(avail.y - overview - output - 2 * spacing, Px(120.0f));
-        ImGui::BeginChild("##stack", {std::floor(avail.x * 0.62f), body}, ImGuiChildFlags_Borders);
+        const float  output   = m_ShowSpreadsheet ? std::max(Px(180.0f), avail.y * 0.3f) : Px(76.0f);
+        const float  body     = std::max(avail.y - overview - output - 2 * spacing, Px(120.0f));
+        const float  left     = std::floor(avail.x * 0.62f);
+        // Left column: the overview over the stack. Right column: the preview over the parameters.
+        ImGui::BeginGroup();
+        DrawOverview(left, overview);
+        ImGui::BeginChild("##stack", {left, body}, ImGuiChildFlags_Borders);
         ImGui::BeginDisabled(ReadOnly());
         DrawStack();
         ImGui::EndDisabled();
         ImGui::EndChild();
+        ImGui::EndGroup();
         ImGui::SameLine();
-        ImGui::BeginChild("##parameters", {0, body}, ImGuiChildFlags_Borders);
+        ImGui::BeginGroup();
+        const float column  = overview + body + spacing;
+        const float preview = std::floor(std::max(overview, column * 0.58f));
+        DrawPreview(preview);
+        ImGui::BeginChild("##parameters", {0, std::max(Px(40.0f), column - preview - spacing)}, ImGuiChildFlags_Borders);
+        DrawPreviewControls();
         ImGui::BeginDisabled(ReadOnly());
         DrawParameters();
         ImGui::EndDisabled();
         ImGui::EndChild();
-        DrawOutput();
+        ImGui::EndGroup();
+        // Bottom: the compile output or the attribute spreadsheet.
+        if (ImGui::SmallButton(m_ShowSpreadsheet ? "Output" : ICON_FA_TABLE_COLUMNS "  Spreadsheet"))
+            m_ShowSpreadsheet = !m_ShowSpreadsheet;
+        ImGui::SameLine();
+        if (m_ShowSpreadsheet)
+            DrawSpreadsheet();
+        else
+            DrawOutput();
         if (m_ValueEdit && !ImGui::IsAnyItemActive())
             FinishEdit();
         DrawSearch();
@@ -601,10 +738,9 @@ namespace Kans
         }
     }
 
-    void VfxSystemEditorPanel::DrawOverview(float height)
+    void VfxSystemEditorPanel::DrawOverview(float width, float height)
     {
-        const auto  graph = BuildOverview();
-        const float width = ImGui::GetContentRegionAvail().x;
+        const auto graph = BuildOverview();
         if (!m_Framed)
         {
             auto& view = m_Overview.GetView();
@@ -1938,6 +2074,620 @@ namespace Kans
         ImGui::EndChild();
     }
 
+    // ---------------------------------------------------------------------- preview
+
+    void VfxSystemEditorPanel::FramePreview()
+    {
+        Bounds b;
+        if (auto* instance = m_Preview->Instance())
+        {
+            if (instance->FixedBounds)
+                b.Expand(instance->FixedBounds->Transformed(instance->OwnerTransform()));
+            for (const auto& e : instance->Emitters())
+            {
+                Bounds own = e.Compiled->Settings.FixedBounds.value_or(e.DynamicBounds);
+                b.Expand(e.Compiled->Settings.SimulationSpace == Vfx::Space::Local ? own.Transformed(instance->OwnerTransform()) : own);
+            }
+        }
+        if (!b.IsValid())
+        {
+            b.Expand(glm::vec3(-1, 0, -1));
+            b.Expand(glm::vec3(1, 2, 1));
+        }
+        m_PreviewCamera.Focus(b.Center(), std::max(0.5f, b.Radius()));
+        m_PreviewFramed = true;
+    }
+
+    void VfxSystemEditorPanel::DrawPreviewToolbar()
+    {
+        using EditorTheme::Px;
+        const auto& palette = EditorTheme::Colors();
+        auto&       p       = *m_Preview;
+        if (ImGui::Button(p.IsPlaying() ? ICON_FA_PAUSE : ICON_FA_PLAY))
+            p.IsPlaying() ? p.Pause() : p.Play();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(p.IsPlaying() ? "Pause" : "Play");
+        ImGui::SameLine(0, Px(2.0f));
+        if (ImGui::Button(ICON_FA_FORWARD_STEP))
+            p.StepFrame();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Step one fixed step");
+        ImGui::SameLine(0, Px(2.0f));
+        if (ImGui::Button(ICON_FA_ROTATE_LEFT))
+            p.Restart();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Restart with the same seed");
+        ImGui::SameLine(0, Px(2.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, p.Loop ? palette.Accent : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        if (ImGui::Button(ICON_FA_ROTATE))
+            p.Loop = !p.Loop;
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Loop at the end of the time bar");
+        ImGui::SameLine();
+        float speed = p.Speed();
+        ImGui::SetNextItemWidth(Px(70.0f));
+        if (ImGui::SliderFloat("##speed", &speed, 0.1f, 4.0f, "%.1fx", ImGuiSliderFlags_Logarithmic))
+            p.SetSpeed(speed);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Playback speed");
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_EXPAND))
+            FramePreview();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Frame the bounds");
+        ImGui::SameLine();
+        if (ImGui::Button("View"))
+            ImGui::OpenPopup("##previewview");
+        ImGui::SameLine(0, Px(2.0f));
+        if (ImGui::Button("Debug"))
+            ImGui::OpenPopup("##previewdebug");
+        if (p.IsOutdated())
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(palette.Warning, ICON_FA_TRIANGLE_EXCLAMATION " Outdated");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The last compile failed; the preview shows the previous one.\n%s", p.OutdatedReason().c_str());
+        }
+        if (ImGui::BeginPopup("##previewview"))
+        {
+            ImGui::MenuItem("Grid", nullptr, &m_Look.Grid);
+            bool floor = p.HasFloor(), sphere = p.HasSphere();
+            if (ImGui::MenuItem("Floor plane (collides)", nullptr, &floor))
+                p.SetFloor(floor);
+            if (ImGui::MenuItem("Sphere (collides)", nullptr, &sphere))
+                p.SetSphere(sphere);
+            ImGui::Separator();
+            bool sunChanged = ImGui::MenuItem("Directional light", nullptr, &m_Sun);
+            ImGui::BeginDisabled(!m_Sun);
+            ImGui::SetNextItemWidth(Px(140.0f));
+            sunChanged |= ImGui::SliderFloat("Yaw", &m_SunYaw, -180.0f, 180.0f, "%.0f deg");
+            ImGui::SetNextItemWidth(Px(140.0f));
+            sunChanged |= ImGui::SliderFloat("Pitch", &m_SunPitch, -89.0f, 0.0f, "%.0f deg");
+            ImGui::EndDisabled();
+            if (sunChanged)
+                p.SetSun(m_Sun, SunDirection(m_SunYaw, m_SunPitch));
+            ImGui::Separator();
+            bool colourChanged = ImGui::MenuItem("Solid background", nullptr, &m_SolidBackground);
+            ImGui::BeginDisabled(!m_SolidBackground);
+            colourChanged |= ImGui::ColorEdit3("Background", &m_Background.x, ImGuiColorEditFlags_NoInputs);
+            ImGui::EndDisabled();
+            if (colourChanged)
+                p.GetScene()->PatchEnvironmentSettings([&](EnvironmentSettings& env) {
+                    env.ShowSkybox      = !m_SolidBackground;
+                    env.BackgroundColor = m_Background;
+                });
+            ImGui::Separator();
+            float step = p.FixedStep() * 1000.0f;
+            ImGui::SetNextItemWidth(Px(140.0f));
+            if (ImGui::DragFloat("Fixed step", &step, 0.1f, 1.0f, 100.0f, "%.2f ms", ImGuiSliderFlags_AlwaysClamp))
+                p.SetFixedStep(step / 1000.0f);
+            ImGui::EndPopup();
+        }
+        if (ImGui::BeginPopup("##previewdebug"))
+        {
+            ImGui::MenuItem("Bounds", nullptr, &m_Debug.Bounds);
+            ImGui::MenuItem("Emitter origins", nullptr, &m_Debug.Origins);
+            ImGui::MenuItem("Velocity vectors", nullptr, &m_Debug.Velocity);
+            ImGui::MenuItem("Collision contacts", nullptr, &m_Debug.Contacts);
+            ImGui::MenuItem("Vector field arrows", nullptr, &m_Debug.VectorFields);
+            ImGui::SetNextItemWidth(Px(140.0f));
+            ImGui::DragFloat("Velocity scale", &m_Debug.VelocityScale, 0.005f, 0.001f, 10.0f, "%.3f s");
+            ImGui::TextDisabled("GPU particle data comes from the last capture.");
+            ImGui::Separator();
+            // Grid3D slice: emitter, grid, attribute, axis and index.
+            auto        view    = p.GetGridView();
+            bool        enabled = view.has_value();
+            if (ImGui::MenuItem("Grid3D slice", nullptr, &enabled))
+            {
+                if (enabled)
+                {
+                    VfxPreview::GridView v;
+                    for (const auto& h : m_Document.Data().Emitters)
+                        if (auto grids = p.Grids(h.Guid); !grids.empty())
+                        {
+                            v.Emitter = h.Guid;
+                            v.Grid    = grids.front();
+                            break;
+                        }
+                    if (const auto* product = p.Product())
+                        for (const auto& e : product->Emitters)
+                            if (e.Handle == v.Emitter)
+                                if (auto at = e.Settings.DataInterfaces.find(v.Grid);
+                                    at != e.Settings.DataInterfaces.end() && !at->second.GridAttributes.empty())
+                                {
+                                    v.Attribute = at->second.GridAttributes.front().Name;
+                                    v.Index     = int(at->second.Resolution.z / 2);
+                                }
+                    view = v;
+                }
+                else
+                    view.reset();
+                p.SetGridView(view);
+            }
+            if (view && p.Product())
+            {
+                const Vfx::CompiledEmitter* emitter = nullptr;
+                for (const auto& e : p.Product()->Emitters)
+                    if (e.Handle == view->Emitter)
+                        emitter = &e;
+                if (emitter)
+                {
+                    auto v = *view;
+                    ImGui::SetNextItemWidth(Px(160.0f));
+                    if (ImGui::BeginCombo("Grid", v.Grid.c_str()))
+                    {
+                        for (const auto& e : p.Product()->Emitters)
+                            for (const auto& g : p.Grids(e.Handle))
+                                if (ImGui::Selectable((e.Settings.Name + " \xE2\x80\xBA " + g).c_str(), v.Emitter == e.Handle && v.Grid == g))
+                                    v.Emitter = e.Handle, v.Grid = g;
+                        ImGui::EndCombo();
+                    }
+                    auto at = emitter->Settings.DataInterfaces.find(v.Grid);
+                    if (at != emitter->Settings.DataInterfaces.end())
+                    {
+                        const auto& grid = at->second;
+                        ImGui::SetNextItemWidth(Px(160.0f));
+                        if (ImGui::BeginCombo("Attribute", v.Attribute.c_str()))
+                        {
+                            for (const auto& a : grid.GridAttributes)
+                                if (ImGui::Selectable(a.Name.c_str(), a.Name == v.Attribute))
+                                    v.Attribute = a.Name;
+                            ImGui::EndCombo();
+                        }
+                        uint32_t components = 1;
+                        for (const auto& a : grid.GridAttributes)
+                            if (a.Name == v.Attribute)
+                                components = Vfx::Components(a.Kind);
+                        int component = int(v.Component);
+                        if (components > 1)
+                        {
+                            ImGui::SetNextItemWidth(Px(160.0f));
+                            ImGui::SliderInt("Component", &component, 0, int(components) - 1, component == 0 ? "x" : component == 1 ? "y" : component == 2 ? "z" : "w");
+                        }
+                        v.Component = uint32_t(std::clamp(component, 0, int(components) - 1));
+                        const char* axes[] = {"X", "Y", "Z"};
+                        ImGui::SetNextItemWidth(Px(160.0f));
+                        ImGui::Combo("Axis", &v.Axis, axes, 3);
+                        ImGui::SetNextItemWidth(Px(160.0f));
+                        ImGui::SliderInt("Slice", &v.Index, 0, int(grid.Resolution[v.Axis]) - 1);
+                        ImGui::Checkbox("Inset", &m_SliceInset);
+                    }
+                    if (v != *view)
+                        p.SetGridView(v);
+                }
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    void VfxSystemEditorPanel::DrawPreviewOverlay(ImVec2 min, ImVec2 size)
+    {
+        using EditorTheme::Px;
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->PushClipRect(min, {min.x + size.x, min.y + size.y}, true);
+        const glm::mat4 viewProjection = m_PreviewCamera.GetViewProjection();
+        auto            project = [&](glm::vec3 p, ImVec2& out) {
+            const glm::vec4 clip = viewProjection * glm::vec4(p, 1.0f);
+            if (clip.w <= 1e-4f)
+                return false;
+            const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+            out = {min.x + (ndc.x * 0.5f + 0.5f) * size.x, min.y + (0.5f - ndc.y * 0.5f) * size.y};
+            return true;
+        };
+        for (const auto& line : m_Preview->DebugLines(m_Debug))
+        {
+            ImVec2 a, b;
+            if (project(line.From, a) && project(line.To, b))
+                draw->AddLine(a, b, line.Color, Px(1.2f));
+        }
+        if (m_Sun)
+        {
+            // The light direction as an arrow from the top-right corner.
+            const glm::vec3 d = SunDirection(m_SunYaw, m_SunPitch);
+            const glm::vec3 r = m_PreviewCamera.Right(), u = m_PreviewCamera.Up();
+            const ImVec2    c {min.x + size.x - Px(28.0f), min.y + Px(28.0f)};
+            const ImVec2    tip {c.x + glm::dot(d, r) * Px(18.0f), c.y - glm::dot(d, u) * Px(18.0f)};
+            draw->AddCircle(c, Px(20.0f), IM_COL32(255, 220, 120, 90));
+            draw->AddLine(c, tip, IM_COL32(255, 220, 120, 255), Px(2.0f));
+            draw->AddCircleFilled(tip, Px(3.0f), IM_COL32(255, 220, 120, 255));
+        }
+        // The Grid3D slice: its outline in the view and a colour-mapped inset.
+        if (const auto& slice = m_Preview->Slice(); slice && !slice->Values.empty())
+        {
+            const int axis = slice->View.Axis, u = axis == 0 ? 1 : 0, v = axis == 2 ? 1 : 2;
+            const glm::vec3 half = slice->WorldBounds * 0.5f;
+            glm::vec3 corner[4];
+            for (int k = 0; k < 4; ++k)
+            {
+                corner[k][axis] = -half[axis] + (float(slice->View.Index) + 0.5f) / float(slice->Resolution[axis]) * slice->WorldBounds[axis];
+                corner[k][u]    = (k == 1 || k == 2) ? half[u] : -half[u];
+                corner[k][v]    = (k >= 2) ? half[v] : -half[v];
+            }
+            const glm::mat4 owner = m_Preview->Instance() ? m_Preview->Instance()->OwnerTransform() : glm::mat4(1);
+            for (int k = 0; k < 4; ++k)
+            {
+                ImVec2 a, b;
+                if (project(glm::vec3(owner * glm::vec4(corner[k], 1)), a) && project(glm::vec3(owner * glm::vec4(corner[(k + 1) % 4], 1)), b))
+                    draw->AddLine(a, b, IM_COL32(255, 160, 60, 220), Px(1.5f));
+            }
+            if (m_SliceInset)
+            {
+                const float  side  = std::min(size.y * 0.42f, Px(170.0f));
+                const float  cell  = side / float(std::max(slice->Size.x, slice->Size.y));
+                const ImVec2 at {min.x + Px(8.0f), min.y + size.y - Px(8.0f) - cell * float(slice->Size.y)};
+                const float  range = slice->Max - slice->Min;
+                for (uint32_t y = 0; y < slice->Size.y; ++y)
+                    for (uint32_t x = 0; x < slice->Size.x; ++x)
+                    {
+                        const float t = range > 0 ? (slice->At(x, y) - slice->Min) / range : 0.5f;
+                        // A blue-to-yellow ramp; v grows upwards.
+                        const ImU32 c = IM_COL32(int(30 + 225 * t), int(40 + 180 * t), int(140 * (1 - t) + 40), 235);
+                        const ImVec2 p0 {at.x + cell * float(x), at.y + cell * float(slice->Size.y - 1 - y)};
+                        draw->AddRectFilled(p0, {p0.x + cell, p0.y + cell}, c);
+                    }
+                char label[128];
+                std::snprintf(label, sizeof(label), "%s %c=%d  [%.3g, %.3g]", slice->View.Attribute.c_str(), "XYZ"[axis], slice->View.Index,
+                              slice->Min, slice->Max);
+                draw->AddText({at.x, at.y - ImGui::GetTextLineHeight() - Px(2.0f)}, IM_COL32(230, 230, 230, 255), label);
+            }
+        }
+        draw->PopClipRect();
+    }
+
+    void VfxSystemEditorPanel::DrawPreviewTimeline()
+    {
+        using EditorTheme::Px;
+        auto&       p       = *m_Preview;
+        const auto& palette = EditorTheme::Colors();
+        char        text[48];
+        std::snprintf(text, sizeof(text), "%.2f s", p.Time());
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(text);
+        ImGui::SameLine();
+        const float durationWidth = Px(64.0f);
+        const float width = std::max(Px(40.0f), ImGui::GetContentRegionAvail().x - durationWidth - ImGui::GetStyle().ItemSpacing.x);
+        const ImVec2 min = ImGui::GetCursorScreenPos();
+        const float  h   = ImGui::GetFrameHeight();
+        ImGui::InvisibleButton("##scrub", {width, h});
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled({min.x, min.y + h * 0.35f}, {min.x + width, min.y + h * 0.65f}, ImGui::GetColorU32(ImGuiCol_FrameBg), Px(2.0f));
+        // Seconds as ticks.
+        for (int s = 0; s <= int(p.Duration()); ++s)
+        {
+            const float x = min.x + width * float(s / p.Duration());
+            draw->AddLine({x, min.y + h * 0.2f}, {x, min.y + h * 0.35f}, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+        }
+        const float t = float(std::clamp(p.Time() / p.Duration(), 0.0, 1.0));
+        draw->AddRectFilled({min.x, min.y + h * 0.35f}, {min.x + width * t, min.y + h * 0.65f}, ImGui::GetColorU32(palette.Accent), Px(2.0f));
+        draw->AddCircleFilled({min.x + width * t, min.y + h * 0.5f}, h * 0.3f, ImGui::GetColorU32(palette.AccentHover));
+        if (ImGui::IsItemActive())
+        {
+            const float x = std::clamp((ImGui::GetIO().MousePos.x - min.x) / width, 0.0f, 1.0f);
+            const double target = double(x) * p.Duration();
+            if (std::abs(target - p.Time()) >= p.FixedStep() * 0.5)
+                p.Seek(target);
+            if (ImGui::IsItemActivated())
+                p.Pause();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Drag to seek: resets and replays in fixed steps");
+        ImGui::SameLine();
+        float duration = float(p.Duration());
+        ImGui::SetNextItemWidth(durationWidth);
+        if (ImGui::DragFloat("##duration", &duration, 0.05f, 0.1f, 600.0f, "%.1f s", ImGuiSliderFlags_AlwaysClamp))
+            p.SetDuration(duration);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Time bar length");
+    }
+
+    void VfxSystemEditorPanel::DrawPreviewStats()
+    {
+        const auto stats = m_Preview->Stats();
+        uint32_t   count = 0, capacity = 0;
+        uint64_t   spawned = 0, memory = 0;
+        double     cpu = 0;
+        for (const auto& s : stats)
+        {
+            count += s.Count;
+            capacity += s.Capacity;
+            spawned += s.SpawnedThisFrame;
+            memory += s.MemoryBytes;
+            cpu += s.CpuMilliseconds;
+        }
+        char gpu[32];
+        if (m_Preview->GpuMilliseconds)
+            std::snprintf(gpu, sizeof(gpu), "%.3f ms", *m_Preview->GpuMilliseconds);
+        else
+            std::snprintf(gpu, sizeof(gpu), "n/a");
+        ImGui::TextDisabled("%u / %u particles  \xC2\xB7  +%llu  \xC2\xB7  CPU %.3f ms  \xC2\xB7  GPU %s  \xC2\xB7  %.1f KiB", count, capacity,
+                            (unsigned long long)spawned, cpu, gpu, double(memory) / 1024.0);
+        if (ImGui::IsItemHovered())
+        {
+            std::string tip;
+            for (const auto& s : stats)
+            {
+                char line[200];
+                std::snprintf(line, sizeof(line), "%s (%s): %u / %u, +%llu this frame, CPU %.3f ms, %.1f KiB\n", s.Name.c_str(),
+                              s.Gpu ? "GPU" : "CPU", s.Count, s.Capacity, (unsigned long long)s.SpawnedThisFrame, s.CpuMilliseconds,
+                              double(s.MemoryBytes) / 1024.0);
+                tip += line;
+            }
+            ImGui::SetTooltip("%s", tip.empty() ? "No preview" : tip.c_str());
+        }
+    }
+
+    void VfxSystemEditorPanel::DrawPreview(float height)
+    {
+        using EditorTheme::Px;
+        ImGui::BeginChild("##preview", {0, height}, ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        DrawPreviewToolbar();
+        const ImGuiIO& io     = ImGui::GetIO();
+        const float    below  = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing();
+        const ImVec2   avail  = ImGui::GetContentRegionAvail();
+        const ImVec2   size   = {std::max(avail.x, 8.0f), std::max(avail.y - below, 8.0f)};
+        const ImVec2   min    = ImGui::GetCursorScreenPos();
+        m_PreviewCamera.SetViewportSize(uint32_t(size.x), uint32_t(size.y));
+        if (!m_PreviewFramed)
+            FramePreview();
+        m_Preview->Camera = m_PreviewCamera.GetPosition();
+        m_Preview->Advance(io.DeltaTime);
+        m_Preview->UpdateSlice(ImGui::GetTime());
+        PreviewFrame frame;
+        if (m_Render)
+            frame = m_Render(m_Preview->GetScene(), m_PreviewCamera, {uint32_t(size.x), uint32_t(size.y)}, m_Look);
+        m_Preview->GpuMilliseconds = frame.VfxGpuMilliseconds;
+        if (frame.Image)
+        {
+            ImGui::Image(static_cast<ImTextureID>(frame.Image), size, ImVec2(0, 1), ImVec2(1, 0));
+            ImGui::SetCursorScreenPos(min);
+        }
+        else
+        {
+            const auto& c = m_SolidBackground ? m_Background : glm::vec3(0.12f, 0.125f, 0.14f);
+            ImGui::GetWindowDrawList()->AddRectFilled(min, {min.x + size.x, min.y + size.y},
+                                                      ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, 1.0f)));
+        }
+        ImGui::InvisibleButton("##previewview", size,
+                               ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+        if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f)
+            m_PreviewCamera.Dolly(io.MouseWheel);
+        if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Left) || ImGui::IsMouseDragging(ImGuiMouseButton_Right)))
+            m_PreviewCamera.Orbit({io.MouseDelta.x, io.MouseDelta.y});
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
+            m_PreviewCamera.Pan({io.MouseDelta.x, io.MouseDelta.y});
+        if (ImGui::IsItemHovered() && ImGui::IsKeyPressed(ImGuiKey_F, false))
+            FramePreview();
+        DrawPreviewOverlay(min, size);
+        DrawPreviewTimeline();
+        DrawPreviewStats();
+        ImGui::EndChild();
+    }
+
+    void VfxSystemEditorPanel::DrawPreviewControls()
+    {
+        using EditorTheme::Px;
+        auto&       p = *m_Preview;
+        const auto& s = m_Document.Data();
+        if (!s.UserParameters.empty() && PropertyGrid::BeginGroup("Preview values"))
+        {
+            for (const auto& param : s.UserParameters)
+            {
+                ImGui::PushID(param.Name.c_str());
+                const auto at         = p.UserOverrides().find(param.Name);
+                const bool overridden = at != p.UserOverrides().end();
+                Vfx::Value value      = overridden ? at->second : param.Default.value_or(Zero(param.Kind));
+                if (PropertyGrid::Row(Short(param.Name).c_str(), "A value for the preview only; the asset keeps its default", overridden))
+                {
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    if (ValueEditor("##value", value, param.Kind, &param))
+                        p.SetUserParameter(param.Name, value);
+                    if (PropertyGrid::RowReset(overridden))
+                        p.ClearUserParameter(param.Name);
+                }
+                ImGui::PopID();
+            }
+            PropertyGrid::EndGroup();
+        }
+        if (!s.Emitters.empty() && PropertyGrid::BeginGroup("Preview emitters"))
+        {
+            if (PropertyGrid::Row("Emit count", "Particles each Emit button adds"))
+            {
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::DragInt("##emitcount", &m_EmitCount, 1.0f, 1, 100000);
+            }
+            const auto stats = p.Stats();
+            for (const auto& h : s.Emitters)
+            {
+                ImGui::PushID(h.Guid.c_str());
+                if (PropertyGrid::Row(h.Name.c_str(), "Preview only: solo, mute and emit leave the asset unchanged"))
+                {
+                    const bool solo = p.Solo() == h.Guid, muted = p.IsMuted(h.Guid);
+                    if (ImGui::SmallButton(solo ? "Solo \xE2\x97\x8F" : "Solo"))
+                        SetSolo(solo ? std::string() : h.Guid);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(muted ? "Muted" : "Mute"))
+                        SetMuted(h.Guid, !muted);
+                    ImGui::SameLine();
+                    const bool running = std::any_of(stats.begin(), stats.end(), [&](const auto& x) { return x.Handle == h.Guid; });
+                    ImGui::BeginDisabled(!running);
+                    if (ImGui::SmallButton("Emit"))
+                        p.Emit(h.Guid, uint32_t(m_EmitCount));
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Capture"))
+                    {
+                        p.CaptureHandle = h.Guid;
+                        p.CaptureEmitter(h.Guid, p.CaptureLimit);
+                        m_ShowSpreadsheet = true;
+                    }
+                    ImGui::EndDisabled();
+                    for (const auto& x : stats)
+                        if (x.Handle == h.Guid)
+                        {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("%u", x.Count);
+                        }
+                }
+                ImGui::PopID();
+            }
+            PropertyGrid::EndGroup();
+        }
+    }
+
+    void VfxSystemEditorPanel::DrawSpreadsheet()
+    {
+        using EditorTheme::Px;
+        auto& p = *m_Preview;
+        ImGui::BeginChild("##sheet", {0, 0}, ImGuiChildFlags_Borders);
+        // Emitter, Capture, auto capture, the row limit and the filter.
+        const auto* chosen = FindHandle(m_Document.Data(), p.CaptureHandle);
+        if (!chosen && !m_Document.Data().Emitters.empty())
+        {
+            p.CaptureHandle = m_Selected != SystemNode && FindHandle(m_Document.Data(), m_Selected) ? m_Selected : m_Document.Data().Emitters.front().Guid;
+            chosen          = FindHandle(m_Document.Data(), p.CaptureHandle);
+        }
+        ImGui::SetNextItemWidth(Px(140.0f));
+        if (ImGui::BeginCombo("##sheetemitter", chosen ? chosen->Name.c_str() : "No emitter"))
+        {
+            for (const auto& h : m_Document.Data().Emitters)
+                if (ImGui::Selectable(h.Name.c_str(), h.Guid == p.CaptureHandle))
+                    p.CaptureHandle = h.Guid;
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_EYE "  Capture"))
+            p.CaptureEmitter(p.CaptureHandle, p.CaptureLimit);
+        ImGui::SameLine();
+        ImGui::Checkbox("Auto capture on step", &p.AutoCapture);
+        ImGui::SameLine();
+        int limit = int(p.CaptureLimit);
+        ImGui::SetNextItemWidth(Px(60.0f));
+        if (ImGui::DragInt("Rows", &limit, 1.0f, 1, 4096))
+            p.CaptureLimit = size_t(std::clamp(limit, 1, 4096));
+        const auto& capture = p.LastCapture();
+        if (!capture)
+        {
+            ImGui::TextDisabled("Capture reads the first particles of the emitter once.");
+            ImGui::EndChild();
+            return;
+        }
+        if (!capture->Error.empty())
+            ImGui::TextColored(EditorTheme::Colors().Warning, "%s", capture->Error.c_str());
+        // Filter: a column component in a range.
+        ImGui::SameLine();
+        bool filtering = m_Sheet.FilterColumn >= 0;
+        if (ImGui::Checkbox("Filter", &filtering))
+            m_Sheet.FilterColumn = filtering ? 0 : -1;
+        if (filtering && !capture->Columns.empty())
+        {
+            m_Sheet.FilterColumn = std::min(m_Sheet.FilterColumn, int(capture->Columns.size()) - 1);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(Px(150.0f));
+            if (ImGui::BeginCombo("##filtercolumn", Short(capture->Columns[size_t(m_Sheet.FilterColumn)]).c_str()))
+            {
+                for (size_t c = 0; c < capture->Columns.size(); ++c)
+                    for (uint32_t k = 0; k < VfxPreview::ColumnComponents(capture->Kinds[c]); ++k)
+                    {
+                        std::string name = Short(capture->Columns[c]);
+                        if (VfxPreview::ColumnComponents(capture->Kinds[c]) > 1)
+                            name += std::string(".") + "xyzw"[k];
+                        if (ImGui::Selectable(name.c_str(), int(c) == m_Sheet.FilterColumn && int(k) == m_Sheet.FilterComponent))
+                            m_Sheet.FilterColumn = int(c), m_Sheet.FilterComponent = int(k);
+                    }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(Px(130.0f));
+            ImGui::DragFloatRange2("##range", &m_Sheet.FilterMin, &m_Sheet.FilterMax, 0.01f);
+        }
+        const auto rows = SheetRows();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu of %u alive at %.2f s", rows.size(), capture->Alive, capture->Time);
+        // One column per attribute component.
+        std::vector<std::pair<size_t, uint32_t>> columns;
+        for (size_t c = 0; c < capture->Columns.size(); ++c)
+            for (uint32_t k = 0; k < VfxPreview::ColumnComponents(capture->Kinds[c]); ++k)
+                columns.push_back({c, k});
+        const int count = int(std::min<size_t>(columns.size() + 1, 63));
+        if (count > 1 && ImGui::BeginTable("##attributes", count,
+                                           ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg |
+                                               ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Sortable | ImGuiTableFlags_Resizable))
+        {
+            ImGui::TableSetupScrollFreeze(1, 1);
+            ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_WidthFixed, Px(34.0f));
+            for (int i = 0; i + 1 < count; ++i)
+            {
+                const auto [c, k] = columns[size_t(i)];
+                std::string name  = Short(capture->Columns[c]);
+                if (VfxPreview::ColumnComponents(capture->Kinds[c]) > 1)
+                    name += std::string(".") + "xyzw"[k];
+                ImGui::TableSetupColumn(name.c_str(), ImGuiTableColumnFlags_WidthFixed, Px(78.0f));
+            }
+            ImGui::TableHeadersRow();
+            // A table appearing shows the sheet's order; later header clicks change it.
+            const bool fresh   = ImGui::GetFrameCount() - m_SheetFrame > 1;
+            m_SheetFrame       = ImGui::GetFrameCount();
+            if (auto* specs = ImGui::TableGetSortSpecs(); specs && fresh)
+            {
+                for (size_t i = 0; i < columns.size() && int(i) + 1 < count; ++i)
+                    if (int(columns[i].first) == m_Sheet.SortColumn && int(columns[i].second) == m_Sheet.SortComponent)
+                        ImGui::TableSetColumnSortDirection(int(i) + 1,
+                                                           m_Sheet.Ascending ? ImGuiSortDirection_Ascending : ImGuiSortDirection_Descending,
+                                                           false);
+                specs->SpecsDirty = false;
+            }
+            else if (specs && specs->SpecsDirty)
+            {
+                if (specs->SpecsCount > 0 && specs->Specs[0].ColumnIndex > 0)
+                {
+                    const auto [c, k]     = columns[size_t(specs->Specs[0].ColumnIndex - 1)];
+                    m_Sheet.SortColumn    = int(c);
+                    m_Sheet.SortComponent = int(k);
+                    m_Sheet.Ascending     = specs->Specs[0].SortDirection != ImGuiSortDirection_Descending;
+                }
+                specs->SpecsDirty = false;
+            }
+            for (auto r : rows)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%zu", r);
+                for (int i = 0; i + 1 < count; ++i)
+                {
+                    ImGui::TableNextColumn();
+                    const auto [c, k] = columns[size_t(i)];
+                    const auto& v     = capture->Rows[r][c];
+                    if (v.Kind == Vfx::Type::Int || v.Kind == Vfx::Type::Bool)
+                        ImGui::Text("%d", v.Integer);
+                    else
+                        ImGui::Text("%.4g", VfxPreview::ComponentOf(v, k));
+                }
+            }
+            ImGui::EndTable();
+        }
+        ImGui::EndChild();
+    }
+
     // ---------------------------------------------------------------------- popups
 
     void VfxSystemEditorPanel::DrawSearch()
@@ -2060,6 +2810,10 @@ namespace Kans
                 }
                 if (ImGui::MenuItem(h->Enabled ? "Disable" : "Enable"))
                     Apply([&, enabled = !h->Enabled](Vfx::System& x, const Context&) { return SetEmitterEnabled(x, guid, enabled); });
+                if (ImGui::MenuItem("Solo in preview", nullptr, m_Preview->Solo() == guid))
+                    SetSolo(m_Preview->Solo() == guid ? std::string() : guid);
+                if (ImGui::MenuItem("Mute in preview", nullptr, m_Preview->IsMuted(guid)))
+                    SetMuted(guid, !m_Preview->IsMuted(guid));
                 if (ImGui::MenuItem(ICON_FA_ARROW_LEFT "  Draw earlier"))
                     Apply([&](Vfx::System& x, const Context&) { return MoveEmitter(x, guid, -1); });
                 if (ImGui::MenuItem(ICON_FA_ARROW_RIGHT "  Draw later"))

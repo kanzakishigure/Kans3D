@@ -968,6 +968,37 @@ namespace Kans
                 throw std::invalid_argument("Missing VFX emitter " + id.ToString());
             });
         }
+        // Each editor renders its preview through its own viewport client.
+        panel->SetPreviewRenderer([this, client = std::shared_ptr<ViewportClient>()](
+                                      const Ref<Scene>& scene, const EditorCamera& camera, glm::uvec2 size,
+                                      const VfxSystemEditorPanel::PreviewLook& look) mutable {
+            VfxSystemEditorPanel::PreviewFrame frame;
+            if (!scene || !m_Viewport || !m_Assets)
+                return frame;
+            if (!client)
+            {
+                client = std::make_shared<ViewportClient>();
+                client->SetAssetManager(m_Assets.get());
+            }
+            if (client->GetScene() != scene)
+            {
+                if (m_ActiveScene && scene->GetRenderWorld().EnvironmentPath.empty())
+                {
+                    scene->GetRenderWorld().EnvironmentPath = m_ActiveScene->GetRenderWorld().EnvironmentPath;
+                    scene->GetRenderWorld().EnvironmentRoot = m_ActiveScene->GetRenderWorld().EnvironmentRoot;
+                }
+                client->SetScene(scene);
+                client->PrepareEnvironment();
+            }
+            GridSettings grid;
+            grid.Enabled = look.Grid;
+            client->SetGrid(grid);
+            client->Resize(size);
+            client->RenderEditor(camera);
+            frame.Image              = client->GetOutput();
+            frame.VfxGpuMilliseconds = VfxPreview::VfxGpuMilliseconds(client->GetLastResult().FrameStats);
+            return frame;
+        });
         if (panel->Open(file))
             m_VfxSystemEditors.push_back(std::move(panel));
         else
