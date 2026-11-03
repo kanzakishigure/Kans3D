@@ -74,6 +74,10 @@ namespace Kans::NodeCanvas
         bool             Collapsed = false, Reroute = false;
         Badge            Mark      = Badge::None;
         std::string      Message;
+        // A custom body below the pins: one row per line of text (a summary, a status). Owners may
+        // draw over it with DrawOptions::NodeBody; Layout reserves the rows either way.
+        std::vector<std::string> Body;
+        uint32_t                 Accent = 0; // ABGR strip on the left edge (0: none), e.g. a state.
     };
     struct Link
     {
@@ -99,6 +103,7 @@ namespace Kans::NodeCanvas
     struct NodeLayout
     {
         glm::vec2              Min {0}, Max {0};
+        glm::vec2              BodyMin {0}, BodyMax {0}; // The custom body rows (empty without a body).
         std::vector<size_t>    Inputs, Outputs; // Indices of the shown pins.
         std::vector<glm::vec2> InputPositions, OutputPositions;
     };
@@ -250,7 +255,10 @@ namespace Kans::NodeCanvas
         // Draws an unconnected input's value editor at the cursor, `width` screen pixels wide, with
         // the font already scaled; returns true while it changed the value.
         std::function<void(const Node&, const Pin&, float width)> PinValue;
-        bool                                                      ShowGrid = true;
+        // Draws over a node's body rows (screen rectangle min..max) after the default text; the
+        // font is already scaled to the zoom.
+        std::function<void(const Node&, glm::vec2 min, glm::vec2 max, float zoom)> NodeBody;
+        bool                                                                     ShowGrid = true;
     };
     // Draws the canvas filling `size` at the cursor, then runs the controller on this frame's input.
     void Draw(const char* id, const Graph& graph, Controller& controller, Host& host, glm::vec2 size,

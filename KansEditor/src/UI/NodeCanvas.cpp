@@ -82,15 +82,22 @@ namespace Kans::NodeCanvas
         }
         for (auto i : l.Outputs)
             outputs = std::max(outputs, Metrics::PinRadius * 2 + 6 + TextWidth(LabelOf(node.Outputs[i])));
+        float body = 0;
+        if (!node.Collapsed)
+            for (const auto& line : node.Body)
+                body = std::max(body, TextWidth(line) + 2 * Metrics::Padding);
         float width = std::max({Metrics::MinWidth,
                                 TextWidth(node.Title) + 2 * Metrics::Padding + Metrics::BadgeWidth,
                                 TextWidth(node.Subtitle) * 0.9f + 2 * Metrics::Padding,
-                                inputs + outputs + 2 * Metrics::Padding + 12});
+                                inputs + outputs + 2 * Metrics::Padding + 12, body});
         width            = std::min(width, Metrics::MaxWidth);
         const size_t rows = std::max(l.Inputs.size(), l.Outputs.size());
+        const size_t bodyRows = node.Collapsed ? 0 : node.Body.size();
         const float  top  = TitleBlock(node);
         l.Min             = node.Position;
-        l.Max             = node.Position + glm::vec2(width, top + float(rows) * Metrics::RowHeight + 6);
+        l.Max             = node.Position + glm::vec2(width, top + float(rows + bodyRows) * Metrics::RowHeight + 6);
+        l.BodyMin         = {l.Min.x, l.Min.y + top + float(rows) * Metrics::RowHeight};
+        l.BodyMax         = {l.Max.x, l.BodyMin.y + float(bodyRows) * Metrics::RowHeight};
         for (size_t k = 0; k < l.Inputs.size(); ++k)
             l.InputPositions.push_back({l.Min.x, l.Min.y + top + (float(k) + 0.5f) * Metrics::RowHeight});
         for (size_t k = 0; k < l.Outputs.size(); ++k)
@@ -709,6 +716,20 @@ namespace Kans::NodeCanvas
             draw->AddRectFilled(a, b, Color(palette.Raised, 0.97f), rounding);
             const float title = Metrics::TitleHeight * zoom;
             draw->AddRectFilled(a, {b.x, a.y + title}, n.Color, rounding, ImDrawFlags_RoundCornersTop);
+            if (n.Accent)
+                draw->AddRectFilled({a.x, a.y + title}, {a.x + 3 * zoom, b.y - rounding}, n.Accent);
+            if (l.BodyMax.y > l.BodyMin.y)
+            {
+                const ImVec2 bodyMin = V(view.ToScreen(l.BodyMin)), bodyMax = V(view.ToScreen(l.BodyMax));
+                draw->AddLine({bodyMin.x + 4 * zoom, bodyMin.y}, {bodyMax.x - 4 * zoom, bodyMin.y}, Color(palette.Line, 0.8f));
+                for (size_t k = 0; k < n.Body.size(); ++k)
+                    draw->AddText(font, fontSize * 0.92f,
+                                  {bodyMin.x + Metrics::Padding * zoom,
+                                   bodyMin.y + (float(k) + 0.5f) * Metrics::RowHeight * zoom - fontSize * 0.46f},
+                                  Color(k == 0 ? palette.Text : palette.TextDim), n.Body[k].c_str());
+                if (options.NodeBody)
+                    options.NodeBody(n, {bodyMin.x, bodyMin.y}, {bodyMax.x, bodyMax.y}, zoom);
+            }
             draw->AddText(font, fontSize, {a.x + Metrics::Padding * zoom, a.y + (title - fontSize) * 0.5f},
                           Color(palette.Text), n.Title.c_str());
             if (!n.Subtitle.empty())

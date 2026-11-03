@@ -165,6 +165,7 @@ namespace Kans
         m_UIDesignerPanel.Bind(nullptr);
         m_MaterialEditorPanel.Bind(nullptr);
         m_VfxModuleEditors.clear(); // Waits for a running module compile.
+        m_VfxSystemEditors.clear();
         if (m_AssetImports)
         {
             auto stopped = m_AssetImports->Shutdown();

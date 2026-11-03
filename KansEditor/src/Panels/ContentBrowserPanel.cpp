@@ -492,6 +492,10 @@ namespace Kans
             if (ImGui::MenuItem(
                     Label(ICON_FA_ATOM, "Physics Material").c_str(), nullptr, false, bool(m_CreatePhysicsMaterial)))
                 m_CreatePhysicsMaterial(m_Current), Refresh();
+            if (ImGui::MenuItem(Label(ICON_FA_WAND_MAGIC_SPARKLES, "VFX System").c_str(), nullptr, false, bool(m_CreateVfxSystem)))
+                m_CreateVfxSystem(m_Current);
+            if (ImGui::MenuItem(Label(ICON_FA_WAND_MAGIC_SPARKLES, "VFX Emitter").c_str(), nullptr, false, bool(m_CreateVfxEmitter)))
+                m_CreateVfxEmitter(m_Current);
             if (ImGui::MenuItem(Label(ICON_FA_DIAGRAM_PROJECT, "VFX Module").c_str(), nullptr, false, bool(m_CreateVfxModule)))
                 m_CreateVfxModule(m_Current);
             ImGui::EndPopup();
@@ -1542,6 +1546,10 @@ namespace Kans
                     m_CreateTimeline(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_ATOM, "Physics Material").c_str()) && m_CreatePhysicsMaterial)
                     m_CreatePhysicsMaterial(folder), Refresh();
+                if (ImGui::MenuItem(Label(ICON_FA_WAND_MAGIC_SPARKLES, "VFX System").c_str()) && m_CreateVfxSystem)
+                    m_CreateVfxSystem(folder);
+                if (ImGui::MenuItem(Label(ICON_FA_WAND_MAGIC_SPARKLES, "VFX Emitter").c_str()) && m_CreateVfxEmitter)
+                    m_CreateVfxEmitter(folder);
                 if (ImGui::MenuItem(Label(ICON_FA_DIAGRAM_PROJECT, "VFX Module").c_str()) && m_CreateVfxModule)
                     m_CreateVfxModule(folder);
                 ImGui::EndMenu();

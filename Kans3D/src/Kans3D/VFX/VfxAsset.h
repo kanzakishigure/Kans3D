@@ -447,6 +447,8 @@ namespace Kans::Vfx
     };
     using EmitterResolver = std::function<Emitter(AssetID)>;
     using ModuleResolver  = std::function<Module(AssetID)>;
+    // Why a simulation stage record is invalid (the decoder's own check), or nothing.
+    std::optional<std::string>       SimulationStageError(const SimulationStage&);
     Emitter                          MergeEmitter(const Emitter&, const EmitterResolver&);
     void                             ApplyOverrides(Emitter&, const std::vector<Override>&);
     std::map<std::string, Parameter> BuiltinParameters();

@@ -237,7 +237,8 @@ namespace Kans
         // The material editor has its own undo, redo and save while it has focus.
         const bool material =
             m_MaterialEditorPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() || m_RagdollEditor.HasFocus() ||
-            std::any_of(m_VfxModuleEditors.begin(), m_VfxModuleEditors.end(), [](const auto& e) { return e->HasFocus(); });
+            std::any_of(m_VfxModuleEditors.begin(), m_VfxModuleEditors.end(), [](const auto& e) { return e->HasFocus(); }) ||
+            std::any_of(m_VfxSystemEditors.begin(), m_VfxSystemEditors.end(), [](const auto& e) { return e->HasFocus(); });
         // Cloth painting has its own stroke undo and saves the .cloth file.
         if (io.KeyCtrl && m_ViewportPanel.IsPaintingCloth() && !material && m_ActiveScene)
         {

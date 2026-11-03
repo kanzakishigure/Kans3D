@@ -39,6 +39,10 @@ namespace Kans::PropertyGrid
     // (`toggled` reports a click). Returns true when the rows are shown: then call EndGroup().
     bool BeginGroup(const char* title, bool* enabled = nullptr, bool* toggled = nullptr, bool defaultOpen = true);
     void EndGroup();
+    // Keeps `width` free at the right end of the next group heading (for the owner's own buttons).
+    void SetNextGroupTrailer(float width);
+    // The screen rectangle of the last group heading drawn (for owners drawing over it).
+    bool LastGroupHeading(ImVec2& min, ImVec2& max);
 
     // ---- Grids (rows outside a group) ----
     bool Begin(const char* id, float labelWidth = 0.0f); // 0: the shared label column.

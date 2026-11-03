@@ -14,6 +14,11 @@ namespace Kans::Vfx
     {
         AssetID     Asset;
         std::string Node, Pin, Message;
+        // Where the error sits in the system, for editors: the emitter handle GUID, the event handler or
+        // simulation stage GUID holding the stack, the stack stage, the module use GUID and the call
+        // scope inside it ("<use>/<input>" for a dynamic input of that input). Empty when unknown.
+        std::string          Emitter, Container, Use, Scope;
+        std::optional<Stage> StageKind;
     };
     struct Instruction
     {

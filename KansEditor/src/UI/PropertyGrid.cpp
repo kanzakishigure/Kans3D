@@ -46,6 +46,9 @@ namespace Kans::PropertyGrid
                 float   Indent = 0, GuideX = 0, BodyTop = 0;
             };
             std::vector<Frame> Groups;
+            // The last group heading drawn, and room kept free at the next heading's right end.
+            ImVec2 HeadingMin, HeadingMax;
+            float  NextTrailer = 0.0f;
         };
         State g;
 
@@ -262,6 +265,8 @@ namespace Kans::PropertyGrid
             open = true;
         if (!heading)
         {
+            g.HeadingMax  = g.HeadingMin; // No heading this time.
+            g.NextTrailer = 0.0f;
             if (enabled && !*enabled)
             {
                 ImGui::PopID();
@@ -277,6 +282,8 @@ namespace Kans::PropertyGrid
         }
 
         OpenFrame(true);
+        const float  trailer = g.NextTrailer;
+        g.NextTrailer        = 0.0f;
         const auto&  p      = EditorTheme::Colors();
         const float  height = ImGui::GetFrameHeight();
         const ImVec2 top    = ImGui::GetCursorScreenPos();
@@ -290,6 +297,8 @@ namespace Kans::PropertyGrid
             storage->SetBool(openID, open);
         }
         const bool hovered = ImGui::IsItemHovered();
+        g.HeadingMin       = at;
+        g.HeadingMax       = {at.x + width, at.y + height};
         auto*      draw    = ImGui::GetWindowDrawList();
         {
             // A band one step lighter than the card; nested bands step back towards it.
@@ -327,7 +336,7 @@ namespace Kans::PropertyGrid
             char note[32];
             std::snprintf(note, sizeof(note), "%d modified", modified);
             const float w = ImGui::CalcTextSize(note).x;
-            draw->AddText({at.x + width - w - Px(4.0f), textY}, ImGui::GetColorU32(p.AccentHover), note);
+            draw->AddText({at.x + width - w - Px(4.0f) - trailer, textY}, ImGui::GetColorU32(p.AccentHover), note);
         }
         ImGui::SetCursorScreenPos({top.x, at.y + height});
         ImGui::Dummy({0, Px(2.0f)});
@@ -346,6 +355,14 @@ namespace Kans::PropertyGrid
         Begin(title);
         g.GroupID = modifiedID;
         return true;
+    }
+
+    void SetNextGroupTrailer(float width) { g.NextTrailer = width; }
+    bool LastGroupHeading(ImVec2& min, ImVec2& max)
+    {
+        min = g.HeadingMin;
+        max = g.HeadingMax;
+        return max.x > min.x;
     }
 
     void EndGroup()

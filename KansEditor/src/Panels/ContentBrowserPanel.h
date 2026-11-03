@@ -37,6 +37,9 @@ namespace Kans
         void SetCreatePhysicsMaterialCallback(PathCallback callback) { m_CreatePhysicsMaterial = std::move(callback); }
         // "Create > VFX Module": asks for its name, usage and stages.
         void SetCreateVfxModuleCallback(PathCallback callback) { m_CreateVfxModule = std::move(callback); }
+        // "Create > VFX System / VFX Emitter": empty, from a template or inherited from an emitter.
+        void SetCreateVfxSystemCallback(PathCallback callback) { m_CreateVfxSystem = std::move(callback); }
+        void SetCreateVfxEmitterCallback(PathCallback callback) { m_CreateVfxEmitter = std::move(callback); }
         // "Import" / "Reimport" of a source file.
         void SetImportCallback(PathCallback callback) { m_Import = std::move(callback); }
         // "Import Settings..." of a source file.
@@ -137,7 +140,7 @@ namespace Kans
         // ---- callbacks and services ----
         PathCallback m_OpenFile, m_CreateMaterial, m_Import, m_ImportSettings, m_ExtractMaterials;
         PathCallback              m_CreateUI, m_CreateTimeline, m_CreatePhysicsMaterial, m_CreateRagdoll;
-        PathCallback              m_CreateVfxModule;
+        PathCallback              m_CreateVfxModule, m_CreateVfxSystem, m_CreateVfxEmitter;
         MaterialThumbnailProvider m_MaterialThumbnail;
         PathCallback              m_CreateInstance;
         std::function<void(const std::string&)> m_ReportError;

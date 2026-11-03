@@ -20,6 +20,7 @@
 #include "Panels/MaterialEditorPanel.h"
 #include "Panels/PhysicsMaterialPanel.h"
 #include "Panels/VfxModuleEditorPanel.h"
+#include "Panels/VfxSystemEditorPanel.h"
 #include "Panels/ProductImportPanel.h"
 #include "Panels/ProjectSettingsPanel.h"
 #include "Panels/PropertiesPanel.h"
@@ -161,6 +162,13 @@ namespace Kans
         VfxModuleCreateDialog                              m_VfxModuleCreate;
         void                                               OpenVfxModule(const std::filesystem::path& file);
         void                                               DrawVfxModuleEditors();
+        // One system and emitter editor per open .vfxsystem or .vfxemitter.
+        std::vector<std::unique_ptr<VfxSystemEditorPanel>> m_VfxSystemEditors;
+        std::vector<std::filesystem::path>                 m_PendingVfxSystems;
+        VfxSystemCreateDialog                              m_VfxSystemCreate;
+        void                                               OpenVfxSystem(const std::filesystem::path& file);
+        // Project products of `type` with their source files.
+        std::vector<std::pair<AssetID, std::filesystem::path>> ProjectVfxAssets(AssetType type);
         Scope<ViewportClient>       m_RagdollPreview;
         // Published Material of a .material source, or invalid.
         AssetID                                  FindPublishedMaterial(const std::filesystem::path& file);

@@ -1,0 +1,2283 @@
+#include "VfxSystemEditorPanel.h"
+#include <algorithm>
+#include <cstring>
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <misc/cpp/imgui_stdlib.h>
+#include "Kans3D/ImGui/EditorTheme.h"
+#include "Panels/VfxModuleEditing.h"
+#include "UI/CurveEditor.h"
+#include "UI/EditorIcons.h"
+#include "UI/GradientEditor.h"
+#include "UI/PropertyGrid.h"
+#include "UI/SourceBuild.h"
+
+namespace Kans
+{
+    namespace fs = std::filesystem;
+    using namespace VfxSystemEditing;
+    using Vfx::Stage;
+
+    namespace
+    {
+        constexpr const char* UsePayload       = "KANS_VFX_MODULE_USE";
+        constexpr const char* ParameterPayload = "KANS_VFX_SYSTEM_PARAMETER";
+        constexpr Vfx::Type   AllTypes[]       = {Vfx::Type::Float, Vfx::Type::Vec2, Vfx::Type::Vec3, Vfx::Type::Vec4, Vfx::Type::Int,
+                                                  Vfx::Type::Bool,  Vfx::Type::Color, Vfx::Type::Quat, Vfx::Type::Position};
+        const char* StageTitle(Stage s)
+        {
+            static const char* labels[] = {"System Spawn",   "System Update",   "Emitter Spawn", "Emitter Update",
+                                           "Particle Spawn", "Particle Update", "Event Handlers", "Simulation Stages"};
+            return labels[int(s)];
+        }
+        std::string Short(const std::string& name)
+        {
+            auto dot = name.find('.');
+            return dot == std::string::npos ? name : name.substr(dot + 1);
+        }
+        Vfx::Value Zero(Vfx::Type t)
+        {
+            return t == Vfx::Type::Int ? Vfx::Value::Int(0) : t == Vfx::Type::Bool ? Vfx::Value::Bool(false) : Vfx::Value::Vector({}, t);
+        }
+        ImVec4 FromAbgr(uint32_t c) { return ImGui::ColorConvertU32ToFloat4(c); }
+        const char* RendererName(Vfx::RendererKind k)
+        {
+            switch (k)
+            {
+                case Vfx::RendererKind::Sprite:
+                    return "Sprite Renderer";
+                case Vfx::RendererKind::Mesh:
+                    return "Mesh Renderer";
+                case Vfx::RendererKind::Ribbon:
+                    return "Ribbon Renderer";
+                default:
+                    return "Light Renderer";
+            }
+        }
+        bool AssetIDField(const char* label, AssetID& id)
+        {
+            std::string text = id.IsValid() ? id.ToString() : std::string();
+            if (!PropertyGrid::Row(label, "An asset ID (source:local); drop or paste it"))
+                return false;
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::InputTextWithHint("##asset", "None", &text, ImGuiInputTextFlags_EnterReturnsTrue))
+            {
+                id = text.empty() ? AssetID {} : AssetID::FromString(text);
+                return true;
+            }
+            return false;
+        }
+        template<size_t N>
+        bool EnumCombo(const char* label, const char* const (&items)[N], int& value)
+        {
+            int index = std::clamp(value, 0, int(N) - 1);
+            if (PropertyGrid::Combo(label, items, int(N), index))
+            {
+                value = index;
+                return true;
+            }
+            return false;
+        }
+    } // namespace
+
+    // ---------------------------------------------------------------------- document
+
+    bool VfxSystemEditorPanel::Open(const fs::path& file)
+    {
+        if (auto error = m_Document.Open(file))
+        {
+            m_Status = *error;
+            return false;
+        }
+        Refresh();
+        m_IsOpen     = true;
+        m_WindowOpen = true;
+        m_Framed     = false;
+        m_Status     = m_Document.ReadOnly() ? "Built-in template: read-only." : "";
+        const auto& s = m_Document.Data();
+        m_Selected = m_Document.GetMode() == Mode::Emitter ? std::string(EmitterModeHandle) :
+                     s.Emitters.empty()                    ? std::string(SystemNode) :
+                                                             s.Emitters.front().Guid;
+        m_Positions = OverviewLayout(s);
+        m_Overview.SetSelection({m_Selected});
+        m_Diagnostics.clear();
+        m_SeenRevision = m_CompiledRevision = size_t(-1);
+        return true;
+    }
+
+    void VfxSystemEditorPanel::Refresh()
+    {
+        m_Library.Load(m_ProjectModules ? m_ProjectModules() : std::vector<std::pair<AssetID, fs::path>> {});
+        m_Context.Modules = &m_Library;
+    }
+
+    NodeCanvas::Graph VfxSystemEditorPanel::BuildOverview() const
+    {
+        auto g = VfxSystemEditing::BuildOverview(m_Document.Data(), m_Context, m_Positions, m_Diagnostics);
+        if (m_Document.GetMode() == Mode::Emitter && !g.Nodes.empty())
+            g.Nodes.erase(g.Nodes.begin()); // One emitter: no system node.
+        return g;
+    }
+
+    void VfxSystemEditorPanel::Select(const std::string& emitter)
+    {
+        m_Selected = emitter;
+        m_Overview.SetSelection({emitter});
+    }
+
+    std::string VfxSystemEditorPanel::Handle() const { return m_Selected == SystemNode ? std::string() : m_Selected; }
+
+    void VfxSystemEditorPanel::Edited()
+    {
+        if (!m_Document.ReadOnly())
+            m_Document.Commit();
+    }
+
+    Result VfxSystemEditorPanel::Apply(const std::function<Result(Vfx::System&, const Context&)>& edit, bool continuous)
+    {
+        if (ReadOnly())
+            return Result::Refused("Built-in templates are read-only; duplicate it to edit it.");
+        auto r = edit(m_Document.Data(), m_Context);
+        if (!r)
+        {
+            m_Status = r.Message;
+            return r;
+        }
+        m_Status.clear();
+        if (continuous)
+            m_ValueEdit = true;
+        else
+        {
+            m_ValueEdit = false;
+            Edited();
+        }
+        return r;
+    }
+
+    void VfxSystemEditorPanel::FinishEdit()
+    {
+        m_ValueEdit = false;
+        Edited();
+    }
+
+    bool VfxSystemEditorPanel::Save()
+    {
+        if (auto error = m_Document.Save())
+        {
+            m_Status = *error;
+            return false;
+        }
+        m_Status = BuildSavedSource(m_Service, m_Document.File());
+        return true;
+    }
+
+    bool VfxSystemEditorPanel::Undo() { return m_Document.Undo(); }
+    bool VfxSystemEditorPanel::Redo() { return m_Document.Redo(); }
+
+    std::optional<fs::path> VfxSystemEditorPanel::DuplicateToProject(const fs::path& directory)
+    {
+        auto copy = VfxSystemEditing::Duplicate(m_Document, directory);
+        if (const auto* error = std::get_if<std::string>(&copy))
+        {
+            m_Status = *error;
+            return std::nullopt;
+        }
+        const auto file = std::get<fs::path>(copy);
+        m_Status        = "Duplicated to " + file.u8string();
+        if (m_Open)
+            m_Open(file);
+        return file;
+    }
+
+    // ---------------------------------------------------------------------- search
+
+    void VfxSystemEditorPanel::OpenModuleSearch(const StackRef& stack, size_t index)
+    {
+        m_Search         = {};
+        m_Search.Open    = true;
+        m_Search.Focus   = true;
+        m_Search.Stack   = stack;
+        m_Search.Index   = index;
+        m_Search.Dynamic = false;
+    }
+
+    void VfxSystemEditorPanel::OpenDynamicInputSearch(const std::string& use, const InputPath& path)
+    {
+        m_Search         = {};
+        m_Search.Open    = true;
+        m_Search.Focus   = true;
+        m_Search.Dynamic = true;
+        m_Search.Use     = use;
+        m_Search.Path    = path;
+        if (const auto* h = FindHandle(m_Document.Data(), Handle()))
+            try
+            {
+                const auto e = Effective(*h, m_Context);
+                if (auto ref = StackOf(e, use))
+                    m_Search.Stack = *ref;
+                if (const auto* u = FindUse(e, use))
+                    m_Search.Kind = InputType(m_Context, *u, path).value_or(Vfx::Type::Float);
+            }
+            catch (const std::exception&)
+            {}
+    }
+
+    std::vector<ModuleEntry> VfxSystemEditorPanel::SearchResults() const
+    {
+        const Stage stage = m_Search.Stack.Kind;
+        return m_Search.Dynamic ? SearchDynamicInputs(m_Library, stage, m_Search.Kind, m_Search.Query) :
+                                  SearchModules(m_Library, stage, m_Search.Query);
+    }
+
+    Result VfxSystemEditorPanel::ChooseSearch(const ModuleEntry& entry)
+    {
+        const auto handle = Handle();
+        Result     r;
+        if (m_Search.Dynamic)
+            r = Apply([&](Vfx::System& s, const Context& c) { return SetDynamicInput(s, c, handle, m_Search.Use, m_Search.Path, entry.Id); });
+        else
+        {
+            r = Apply([&](Vfx::System& s, const Context& c) { return AddModule(s, c, handle, m_Search.Stack, entry.Id, m_Search.Index); });
+            if (r)
+                Expand(r.Value);
+        }
+        m_Search.Open = false;
+        return r;
+    }
+
+    // ---------------------------------------------------------------------- curves and gradients
+
+    void VfxSystemEditorPanel::OpenCurveEditor(const std::string& use, const InputPath& path)
+    {
+        m_CurveEdit            = {};
+        m_CurveEdit.Open       = true;
+        m_CurveEdit.Requested  = true;
+        m_CurveEdit.IsGradient = false;
+        m_CurveEdit.Use        = use;
+        m_CurveEdit.Path       = path;
+        if (const auto* h = FindHandle(m_Document.Data(), Handle()))
+            try
+            {
+                const auto e = Effective(*h, m_Context);
+                if (const auto* u = FindUse(e, use))
+                {
+                    auto input = GetInput(*u, path);
+                    Vfx::InterfaceBinding b;
+                    if (input && input->Kind == Vfx::InputKind::DataInterface)
+                        b = input->Interface;
+                    else if (const auto* m = m_Library.Find(u->Script))
+                        for (const auto& info : ModuleInputs(m->Data))
+                            if (info.Spec.Name == path.back())
+                                b = info.DefaultBinding;
+                    m_CurveEdit.Curve = CurveFromBinding(b);
+                }
+            }
+            catch (const std::exception&)
+            {}
+    }
+
+    void VfxSystemEditorPanel::OpenGradientEditor(const std::string& use, const InputPath& path)
+    {
+        OpenCurveEditor(use, path);
+        m_CurveEdit.IsGradient = true;
+        Vfx::InterfaceBinding b;
+        b.Kind = "Gradient";
+        for (const auto& key : m_CurveEdit.Curve.Keys)
+        {
+            b.Times.push_back(float(key.Time));
+            b.Values.push_back(key.Value);
+        }
+        m_CurveEdit.Gradient = Gradient::FromBinding(b);
+    }
+
+    Result VfxSystemEditorPanel::SetEditedGradient(const Gradient& gradient, bool continuous)
+    {
+        m_CurveEdit.Gradient = gradient;
+        Vfx::Input input;
+        input.Kind      = Vfx::InputKind::DataInterface;
+        input.Interface = gradient.Bake();
+        const auto handle = Handle();
+        return Apply([&](Vfx::System& s, const Context& c) { return SetInput(s, c, handle, m_CurveEdit.Use, m_CurveEdit.Path, input); },
+                     continuous);
+    }
+
+    Result VfxSystemEditorPanel::SetEditedCurve(const TimelineCurve& curve, bool continuous)
+    {
+        m_CurveEdit.Curve = curve;
+        Vfx::Input input;
+        input.Kind      = Vfx::InputKind::DataInterface;
+        input.Interface = BindingFromCurve(curve);
+        const auto handle = Handle();
+        return Apply([&](Vfx::System& s, const Context& c) { return SetInput(s, c, handle, m_CurveEdit.Use, m_CurveEdit.Path, input); },
+                     continuous);
+    }
+
+    // ---------------------------------------------------------------------- compile
+
+    void VfxSystemEditorPanel::Tick(double now)
+    {
+        m_Now = now;
+        if (m_Compile.valid() && m_Compile.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+        {
+            auto errors = m_Compile.get();
+            m_Diagnostics.clear();
+            for (const auto& d : errors)
+                m_Diagnostics.push_back(Locate(d, m_Document.Data(), m_Context));
+            for (const auto& h : m_Document.Data().Emitters)
+                for (const auto& p : ListParameters(m_Document.Data(), m_Context, h.Guid))
+                    if (!p.Warning.empty())
+                    {
+                        StackDiagnostic w;
+                        w.Emitter = h.Guid;
+                        w.Message = p.Name + ": " + p.Warning;
+                        w.Warning = true;
+                        m_Diagnostics.push_back(std::move(w));
+                    }
+            m_CompiledRevision = m_PendingRevision;
+        }
+        if (m_Document.Revision() != m_SeenRevision)
+        {
+            m_SeenRevision = m_Document.Revision();
+            m_EditTime     = now;
+        }
+        if (!m_Compile.valid() && m_CompiledRevision != m_SeenRevision && now - m_EditTime >= CompileDelay)
+        {
+            m_PendingRevision = m_SeenRevision;
+            m_Compile         = std::async(std::launch::async, [system = m_Document.Data(), modules = m_Library.Resolver(),
+                                                        emitters = m_Context.ResolveEmitter()] {
+                try
+                {
+                    return Vfx::Compile(system, emitters, modules).Errors;
+                }
+                catch (const std::exception& e)
+                {
+                    Vfx::Diagnostic d;
+                    d.Message = e.what();
+                    return std::vector<Vfx::Diagnostic> {d};
+                }
+            });
+        }
+    }
+
+    void VfxSystemEditorPanel::WaitForCompile()
+    {
+        if (m_Compile.valid())
+            m_Compile.wait();
+        Tick(m_EditTime);
+    }
+
+    void VfxSystemEditorPanel::ActivateDiagnostic(size_t index)
+    {
+        if (index >= m_Diagnostics.size())
+            return;
+        const auto& d = m_Diagnostics[index];
+        if (!d.Emitter.empty() && FindHandle(m_Document.Data(), d.Emitter))
+            Select(d.Emitter);
+        else if (d.Emitter.empty() && m_Document.GetMode() == Mode::System)
+            Select(SystemNode);
+        if (!d.Use.empty())
+            Expand(d.Use);
+        m_Highlight = {d.Use, d.Input, m_Now + 2.0, true};
+    }
+
+    // ---------------------------------------------------------------------- close
+
+    void VfxSystemEditorPanel::RequestClose(std::function<void()> closed)
+    {
+        m_Closing.Request(m_IsOpen && m_Document.IsDirty(), "closing " + m_Document.File().filename().u8string(), [this, closed] {
+            m_IsOpen = false;
+            if (closed)
+                closed();
+        });
+        m_ClosePromptRequested = m_Closing.Asking();
+    }
+
+    void VfxSystemEditorPanel::ResolveClose(UnsavedChanges::Choice choice)
+    {
+        m_Closing.Resolve(choice, [this] { return Save() ? UnsavedChanges::SaveResult::Saved : UnsavedChanges::SaveResult::Failed; });
+    }
+
+    // ---------------------------------------------------------------------- overview host
+
+    bool VfxSystemEditorPanel::CanConnect(const NodeCanvas::PinRef& output, const NodeCanvas::PinRef& input, std::string* reason)
+    {
+        const auto refuse = [&](const std::string& why) {
+            if (reason)
+                *reason = why;
+            return false;
+        };
+        if (output.Node == SystemNode || input.Node == SystemNode)
+            return refuse("The system node has no events");
+        if (output.Node == input.Node)
+            return refuse("An emitter cannot handle its own events here");
+        const auto& s = m_Document.Data();
+        if (EventChannels(s, m_Context, output.Node).empty() && EventLayouts(s, m_Context, output.Node).empty())
+        {
+            const auto* h = FindHandle(s, output.Node);
+            return refuse((h ? h->Name : output.Node) + " writes no events; add an event generator module first");
+        }
+        return true;
+    }
+
+    void VfxSystemEditorPanel::Connect(const NodeCanvas::PinRef& output, const NodeCanvas::PinRef& input)
+    {
+        auto r = Apply([&](Vfx::System& s, const Context& c) { return ConnectEmitters(s, c, output.Node, input.Node); });
+        if (r)
+        {
+            Select(input.Node);
+            m_Status = "Added an event handler";
+        }
+    }
+
+    void VfxSystemEditorPanel::Disconnect(const NodeCanvas::PinRef&)
+    {
+        m_Status = "Links show event handlers and particle readers; remove them in the emitter's stack.";
+    }
+
+    void VfxSystemEditorPanel::DisconnectLink(size_t) { Disconnect({}); }
+
+    void VfxSystemEditorPanel::Translate(const std::vector<std::string>& nodes, const std::vector<std::string>&, glm::vec2 delta)
+    {
+        const auto layout = OverviewLayout(m_Document.Data());
+        for (const auto& n : nodes)
+        {
+            auto at = m_Positions.find(n);
+            if (at == m_Positions.end())
+                at = m_Positions.emplace(n, layout.count(n) ? layout.at(n) : glm::vec2(0)).first;
+            at->second += delta;
+        }
+    }
+
+    void VfxSystemEditorPanel::RequestSearch(const std::optional<NodeCanvas::PinRef>&, glm::vec2)
+    {
+        if (m_Document.GetMode() == Mode::System && !ReadOnly())
+            m_AddEmitterRequested = true;
+    }
+
+    void VfxSystemEditorPanel::ContextMenu(const NodeCanvas::Hit& hit, glm::vec2)
+    {
+        if (hit.Type == NodeCanvas::Hit::Kind::Node && hit.Id != SystemNode && m_Document.GetMode() == Mode::System)
+        {
+            m_MenuEmitter          = hit.Id;
+            m_EmitterMenuRequested = true;
+        }
+    }
+
+    // ---------------------------------------------------------------------- drawing
+
+    std::string VfxSystemEditorPanel::WindowName() const
+    {
+        return std::string(ICON_FA_WAND_MAGIC_SPARKLES "  ") + m_Document.File().filename().u8string() +
+               (m_Document.IsDirty() ? " *" : "") + "###VfxSystem" + m_Document.File().u8string();
+    }
+
+    void VfxSystemEditorPanel::Draw()
+    {
+        if (!m_IsOpen)
+            return;
+        ImGui::SetNextWindowSize({1360.0f, 820.0f}, ImGuiCond_FirstUseEver);
+        bool open = true;
+        if (ImGui::Begin(WindowName().c_str(), &open))
+            DrawContents();
+        else
+            m_Focused = false;
+        ImGui::End();
+        if (!open)
+            RequestClose();
+        if (m_ClosePromptRequested)
+        {
+            ImGui::OpenPopup("Unsaved VFX system");
+            m_ClosePromptRequested = false;
+        }
+        if (ImGui::BeginPopupModal("Unsaved VFX system", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::Text("Save the changes to %s before closing?", m_Document.File().filename().u8string().c_str());
+            if (ImGui::Button(ICON_FA_FLOPPY_DISK "  Save"))
+                ResolveClose(UnsavedChanges::Choice::Save), ImGui::CloseCurrentPopup();
+            ImGui::SameLine();
+            if (ImGui::Button("Don't save"))
+                ResolveClose(UnsavedChanges::Choice::Discard), ImGui::CloseCurrentPopup();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+                ResolveClose(UnsavedChanges::Choice::Cancel), ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+    }
+
+    void VfxSystemEditorPanel::DrawContents()
+    {
+        m_Focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        Tick(ImGui::GetTime());
+        DrawToolbar();
+        if (!m_IsOpen)
+        {
+            ImGui::TextDisabled("%s", m_Status.empty() ? "Open a .vfxsystem or .vfxemitter from the Content Browser." : m_Status.c_str());
+            return;
+        }
+        using EditorTheme::Px;
+        const ImVec2 avail    = ImGui::GetContentRegionAvail();
+        const float  spacing  = ImGui::GetStyle().ItemSpacing.y;
+        const float  overview = m_Document.GetMode() == Mode::Emitter ? Px(150.0f) : std::max(Px(160.0f), avail.y * 0.26f);
+        const float  output   = Px(76.0f);
+        DrawOverview(overview);
+        const float body = std::max(avail.y - overview - output - 2 * spacing, Px(120.0f));
+        ImGui::BeginChild("##stack", {std::floor(avail.x * 0.62f), body}, ImGuiChildFlags_Borders);
+        ImGui::BeginDisabled(ReadOnly());
+        DrawStack();
+        ImGui::EndDisabled();
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("##parameters", {0, body}, ImGuiChildFlags_Borders);
+        ImGui::BeginDisabled(ReadOnly());
+        DrawParameters();
+        ImGui::EndDisabled();
+        ImGui::EndChild();
+        DrawOutput();
+        if (m_ValueEdit && !ImGui::IsAnyItemActive())
+            FinishEdit();
+        DrawSearch();
+        DrawCurvePopup();
+        DrawMenus();
+        Shortcuts();
+    }
+
+    void VfxSystemEditorPanel::DrawToolbar()
+    {
+        if (!m_IsOpen)
+            return;
+        const auto& palette = EditorTheme::Colors();
+        ImGui::TextUnformatted(ICON_FA_WAND_MAGIC_SPARKLES);
+        ImGui::SameLine();
+        ImGui::TextUnformatted((m_Document.File().filename().u8string() + (m_Document.IsDirty() ? "  *" : "")).c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", m_Document.GetMode() == Mode::Emitter ? "Emitter" : "System");
+        ImGui::SameLine();
+        if (ReadOnly())
+        {
+            ImGui::TextColored(palette.Warning, ICON_FA_LOCK "  Read-only built-in");
+            ImGui::SameLine();
+            ImGui::BeginDisabled(m_ProjectDirectory.empty());
+            if (ImGui::Button(ICON_FA_COPY "  Duplicate to project"))
+                DuplicateToProject(m_ProjectDirectory);
+            ImGui::EndDisabled();
+        }
+        else
+        {
+            ImGui::BeginDisabled(!m_Document.IsDirty());
+            if (ImGui::Button(ICON_FA_FLOPPY_DISK "  Save"))
+                Save();
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!m_Document.CanUndo());
+            if (ImGui::Button("Undo"))
+                Undo();
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!m_Document.CanRedo());
+            if (ImGui::Button("Redo"))
+                Redo();
+            ImGui::EndDisabled();
+            if (m_Document.GetMode() == Mode::System)
+            {
+                ImGui::SameLine();
+                if (ImGui::Button(ICON_FA_PLUS "  Emitter"))
+                    m_AddEmitterRequested = true;
+            }
+        }
+        ImGui::SameLine();
+        size_t errors = 0, warnings = 0;
+        for (const auto& d : m_Diagnostics)
+            (d.Warning ? warnings : errors)++;
+        if (IsCompiling() || m_CompiledRevision != m_Document.Revision())
+            ImGui::TextDisabled("Compiling...");
+        else if (errors)
+            ImGui::TextColored(palette.Danger, ICON_FA_TRIANGLE_EXCLAMATION "  %zu error%s", errors, errors == 1 ? "" : "s");
+        else
+            ImGui::TextColored(palette.Success, warnings ? "Compiles (%zu warnings)" : "Compiles", warnings);
+        if (!m_Status.empty())
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", m_Status.c_str());
+        }
+    }
+
+    void VfxSystemEditorPanel::DrawOverview(float height)
+    {
+        const auto  graph = BuildOverview();
+        const float width = ImGui::GetContentRegionAvail().x;
+        if (!m_Framed)
+        {
+            auto& view = m_Overview.GetView();
+            view.Size  = {width, height};
+            m_Overview.FrameAll(graph);
+            m_Framed = true;
+        }
+        NodeCanvas::Draw("##overview", graph, m_Overview, *this, {width, height});
+        // A single selected node chooses the stack.
+        const auto& selection = m_Overview.Selection();
+        if (selection.size() == 1 && *selection.begin() != m_Selected)
+            m_Selected = *selection.begin();
+    }
+
+    bool VfxSystemEditorPanel::ValueEditor(const char* id, Vfx::Value& value, Vfx::Type kind, const Vfx::Parameter* spec)
+    {
+        using Vfx::Type;
+        ImGui::PushID(id);
+        bool changed = false;
+        if (spec && kind == Type::Int && !spec->EnumNames.empty())
+        {
+            const auto& names = spec->EnumNames;
+            int         index = std::clamp(value.Integer, 0, int(names.size()) - 1);
+            if (ImGui::BeginCombo("##e", names[size_t(index)].c_str()))
+            {
+                for (size_t k = 0; k < names.size(); ++k)
+                    if (ImGui::Selectable(names[k].c_str(), int(k) == value.Integer))
+                        value.Integer = int(k), changed = true;
+                ImGui::EndCombo();
+            }
+        }
+        else
+            switch (kind)
+            {
+                case Type::Float:
+                    if (spec && spec->Range)
+                        changed = ImGui::SliderFloat("##v", &value.Data.x, spec->Range->x, spec->Range->y, "%.3g");
+                    else
+                        changed = ImGui::DragFloat("##v", &value.Data.x, 0.01f, 0, 0, "%.3g");
+                    if (changed)
+                        value.Data = glm::vec4(value.Data.x);
+                    break;
+                case Type::Int:
+                    if (spec && spec->Range)
+                        changed = ImGui::SliderInt("##v", &value.Integer, int(spec->Range->x), int(spec->Range->y));
+                    else
+                        changed = ImGui::DragInt("##v", &value.Integer);
+                    break;
+                case Type::Bool:
+                {
+                    bool b        = value.Integer != 0;
+                    changed       = ImGui::Checkbox("##v", &b);
+                    value.Integer = b;
+                    break;
+                }
+                case Type::Vec2:
+                    changed = ImGui::DragFloat2("##v", &value.Data.x, 0.01f, 0, 0, "%.3g");
+                    break;
+                case Type::Vec3:
+                case Type::Position:
+                    changed = ImGui::DragFloat3("##v", &value.Data.x, 0.01f, 0, 0, "%.3g");
+                    break;
+                case Type::Vec4:
+                case Type::Quat:
+                    changed = ImGui::DragFloat4("##v", &value.Data.x, 0.01f, 0, 0, "%.3g");
+                    break;
+                case Type::Color:
+                    changed = ImGui::ColorEdit4("##v", &value.Data.x, ImGuiColorEditFlags_Float);
+                    break;
+                case Type::IVec3:
+                {
+                    glm::ivec3 v(value.Data);
+                    changed = ImGui::DragInt3("##v", &v.x);
+                    if (changed)
+                        value.Data = glm::vec4(glm::vec3(v), 0);
+                    break;
+                }
+            }
+        ImGui::PopID();
+        value.Kind = kind;
+        return changed && !ReadOnly();
+    }
+
+    // ---------------------------------------------------------------------- stack
+
+    void VfxSystemEditorPanel::DrawStack()
+    {
+        auto& s = m_Document.Data();
+        if (m_Selected == SystemNode || (m_Selected.empty() && m_Document.GetMode() == Mode::System))
+        {
+            DrawSystemProperties();
+            return;
+        }
+        const auto* handle = FindHandle(s, m_Selected);
+        if (!handle)
+        {
+            ImGui::TextDisabled("Select an emitter in the overview.");
+            return;
+        }
+        Vfx::Emitter effective;
+        try
+        {
+            effective = Effective(*handle, m_Context);
+        }
+        catch (const std::exception& e)
+        {
+            ImGui::TextColored(EditorTheme::Colors().Danger, ICON_FA_TRIANGLE_EXCLAMATION "  %s", e.what());
+            return;
+        }
+        // Copies: edits below may change the handle.
+        const Vfx::EmitterHandle h = *handle;
+        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.1f);
+        ImGui::TextUnformatted(h.Name.c_str());
+        ImGui::PopFont();
+        ImGui::SameLine();
+        const auto layer = LayerOf(h);
+        ImGui::TextDisabled("%s", layer == Layer::Own ? "Emitter" : layer == Layer::InlineChild ? "Inherited emitter (overrides)" :
+                                                                                                    "Referenced emitter (handle overrides)");
+        DrawEmitterProperties(h, effective);
+        for (auto stage : {Stage::EmitterSpawn, Stage::EmitterUpdate, Stage::ParticleSpawn, Stage::ParticleUpdate})
+            DrawStackSection(h, effective, {stage, {}}, StageTitle(stage));
+        DrawHandlers(h, effective);
+        DrawSimulationStages(h, effective);
+        DrawRenderers(h, effective);
+    }
+
+    void VfxSystemEditorPanel::DrawSystemProperties()
+    {
+        auto& s = m_Document.Data();
+        if (!PropertyGrid::BeginGroup("System Properties"))
+            return;
+        float warmup = s.WarmupTime, tick = s.WarmupTickDelta, maxDelta = s.MaxDeltaTime;
+        const float zero = 0, thirty = 1.f / 30, tenth = 0.1f;
+        if (PropertyGrid::Float("Warmup time", warmup, 0.05f, 0.0f, 600.0f, "%.2f s", &zero))
+            Apply([&](Vfx::System& x, const Context&) { x.WarmupTime = std::max(0.0f, warmup); return Result::Done(); }, true);
+        if (PropertyGrid::Float("Warmup tick", tick, 0.001f, 0.001f, 1.0f, "%.4f s", &thirty))
+            Apply([&](Vfx::System& x, const Context&) { x.WarmupTickDelta = std::max(0.001f, tick); return Result::Done(); }, true);
+        if (PropertyGrid::Float("Max delta time", maxDelta, 0.005f, 0.001f, 1.0f, "%.3f s", &tenth))
+            Apply([&](Vfx::System& x, const Context&) { x.MaxDeltaTime = std::max(0.001f, maxDelta); return Result::Done(); }, true);
+        int seed = int(s.Seed);
+        const int one = 1;
+        if (PropertyGrid::Int("Determinism seed", seed, 0, INT32_MAX, &one))
+            Apply([&](Vfx::System& x, const Context&) { x.Seed = uint32_t(std::max(0, seed)); return Result::Done(); }, true);
+        bool fixed = s.FixedBounds.has_value();
+        if (PropertyGrid::Checkbox("Fixed bounds", fixed))
+            Apply([&](Vfx::System& x, const Context&) {
+                x.FixedBounds = fixed ? std::optional<Bounds>(Bounds {glm::vec3(-1), glm::vec3(1)}) : std::nullopt;
+                return Result::Done();
+            });
+        if (s.FixedBounds)
+        {
+            glm::vec3 lo = s.FixedBounds->Min, hi = s.FixedBounds->Max;
+            if (PropertyGrid::Vec3("Bounds min", lo, -1.0f, 0.05f))
+                Apply([&](Vfx::System& x, const Context&) { x.FixedBounds->Min = glm::min(lo, x.FixedBounds->Max); return Result::Done(); }, true);
+            if (PropertyGrid::Vec3("Bounds max", hi, 1.0f, 0.05f))
+                Apply([&](Vfx::System& x, const Context&) { x.FixedBounds->Max = glm::max(hi, x.FixedBounds->Min); return Result::Done(); }, true);
+        }
+        PropertyGrid::Text("Scalability", "Per-platform scalability is not part of the system asset yet", true);
+        PropertyGrid::EndGroup();
+        for (auto stage : {Stage::SystemSpawn, Stage::SystemUpdate})
+        {
+            auto at = s.Stages.find(stage);
+            if (at == s.Stages.end() || at->second.empty())
+                continue;
+            if (PropertyGrid::BeginGroup(StageTitle(stage)))
+            {
+                for (const auto& u : at->second)
+                    PropertyGrid::Text(m_Library.NameOf(u.Script).c_str(), u.Enabled ? "Enabled" : "Off", true);
+                PropertyGrid::EndGroup();
+            }
+        }
+    }
+
+    void VfxSystemEditorPanel::DrawEmitterProperties(const Vfx::EmitterHandle& h, const Vfx::Emitter& e)
+    {
+        const auto handle = h.Guid;
+        const auto layer  = LayerOf(h);
+        if (!PropertyGrid::BeginGroup("Emitter Properties", nullptr, nullptr, false))
+            return;
+        auto        settings   = SettingsOf(e);
+        const auto  overridden = OverriddenSettings(h);
+        const auto  edit = [&](bool continuous) {
+            Apply([&](Vfx::System& s, const Context& c) { return SetEmitterSettings(s, c, handle, settings); }, continuous);
+        };
+        // A child's overridden setting shows a reset to the parent's value.
+        const auto reset = [&](const char* name) {
+            if (layer == Layer::InlineChild && PropertyGrid::RowReset(overridden.count(name) > 0))
+                Apply([&](Vfx::System& s, const Context& c) { return ResetEmitterSetting(s, c, handle, name); });
+        };
+        ImGui::BeginDisabled(layer == Layer::Reference);
+        const char* targets[] = {"CPU", "GPU"};
+        int         target    = int(settings.Target);
+        if (PropertyGrid::Row("Simulation", "CPU or GPU simulation", overridden.count("Target") > 0))
+        {
+            ImGui::SetNextItemWidth(-FLT_MIN - (overridden.count("Target") ? ImGui::GetFrameHeight() + 4 : 0));
+            if (ImGui::Combo("##target", &target, targets, 2))
+                settings.Target = Vfx::SimTarget(target), edit(false);
+            reset("Target");
+        }
+        const char* spaces[] = {"Local", "World"};
+        int         space    = int(settings.SimulationSpace);
+        if (PropertyGrid::Row("Space", "Simulate in the owner's local space or in world space", overridden.count("Space") > 0))
+        {
+            ImGui::SetNextItemWidth(-FLT_MIN - (overridden.count("Space") ? ImGui::GetFrameHeight() + 4 : 0));
+            if (ImGui::Combo("##space", &space, spaces, 2))
+                settings.SimulationSpace = Vfx::Space(space), edit(false);
+            reset("Space");
+        }
+        int capacity = int(settings.Capacity);
+        if (PropertyGrid::Row("Capacity", "The most particles alive at once", overridden.count("Capacity") > 0))
+        {
+            ImGui::SetNextItemWidth(-FLT_MIN - (overridden.count("Capacity") ? ImGui::GetFrameHeight() + 4 : 0));
+            if (ImGui::DragInt("##capacity", &capacity, 4.0f, 1, 16777216))
+                settings.Capacity = uint32_t(std::clamp(capacity, 1, 16777216)), edit(true);
+            reset("Capacity");
+        }
+        if (PropertyGrid::Row("Deterministic", "Same seed, same result", overridden.count("Deterministic") > 0))
+        {
+            if (ImGui::Checkbox("##deterministic", &settings.Deterministic))
+                edit(false);
+            reset("Deterministic");
+        }
+        const char* boundsModes[] = {"Dynamic", "Fixed"};
+        int         boundsMode    = settings.FixedBounds ? 1 : 0;
+        if (PropertyGrid::Row("Bounds", "Fixed bounds or bounds measured from the particles", overridden.count("FixedBounds") > 0))
+        {
+            ImGui::SetNextItemWidth(-FLT_MIN - (overridden.count("FixedBounds") ? ImGui::GetFrameHeight() + 4 : 0));
+            if (ImGui::Combo("##bounds", &boundsMode, boundsModes, 2))
+            {
+                settings.FixedBounds = boundsMode ? std::optional<Bounds>(Bounds {glm::vec3(-1), glm::vec3(1)}) : std::nullopt;
+                edit(false);
+            }
+            reset("FixedBounds");
+        }
+        if (settings.FixedBounds)
+        {
+            glm::vec3 lo = settings.FixedBounds->Min, hi = settings.FixedBounds->Max;
+            if (PropertyGrid::Vec3("Bounds min", lo, -1.0f, 0.05f))
+                settings.FixedBounds->Min = glm::min(lo, hi), edit(true);
+            if (PropertyGrid::Vec3("Bounds max", hi, 1.0f, 0.05f))
+                settings.FixedBounds->Max = glm::max(hi, lo), edit(true);
+        }
+        const float noCull = 0;
+        if (PropertyGrid::Float("Cull distance", settings.CullDistance, 0.5f, 0.0f, 100000.0f, "%.1f", &noCull))
+            edit(true);
+        const char* policies[] = {"Pause spawning", "Continue"};
+        int         policy     = int(settings.DistancePolicy);
+        if (PropertyGrid::Combo("Beyond cull", policies, 2, policy))
+            settings.DistancePolicy = Vfx::CullPolicy(policy), edit(false);
+        ImGui::EndDisabled();
+        if (layer == Layer::InlineChild || layer == Layer::Reference)
+        {
+            const AssetID parent = layer == Layer::InlineChild ? h.Inline->Parent : h.Reference;
+            std::string   name   = parent.ToString();
+            if (m_ProjectEmitters)
+                for (const auto& [id, file] : m_ProjectEmitters())
+                    if (id == parent)
+                        name = file.stem().u8string();
+            PropertyGrid::Text(layer == Layer::InlineChild ? "Parent" : "Reference", name, true);
+        }
+        // Event channels this emitter writes.
+        std::string channels;
+        for (const auto& c : e.Channels)
+            channels += (channels.empty() ? "" : ", ") + c.Name;
+        if (PropertyGrid::Row("Event channels", "Channels event generator modules write to"))
+        {
+            ImGui::TextUnformatted(channels.empty() ? "None" : channels.c_str());
+            const auto layouts = EventLayouts(m_Document.Data(), m_Context, handle);
+            if (!layouts.empty() && layer == Layer::Own)
+            {
+                ImGui::SameLine();
+                if (ImGui::SmallButton(ICON_FA_PLUS "##channel"))
+                    ImGui::OpenPopup("##addchannel");
+                if (ImGui::BeginPopup("##addchannel"))
+                {
+                    for (const auto& l : layouts)
+                        if (ImGui::MenuItem(l.c_str()))
+                            Apply([&](Vfx::System& s, const Context& c) { return AddEventChannel(s, c, handle, l); });
+                    ImGui::EndPopup();
+                }
+            }
+        }
+        PropertyGrid::EndGroup();
+    }
+
+    void VfxSystemEditorPanel::DrawStackSection(const Vfx::EmitterHandle& h, const Vfx::Emitter& e, const StackRef& ref,
+                                                const char* title)
+    {
+        const auto* stack = FindStack(e, ref);
+        if (!stack)
+            return;
+        const bool own = !title; // Handler and simulation stage stacks draw inside their own group.
+        if (!own && !PropertyGrid::BeginGroup(title))
+            return;
+        for (size_t i = 0; i < stack->size(); ++i)
+            DrawModuleRow(h, e, ref, (*stack)[i], i);
+        PropertyGrid::BeginFree();
+        ImGui::PushID(int(ref.Kind));
+        ImGui::PushID(ref.Container.c_str());
+        if (ImGui::Button(ICON_FA_PLUS "  Add module", {-FLT_MIN, 0}))
+            OpenModuleSearch(ref, stack->size());
+        // Dropping a row here moves it to the end of this stack.
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(UsePayload))
+            {
+                const std::string use(static_cast<const char*>(payload->Data), size_t(payload->DataSize));
+                const auto        handle = h.Guid;
+                Apply([&](Vfx::System& s, const Context& c) { return MoveModule(s, c, handle, use, ref, SIZE_MAX); });
+            }
+            ImGui::EndDragDropTarget();
+        }
+        ImGui::PopID();
+        ImGui::PopID();
+        PropertyGrid::EndFree();
+        if (!own)
+            PropertyGrid::EndGroup();
+    }
+
+    void VfxSystemEditorPanel::DrawModuleRow(const Vfx::EmitterHandle& h, const Vfx::Emitter& e, const StackRef& ref,
+                                             const Vfx::ModuleUse& use, size_t index)
+    {
+        using EditorTheme::Px;
+        const auto& palette = EditorTheme::Colors();
+        const auto* info    = m_Library.Find(use.Script);
+        const auto  name    = info ? info->Name : m_Library.NameOf(use.Script);
+        const auto  origin  = ModuleOrigin(h, use.Guid);
+        const auto  handle  = h.Guid;
+        ImGui::PushID(use.Guid.c_str());
+        const bool expanding = m_ExpandPending.erase(use.Guid) > 0;
+        if (expanding)
+        {
+            ImGui::PushID(name.c_str());
+            ImGui::GetStateStorage()->SetBool(ImGui::GetID("##open"), true);
+            ImGui::PopID();
+        }
+        bool enabled = use.Enabled, toggled = false;
+        PropertyGrid::SetNextGroupTrailer(Px(120.0f));
+        const bool open = PropertyGrid::BeginGroup(name.c_str(), &enabled, &toggled, false);
+        if (expanding)
+            ImGui::SetScrollHereY(0.4f); // A row opened for the user (added, or a diagnostic) comes into view.
+        ImVec2     bmin, bmax;
+        if (PropertyGrid::LastGroupHeading(bmin, bmax))
+        {
+            auto* draw = ImGui::GetWindowDrawList();
+            // Category colour on the left edge of the band.
+            const uint32_t category = VfxModuleEditing::CategoryColor(info ? info->Data.Category : std::string());
+            draw->AddRectFilled({bmin.x - Px(4.0f), bmin.y}, {bmin.x - Px(1.0f), bmax.y}, category | 0xff000000);
+            // The inheritance marker and the error count at the right end.
+            const char* tag = origin == Origin::Inherited  ? "Inherited" :
+                              origin == Origin::Overridden ? ICON_FA_PEN " Overridden" :
+                              origin == Origin::Added      ? ICON_FA_PLUS " Added" :
+                                                             "";
+            const ImVec4 tagColor = origin == Origin::Overridden ? palette.AccentHover : origin == Origin::Added ? palette.Success : palette.TextDim;
+            const float  textY    = bmin.y + (bmax.y - bmin.y - ImGui::GetFontSize()) * 0.5f;
+            if (*tag)
+                draw->AddText({bmax.x - Px(24.0f) - ImGui::CalcTextSize(tag).x, textY}, ImGui::GetColorU32(tagColor), tag);
+            size_t errors = 0;
+            std::string message;
+            for (const auto& d : m_Diagnostics)
+                if (d.Emitter == handle && d.Use == use.Guid && !d.Warning)
+                    ++errors, message = d.Message;
+            if (errors)
+            {
+                const float x = bmax.x - Px(118.0f);
+                draw->AddText({x, textY}, ImGui::GetColorU32(palette.Danger), ICON_FA_CIRCLE_EXCLAMATION);
+                if (ImGui::IsMouseHoveringRect({x, bmin.y}, {x + Px(16.0f), bmax.y}))
+                    ImGui::SetTooltip("%s", message.c_str());
+            }
+            if (m_Highlight.Use == use.Guid && m_Now < m_Highlight.Until)
+            {
+                draw->AddRect({bmin.x - Px(4.0f), bmin.y}, {bmax.x + Px(4.0f), bmax.y}, ImGui::GetColorU32(palette.Warning), Px(3.0f), 0, 2.0f);
+                if (m_Highlight.Scroll && m_Highlight.Input.empty())
+                {
+                    ImGui::SetScrollHereY(0.3f);
+                    m_Highlight.Scroll = false;
+                }
+            }
+            // The grip: drag to reorder (within the stack, or into another stack that allows it).
+            const ImRect grip({bmax.x - Px(20.0f), bmin.y}, {bmax.x, bmax.y});
+            const ImGuiID gripID = ImGui::GetID("##grip");
+            if (ImGui::ItemAdd(grip, gripID))
+            {
+                bool hovered = false, held = false;
+                ImGui::ButtonBehavior(grip, gripID, &hovered, &held);
+                draw->AddText({grip.Min.x + Px(6.0f), textY}, ImGui::GetColorU32(hovered || held ? palette.Text : palette.TextDim),
+                              ICON_FA_ELLIPSIS_VERTICAL);
+                if (hovered && !held)
+                    ImGui::SetTooltip("Drag to reorder; right-click the band for more");
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+                {
+                    ImGui::SetDragDropPayload(UsePayload, use.Guid.data(), use.Guid.size());
+                    ImGui::Text("%s", name.c_str());
+                    ImGui::EndDragDropSource();
+                }
+            }
+            // Drop onto a band: the dragged row goes before it.
+            if (ImGui::BeginDragDropTargetCustom(ImRect(bmin, bmax), ImGui::GetID("##drop")))
+            {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(UsePayload))
+                {
+                    const std::string dragged(static_cast<const char*>(payload->Data), size_t(payload->DataSize));
+                    Apply([&](Vfx::System& s, const Context& c) { return MoveModule(s, c, handle, dragged, ref, index); });
+                }
+                ImGui::EndDragDropTarget();
+            }
+            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseHoveringRect(bmin, bmax) &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                m_MenuUse          = use.Guid;
+                m_UseMenuRequested = true;
+            }
+        }
+        if (toggled)
+            Apply([&](Vfx::System& s, const Context& c) { return SetModuleEnabled(s, c, handle, use.Guid, enabled); });
+        if (open)
+        {
+            if (info)
+                DrawInputs(h, e, ref, use, info->Data, {}, 0);
+            else
+                PropertyGrid::Text("Script", "Missing " + use.Script.ToString(), true);
+            PropertyGrid::EndGroup();
+        }
+        ImGui::PopID();
+    }
+
+    void VfxSystemEditorPanel::DrawInputs(const Vfx::EmitterHandle& h, const Vfx::Emitter& e, const StackRef& ref,
+                                          const Vfx::ModuleUse& use, const Vfx::Module& module, const InputPath& prefix, int depth)
+    {
+        using EditorTheme::Px;
+        const auto& palette = EditorTheme::Colors();
+        const auto  handle  = h.Guid;
+        const auto  inputs  = ModuleInputs(module);
+        std::set<std::string> spaces;
+        for (const auto& info : inputs)
+            if (!info.SpaceInput.empty())
+                spaces.insert(info.SpaceInput);
+        const auto set = [&](const InputPath& path, const Vfx::Input& value, bool continuous) {
+            Apply([&](Vfx::System& s, const Context& c) { return SetInput(s, c, handle, use.Guid, path, value); }, continuous);
+        };
+        for (const auto& info : inputs)
+        {
+            const auto& spec = info.Spec;
+            if (spaces.count(spec.Name))
+                continue; // Drawn as the toggle of its position input.
+            InputPath path = prefix;
+            path.push_back(spec.Name);
+            const auto current    = GetInput(use, path);
+            const bool overridden = depth == 0 && InputOverridden(h, use.Guid, spec.Name);
+            const bool modified   = LayerOf(h) == Layer::Own || ModuleOrigin(h, use.Guid) == Origin::Added ? current.has_value() : overridden;
+            ImGui::PushID(spec.Name.c_str());
+            std::string error;
+            for (const auto& d : m_Diagnostics)
+                if (d.Emitter == handle && d.Use == use.Guid && !d.Warning &&
+                    ((depth == 0 && d.Input == spec.Name && d.Nested.empty()) ||
+                     (depth == 1 && !prefix.empty() && d.Input == prefix[0] && d.Nested == spec.Name)))
+                    error = d.Message;
+            const std::string label = (error.empty() ? "" : ICON_FA_CIRCLE_EXCLAMATION " ") + Short(spec.Name);
+            if (PropertyGrid::Row(label.c_str(), error.empty() ? Vfx::TypeName(spec.Kind) : error.c_str(), modified))
+            {
+                const bool highlighted = m_Highlight.Use == use.Guid && m_Highlight.Input == spec.Name && m_Now < m_Highlight.Until;
+                if (highlighted)
+                {
+                    const ImVec2 at = ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddRectFilled({at.x - Px(2.0f), at.y}, {at.x + ImGui::GetContentRegionAvail().x, at.y + ImGui::GetFrameHeight()},
+                                                              ImGui::GetColorU32(ImVec4(palette.Warning.x, palette.Warning.y, palette.Warning.z, 0.25f)));
+                    if (m_Highlight.Scroll)
+                    {
+                        ImGui::SetScrollHereY(0.3f);
+                        m_Highlight.Scroll = false;
+                    }
+                }
+                const float button = ImGui::GetFrameHeight();
+                const float width  = std::max(Px(40.0f), ImGui::GetContentRegionAvail().x - button - Px(4.0f) - (modified ? button + Px(4.0f) : 0.0f));
+                ImGui::SetNextItemWidth(width);
+                if (!error.empty())
+                    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImGui::GetColorU32(ImVec4(palette.Danger.x, palette.Danger.y, palette.Danger.z, 0.35f)));
+                if (current && current->Kind == Vfx::InputKind::Link)
+                {
+                    if (ImGui::Button((ICON_FA_LINK "  " + current->Link).c_str(), {width, 0}))
+                        ImGui::OpenPopup("##inputmenu");
+                }
+                else if (current && current->Kind == Vfx::InputKind::DynamicInput)
+                {
+                    if (ImGui::Button(("f(x)  " + m_Library.NameOf(current->Script)).c_str(), {width, 0}))
+                        ImGui::OpenPopup("##inputmenu");
+                }
+                else if (info.Interface == "Curve" || info.Interface == "Gradient")
+                {
+                    const auto binding = current && current->Kind == Vfx::InputKind::DataInterface ? current->Interface : info.DefaultBinding;
+                    const ImVec2 min   = ImGui::GetCursorScreenPos();
+                    const float  high  = ImGui::GetFrameHeight();
+                    ImGui::InvisibleButton("##curve", {width, high});
+                    const bool clicked = ImGui::IsItemClicked();
+                    auto*      draw    = ImGui::GetWindowDrawList();
+                    if (info.Interface == "Gradient")
+                    {
+                        ImGui::SetCursorScreenPos(min);
+                        GradientEditor::Preview(Gradient::FromBinding(binding), width, high);
+                    }
+                    else
+                    {
+                        draw->AddRectFilled(min, {min.x + width, min.y + high}, ImGui::GetColorU32(palette.Inset), Px(3.0f));
+                        const auto curve = CurveFromBinding(binding);
+                        float      low = 0, top = 1;
+                        for (const auto& k : curve.Keys)
+                            low = std::min(low, k.Value.x), top = std::max(top, k.Value.x);
+                        ImVec2 last;
+                        for (int i = 0; i <= 32; ++i)
+                        {
+                            const float  t = float(i) / 32;
+                            const float  v = curve.Keys.empty() ? 0 : curve.Sample(t).x;
+                            const ImVec2 p {min.x + t * width, min.y + high - 3 - (v - low) / std::max(top - low, 1e-4f) * (high - 6)};
+                            if (i)
+                                draw->AddLine(last, p, ImGui::GetColorU32(palette.Accent), 1.5f);
+                            last = p;
+                        }
+                    }
+                    if (ImGui::IsItemHovered() || ImGui::IsMouseHoveringRect(min, {min.x + width, min.y + high}))
+                        ImGui::SetTooltip("Click to edit the %s", info.Interface == "Gradient" ? "gradient" : "curve");
+                    if (clicked)
+                        info.Interface == "Gradient" ? OpenGradientEditor(use.Guid, path) : OpenCurveEditor(use.Guid, path);
+                }
+                else if (info.Interface == "Grid3D")
+                {
+                    auto binding = current && current->Kind == Vfx::InputKind::DataInterface ? current->Interface : Vfx::InterfaceBinding {};
+                    binding.Kind = "Grid3D";
+                    std::string label2 = binding.Source.empty() ? "Choose a grid" : Short(binding.Source) + " · " + binding.Channel;
+                    if (ImGui::BeginCombo("##grid", label2.c_str()))
+                    {
+                        for (const auto& [name, grid] : e.DataInterfaces)
+                            if (grid.Kind == "Grid3D")
+                                for (const auto& attribute : grid.GridAttributes)
+                                    if (ImGui::Selectable((Short(name) + " · " + attribute.Name).c_str(),
+                                                          binding.Source == name && binding.Channel == attribute.Name))
+                                    {
+                                        auto chosen        = grid;
+                                        chosen.GridAttributes.clear();
+                                        chosen.Source      = name;
+                                        chosen.Channel     = attribute.Name;
+                                        Vfx::Input input;
+                                        input.Kind      = Vfx::InputKind::DataInterface;
+                                        input.Interface = chosen;
+                                        set(path, input, false);
+                                    }
+                        ImGui::EndCombo();
+                    }
+                }
+                else if (info.Interface == "Events")
+                {
+                    auto binding = current && current->Kind == Vfx::InputKind::DataInterface ? current->Interface : Vfx::InterfaceBinding {};
+                    if (ImGui::BeginCombo("##channel", binding.Channel.empty() ? "Default channel" : binding.Channel.c_str()))
+                    {
+                        for (const auto& c : e.Channels)
+                            if (ImGui::Selectable(c.Name.c_str(), binding.Channel == c.Name))
+                            {
+                                Vfx::Input input;
+                                input.Kind              = Vfx::InputKind::DataInterface;
+                                input.Interface.Kind    = "Events";
+                                input.Interface.Channel = c.Name;
+                                set(path, input, false);
+                            }
+                        ImGui::EndCombo();
+                    }
+                }
+                else if (info.Interface == "EmitterParticles")
+                {
+                    auto binding = current && current->Kind == Vfx::InputKind::DataInterface ? current->Interface : Vfx::InterfaceBinding {};
+                    const auto* source = FindHandle(m_Document.Data(), binding.SourceEmitter);
+                    if (ImGui::BeginCombo("##source", source ? source->Name.c_str() : "Choose an emitter"))
+                    {
+                        for (const auto& other : m_Document.Data().Emitters)
+                            if (other.Guid != handle && ImGui::Selectable(other.Name.c_str(), other.Guid == binding.SourceEmitter))
+                            {
+                                Vfx::Input input;
+                                input.Kind                    = Vfx::InputKind::DataInterface;
+                                input.Interface.Kind          = "EmitterParticles";
+                                input.Interface.SourceEmitter = other.Guid;
+                                set(path, input, false);
+                            }
+                        ImGui::EndCombo();
+                    }
+                }
+                else if (!info.Interface.empty() && info.Interface != "ForceFields")
+                {
+                    // Asset-backed bindings (vector fields, meshes, textures): the asset ID.
+                    auto binding = current && current->Kind == Vfx::InputKind::DataInterface ? current->Interface : Vfx::InterfaceBinding {};
+                    if (binding.Kind.empty())
+                        binding.Kind = info.Interface == "Mesh" ? "StaticMesh" : info.Interface;
+                    std::string text = binding.Asset.IsValid() ? binding.Asset.ToString() : std::string();
+                    if (ImGui::InputTextWithHint("##asset", (info.Interface + " asset ID").c_str(), &text, ImGuiInputTextFlags_EnterReturnsTrue))
+                    {
+                        binding.Asset = text.empty() ? AssetID {} : AssetID::FromString(text);
+                        if (info.Interface == "Mesh")
+                            binding.Source = "Asset";
+                        Vfx::Input input;
+                        input.Kind      = Vfx::InputKind::DataInterface;
+                        input.Interface = binding;
+                        set(path, input, false);
+                    }
+                }
+                else if (info.Interface == "ForceFields")
+                    ImGui::TextDisabled("Scene force fields");
+                else
+                {
+                    Vfx::Value value = current && current->Kind == Vfx::InputKind::Literal ? current->Literal : spec.Default.value_or(Zero(spec.Kind));
+                    float      valueWidth = width;
+                    // A position with a space input gets its Local/World toggle next to it.
+                    const Vfx::Parameter* spaceSpec = nullptr;
+                    for (const auto& other : inputs)
+                        if (other.Spec.Name == info.SpaceInput)
+                            spaceSpec = &other.Spec;
+                    if (spaceSpec)
+                        valueWidth -= Px(64.0f);
+                    ImGui::SetNextItemWidth(valueWidth);
+                    if (ValueEditor("##value", value, spec.Kind, &spec))
+                    {
+                        Vfx::Input input;
+                        input.Literal = value;
+                        set(path, input, true);
+                    }
+                    if (spaceSpec)
+                    {
+                        InputPath spacePath = prefix;
+                        spacePath.push_back(spaceSpec->Name);
+                        auto  spaceInput = GetInput(use, spacePath);
+                        int   spaceValue = spaceInput && spaceInput->Kind == Vfx::InputKind::Literal ? spaceInput->Literal.Integer :
+                                                                                                        spaceSpec->Default.value_or(Vfx::Value::Int(0)).Integer;
+                        ImGui::SameLine(0, Px(4.0f));
+                        if (ImGui::Button((spaceSpec->EnumNames[size_t(std::clamp(spaceValue, 0, 1))] + "##space").c_str(), {Px(60.0f), 0}))
+                        {
+                            Vfx::Input input;
+                            input.Literal = Vfx::Value::Int(1 - std::clamp(spaceValue, 0, 1));
+                            set(spacePath, input, false);
+                        }
+                    }
+                }
+                if (!error.empty())
+                    ImGui::PopStyleColor();
+                // Parameters dropped on the value link the input.
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(ParameterPayload))
+                    {
+                        const std::string parameter(static_cast<const char*>(payload->Data), size_t(payload->DataSize));
+                        Apply([&](Vfx::System& s, const Context& c) { return LinkInput(s, c, handle, use.Guid, path, parameter); });
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::SameLine(0, Px(4.0f));
+                if (ImGui::Button(ICON_FA_CARET_DOWN "##menu", {button, button}))
+                    ImGui::OpenPopup("##inputmenu");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Link to a parameter, use a dynamic input or reset");
+                if (ImGui::BeginPopup("##inputmenu"))
+                {
+                    if (ImGui::BeginMenu(ICON_FA_LINK "  Link to parameter"))
+                    {
+                        bool any = false;
+                        for (const auto& p : ListParameters(m_Document.Data(), m_Context, handle))
+                            if (p.Kind == spec.Kind && p.Namespace != "")
+                            {
+                                any = true;
+                                if (ImGui::MenuItem(p.Name.c_str()))
+                                    Apply([&](Vfx::System& s, const Context& c) { return LinkInput(s, c, handle, use.Guid, path, p.Name); });
+                            }
+                        if (!any)
+                            ImGui::TextDisabled("No %s parameters", Vfx::TypeName(spec.Kind));
+                        ImGui::EndMenu();
+                    }
+                    if (info.Interface.empty() && ImGui::MenuItem("f(x)  Dynamic input..."))
+                        OpenDynamicInputSearch(use.Guid, path);
+                    if (current && current->Kind == Vfx::InputKind::DynamicInput)
+                        if (const auto* nested = m_Library.Find(current->Script); nested && nested->File.extension() == ".vfxmodule")
+                            if (ImGui::MenuItem(ICON_FA_UP_RIGHT_FROM_SQUARE "  Open dynamic input") && m_OpenModule)
+                                m_OpenModule(nested->File);
+                    if (ImGui::MenuItem(ICON_FA_ROTATE_LEFT "  Reset", nullptr, false, modified || current.has_value()))
+                        Apply([&](Vfx::System& s, const Context& c) { return ResetInput(s, c, handle, use.Guid, path); });
+                    ImGui::EndPopup();
+                }
+                if (PropertyGrid::RowReset(modified))
+                    Apply([&](Vfx::System& s, const Context& c) { return ResetInput(s, c, handle, use.Guid, path); });
+            }
+            // A dynamic input's own inputs, nested under it.
+            if (current && current->Kind == Vfx::InputKind::DynamicInput && depth < 6)
+                if (const auto* nested = m_Library.Find(current->Script))
+                {
+                    if (PropertyGrid::BeginGroup(("f(x) " + nested->Name).c_str()))
+                    {
+                        DrawInputs(h, e, ref, use, nested->Data, path, depth + 1);
+                        PropertyGrid::EndGroup();
+                    }
+                }
+            ImGui::PopID();
+        }
+        if (inputs.empty() && depth == 0)
+            PropertyGrid::Text("Inputs", "None", true);
+    }
+
+    void VfxSystemEditorPanel::DrawHandlers(const Vfx::EmitterHandle& h, const Vfx::Emitter& e)
+    {
+        const auto handle = h.Guid;
+        auto&      s      = m_Document.Data();
+        if (!PropertyGrid::BeginGroup(StageTitle(Stage::EventHandler)))
+            return;
+        for (const auto& handler : e.Handlers)
+        {
+            ImGui::PushID(handler.Guid.c_str());
+            const auto* source  = FindHandle(s, handler.SourceEmitter);
+            std::string title   = "From " + (source ? source->Name : handler.SourceEmitter) + " \xC2\xB7 " + handler.Channel;
+            bool        enabled = handler.Enabled, toggled = false;
+            if (PropertyGrid::BeginGroup(title.c_str(), &enabled, &toggled))
+            {
+                auto       settings = handler;
+                const auto edit     = [&](bool continuous) {
+                    Apply([&](Vfx::System& x, const Context& c) { return SetEventHandler(x, c, handle, settings); }, continuous);
+                };
+                if (PropertyGrid::Row("Source", "The emitter whose events spawn or update these particles"))
+                {
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    if (ImGui::BeginCombo("##source", source ? source->Name.c_str() : "Choose an emitter"))
+                    {
+                        for (const auto& other : s.Emitters)
+                            if (other.Guid != handle && ImGui::Selectable(other.Name.c_str(), other.Guid == handler.SourceEmitter))
+                            {
+                                settings.SourceEmitter = other.Guid;
+                                const auto channels    = EventChannels(s, m_Context, other.Guid);
+                                settings.Channel       = channels.empty() ? std::string() : channels.front();
+                                edit(false);
+                            }
+                        ImGui::EndCombo();
+                    }
+                }
+                if (PropertyGrid::Row("Event", "The source's event channel"))
+                {
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    if (ImGui::BeginCombo("##event", handler.Channel.c_str()))
+                    {
+                        for (const auto& c : EventChannels(s, m_Context, handler.SourceEmitter))
+                            if (ImGui::Selectable(c.c_str(), c == handler.Channel))
+                                settings.Channel = c, edit(false);
+                        ImGui::EndCombo();
+                    }
+                }
+                const char* modes[] = {"Spawn particles", "Apply to every particle"};
+                int         mode    = int(handler.Mode);
+                if (PropertyGrid::Combo("Mode", modes, 2, mode))
+                    settings.Mode = Vfx::EventMode(mode), edit(false);
+                int spawn = int(std::min<uint32_t>(handler.SpawnNumber, INT32_MAX));
+                if (settings.Mode == Vfx::EventMode::SpawnedParticles && PropertyGrid::Int("Spawn count", spawn, 0, 100000))
+                    settings.SpawnNumber = uint32_t(std::max(0, spawn)), edit(true);
+                bool limited = handler.MaxEventsPerFrame != UINT32_MAX;
+                if (PropertyGrid::Checkbox("Limit events", limited))
+                    settings.MaxEventsPerFrame = limited ? 64 : UINT32_MAX, edit(false);
+                if (limited)
+                {
+                    int most = int(std::min<uint32_t>(handler.MaxEventsPerFrame, INT32_MAX));
+                    if (PropertyGrid::Int("Events per frame", most, 1, 1000000))
+                        settings.MaxEventsPerFrame = uint32_t(std::max(1, most)), edit(true);
+                }
+                DrawStackSection(h, e, {Stage::EventHandler, handler.Guid}, nullptr);
+                PropertyGrid::BeginFree();
+                if (ImGui::SmallButton(ICON_FA_TRASH "  Remove handler"))
+                    Apply([&](Vfx::System& x, const Context& c) { return RemoveEventHandler(x, c, handle, handler.Guid); });
+                PropertyGrid::EndFree();
+                PropertyGrid::EndGroup();
+            }
+            if (toggled)
+            {
+                auto settings    = handler;
+                settings.Enabled = enabled;
+                Apply([&](Vfx::System& x, const Context& c) { return SetEventHandler(x, c, handle, settings); });
+            }
+            ImGui::PopID();
+        }
+        PropertyGrid::BeginFree();
+        if (ImGui::Button(ICON_FA_PLUS "  Add event handler", {-FLT_MIN, 0}))
+        {
+            std::string source;
+            for (const auto& other : s.Emitters)
+                if (other.Guid != handle && source.empty())
+                    source = other.Guid;
+            const auto channels = EventChannels(s, m_Context, source);
+            if (source.empty())
+                m_Status = "Event handlers read another emitter's events; add a second emitter first.";
+            else
+                Apply([&](Vfx::System& x, const Context& c) {
+                    return AddEventHandler(x, c, handle, source, channels.empty() ? std::string() : channels.front());
+                });
+        }
+        PropertyGrid::EndFree();
+        PropertyGrid::EndGroup();
+    }
+
+    void VfxSystemEditorPanel::DrawSimulationStages(const Vfx::EmitterHandle& h, const Vfx::Emitter& e)
+    {
+        const auto handle = h.Guid;
+        if (!PropertyGrid::BeginGroup(StageTitle(Stage::SimulationStage)))
+            return;
+        for (size_t i = 0; i < e.SimulationStages.size(); ++i)
+        {
+            const auto& stage = e.SimulationStages[i];
+            ImGui::PushID(stage.Guid.c_str());
+            std::string error;
+            for (const auto& d : m_Diagnostics)
+                if (d.Emitter == handle && d.SimulationStage == stage.Guid && d.Use.empty() && !d.Warning)
+                    error = d.Message;
+            const std::string title = (error.empty() ? "" : ICON_FA_CIRCLE_EXCLAMATION " ") + stage.Name;
+            if (PropertyGrid::BeginGroup(title.c_str()))
+            {
+                auto       settings = stage;
+                const auto edit     = [&](bool continuous) {
+                    Apply([&](Vfx::System& x, const Context& c) { return SetSimulationStage(x, c, handle, settings); }, continuous);
+                };
+                if (!error.empty())
+                    PropertyGrid::Text("Error", error);
+                std::string name = stage.Name;
+                if (PropertyGrid::InputText("Name", name) && !name.empty())
+                    settings.Name = name, edit(true);
+                if (PropertyGrid::Row("Iterate over", "Particles, or every cell of a Grid3D data interface"))
+                {
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    const std::string current = stage.Source == Vfx::IterationSource::Particles ? "Particles" : "Grid3D " + Short(stage.DataInterface);
+                    if (ImGui::BeginCombo("##source", current.c_str()))
+                    {
+                        if (ImGui::Selectable("Particles", stage.Source == Vfx::IterationSource::Particles))
+                            settings.Source = Vfx::IterationSource::Particles, edit(false);
+                        for (const auto& [diName, binding] : e.DataInterfaces)
+                            if (binding.Kind == "Grid3D" &&
+                                ImGui::Selectable(("Grid3D " + Short(diName)).c_str(), stage.DataInterface == diName))
+                                settings.Source = Vfx::IterationSource::DataInterface, settings.DataInterface = diName, edit(false);
+                        ImGui::EndCombo();
+                    }
+                }
+                int iterations = int(stage.Iterations);
+                const int one  = 1;
+                if (PropertyGrid::Int("Iterations", iterations, 1, 64, &one))
+                    settings.Iterations = uint32_t(std::clamp(iterations, 1, 64)), edit(true);
+                if (PropertyGrid::Row("Enabled by", "A bool emitter or user parameter; empty runs the stage every frame"))
+                {
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    if (ImGui::BeginCombo("##enabled", stage.Enabled.empty() ? "Always" : stage.Enabled.c_str()))
+                    {
+                        if (ImGui::Selectable("Always", stage.Enabled.empty()))
+                            settings.Enabled.clear(), edit(false);
+                        for (const auto& p : ListParameters(m_Document.Data(), m_Context, handle))
+                            if (p.Kind == Vfx::Type::Bool && (p.Namespace == "Emitter" || p.Namespace == "User") &&
+                                ImGui::Selectable(p.Name.c_str(), p.Name == stage.Enabled))
+                                settings.Enabled = p.Name, edit(false);
+                        ImGui::EndCombo();
+                    }
+                }
+                DrawStackSection(h, e, {Stage::SimulationStage, stage.Guid}, nullptr);
+                PropertyGrid::BeginFree();
+                if (ImGui::SmallButton(ICON_FA_ARROW_UP "##up"))
+                    Apply([&](Vfx::System& x, const Context& c) { return MoveSimulationStage(x, c, handle, stage.Guid, -1); });
+                ImGui::SameLine();
+                if (ImGui::SmallButton(ICON_FA_ARROW_DOWN "##down"))
+                    Apply([&](Vfx::System& x, const Context& c) { return MoveSimulationStage(x, c, handle, stage.Guid, 1); });
+                ImGui::SameLine();
+                if (ImGui::SmallButton(ICON_FA_TRASH "  Remove stage"))
+                    Apply([&](Vfx::System& x, const Context& c) { return RemoveSimulationStage(x, c, handle, stage.Guid); });
+                PropertyGrid::EndFree();
+                PropertyGrid::EndGroup();
+            }
+            ImGui::PopID();
+        }
+        PropertyGrid::BeginFree();
+        if (ImGui::Button(ICON_FA_PLUS "  Add simulation stage", {-FLT_MIN, 0}))
+            ImGui::OpenPopup("##addstage");
+        if (ImGui::BeginPopup("##addstage"))
+        {
+            if (ImGui::MenuItem("Over particles"))
+                Apply([&](Vfx::System& x, const Context& c) {
+                    return AddSimulationStage(x, c, handle, "ParticleStage", Vfx::IterationSource::Particles, {}, 1);
+                });
+            for (const auto& [diName, binding] : e.DataInterfaces)
+                if (binding.Kind == "Grid3D" && ImGui::MenuItem(("Over grid " + Short(diName)).c_str()))
+                    Apply([&](Vfx::System& x, const Context& c) {
+                        return AddSimulationStage(x, c, handle, "GridStage", Vfx::IterationSource::DataInterface, diName, 1);
+                    });
+            ImGui::EndPopup();
+        }
+        PropertyGrid::EndFree();
+        PropertyGrid::EndGroup();
+    }
+
+    void VfxSystemEditorPanel::DrawRenderers(const Vfx::EmitterHandle& h, const Vfx::Emitter& e)
+    {
+        const auto handle = h.Guid;
+        if (!PropertyGrid::BeginGroup("Render"))
+            return;
+        for (const auto& renderer : e.Renderers)
+        {
+            ImGui::PushID(renderer.Guid.c_str());
+            std::string error;
+            for (const auto& d : m_Diagnostics)
+                if (d.Emitter == handle && d.Renderer == renderer.Guid && !d.Warning)
+                    error = d.Message;
+            const std::string title = (error.empty() ? "" : ICON_FA_CIRCLE_EXCLAMATION " ") + std::string(RendererName(renderer.Kind));
+            if (PropertyGrid::BeginGroup(title.c_str()))
+            {
+                auto       r    = renderer;
+                const auto edit = [&](bool continuous) {
+                    Apply([&](Vfx::System& x, const Context& c) { return SetRenderer(x, c, handle, r); }, continuous);
+                };
+                if (!error.empty())
+                    PropertyGrid::Text("Error", error);
+                if (AssetIDField("Material", r.Material))
+                    edit(false);
+                if (r.Kind == Vfx::RendererKind::Mesh)
+                    for (size_t k = 0; k < r.Meshes.size(); ++k)
+                    {
+                        ImGui::PushID(int(k));
+                        if (AssetIDField("Mesh", r.Meshes[k].Mesh))
+                            edit(false);
+                        if (PropertyGrid::Vec3("Mesh scale", r.Meshes[k].Scale, 1.0f, 0.01f))
+                            edit(true);
+                        ImGui::PopID();
+                    }
+                if (r.Kind == Vfx::RendererKind::Mesh && PropertyGrid::Row("Meshes"))
+                    if (ImGui::SmallButton(ICON_FA_PLUS " Mesh"))
+                        r.Meshes.push_back({}), edit(false);
+                if (PropertyGrid::BeginGroup("Alignment and facing", nullptr, nullptr, false))
+                {
+                    if (r.Kind == Vfx::RendererKind::Ribbon)
+                    {
+                        const char* facing[] = {"Screen", "Custom", "Custom side"};
+                        int         f        = int(r.RibbonFacingMode);
+                        if (EnumCombo("Facing", facing, f))
+                            r.RibbonFacingMode = Vfx::RibbonFacing(f), edit(false);
+                        int tess = int(r.TessellationFactor);
+                        if (PropertyGrid::Int("Tessellation", tess, 1, 16))
+                            r.TessellationFactor = uint32_t(std::clamp(tess, 1, 16)), edit(true);
+                        if (PropertyGrid::Float("Curve tension", r.CurveTension, 0.01f, 0.0f, 1.0f))
+                            edit(true);
+                    }
+                    else
+                    {
+                        const char* facing[] = {"View plane", "Camera position", "Velocity", "Custom", "Default", "Camera plane"};
+                        int         f        = int(r.FacingMode);
+                        if (EnumCombo("Facing", facing, f))
+                            r.FacingMode = Vfx::Facing(f), edit(false);
+                        if (PropertyGrid::Checkbox("Lock axis", r.LockedAxisEnable))
+                            edit(false);
+                        if (r.LockedAxisEnable && PropertyGrid::Vec3("Locked axis", r.LockedAxis, 0.0f, 0.01f))
+                            edit(true);
+                        if (r.FacingMode == Vfx::Facing::Custom && PropertyGrid::Vec3("Facing vector", r.FacingVector, 0.0f, 0.01f))
+                            edit(true);
+                        glm::vec3 pivot(r.Pivot, 0);
+                        if (r.Kind == Vfx::RendererKind::Sprite && PropertyGrid::Vec3("Pivot", pivot, glm::vec3(0.5f, 0.5f, 0.0f), 0.01f))
+                            r.Pivot = glm::vec2(pivot), edit(true);
+                    }
+                    PropertyGrid::EndGroup();
+                }
+                if (PropertyGrid::BeginGroup("Sorting", nullptr, nullptr, false))
+                {
+                    const char* sorts[] = {"None", "Emitter order", "Particle depth", "Particle distance", "Custom"};
+                    int         sort    = int(r.Sorting);
+                    if (EnumCombo("Sort", sorts, sort))
+                        r.Sorting = Vfx::Sort(sort), edit(false);
+                    if (PropertyGrid::Checkbox("Ascending", r.SortAscending))
+                        edit(false);
+                    PropertyGrid::EndGroup();
+                }
+                if (r.Kind == Vfx::RendererKind::Sprite && PropertyGrid::BeginGroup("Sub images", nullptr, nullptr, false))
+                {
+                    int rows = int(r.Rows), columns = int(r.Columns);
+                    if (PropertyGrid::Int("Rows", rows, 1, 256))
+                        r.Rows = uint32_t(std::clamp(rows, 1, 256)), edit(true);
+                    if (PropertyGrid::Int("Columns", columns, 1, 256))
+                        r.Columns = uint32_t(std::clamp(columns, 1, 256)), edit(true);
+                    if (PropertyGrid::Checkbox("Frame blending", r.FrameBlending))
+                        edit(false);
+                    PropertyGrid::EndGroup();
+                }
+                if (PropertyGrid::BeginGroup("Lighting and shadows", nullptr, nullptr, false))
+                {
+                    const char* normals[] = {"Camera facing", "Spherical", "Particle normal"};
+                    int         normal    = int(r.NormalMode);
+                    if (EnumCombo("Normals", normals, normal))
+                        r.NormalMode = Vfx::LightingNormal(normal), edit(false);
+                    const char* evaluation[] = {"Per pixel", "Per vertex"};
+                    int         lighting     = int(r.Lighting);
+                    if (EnumCombo("Lighting", evaluation, lighting))
+                        r.Lighting = Vfx::LightingEvaluation(lighting), edit(false);
+                    if (r.NormalMode == Vfx::LightingNormal::Spherical && PropertyGrid::Float("Curvature", r.Curvature, 0.01f, 0.0f, 1.0f))
+                        edit(true);
+                    if (PropertyGrid::Checkbox("Receive shadows", r.ReceiveShadows))
+                        edit(false);
+                    bool cast = r.CastsShadows();
+                    if (PropertyGrid::Checkbox("Cast shadows", cast))
+                        r.CastShadows = cast, edit(false);
+                    if (PropertyGrid::Float("Depth fade", r.DepthFadeDistance, 0.01f, 0.0f, 100.0f))
+                        edit(true);
+                    PropertyGrid::EndGroup();
+                }
+                if (PropertyGrid::BeginGroup("Bindings", nullptr, nullptr, false))
+                {
+                    auto        parameters = ListParameters(m_Document.Data(), m_Context, handle);
+                    std::vector<std::string> keys;
+                    for (const auto& [k, v] : r.Bindings)
+                        keys.push_back(k);
+                    if (!r.Bindings.count("DirectionalTransmittance"))
+                        keys.push_back("DirectionalTransmittance");
+                    for (const auto& key : keys)
+                    {
+                        auto at = r.Bindings.find(key);
+                        if (!PropertyGrid::Row(key.c_str(), "The particle attribute this renderer input reads"))
+                            continue;
+                        ImGui::PushID(key.c_str());
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+                        if (ImGui::BeginCombo("##binding", at == r.Bindings.end() ? "None" : at->second.c_str()))
+                        {
+                            if (key == "DirectionalTransmittance" && ImGui::Selectable("None", at == r.Bindings.end()))
+                                r.Bindings.erase(key), edit(false);
+                            for (const auto& p : parameters)
+                                if (p.Namespace == "Particles" && ImGui::Selectable(p.Name.c_str(), at != r.Bindings.end() && at->second == p.Name))
+                                    r.Bindings[key] = p.Name, edit(false);
+                            ImGui::EndCombo();
+                        }
+                        ImGui::PopID();
+                    }
+                    PropertyGrid::EndGroup();
+                }
+                PropertyGrid::BeginFree();
+                if (ImGui::SmallButton(ICON_FA_ARROW_UP "##up"))
+                    Apply([&](Vfx::System& x, const Context& c) { return MoveRenderer(x, c, handle, renderer.Guid, -1); });
+                ImGui::SameLine();
+                if (ImGui::SmallButton(ICON_FA_ARROW_DOWN "##down"))
+                    Apply([&](Vfx::System& x, const Context& c) { return MoveRenderer(x, c, handle, renderer.Guid, 1); });
+                ImGui::SameLine();
+                if (ImGui::SmallButton(ICON_FA_TRASH "  Remove renderer"))
+                    Apply([&](Vfx::System& x, const Context& c) { return RemoveRenderer(x, c, handle, renderer.Guid); });
+                PropertyGrid::EndFree();
+                PropertyGrid::EndGroup();
+            }
+            ImGui::PopID();
+        }
+        PropertyGrid::BeginFree();
+        if (ImGui::Button(ICON_FA_PLUS "  Add renderer", {-FLT_MIN, 0}))
+            ImGui::OpenPopup("##addrenderer");
+        if (ImGui::BeginPopup("##addrenderer"))
+        {
+            for (auto kind : {Vfx::RendererKind::Sprite, Vfx::RendererKind::Mesh, Vfx::RendererKind::Ribbon})
+                if (ImGui::MenuItem(RendererName(kind)))
+                    Apply([&](Vfx::System& x, const Context& c) { return AddRenderer(x, c, handle, kind); });
+            ImGui::EndPopup();
+        }
+        PropertyGrid::EndFree();
+        PropertyGrid::EndGroup();
+    }
+
+    // ---------------------------------------------------------------------- parameters
+
+    void VfxSystemEditorPanel::DrawParameters()
+    {
+        using EditorTheme::Px;
+        const auto& palette    = EditorTheme::Colors();
+        const auto  handle     = Handle();
+        auto&       s          = m_Document.Data();
+        const auto  parameters = ListParameters(s, m_Context, handle);
+        ImGui::TextUnformatted(ICON_FA_SLIDERS "  Parameters");
+        ImGui::SameLine();
+        ImGui::TextDisabled("drag one onto an input to link it");
+        const auto row = [&](const ParameterInfo& p) {
+            ImGui::PushID(p.Name.c_str());
+            ImGui::Selectable(Short(p.Name).c_str(), false, ImGuiSelectableFlags_AllowOverlap, {Px(150.0f), 0});
+            if (ImGui::BeginDragDropSource())
+            {
+                ImGui::SetDragDropPayload(ParameterPayload, p.Name.data(), p.Name.size());
+                ImGui::Text("%s (%s)", p.Name.c_str(), Vfx::TypeName(p.Kind));
+                ImGui::EndDragDropSource();
+            }
+            if (ImGui::IsItemHovered())
+            {
+                std::string tip = p.Name + " (" + Vfx::TypeName(p.Kind) + ")";
+                if (!p.Writers.empty())
+                {
+                    tip += "\nWritten by:";
+                    for (const auto& w : p.Writers)
+                        tip += " " + w;
+                }
+                if (!p.Readers.empty())
+                {
+                    tip += "\nRead by:";
+                    for (const auto& r : p.Readers)
+                        tip += " " + r;
+                }
+                if (!p.Warning.empty())
+                    tip += "\n" + p.Warning;
+                ImGui::SetTooltip("%s", tip.c_str());
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", Vfx::TypeName(p.Kind));
+            if (!p.Warning.empty())
+            {
+                ImGui::SameLine();
+                ImGui::TextColored(palette.Warning, ICON_FA_TRIANGLE_EXCLAMATION);
+            }
+            std::string uses;
+            if (!p.Writers.empty())
+                uses += "W: " + p.Writers.front() + (p.Writers.size() > 1 ? " +" + std::to_string(p.Writers.size() - 1) : "");
+            if (!p.Readers.empty())
+                uses += std::string(uses.empty() ? "" : "  ") + "R: " + p.Readers.front() +
+                        (p.Readers.size() > 1 ? " +" + std::to_string(p.Readers.size() - 1) : "");
+            if (!uses.empty())
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", uses.c_str());
+            }
+            ImGui::PopID();
+        };
+        // User parameters: exposed to the component and C#.
+        if (PropertyGrid::BeginGroup("User"))
+        {
+            PropertyGrid::BeginFree();
+            for (const auto& p : s.UserParameters)
+            {
+                ImGui::PushID(p.Name.c_str());
+                auto at = std::find_if(parameters.begin(), parameters.end(), [&](const auto& x) { return x.Name == p.Name; });
+                if (m_RenameParameter == p.Name)
+                {
+                    ImGui::SetNextItemWidth(Px(150.0f));
+                    ImGui::SetKeyboardFocusHere();
+                    if (ImGui::InputText("##rename", m_RenameBuffer, sizeof(m_RenameBuffer),
+                                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
+                    {
+                        const std::string to = std::string("User.") + m_RenameBuffer;
+                        Apply([&](Vfx::System& x, const Context&) { return RenameUserParameter(x, p.Name, to); });
+                        m_RenameParameter.clear();
+                    }
+                    if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+                        m_RenameParameter.clear();
+                }
+                else if (at != parameters.end())
+                {
+                    row(*at);
+                    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                    {
+                        m_RenameParameter = p.Name;
+                        std::snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", Short(p.Name).c_str());
+                    }
+                }
+                Vfx::Value value = p.Default.value_or(Zero(p.Kind));
+                ImGui::SetNextItemWidth(std::max(Px(60.0f), ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight() * 2 - Px(8.0f)));
+                if (ValueEditor("##default", value, p.Kind, &p))
+                    Apply([&](Vfx::System& x, const Context&) { return SetUserParameterDefault(x, p.Name, value); }, true);
+                ImGui::SameLine();
+                if (ImGui::SmallButton(ICON_FA_PEN "##rename"))
+                {
+                    m_RenameParameter = p.Name;
+                    std::snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", Short(p.Name).c_str());
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton(ICON_FA_TRASH "##remove"))
+                    Apply([&](Vfx::System& x, const Context&) { return RemoveUserParameter(x, p.Name); });
+                ImGui::PopID();
+            }
+            if (m_Document.GetMode() == Mode::System)
+            {
+                if (ImGui::Button(ICON_FA_PLUS "  User parameter"))
+                    ImGui::OpenPopup("##adduser");
+                if (ImGui::BeginPopup("##adduser"))
+                {
+                    for (auto t : AllTypes)
+                        if (ImGui::MenuItem(Vfx::TypeName(t)))
+                            Apply([&](Vfx::System& x, const Context&) { return AddUserParameter(x, t); });
+                    ImGui::EndPopup();
+                }
+            }
+            else
+                ImGui::TextDisabled("User parameters belong to systems.");
+            PropertyGrid::EndFree();
+            PropertyGrid::EndGroup();
+        }
+        for (const char* ns : {"System", "Emitter", "Particles", "Engine"})
+        {
+            const bool particles = std::strcmp(ns, "Particles") == 0;
+            if (!PropertyGrid::BeginGroup(particles ? "Particles (attributes)" : ns, nullptr, nullptr, std::strcmp(ns, "Engine") != 0))
+                continue;
+            PropertyGrid::BeginFree();
+            for (const auto& p : parameters)
+                if (p.Namespace == ns)
+                    row(p);
+            PropertyGrid::EndFree();
+            PropertyGrid::EndGroup();
+        }
+        // Data interfaces of the selected emitter.
+        const auto* h = FindHandle(s, handle);
+        if (!h || !PropertyGrid::BeginGroup("Data Interfaces"))
+            return;
+        Vfx::Emitter e;
+        try
+        {
+            e = Effective(*h, m_Context);
+        }
+        catch (const std::exception&)
+        {}
+        const bool own = LayerOf(*h) == Layer::Own;
+        for (const auto& [name, binding] : e.DataInterfaces)
+        {
+            ImGui::PushID(name.c_str());
+            if (PropertyGrid::BeginGroup((Short(name) + " \xC2\xB7 " + binding.Kind).c_str(), nullptr, nullptr, false))
+            {
+                auto       b    = binding;
+                const auto edit = [&](bool continuous) {
+                    Apply([&](Vfx::System& x, const Context& c) { return SetDataInterface(x, c, handle, name, b); }, continuous);
+                };
+                ImGui::BeginDisabled(!own);
+                if (b.Kind == "Grid3D")
+                {
+                    glm::vec3 resolution(b.Resolution);
+                    if (PropertyGrid::Vec3("Resolution", resolution, 32.0f, 0.2f))
+                        b.Resolution = glm::uvec3(glm::clamp(glm::round(resolution), glm::vec3(1), glm::vec3(128))), edit(true);
+                    if (PropertyGrid::Vec3("World bounds", b.WorldBounds, 4.0f, 0.05f))
+                        b.WorldBounds = glm::max(b.WorldBounds, glm::vec3(0.001f)), edit(true);
+                    for (size_t k = 0; k < b.GridAttributes.size(); ++k)
+                    {
+                        ImGui::PushID(int(k));
+                        auto& a = b.GridAttributes[k];
+                        if (PropertyGrid::Row("Attribute"))
+                        {
+                            ImGui::SetNextItemWidth(Px(110.0f));
+                            if (ImGui::InputText("##name", &a.Name, ImGuiInputTextFlags_EnterReturnsTrue))
+                                edit(false);
+                            ImGui::SameLine();
+                            ImGui::SetNextItemWidth(Px(70.0f));
+                            int kind = int(a.Kind);
+                            const char* kinds[] = {"float", "vec2", "vec3", "vec4"};
+                            if (ImGui::Combo("##type", &kind, kinds, 4))
+                                a.Kind = Vfx::Type(kind), edit(false);
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton(ICON_FA_XMARK) && b.GridAttributes.size() > 1)
+                                b.GridAttributes.erase(b.GridAttributes.begin() + long(k)), edit(false);
+                        }
+                        ImGui::PopID();
+                    }
+                    if (PropertyGrid::Row("Attributes") && ImGui::SmallButton(ICON_FA_PLUS " Attribute"))
+                        b.GridAttributes.push_back({"Attribute" + std::to_string(b.GridAttributes.size()), Vfx::Type::Float}), edit(false);
+                }
+                else if (b.Kind == "VectorField")
+                {
+                    if (AssetIDField("Field asset", b.Asset))
+                        edit(false);
+                    if (PropertyGrid::Float("Intensity", b.Intensity, 0.01f))
+                        edit(true);
+                }
+                else if (b.Kind == "StaticMesh" || b.Kind == "SkeletalMesh")
+                {
+                    if (AssetIDField("Mesh asset", b.Asset))
+                        edit(false);
+                    if (PropertyGrid::InputText("Entity path", b.EntityPath))
+                        edit(false);
+                }
+                else if (b.Kind == "Curve")
+                {
+                    PropertyGrid::BeginFree();
+                    auto curve = CurveFromBinding(b);
+                    if (CurveEditor::Draw("##curve", curve, 1, glm::vec4(0), 0.01f, "0", "1"))
+                    {
+                        auto baked = BindingFromCurve(curve);
+                        b.Times    = baked.Times;
+                        b.Values   = baked.Values;
+                        edit(true);
+                    }
+                    PropertyGrid::EndFree();
+                }
+                ImGui::EndDisabled();
+                PropertyGrid::BeginFree();
+                if (own && ImGui::SmallButton(ICON_FA_TRASH "  Remove"))
+                    Apply([&](Vfx::System& x, const Context& c) { return RemoveDataInterface(x, c, handle, name); });
+                PropertyGrid::EndFree();
+                PropertyGrid::EndGroup();
+            }
+            ImGui::PopID();
+        }
+        PropertyGrid::BeginFree();
+        ImGui::BeginDisabled(!own);
+        if (ImGui::Button(ICON_FA_PLUS "  Data interface"))
+            ImGui::OpenPopup("##adddi");
+        ImGui::EndDisabled();
+        if (ImGui::BeginPopup("##adddi"))
+        {
+            for (const char* kind : DataInterfaceKinds)
+                if (ImGui::MenuItem(kind))
+                    Apply([&](Vfx::System& x, const Context& c) { return AddDataInterface(x, c, handle, kind); });
+            ImGui::EndPopup();
+        }
+        PropertyGrid::EndFree();
+        PropertyGrid::EndGroup();
+    }
+
+    // ---------------------------------------------------------------------- output
+
+    void VfxSystemEditorPanel::DrawOutput()
+    {
+        const auto& palette = EditorTheme::Colors();
+        ImGui::BeginChild("##output", {0, 0}, ImGuiChildFlags_Borders);
+        if (m_Diagnostics.empty())
+            ImGui::TextDisabled(IsCompiling() ? "Compiling..." : "No problems.");
+        const auto& s = m_Document.Data();
+        for (size_t i = 0; i < m_Diagnostics.size(); ++i)
+        {
+            const auto& d     = m_Diagnostics[i];
+            std::string where;
+            if (const auto* h = FindHandle(s, d.Emitter))
+                where = h->Name;
+            else if (d.Emitter.empty())
+                where = "System";
+            if (d.Stack)
+                where += " \xE2\x80\xBA " + std::string(StageTitle(d.Stack->Kind));
+            if (!d.Use.empty() && FindHandle(s, d.Emitter))
+                try
+                {
+                    if (const auto* u = FindUse(Effective(*FindHandle(s, d.Emitter), m_Context), d.Use))
+                        where += " \xE2\x80\xBA " + m_Library.NameOf(u->Script);
+                }
+                catch (const std::exception&)
+                {}
+            if (!d.Input.empty())
+                where += " \xE2\x80\xBA " + Short(d.Input) + (d.Nested.empty() ? "" : " \xE2\x80\xBA " + Short(d.Nested));
+            ImGui::PushID(int(i));
+            ImGui::PushStyleColor(ImGuiCol_Text, d.Warning ? palette.Warning : palette.Danger);
+            const std::string line = std::string(d.Warning ? ICON_FA_TRIANGLE_EXCLAMATION : ICON_FA_CIRCLE_XMARK) + "  " + where + ": " + d.Message;
+            if (ImGui::Selectable(line.c_str()))
+                ActivateDiagnostic(i);
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+    }
+
+    // ---------------------------------------------------------------------- popups
+
+    void VfxSystemEditorPanel::DrawSearch()
+    {
+        using EditorTheme::Px;
+        if (m_Search.Focus)
+        {
+            ImGui::OpenPopup("##vfxmodulesearch");
+            ImGui::SetNextWindowPos(ImGui::GetMousePos(), ImGuiCond_Appearing);
+        }
+        ImGui::SetNextWindowSize({Px(380.0f), Px(420.0f)}, ImGuiCond_Appearing);
+        if (!ImGui::BeginPopup("##vfxmodulesearch"))
+        {
+            m_Search.Open = m_Search.Open && m_Search.Focus;
+            return;
+        }
+        if (m_Search.Focus)
+        {
+            ImGui::SetKeyboardFocusHere();
+            m_Search.Focus = false;
+        }
+        ImGui::TextDisabled("%s", m_Search.Dynamic ? ("Dynamic input for " + Short(m_Search.Path.back())).c_str() :
+                                                     ("Add module to " + std::string(StageTitle(m_Search.Stack.Kind))).c_str());
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const bool enter = ImGui::InputTextWithHint("##query", "Search modules", &m_Search.Query, ImGuiInputTextFlags_EnterReturnsTrue);
+        const auto results = SearchResults();
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+            m_Search.Highlight = std::min(m_Search.Highlight + 1, int(results.size()) - 1);
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+            m_Search.Highlight = std::max(m_Search.Highlight - 1, 0);
+        m_Search.Highlight = std::clamp(m_Search.Highlight, 0, std::max(0, int(results.size()) - 1));
+        std::optional<ModuleEntry> chosen;
+        if (enter && !results.empty())
+            chosen = results[size_t(m_Search.Highlight)];
+        ImGui::BeginChild("##results", {0, 0});
+        std::string category;
+        for (size_t i = 0; i < results.size(); ++i)
+        {
+            const auto& r = results[i];
+            if (m_Search.Query.empty() && r.Category != category)
+            {
+                category = r.Category;
+                ImGui::SeparatorText(category.c_str());
+            }
+            ImGui::PushID(int(i));
+            if (ImGui::Selectable(r.Name.c_str(), int(i) == m_Search.Highlight))
+                chosen = r;
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().TextDim);
+            ImGui::TextWrapped("%s", r.Description.c_str());
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+        if (results.empty())
+            ImGui::TextDisabled("No modules fit here.");
+        ImGui::EndChild();
+        if (chosen)
+        {
+            ChooseSearch(*chosen);
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            m_Search.Open = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    void VfxSystemEditorPanel::DrawCurvePopup()
+    {
+        using EditorTheme::Px;
+        if (m_CurveEdit.Requested)
+        {
+            ImGui::OpenPopup("##vfxcurve");
+            m_CurveEdit.Requested = false;
+        }
+        ImGui::SetNextWindowSize({Px(420.0f), 0}, ImGuiCond_Appearing);
+        if (!ImGui::BeginPopup("##vfxcurve"))
+        {
+            m_CurveEdit.Open = false;
+            return;
+        }
+        ImGui::Text("%s  %s", m_CurveEdit.IsGradient ? ICON_FA_PALETTE : ICON_FA_CHART_LINE, Short(m_CurveEdit.Path.back()).c_str());
+        ImGui::BeginDisabled(ReadOnly());
+        if (m_CurveEdit.IsGradient)
+        {
+            auto g = m_CurveEdit.Gradient;
+            if (GradientEditor::Draw("##gradient", g))
+                SetEditedGradient(g, true);
+        }
+        else
+        {
+            auto c = m_CurveEdit.Curve;
+            if (CurveEditor::Draw("##curve", c, 1, glm::vec4(0), 0.01f, "0", "1"))
+                SetEditedCurve(c, true);
+        }
+        ImGui::EndDisabled();
+        ImGui::EndPopup();
+    }
+
+    void VfxSystemEditorPanel::DrawMenus()
+    {
+        auto& s = m_Document.Data();
+        if (m_EmitterMenuRequested)
+        {
+            ImGui::OpenPopup("##emittermenu");
+            m_EmitterMenuRequested = false;
+        }
+        if (ImGui::BeginPopup("##emittermenu"))
+        {
+            const auto  guid = m_MenuEmitter;
+            const auto* h    = FindHandle(s, guid);
+            if (h)
+            {
+                ImGui::TextDisabled("%s", h->Name.c_str());
+                if (ImGui::MenuItem(ICON_FA_PEN "  Rename"))
+                {
+                    m_RenameEmitter = guid;
+                    std::snprintf(m_RenameBuffer, sizeof(m_RenameBuffer), "%s", h->Name.c_str());
+                }
+                if (ImGui::MenuItem(h->Enabled ? "Disable" : "Enable"))
+                    Apply([&, enabled = !h->Enabled](Vfx::System& x, const Context&) { return SetEmitterEnabled(x, guid, enabled); });
+                if (ImGui::MenuItem(ICON_FA_ARROW_LEFT "  Draw earlier"))
+                    Apply([&](Vfx::System& x, const Context&) { return MoveEmitter(x, guid, -1); });
+                if (ImGui::MenuItem(ICON_FA_ARROW_RIGHT "  Draw later"))
+                    Apply([&](Vfx::System& x, const Context&) { return MoveEmitter(x, guid, 1); });
+                if (ImGui::MenuItem(ICON_FA_CLONE "  Duplicate"))
+                    if (auto r = Apply([&](Vfx::System& x, const Context&) { return DuplicateEmitter(x, guid); }))
+                        Select(r.Value);
+                if (ImGui::MenuItem(ICON_FA_TRASH "  Delete"))
+                {
+                    Apply([&](Vfx::System& x, const Context&) { return DeleteEmitter(x, guid); });
+                    Select(s.Emitters.empty() ? std::string(SystemNode) : s.Emitters.front().Guid);
+                }
+            }
+            ImGui::EndPopup();
+        }
+        if (!m_RenameEmitter.empty())
+        {
+            ImGui::OpenPopup("##renameemitter");
+        }
+        if (ImGui::BeginPopup("##renameemitter"))
+        {
+            if (ImGui::IsWindowAppearing())
+                ImGui::SetKeyboardFocusHere();
+            if (ImGui::InputText("Name", m_RenameBuffer, sizeof(m_RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue))
+            {
+                const auto guid = m_RenameEmitter;
+                const std::string name = m_RenameBuffer;
+                Apply([&](Vfx::System& x, const Context&) { return RenameEmitter(x, guid, name); });
+                m_RenameEmitter.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+                m_RenameEmitter.clear(), ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        else
+            m_RenameEmitter.clear();
+        if (m_UseMenuRequested)
+        {
+            ImGui::OpenPopup("##usemenu");
+            m_UseMenuRequested = false;
+        }
+        if (ImGui::BeginPopup("##usemenu"))
+        {
+            const auto  use    = m_MenuUse;
+            const auto  handle = Handle();
+            const auto* h      = FindHandle(s, handle);
+            if (h)
+                try
+                {
+                    const auto  e     = Effective(*h, m_Context);
+                    const auto  ref   = StackOf(e, use);
+                    const auto* u     = FindUse(e, use);
+                    const auto* info  = u ? m_Library.Find(u->Script) : nullptr;
+                    if (ref && u)
+                    {
+                        const auto* stack = FindStack(e, *ref);
+                        size_t      index = 0;
+                        while (index < stack->size() && (*stack)[index].Guid != use)
+                            ++index;
+                        ImGui::TextDisabled("%s", m_Library.NameOf(u->Script).c_str());
+                        if (ImGui::MenuItem(ICON_FA_ARROW_UP "  Move up", nullptr, false, index > 0))
+                            Apply([&](Vfx::System& x, const Context& c) { return MoveModule(x, c, handle, use, *ref, index - 1); });
+                        if (ImGui::MenuItem(ICON_FA_ARROW_DOWN "  Move down", nullptr, false, index + 1 < stack->size()))
+                            Apply([&](Vfx::System& x, const Context& c) { return MoveModule(x, c, handle, use, *ref, index + 1); });
+                        if (ImGui::MenuItem(ICON_FA_CLONE "  Duplicate"))
+                            Apply([&](Vfx::System& x, const Context& c) { return DuplicateModule(x, c, handle, use); });
+                        if (ImGui::MenuItem(ICON_FA_TRASH "  Delete"))
+                            Apply([&](Vfx::System& x, const Context& c) { return RemoveModule(x, c, handle, use); });
+                        const auto origin = ModuleOrigin(*h, use);
+                        if (ImGui::MenuItem(ICON_FA_ROTATE_LEFT "  Reset to parent", nullptr, false,
+                                            origin == Origin::Overridden))
+                            Apply([&](Vfx::System& x, const Context& c) { return ResetModule(x, c, handle, use); });
+                        if (ImGui::MenuItem(ICON_FA_UP_RIGHT_FROM_SQUARE "  Open module", nullptr, false,
+                                            info && !info->File.empty() && bool(m_OpenModule)))
+                            m_OpenModule(info->File);
+                    }
+                }
+                catch (const std::exception&)
+                {}
+            ImGui::EndPopup();
+        }
+        if (m_AddEmitterRequested)
+        {
+            ImGui::OpenPopup("##addemitter");
+            m_AddEmitterRequested = false;
+        }
+        if (ImGui::BeginPopup("##addemitter"))
+        {
+            ImGui::TextDisabled("Add emitter");
+            if (ImGui::MenuItem("Empty"))
+                if (auto r = Apply([&](Vfx::System& x, const Context&) { return Result::Done(AddEmitter(x, "Emitter")); }))
+                    Select(r.Value);
+            if (ImGui::BeginMenu("From template"))
+            {
+                for (const auto& t : Templates())
+                    if (ImGui::MenuItem(t.Name.c_str()))
+                        try
+                        {
+                            auto e = Vfx::DecodeEmitter(YAML::LoadFile(t.File.string()));
+                            if (auto r = Apply([&](Vfx::System& x, const Context&) { return Result::Done(AddEmitter(x, t.Name, e)); }))
+                                Select(r.Value);
+                        }
+                        catch (const std::exception& ex)
+                        {
+                            m_Status = ex.what();
+                        }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Inherited from emitter asset"))
+            {
+                bool any = false;
+                if (m_ProjectEmitters)
+                    for (const auto& [id, file] : m_ProjectEmitters())
+                    {
+                        any = true;
+                        if (ImGui::MenuItem(file.stem().u8string().c_str()))
+                            if (auto r = Apply([&, id = id, name = file.stem().u8string()](Vfx::System& x, const Context&) {
+                                    return Result::Done(AddInheritedEmitter(x, name, id));
+                                }))
+                                Select(r.Value);
+                    }
+                if (!any)
+                    ImGui::TextDisabled("No emitter assets in the project");
+                ImGui::EndMenu();
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    void VfxSystemEditorPanel::DrawPrompts() {}
+
+    void VfxSystemEditorPanel::Shortcuts()
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!m_Focused || io.WantTextInput || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId))
+            return;
+        if (io.KeyCtrl)
+        {
+            if (ImGui::IsKeyPressed(ImGuiKey_S, false))
+                Save();
+            else if (ImGui::IsKeyPressed(ImGuiKey_Z, false))
+                io.KeyShift ? Redo() : Undo();
+            else if (ImGui::IsKeyPressed(ImGuiKey_Y, false))
+                Redo();
+        }
+    }
+
+    // ---------------------------------------------------------------------- create dialog
+
+    void VfxSystemCreateDialog::OpenSystem(const fs::path& directory)
+    {
+        m_Directory = directory;
+        m_Requested = true;
+        m_Emitter   = false;
+        m_Choice    = 0;
+        m_Templates = Templates();
+        m_Error.clear();
+        std::snprintf(m_Name, sizeof(m_Name), "%s", "NewSystem");
+    }
+
+    void VfxSystemCreateDialog::OpenEmitter(const fs::path& directory, AssetList parents)
+    {
+        m_Directory = directory;
+        m_Requested = true;
+        m_Emitter   = true;
+        m_Choice    = 0;
+        m_Parents   = parents ? parents() : std::vector<std::pair<AssetID, fs::path>> {};
+        m_Error.clear();
+        std::snprintf(m_Name, sizeof(m_Name), "%s", "NewEmitter");
+    }
+
+    std::optional<fs::path> VfxSystemCreateDialog::Draw()
+    {
+        const char* title = m_Emitter ? "New VFX Emitter" : "New VFX System";
+        if (m_Requested)
+        {
+            ImGui::OpenPopup(title);
+            m_Requested = false;
+        }
+        std::optional<fs::path> created;
+        if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            return created;
+        ImGui::InputText("Name", m_Name, sizeof(m_Name));
+        ImGui::SeparatorText(m_Emitter ? "Start from" : "Emitters");
+        ImGui::RadioButton("Empty", &m_Choice, 0);
+        if (m_Emitter)
+        {
+            for (size_t k = 0; k < m_Parents.size(); ++k)
+                ImGui::RadioButton(("Inherit from " + m_Parents[k].second.stem().u8string()).c_str(), &m_Choice, int(k) + 1);
+            if (m_Parents.empty())
+                ImGui::TextDisabled("No emitter assets to inherit from yet.");
+        }
+        else
+            for (size_t k = 0; k < m_Templates.size(); ++k)
+                ImGui::RadioButton(("Template: " + m_Templates[k].Name).c_str(), &m_Choice, int(k) + 1);
+        if (!m_Error.empty())
+            ImGui::TextColored(EditorTheme::Colors().Danger, "%s", m_Error.c_str());
+        if (ImGui::Button("Create"))
+        {
+            std::variant<fs::path, std::string> result;
+            if (m_Emitter)
+                result = CreateEmitterFile(m_Directory, m_Name, m_Choice > 0 ? m_Parents[size_t(m_Choice - 1)].first : AssetID {});
+            else
+                result = CreateSystemFile(m_Directory, m_Name,
+                                          m_Choice > 0 ? std::vector<fs::path> {m_Templates[size_t(m_Choice - 1)].File} : std::vector<fs::path> {});
+            if (auto* error = std::get_if<std::string>(&result))
+                m_Error = *error;
+            else
+            {
+                created = std::get<fs::path>(result);
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return created;
+    }
+} // namespace Kans

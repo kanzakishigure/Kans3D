@@ -94,6 +94,8 @@ namespace Kans
                 OpenPhysicsMaterial(path);
             else if (path.extension() == ".vfxmodule")
                 OpenVfxModule(path);
+            else if (path.extension() == ".vfxsystem" || path.extension() == ".vfxemitter")
+                OpenVfxSystem(path);
             else if (path.extension() == ".cloth")
                 OpenClothFile(path);
             else if (path.extension() == ".ragdoll")
@@ -137,6 +139,11 @@ namespace Kans
         });
         m_ContentBrowserPanel.SetCreateVfxModuleCallback(
             [this](const std::filesystem::path& directory) { m_VfxModuleCreate.Open(directory); });
+        m_ContentBrowserPanel.SetCreateVfxSystemCallback(
+            [this](const std::filesystem::path& directory) { m_VfxSystemCreate.OpenSystem(directory); });
+        m_ContentBrowserPanel.SetCreateVfxEmitterCallback([this](const std::filesystem::path& directory) {
+            m_VfxSystemCreate.OpenEmitter(directory, [this] { return ProjectVfxAssets(AssetType::VfxEmitter); });
+        });
         m_ContentBrowserPanel.SetImportCallback([this](const std::filesystem::path& path) { ImportSource(path); });
         m_ContentBrowserPanel.SetImportSettingsCallback(
             [this](const std::filesystem::path& path) { OpenImporter(path); });
@@ -917,8 +924,74 @@ namespace Kans
             Record(AssetError {AssetErrorCode::InvalidData, panel->Status()});
     }
 
+    std::vector<std::pair<AssetID, std::filesystem::path>> EditorLayer::ProjectVfxAssets(AssetType type)
+    {
+        std::vector<std::pair<AssetID, std::filesystem::path>> r;
+        if (!m_AssetImports)
+            return r;
+        auto registry = m_AssetImports->GetRuntimeAssetRegistry();
+        auto listed   = m_AssetImports->GetSources();
+        if (!registry || !std::holds_alternative<std::vector<SourceAssetMetadata>>(listed))
+            return r;
+        const auto& sources = std::get<std::vector<SourceAssetMetadata>>(listed);
+        for (const auto& record : registry->GetAllProducts())
+            if (record.Metadata.Type == type)
+                for (const auto& source : sources)
+                    if (source.sourceAssetID == record.Metadata.assetID.GetSourceID())
+                        r.emplace_back(record.Metadata.assetID, m_AssetImports->GetConfig().AssetDirectory / source.Path.GetPath());
+        return r;
+    }
+
+    void EditorLayer::OpenVfxSystem(const std::filesystem::path& file)
+    {
+        std::error_code error;
+        for (auto& editor : m_VfxSystemEditors)
+            if (editor->IsOpen() && std::filesystem::equivalent(editor->GetFile(), file, error))
+            {
+                ImGui::SetWindowFocus(editor->WindowName().c_str());
+                return;
+            }
+        auto panel = std::make_unique<VfxSystemEditorPanel>();
+        panel->Bind(m_AssetImports.get());
+        panel->SetOpenCallback([this](const std::filesystem::path& copy) { m_PendingVfxSystems.push_back(copy); });
+        panel->SetOpenModuleCallback([this](const std::filesystem::path& module) { m_PendingVfxModules.push_back(module); });
+        if (m_AssetImports)
+        {
+            panel->SetProjectDirectory(m_AssetImports->GetConfig().AssetDirectory / "VFX");
+            panel->SetProjectModules([this] { return ProjectVfxAssets(AssetType::VfxModule); });
+            panel->SetProjectEmitters([this] { return ProjectVfxAssets(AssetType::VfxEmitter); });
+            // Parents and referenced emitters: the project's emitter sources, by product ID.
+            panel->SetEmitterResolver([emitters = ProjectVfxAssets(AssetType::VfxEmitter)](AssetID id) {
+                for (const auto& [asset, path] : emitters)
+                    if (asset == id || asset.GetSourceID() == id.GetSourceID())
+                        return Vfx::DecodeEmitter(YAML::LoadFile(path.string()));
+                throw std::invalid_argument("Missing VFX emitter " + id.ToString());
+            });
+        }
+        if (panel->Open(file))
+            m_VfxSystemEditors.push_back(std::move(panel));
+        else
+            Record(AssetError {AssetErrorCode::InvalidData, panel->Status()});
+    }
+
     void EditorLayer::DrawVfxModuleEditors()
     {
+        for (auto& editor : m_VfxSystemEditors)
+            editor->Draw();
+        m_VfxSystemEditors.erase(std::remove_if(m_VfxSystemEditors.begin(), m_VfxSystemEditors.end(),
+                                                [](const auto& editor) { return !editor->IsOpen() && !editor->IsAskingToClose(); }),
+                                 m_VfxSystemEditors.end());
+        if (auto created = m_VfxSystemCreate.Draw())
+        {
+            m_ContentBrowserPanel.Refresh();
+            m_PendingVfxSystems.push_back(*created);
+        }
+        {
+            auto pendingSystems = std::move(m_PendingVfxSystems);
+            m_PendingVfxSystems.clear();
+            for (const auto& file : pendingSystems)
+                OpenVfxSystem(file);
+        }
         for (auto& editor : m_VfxModuleEditors)
             editor->Draw();
         m_VfxModuleEditors.erase(std::remove_if(m_VfxModuleEditors.begin(), m_VfxModuleEditors.end(),

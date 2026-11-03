@@ -412,6 +412,7 @@ namespace Kans::Vfx
             std::map<std::string, InterfaceBinding>        MeshCache;
             std::map<std::string, InterfaceBinding>*       SharedMeshCache = nullptr;
             const std::map<std::string, InterfaceBinding>* Grids           = nullptr;
+            std::string                                    Scope; // The call scope of Inline, for diagnostics.
             uint32_t GridResource(const std::string& name, const InterfaceBinding& grid)
             {
                 for (uint32_t n = 0; n < Out.Resources.size(); ++n)
@@ -477,6 +478,7 @@ namespace Kans::Vfx
             void Error(AssetID a, const std::string& n, const std::string& p, std::string m)
             {
                 Errors.push_back({a, n, p, std::move(m)});
+                Errors.back().Scope = Scope;
             }
             uint32_t Param(const std::string& name, Type type)
             {
@@ -573,6 +575,13 @@ namespace Kans::Vfx
                             const std::string&                     scope,
                             const std::map<std::string, uint32_t>* arguments = nullptr)
             {
+                struct ScopeGuard
+                {
+                    std::string& Target;
+                    std::string  Saved;
+                    ~ScopeGuard() { Target = std::move(Saved); }
+                } guard {Scope, Scope};
+                Scope = scope;
                 if (std::find(Calls.begin(), Calls.end(), id) != Calls.end())
                 {
                     Error(id, "", "", "Function/dynamic input recursion");
@@ -721,7 +730,10 @@ namespace Kans::Vfx
                     if (n.Op == "Input")
                     {
                         auto input = inputs.find(n.Parameter);
-                        if (input != inputs.end() && input->second.Kind == InputKind::DataInterface)
+                        // An Input node feeding nothing reads nothing: a curve module may keep one
+                        // next to the Sample node bound to the same input.
+                        const bool feeds = std::any_of(m.Links.begin(), m.Links.end(), [&](const Link& l) { return l.From == guid; });
+                        if (input != inputs.end() && input->second.Kind == InputKind::DataInterface && feeds)
                             Error(id, guid, output, "Input cannot read DataInterface parameter: " + n.Parameter);
                         auto p = resolved.find(n.Parameter);
                         if (p == resolved.end())
@@ -1514,7 +1526,13 @@ namespace Kans::Vfx
                         catch (const std::exception&)
                         {}
                         if (events == eventPass)
+                        {
+                            const auto before = errors.size();
                             c.Inline(use.Script, Usage::Module, use.Inputs, use.Guid);
+                            for (auto e = before; e < errors.size(); ++e)
+                                if (errors[e].Use.empty())
+                                    errors[e].Use = use.Guid;
+                        }
                     }
             // Validate the entire graph, then retain only effects and their expression dependencies.
             std::vector<bool>             live(c.Out.Code.size(), false);
@@ -1618,6 +1636,20 @@ namespace Kans::Vfx
     {
         CompileResult                           r;
         std::map<std::string, InterfaceBinding> meshCache;
+        // Locates the errors added since `from` for editors (fields already set are kept).
+        const auto locate = [&r](size_t from, const std::string& emitter, std::optional<Stage> stage = {},
+                                 const std::string& container = {}) {
+            for (auto e = from; e < r.Errors.size(); ++e)
+            {
+                auto& d = r.Errors[e];
+                if (d.Emitter.empty())
+                    d.Emitter = emitter;
+                if (!d.StageKind)
+                    d.StageKind = stage;
+                if (d.Container.empty())
+                    d.Container = container;
+            }
+        };
         r.Product.Settings            = system;
         auto known                    = BuiltinParameters();
         known["Transient.SpawnIndex"] = {"Transient.SpawnIndex", Type::Int, Value::Int(0), {}};
@@ -1637,14 +1669,17 @@ namespace Kans::Vfx
                                             "Stage belongs to an emitter"});
                 continue;
             }
+            const auto from       = r.Errors.size();
             r.Product.Programs[s] = StageProgram(
                 s, stack, SimTarget::CPU, modules, known, r.Errors, asset, Space::Local, meshes, skeletons, &meshCache);
+            locate(from, "", s);
         }
         // Resolve all emitter settings first: cross-emitter validation never depends on handle order.
         std::vector<std::map<std::string, Parameter>> parameters;
         for (const auto& h : system.Emitters)
             if (h.Enabled)
             {
+                const auto      emitterErrors = r.Errors.size();
                 CompiledEmitter ce;
                 ce.Handle = h.Guid;
                 try
@@ -1656,6 +1691,7 @@ namespace Kans::Vfx
                 catch (const std::exception& e)
                 {
                     r.Errors.push_back({asset, h.Guid, "", e.what()});
+                    locate(emitterErrors, h.Guid);
                     continue;
                 }
                 auto k = known;
@@ -1745,7 +1781,8 @@ namespace Kans::Vfx
                                                     "EventHandler requires handler entries"});
                         continue;
                     }
-                    ce.Programs[s] = StageProgram(s,
+                    const auto from = r.Errors.size();
+                    ce.Programs[s]  = StageProgram(s,
                                                   stack,
                                                   s >= Stage::ParticleSpawn ? ce.Settings.Target : SimTarget::CPU,
                                                   modules,
@@ -1757,6 +1794,7 @@ namespace Kans::Vfx
                                                   skeletons,
                                                   &meshCache,
                                                   &ce.Settings.DataInterfaces);
+                    locate(from, h.Guid, s);
                 }
                 for (auto stage : {Stage::ParticleSpawn, Stage::ParticleUpdate})
                     if (!ce.Programs.count(stage))
@@ -1769,7 +1807,8 @@ namespace Kans::Vfx
                 std::set<std::string> stageIDs;
                 for (const auto& stage : ce.Settings.SimulationStages)
                 {
-                    const auto error = [&](const std::string& pin, const std::string& message) {
+                    const auto stageErrors = r.Errors.size();
+                    const auto error       = [&](const std::string& pin, const std::string& message) {
                         r.Errors.push_back({asset, stage.Guid, pin, "Emitter " + h.Name + ": " + message});
                     };
                     if (ce.Settings.Target != SimTarget::GPU)
@@ -1804,6 +1843,7 @@ namespace Kans::Vfx
                                           &meshCache,
                                           &ce.Settings.DataInterfaces,
                                           grid);
+                    locate(stageErrors, h.Guid, Stage::SimulationStage, stage.Guid);
                     for (const auto& name : p.Reads)
                         if (name.rfind("Particles.", 0) == 0)
                             attributes.insert(name);
@@ -2022,6 +2062,7 @@ namespace Kans::Vfx
                                                  uint32_t(ce.Attributes.size())});
                 parameters.push_back(std::move(k));
                 r.Product.Emitters.push_back(std::move(ce));
+                locate(emitterErrors, h.Guid);
             }
         auto&                           result = r.Product.Emitters;
         std::vector<std::set<uint32_t>> dependencies(result.size());
@@ -2115,6 +2156,13 @@ namespace Kans::Vfx
             std::set<std::string> ids;
             for (const auto& h : ce.Settings.Handlers)
             {
+                const auto handlerErrors = r.Errors.size();
+                // Every exit of this iteration locates what it added.
+                struct Locate
+                {
+                    std::function<void()> Run;
+                    ~Locate() { Run(); }
+                } located {[&] { locate(handlerErrors, ce.Handle, Stage::EventHandler, h.Guid); }};
                 if (!ids.insert(h.Guid).second || h.Guid.empty())
                     r.Errors.push_back({asset, h.Guid, "", "Duplicate or empty event handler GUID"});
                 if (!h.Enabled)
@@ -2288,12 +2336,14 @@ namespace Kans::Vfx
                     p.Resources.push_back(state);
                 }
             };
+            const auto bound = r.Errors.size();
             for (auto& [stage, p] : ce.Programs)
                 bind(p, ce.Handle);
             for (auto& h : ce.Handlers)
                 bind(h.Bytecode, h.Settings.Guid);
             for (auto& s : ce.SimulationStages)
                 bind(s.Bytecode, s.Settings.Guid);
+            locate(bound, ce.Handle);
         }
         // Stable Kahn ordering: among available emitters choose the first handle in the asset.
         std::set<uint32_t> done;

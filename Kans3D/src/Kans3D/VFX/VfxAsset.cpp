@@ -491,8 +491,8 @@ namespace Kans::Vfx
             s.DataInterface = n["IterationSource"]["Parameter"].as<std::string>("");
             s.Iterations    = n["Iterations"].as<uint32_t>(1);
             s.Enabled       = n["Enabled"].as<std::string>("");
-            Check(!s.Guid.empty() && !s.Name.empty(), "Simulation stage requires GUID and Name");
-            Check(s.Iterations >= 1 && s.Iterations <= 64, "Simulation Iterations must be 1–64: " + s.Guid);
+            if (auto error = SimulationStageError(s))
+                Check(false, *error);
             std::set<std::string> ids;
             for (const auto& u : n["Modules"])
             {
@@ -1139,6 +1139,14 @@ namespace Kans::Vfx
             x.Emitters.push_back(h);
         }
         return x;
+    }
+    std::optional<std::string> SimulationStageError(const SimulationStage& s)
+    {
+        if (s.Guid.empty() || s.Name.empty())
+            return std::string("Simulation stage requires GUID and Name");
+        if (s.Iterations < 1 || s.Iterations > 64)
+            return "Simulation Iterations must be 1–64: " + s.Guid;
+        return std::nullopt;
     }
     void ApplyOverrides(Emitter& e, const std::vector<Override>& overrides)
     {
