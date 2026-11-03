@@ -120,6 +120,8 @@ namespace Kans::Vfx
         Type                     Kind = Type::Float;
         std::optional<Value>     Default;
         std::optional<glm::vec2> Range;
+        // Display names of an int input's values 0..N-1 (editor and stack UI only).
+        std::vector<std::string> EnumNames;
     };
     struct GridAttribute
     {
@@ -238,6 +240,29 @@ namespace Kans::Vfx
         uint32_t        Iterations = 1;
         Stack           Modules;
     };
+    // Editor-only graph layout: node positions, collapsed nodes and comment boxes. The compiler and
+    // runtime ignore it; an empty layout is not written, and the importer strips it from products.
+    struct ModuleComment
+    {
+        std::string Guid, Title;
+        glm::vec2   Position {0}, Size {320, 200};
+        glm::vec4   Color {0.35f, 0.38f, 0.45f, 0.35f};
+        bool        operator==(const ModuleComment& b) const
+        {
+            return Guid == b.Guid && Title == b.Title && Position == b.Position && Size == b.Size && Color == b.Color;
+        }
+    };
+    struct ModuleLayout
+    {
+        std::map<std::string, glm::vec2> Positions; // Node GUID -> canvas position.
+        std::set<std::string>            Collapsed;
+        std::vector<ModuleComment>       Comments;
+        bool Empty() const { return Positions.empty() && Collapsed.empty() && Comments.empty(); }
+        bool operator==(const ModuleLayout& b) const
+        {
+            return Positions == b.Positions && Collapsed == b.Collapsed && Comments == b.Comments;
+        }
+    };
     struct Module
     {
         AssetID                Identity;
@@ -250,6 +275,7 @@ namespace Kans::Vfx
         // Function/dynamic-input return node and output pin; modules use parameter-map Set nodes.
         std::string              ResultNode, ResultPin = "Value";
         std::vector<EventLayout> EventLayouts;
+        ModuleLayout             Editor;
     };
     struct MeshEntry
     {

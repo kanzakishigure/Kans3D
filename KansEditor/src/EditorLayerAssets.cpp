@@ -92,6 +92,8 @@ namespace Kans
                 OpenMaterial(path);
             else if (path.extension() == ".physmat")
                 OpenPhysicsMaterial(path);
+            else if (path.extension() == ".vfxmodule")
+                OpenVfxModule(path);
             else if (path.extension() == ".cloth")
                 OpenClothFile(path);
             else if (path.extension() == ".ragdoll")
@@ -133,6 +135,8 @@ namespace Kans
             OpenPhysicsMaterial(std::get<std::filesystem::path>(created));
             m_PhysicsMaterialPanel.Save();
         });
+        m_ContentBrowserPanel.SetCreateVfxModuleCallback(
+            [this](const std::filesystem::path& directory) { m_VfxModuleCreate.Open(directory); });
         m_ContentBrowserPanel.SetImportCallback([this](const std::filesystem::path& path) { ImportSource(path); });
         m_ContentBrowserPanel.SetImportSettingsCallback(
             [this](const std::filesystem::path& path) { OpenImporter(path); });
@@ -850,5 +854,84 @@ namespace Kans
             m_Panels.Open(PanelID::PhysicsMaterial);
         else
             Record(AssetError {AssetErrorCode::InvalidData, "Cannot open " + file.filename().u8string()});
+    }
+
+    void EditorLayer::OpenVfxModule(const std::filesystem::path& file)
+    {
+        std::error_code error;
+        for (auto& editor : m_VfxModuleEditors)
+            if (editor->IsOpen() && std::filesystem::equivalent(editor->GetFile(), file, error))
+            {
+                ImGui::SetWindowFocus(editor->WindowName().c_str());
+                return;
+            }
+        auto panel = std::make_unique<VfxModuleEditorPanel>();
+        panel->Bind(m_AssetImports.get());
+        panel->SetOpenCallback([this](const std::filesystem::path& copy) { m_PendingVfxModules.push_back(copy); });
+        if (m_AssetImports)
+        {
+            panel->SetProjectDirectory(m_AssetImports->GetConfig().AssetDirectory / "VFX");
+            // The file of a project source, by source ID or path.
+            const auto sources = [this]() {
+                auto listed = m_AssetImports->GetSources();
+                return std::holds_alternative<std::vector<SourceAssetMetadata>>(listed) ?
+                           std::get<std::vector<SourceAssetMetadata>>(listed) :
+                           std::vector<SourceAssetMetadata> {};
+            };
+            panel->SetModuleResolver([this, sources](AssetID id) {
+                for (const auto& source : sources())
+                    if (source.sourceAssetID == id.GetSourceID())
+                        return Vfx::DecodeModule(
+                            YAML::LoadFile((m_AssetImports->GetConfig().AssetDirectory / source.Path.GetPath()).string()));
+                throw std::invalid_argument("Missing VFX script " + id.ToString());
+            });
+            // Emitters and systems whose products depend on the module's products.
+            panel->SetUsageQuery([this, sources](const std::filesystem::path& module) -> std::optional<std::vector<std::string>> {
+                auto registry = m_AssetImports->GetRuntimeAssetRegistry();
+                if (!registry)
+                    return std::nullopt;
+                const auto     all = sources();
+                SourceAssetID  id;
+                std::error_code ec;
+                for (const auto& source : all)
+                    if (std::filesystem::equivalent(m_AssetImports->GetConfig().AssetDirectory / source.Path.GetPath(), module, ec))
+                        id = source.sourceAssetID;
+                if (!id.IsValid())
+                    return std::nullopt;
+                std::set<SourceAssetID> users;
+                for (const auto& record : registry->GetAllProducts())
+                    if (record.Metadata.Type == AssetType::VfxEmitter || record.Metadata.Type == AssetType::VfxSystem)
+                        for (const auto& dependency : record.Metadata.Dependencies)
+                            if (dependency.GetSourceID() == id)
+                                users.insert(record.Metadata.assetID.GetSourceID());
+                std::vector<std::string> names;
+                for (const auto& source : all)
+                    if (users.count(source.sourceAssetID))
+                        names.push_back(source.Path.ToString());
+                return names;
+            });
+        }
+        if (panel->Open(file))
+            m_VfxModuleEditors.push_back(std::move(panel));
+        else
+            Record(AssetError {AssetErrorCode::InvalidData, panel->Status()});
+    }
+
+    void EditorLayer::DrawVfxModuleEditors()
+    {
+        for (auto& editor : m_VfxModuleEditors)
+            editor->Draw();
+        m_VfxModuleEditors.erase(std::remove_if(m_VfxModuleEditors.begin(), m_VfxModuleEditors.end(),
+                                                [](const auto& editor) { return !editor->IsOpen() && !editor->IsAskingToClose(); }),
+                                 m_VfxModuleEditors.end());
+        if (auto created = m_VfxModuleCreate.Draw())
+        {
+            m_ContentBrowserPanel.Refresh();
+            m_PendingVfxModules.push_back(*created);
+        }
+        auto pending = std::move(m_PendingVfxModules);
+        m_PendingVfxModules.clear();
+        for (const auto& file : pending)
+            OpenVfxModule(file);
     }
 } // namespace Kans

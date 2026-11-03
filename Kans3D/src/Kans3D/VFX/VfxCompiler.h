@@ -97,6 +97,36 @@ namespace Kans::Vfx
         std::vector<Diagnostic> Errors;
         explicit                operator bool() const { return Errors.empty(); }
     };
+    // Implicit link conversion the compiler applies: identical types, or a float widened to a vector.
+    bool CanConvert(Type from, Type to);
+    // Editor catalog of graph operations: category, a one-line description and the pins a new node
+    // gets. A pin follows the node type unless it is fixed; the compiler stays the authority.
+    enum class PinRule
+    {
+        Node,
+        Fixed
+    };
+    struct PinSpec
+    {
+        std::string              Name;
+        PinRule                  Rule = PinRule::Node;
+        Type                     Kind = Type::Float;
+        std::vector<std::string> Enum; // Names of an int pin's values 0..N-1.
+        std::optional<Value>     Default;
+    };
+    struct OperationInfo
+    {
+        std::string          Name, Category, Description;
+        std::vector<Type>    Kinds; // Node types offered; the first is the default.
+        std::vector<PinSpec> Inputs, Outputs;
+        bool                 Parameter = false; // Bound to a parameter or data interface input by name.
+        bool                 Code      = false; // Uses Code: GLSL, a grid attribute, a bone or attribute name.
+        bool                 Hidden    = false; // Not offered by the node search (reroutes).
+    };
+    const std::vector<OperationInfo>& Operations();
+    const OperationInfo*              FindOperation(const std::string& name);
+    // The pins a new node of `op` gets for node type `kind` (Make has one per component).
+    void OperationPins(const OperationInfo& op, Type kind, std::vector<Pin>& inputs, std::vector<Pin>& outputs);
     using SkeletonResolver = std::function<SkeletonData(AssetID)>;
     using MeshResolver     = std::function<MeshData(AssetID)>;
     CompileResult Compile(const System&,

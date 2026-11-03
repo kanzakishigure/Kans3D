@@ -66,6 +66,8 @@ namespace Kans::Vfx
                     a["Default"] = EncodeValue(*x.Default);
                 if (x.Range)
                     a["Range"] = Vec(glm::vec4(*x.Range, 0, 0), 2);
+                if (!x.EnumNames.empty())
+                    a["Enum"] = x.EnumNames;
                 n.push_back(a);
             }
             return n;
@@ -94,6 +96,11 @@ namespace Kans::Vfx
                     auto v = ReadVec(x["Range"], 2);
                     Check(v.x <= v.y, "Invalid VFX input range");
                     p.Range = glm::vec2(v);
+                }
+                if (x["Enum"])
+                {
+                    p.EnumNames = x["Enum"].as<std::vector<std::string>>();
+                    Check(p.Kind == Type::Int, "VFX enum input requires int: " + p.Name);
                 }
                 r.push_back(p);
             }
@@ -839,6 +846,37 @@ namespace Kans::Vfx
             a["Input"]  = v.Input;
             n["Links"].push_back(a);
         }
+        if (!x.Editor.Empty())
+        {
+            YAML::Node editor;
+            editor["Nodes"] = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& v : x.Nodes) // Node order keeps the metadata stable across saves.
+            {
+                auto at        = x.Editor.Positions.find(v.Guid);
+                bool collapsed = x.Editor.Collapsed.count(v.Guid) > 0;
+                if (at == x.Editor.Positions.end() && !collapsed)
+                    continue;
+                YAML::Node a;
+                a["Guid"] = v.Guid;
+                if (at != x.Editor.Positions.end())
+                    a["Position"] = Vec(glm::vec4(at->second, 0, 0), 2);
+                if (collapsed)
+                    a["Collapsed"] = true;
+                editor["Nodes"].push_back(a);
+            }
+            if (!x.Editor.Comments.empty())
+                for (const auto& c : x.Editor.Comments)
+                {
+                    YAML::Node a;
+                    a["Guid"]     = c.Guid;
+                    a["Title"]    = c.Title;
+                    a["Position"] = Vec(glm::vec4(c.Position, 0, 0), 2);
+                    a["Size"]     = Vec(glm::vec4(c.Size, 0, 0), 2);
+                    a["Color"]    = Vec(c.Color, 4);
+                    editor["Comments"].push_back(a);
+                }
+            n["Editor"] = editor;
+        }
         return n;
     }
     Module DecodeModule(const YAML::Node& n)
@@ -884,6 +922,30 @@ namespace Kans::Vfx
             v.To     = a["To"].as<std::string>();
             v.Input  = a["Input"].as<std::string>("Value");
             x.Links.push_back(v);
+        }
+        if (const auto editor = n["Editor"])
+        {
+            for (const auto& a : editor["Nodes"])
+            {
+                auto guid = a["Guid"].as<std::string>();
+                if (!ids.count(guid))
+                    continue; // Metadata of a removed node is dropped, never an error.
+                if (a["Position"])
+                    x.Editor.Positions[guid] = glm::vec2(ReadVec(a["Position"], 2));
+                if (a["Collapsed"].as<bool>(false))
+                    x.Editor.Collapsed.insert(guid);
+            }
+            for (const auto& a : editor["Comments"])
+            {
+                ModuleComment c;
+                c.Guid     = a["Guid"].as<std::string>("");
+                c.Title    = a["Title"].as<std::string>("");
+                c.Position = glm::vec2(ReadVec(a["Position"], 2));
+                c.Size     = glm::max(glm::vec2(ReadVec(a["Size"], 2)), glm::vec2(1));
+                if (a["Color"])
+                    c.Color = ReadVec(a["Color"], 4);
+                x.Editor.Comments.push_back(c);
+            }
         }
         return x;
     }

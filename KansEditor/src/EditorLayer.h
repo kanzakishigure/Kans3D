@@ -19,6 +19,7 @@
 #include "Panels/HierarchyPanel.h"
 #include "Panels/MaterialEditorPanel.h"
 #include "Panels/PhysicsMaterialPanel.h"
+#include "Panels/VfxModuleEditorPanel.h"
 #include "Panels/ProductImportPanel.h"
 #include "Panels/ProjectSettingsPanel.h"
 #include "Panels/PropertiesPanel.h"
@@ -154,6 +155,12 @@ namespace Kans
         };
         std::vector<PendingRagdoll> m_PendingRagdolls;
         RagdollEditorPanel          m_RagdollEditor;
+        // One module graph editor per open .vfxmodule.
+        std::vector<std::unique_ptr<VfxModuleEditorPanel>> m_VfxModuleEditors;
+        std::vector<std::filesystem::path>                 m_PendingVfxModules;
+        VfxModuleCreateDialog                              m_VfxModuleCreate;
+        void                                               OpenVfxModule(const std::filesystem::path& file);
+        void                                               DrawVfxModuleEditors();
         Scope<ViewportClient>       m_RagdollPreview;
         // Published Material of a .material source, or invalid.
         AssetID                                  FindPublishedMaterial(const std::filesystem::path& file);

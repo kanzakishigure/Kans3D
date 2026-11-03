@@ -294,8 +294,10 @@ namespace Kans
             }
             else
             {
-                n    = Vfx::EncodeModule(Vfx::DecodeModule(n));
-                type = AssetType::VfxModule;
+                auto module   = Vfx::DecodeModule(n);
+                module.Editor = {}; // Graph layout is editor-only: moving a node changes no product.
+                n             = Vfx::EncodeModule(module);
+                type          = AssetType::VfxModule;
                 key  = "vfxmodule:root";
             }
             if (type != AssetType::VfxSystem)

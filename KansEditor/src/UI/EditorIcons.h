@@ -132,3 +132,5 @@
 #define ICON_FA_CAR                    "\xef\x86\xb9" // U+F1B9
 #define ICON_FA_TORNADO                "\xef\x9d\xaf" // U+F76F
 #define ICON_FA_CIRCLE_NODES           "\xee\x93\xa2" // U+E4E2
+#define ICON_FA_LOCK                   "\xef\x80\xa3" // U+F023
+#define ICON_FA_CIRCLE_EXCLAMATION     "\xef\x81\xaa" // U+F06A

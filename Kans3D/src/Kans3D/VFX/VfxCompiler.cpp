@@ -31,10 +31,7 @@ namespace Kans::Vfx
             return v;
         }
         bool VectorType(Type t) { return t != Type::Int && t != Type::Bool && t != Type::IVec3; }
-        bool Widen(Type from, Type to)
-        {
-            return from == to || (from == Type::Float && (to == Type::Vec2 || to == Type::Vec3 || to == Type::Vec4));
-        }
+        bool Widen(Type from, Type to) { return CanConvert(from, to); }
         const std::map<std::string, uint32_t> Arity = {{"Collision", 13},
                                                        {"ColliderVelocity", 2},
                                                        {"Add", 2},
@@ -93,6 +90,154 @@ namespace Kans::Vfx
                                                        {"Or", 2},
                                                        {"Not", 1},
                                                        {"Mod", 2}};
+        // One row per graph operation (next to Arity above): the node search's categories and
+        // descriptions and the pins of a new node. Pin names are labels; the compiler reads pins by order.
+        std::vector<OperationInfo> BuildOperations()
+        {
+            using T                = Type;
+            const auto           N = [](std::string name) { return PinSpec {std::move(name), PinRule::Node, T::Float, {}, {}}; };
+            const auto           F = [](std::string name, T kind) { return PinSpec {std::move(name), PinRule::Fixed, kind, {}, {}}; };
+            const std::vector<T> floats {T::Float, T::Vec2, T::Vec3, T::Vec4};
+            const std::vector<T> arithmetic {T::Float, T::Vec2, T::Vec3, T::Vec4, T::Color, T::Position, T::Int, T::IVec3};
+            const std::vector<T> all {T::Float, T::Vec2, T::Vec3, T::Vec4, T::Int, T::Bool, T::Color, T::Quat, T::Position, T::IVec3};
+            const std::vector<T> numbers {T::Float, T::Vec2, T::Vec3, T::Vec4, T::Int};
+            std::vector<OperationInfo> r;
+            const auto add = [&](std::string name, std::string category, std::string description, std::vector<T> kinds,
+                                 std::vector<PinSpec> inputs, std::vector<PinSpec> outputs, bool parameter = false,
+                                 bool code = false) {
+                r.push_back({std::move(name), std::move(category), std::move(description), std::move(kinds),
+                             std::move(inputs), std::move(outputs), parameter, code, false});
+            };
+            const PinSpec value = N("Value");
+            // Math
+            add("Add", "Math", "A + B, per component.", arithmetic, {N("A"), N("B")}, {value});
+            add("Sub", "Math", "A - B, per component.", arithmetic, {N("A"), N("B")}, {value});
+            add("Mul", "Math", "A * B, per component.", arithmetic, {N("A"), N("B")}, {value});
+            add("Div", "Math", "A / B, per component.", {T::Float, T::Vec2, T::Vec3, T::Vec4, T::Color, T::Int}, {N("A"), N("B")}, {value});
+            add("Min", "Math", "The smaller of A and B, per component.", numbers, {N("A"), N("B")}, {value});
+            add("Max", "Math", "The larger of A and B, per component.", numbers, {N("A"), N("B")}, {value});
+            add("Abs", "Math", "Absolute value.", numbers, {N("A")}, {value});
+            add("Floor", "Math", "Rounds down to a whole number.", floats, {N("A")}, {value});
+            add("Frac", "Math", "Fractional part: A - floor(A).", floats, {N("A")}, {value});
+            add("Pow", "Math", "A raised to the power B.", floats, {N("A"), N("B")}, {value});
+            add("Exp", "Math", "e raised to the power A.", floats, {N("A")}, {value});
+            add("Sin", "Math", "Sine of an angle in radians.", floats, {N("A")}, {value});
+            add("Cos", "Math", "Cosine of an angle in radians.", floats, {N("A")}, {value});
+            add("Mod", "Math", "Integer remainder of A / B (0 when B is 0).", {T::Int}, {N("A"), N("B")}, {value});
+            add("Lerp", "Math", "Blends from A to B by Amount.", {T::Float, T::Vec2, T::Vec3, T::Vec4, T::Color, T::Position},
+                {N("A"), N("B"), F("Amount", T::Float)}, {value});
+            add("Clamp", "Math", "Keeps Value between Min and Max.", numbers, {N("Value"), N("Min"), N("Max")}, {value});
+            add("Saturate", "Math", "Clamps to the 0..1 range.", floats, {N("A")}, {value});
+            add("Step", "Math", "1 where X >= Edge, else 0.", floats, {N("Edge"), N("X")}, {value});
+            add("Smoothstep", "Math", "Smooth 0..1 ramp of X between Edge0 and Edge1.", floats, {N("Edge0"), N("Edge1"), N("X")}, {value});
+            add("Less", "Math", "True when A < B (scalars).", {T::Bool}, {F("A", T::Float), F("B", T::Float)}, {value});
+            add("LessEqual", "Math", "True when A <= B (scalars).", {T::Bool}, {F("A", T::Float), F("B", T::Float)}, {value});
+            add("Greater", "Math", "True when A > B (scalars).", {T::Bool}, {F("A", T::Float), F("B", T::Float)}, {value});
+            add("Equal", "Math", "True when A equals B (scalars).", {T::Bool}, {F("A", T::Int), F("B", T::Int)}, {value});
+            add("Select", "Math", "True when Condition holds, else False.", all, {F("Condition", T::Bool), N("True"), N("False")}, {value});
+            add("And", "Math", "True when both are true.", {T::Bool}, {N("A"), N("B")}, {value});
+            add("Or", "Math", "True when either is true.", {T::Bool}, {N("A"), N("B")}, {value});
+            add("Not", "Math", "Negates a bool.", {T::Bool}, {N("A")}, {value});
+            add("Constant", "Math", "A fixed value.", all, {}, {value});
+            // Vector
+            add("Dot", "Vector", "Dot product of two vectors.", {T::Float}, {F("A", T::Vec3), F("B", T::Vec3)}, {value});
+            add("Cross", "Vector", "Cross product of two vec3.", {T::Vec3}, {N("A"), N("B")}, {value});
+            add("Normalize", "Vector", "Unit-length direction of a vector.", {T::Vec3, T::Vec2, T::Vec4}, {N("A")}, {value});
+            add("Length", "Vector", "Length of a vector.", {T::Float}, {F("A", T::Vec3)}, {value});
+            add("Make", "Vector", "Builds a vector or colour from components.", {T::Vec3, T::Vec2, T::Vec4, T::Color, T::IVec3}, {}, {value});
+            add("Break", "Vector", "Splits a vector into its components.", {T::Float}, {F("A", T::Vec3)}, {N("X"), N("Y"), N("Z")});
+            add("Splat", "Vector", "Copies a float into every component.", {T::Vec3, T::Vec2, T::Vec4, T::Color}, {F("A", T::Float)}, {value});
+            add("ToInt", "Vector", "Converts a float to int (truncates).", {T::Int}, {F("A", T::Float)}, {value});
+            add("ToFloat", "Vector", "Converts an int to float.", {T::Float}, {F("A", T::Int)}, {value});
+            add("TransformPosition", "Vector", "Local position to world space.", {T::Position}, {N("Position")}, {value});
+            add("InverseTransformPosition", "Vector", "World position to local space.", {T::Position}, {N("Position")}, {value});
+            add("TransformVector", "Vector", "Local direction to world space.", {T::Vec3}, {N("Vector")}, {value});
+            add("InverseTransformVector", "Vector", "World direction to local space.", {T::Vec3}, {N("Vector")}, {value});
+            add("ToSimulationVector", "Vector", "World vector into the emitter's simulation space.", {T::Vec3}, {N("Vector")}, {value});
+            add("ToWorldVector", "Vector", "Simulation-space vector to world space.", {T::Vec3}, {N("Vector")}, {value});
+            add("FieldPosition", "Vector", "Position into a field's translated, rotated, scaled frame.", {T::Position},
+                {F("Position", T::Position), F("Translate", T::Vec3), F("Rotation", T::Quat), F("Scale", T::Vec3)}, {value});
+            add("FieldVector", "Vector", "Vector into a field's rotated frame.", {T::Vec3}, {F("Vector", T::Vec3), F("Rotation", T::Quat)}, {value});
+            // Noise
+            add("Random", "Noise", "Deterministic random value in 0..1 per particle.", floats, {}, {value});
+            add("RandomRange", "Noise", "Deterministic random value between Min and Max.", floats, {N("Min"), N("Max")}, {value});
+            add("RandomVector", "Noise", "Random vector with components in 0..1.", {T::Vec3, T::Vec2, T::Vec4}, {}, {value});
+            add("RandomUnitVector", "Noise", "Random direction of length 1.", {T::Vec3}, {}, {value});
+            add("Noise3D", "Noise", "Smooth value noise at a point.", {T::Float}, {F("Position", T::Vec3)}, {value});
+            PinSpec octaves = F("Octaves", T::Int);
+            octaves.Default = Value::Int(1);
+            add("CurlNoise", "Noise", "Divergence-free curl noise vector (1-4 octaves).", {T::Vec3},
+                {F("Position", T::Position), F("Frequency", T::Float), F("Offset", T::Vec3), octaves}, {value});
+            add("EmitterSeedOffset", "Noise", "Per-emitter random offset for noise lookups.", {T::Vec3}, {}, {value});
+            // Grid
+            add("GridNumCells", "Grid", "Cell count of a Grid3D.", {T::IVec3}, {}, {value}, true);
+            add("GridCellSize", "Grid", "World size of one Grid3D cell.", {T::Vec3}, {}, {value}, true);
+            add("GridIndexToWorld", "Grid", "World position of a cell centre.", {T::Position}, {F("Index", T::IVec3)}, {value}, true);
+            add("GridWorldToIndex", "Grid", "Cell index containing a world position.", {T::IVec3}, {F("Position", T::Position)}, {value}, true);
+            add("GridWorldToCell", "Grid", "Continuous cell coordinate of a world position.", {T::Vec3}, {F("Position", T::Position)}, {value}, true);
+            add("GridGet", "Grid", "Reads a grid attribute at a cell.", floats, {F("Index", T::IVec3)}, {value}, true, true);
+            add("GridSet", "Grid", "Writes a grid attribute at the executing cell.", floats, {F("Index", T::IVec3), N("Value")}, {value}, true, true);
+            add("GridSample", "Grid", "Trilinear sample of a grid attribute at a position.", floats, {F("Position", T::Position)}, {value}, true, true);
+            add("GridAddFloat", "Grid", "Atomically adds to one component of a cell.", {T::Float},
+                {F("Index", T::IVec3), F("Component", T::Int), F("Value", T::Float)}, {value}, true, true);
+            PinSpec steps = F("Steps", T::Int);
+            steps.Default = Value::Int(16);
+            add("GridLightMarch", "Grid", "Marches density toward the light; returns transmittance.", {T::Float},
+                {F("Index", T::IVec3), F("Light", T::Vec4), F("Extinction", T::Float), steps, F("StepLength", T::Float)}, {value}, true, true);
+            // Sampling
+            add("Sample", "Sampling", "Samples a curve, gradient or texture data interface.", {T::Float, T::Color, T::Vec2, T::Vec3, T::Vec4},
+                {F("Coordinate", T::Float)}, {value}, true);
+            add("SampleVectorField", "Sampling", "Samples a vector field at a field-local position.", {T::Vec3}, {F("Position", T::Position)}, {value}, true);
+            add("VectorFieldBounds", "Sampling", "Local bounds of a vector field.", {T::Vec3}, {}, {N("Min"), N("Max")}, true);
+            add("VectorFieldResolution", "Sampling", "Cell counts of a vector field.", {T::Int}, {}, {N("X"), N("Y"), N("Z")}, true);
+            add("SampleForceFields", "Sampling", "Scene wind and force fields at a position.", {T::Vec3},
+                {F("Position", T::Position), F("Velocity", T::Vec3)}, {N("Wind"), N("Force"), N("Acceleration"), N("Impulse")});
+            PinSpec mode = F("Mode", T::Int);
+            mode.Enum    = {"SceneQueries", "DepthBuffer", "AnalyticShapes"};
+            mode.Default = Value::Int(2);
+            add("Collision", "Sampling", "Collides particles with the scene and returns the response.", {T::Position},
+                {F("Previous", T::Position), F("Position", T::Position), F("Velocity", T::Vec3), F("Size", T::Vec2),
+                 F("Scale", T::Vec3), mode, F("Restitution", T::Float), F("Friction", T::Float), F("RadiusScale", T::Float),
+                 F("RadiusOverride", T::Float), F("RestingVelocity", T::Float), F("DeltaTime", T::Float), F("MeshRadius", T::Float)},
+                {F("Position", T::Position), F("Velocity", T::Vec3), F("Normal", T::Vec3), F("Contact", T::Position), F("Hit", T::Bool)});
+            add("ColliderVelocity", "Sampling", "Surface velocity of the collider covering a point (GPU).", {T::Vec4},
+                {F("Position", T::Position), F("Radius", T::Float)}, {value});
+            add("MainLightDirection", "Sampling", "Direction and intensity of the main directional light (GPU).", {T::Vec4}, {}, {value});
+            const std::vector<PinSpec> surface {F("Position", T::Position), F("Normal", T::Vec3), F("MeshVelocity", T::Vec3),
+                                                F("Color", T::Color), F("Valid", T::Bool)};
+            add("RandomTriangle", "Sampling", "Random triangle of a mesh, area weighted.", {T::Int}, {}, {value}, true);
+            add("TriangleCount", "Sampling", "Triangle count of a mesh.", {T::Int}, {}, {value}, true);
+            add("SampleTriangle", "Sampling", "Surface data at barycentric coordinates of a triangle.", {T::Position},
+                {F("Triangle", T::Int), F("Barycentric", T::Vec3)}, surface, true);
+            add("SampleSkinnedTriangle", "Sampling", "Skinned surface data of a triangle.", {T::Position},
+                {F("Triangle", T::Int), F("Barycentric", T::Vec3)}, surface, true);
+            add("RandomVertex", "Sampling", "Random vertex index of a mesh.", {T::Int}, {}, {value}, true);
+            add("VertexCount", "Sampling", "Vertex count of a mesh.", {T::Int}, {}, {value}, true);
+            add("SampleVertex", "Sampling", "Data of one mesh vertex.", {T::Position}, {F("Index", T::Int)},
+                {F("Position", T::Position), F("Normal", T::Vec3), F("Tangent", T::Vec4), F("UV0", T::Vec2), F("Color", T::Color), F("Valid", T::Bool)}, true);
+            add("RandomBone", "Sampling", "Random bone index of a skeletal mesh.", {T::Int}, {}, {value}, true);
+            add("BoneCount", "Sampling", "Bone count of a skeletal mesh.", {T::Int}, {}, {value}, true);
+            add("SampleBone", "Sampling", "Position and rotation of one bone.", {T::Position}, {F("Index", T::Int)},
+                {F("Position", T::Position), F("Rotation", T::Quat), F("Velocity", T::Vec3), F("Valid", T::Bool)}, true);
+            add("BoneByName", "Sampling", "Index of the bone named in Code.", {T::Int}, {}, {value}, true, true);
+            // Events
+            add("WriteEvent", "Events", "Writes Count events with the payload pins to a channel.", {T::Int},
+                {F("Count", T::Int), F("Position", T::Position)}, {value}, true);
+            add("ParticleCount", "Events", "Particle count of another emitter.", {T::Int}, {}, {value}, true);
+            add("ReadAttribute", "Events", "Reads another emitter's particle attribute by index.", all, {F("Index", T::Int)}, {value}, true, true);
+            add("ReadAttributeByID", "Events", "Reads another emitter's particle attribute by unique ID.", all,
+                {F("ID", T::Int)}, {value, F("Found", T::Bool)}, true, true);
+            // Custom
+            add("CustomGLSL", "Custom", "A GLSL expression or body; $ArgN names input N (GPU only).", floats, {F("Arg0", T::Float)}, {value}, false, true);
+            add("Call", "Custom", "Calls a function script with its inputs.", floats, {}, {value});
+            // Parameters
+            add("Input", "Parameters", "Reads a module input (Module.*).", all, {}, {value}, true);
+            add("Get", "Parameters", "Reads a parameter (Particles, Emitter, System, Engine...).", all, {}, {value}, true);
+            add("Set", "Parameters", "Writes a parameter.", all, {N("Value")}, {value}, true);
+            add("Reroute", "Utility", "Passes a value through, to route links.", all, {N("Value")}, {value});
+            r.back().Hidden = true;
+            return r;
+        }
         std::string                           GType(Type);
         void                                  SpecializeGridModule(Module&                                        m,
                                                                    const std::map<std::string, Input>&            inputs,
@@ -923,6 +1068,13 @@ namespace Kans::Vfx
                             Error(id, guid, output, ex.what());
                         }
                         reg = Emit(i);
+                    }
+                    else if (n.Op == "Reroute")
+                    {
+                        if (i.Args.size() != 1)
+                            Error(id, guid, output, "Reroute requires one input");
+                        reg = i.Args.empty() ? Constant(Value::Vector({}, i.Kind)) :
+                                               Convert(i.Args[0], i.Kind, id, guid, output);
                     }
                     else if (n.Op == "Call")
                     {
@@ -2190,6 +2342,53 @@ namespace Kans::Vfx
                     generate(s.Bytecode);
             }
         return r;
+    }
+    bool CanConvert(Type from, Type to)
+    {
+        return from == to || (from == Type::Float && (to == Type::Vec2 || to == Type::Vec3 || to == Type::Vec4));
+    }
+    const std::vector<OperationInfo>& Operations()
+    {
+        static const std::vector<OperationInfo> table = BuildOperations();
+        return table;
+    }
+    const OperationInfo* FindOperation(const std::string& name)
+    {
+        for (const auto& op : Operations())
+            if (op.Name == name)
+                return &op;
+        return nullptr;
+    }
+    void OperationPins(const OperationInfo& op, Type kind, std::vector<Pin>& inputs, std::vector<Pin>& outputs)
+    {
+        const auto pin = [&](const PinSpec& spec) {
+            Pin p;
+            p.Name = spec.Name;
+            p.Kind = spec.Rule == PinRule::Node ? kind : spec.Kind;
+            if (spec.Default && spec.Default->Kind == p.Kind)
+                p.Default = spec.Default;
+            return p;
+        };
+        inputs.clear();
+        outputs.clear();
+        for (const auto& spec : op.Inputs)
+        {
+            auto p = pin(spec);
+            if (!p.Default && op.Name != "Set" && op.Name != "Reroute")
+                p.Default = p.Kind == Type::Int  ? Value::Int(0) :
+                            p.Kind == Type::Bool ? Value::Bool(false) :
+                                                   Value::Vector({}, p.Kind);
+            inputs.push_back(p);
+        }
+        if (op.Name == "Make")
+        {
+            const char* names[] = {"X", "Y", "Z", "W"};
+            const Type  scalar  = kind == Type::IVec3 ? Type::Int : Type::Float;
+            for (uint32_t k = 0; k < Components(kind); ++k)
+                inputs.push_back({names[k], scalar, scalar == Type::Int ? Value::Int(0) : Value::Float(0)});
+        }
+        for (const auto& spec : op.Outputs)
+            outputs.push_back(pin(spec));
     }
     std::string FormatDiagnostics(const std::vector<Diagnostic>& errors)
     {

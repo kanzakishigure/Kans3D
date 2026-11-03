@@ -492,6 +492,8 @@ namespace Kans
             if (ImGui::MenuItem(
                     Label(ICON_FA_ATOM, "Physics Material").c_str(), nullptr, false, bool(m_CreatePhysicsMaterial)))
                 m_CreatePhysicsMaterial(m_Current), Refresh();
+            if (ImGui::MenuItem(Label(ICON_FA_DIAGRAM_PROJECT, "VFX Module").c_str(), nullptr, false, bool(m_CreateVfxModule)))
+                m_CreateVfxModule(m_Current);
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -1540,6 +1542,8 @@ namespace Kans
                     m_CreateTimeline(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_ATOM, "Physics Material").c_str()) && m_CreatePhysicsMaterial)
                     m_CreatePhysicsMaterial(folder), Refresh();
+                if (ImGui::MenuItem(Label(ICON_FA_DIAGRAM_PROJECT, "VFX Module").c_str()) && m_CreateVfxModule)
+                    m_CreateVfxModule(folder);
                 ImGui::EndMenu();
             }
             if (ImGui::MenuItem(Label(ICON_FA_PASTE, "Paste").c_str(), "Ctrl+V", false, hasClipboard))

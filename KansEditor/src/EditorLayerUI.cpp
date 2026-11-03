@@ -175,6 +175,7 @@ namespace Kans
         m_Panels.Draw();
         DrawClothInfo();
         m_RagdollEditor.Draw();
+        DrawVfxModuleEditors();
         Application::Get().GetImGuiLayer()->BlockEvents(m_ViewportPanel.IsFocused() || m_ViewportPanel.IsHovered());
         TrackSceneEdits();
     }
@@ -235,7 +236,8 @@ namespace Kans
             return;
         // The material editor has its own undo, redo and save while it has focus.
         const bool material =
-            m_MaterialEditorPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() || m_RagdollEditor.HasFocus();
+            m_MaterialEditorPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() || m_RagdollEditor.HasFocus() ||
+            std::any_of(m_VfxModuleEditors.begin(), m_VfxModuleEditors.end(), [](const auto& e) { return e->HasFocus(); });
         // Cloth painting has its own stroke undo and saves the .cloth file.
         if (io.KeyCtrl && m_ViewportPanel.IsPaintingCloth() && !material && m_ActiveScene)
         {
