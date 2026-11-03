@@ -5,7 +5,6 @@
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Project/RecentProjects.h"
 #include "EditorLayer.h"
-#include "ImGuizmo.h"
 #include "Launcher/EditorProcess.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
@@ -198,7 +197,7 @@ namespace Kans
         for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END && !m_EditPending; ++key)
             m_EditPending |= ImGui::IsKeyReleased(ImGuiKey(key));
         // A timeline preview changes the scene temporarily; it is not an edit.
-        if (m_EditPending && !m_TimelinePanel.IsPreviewing() && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing() &&
+        if (m_EditPending && !m_TimelinePanel.IsPreviewing() && !ImGui::IsAnyItemActive() && !m_ViewportPanel.IsGizmoDragging() &&
             !ImGui::IsAnyMouseDown())
         {
             m_History.Record(*m_ActiveScene);

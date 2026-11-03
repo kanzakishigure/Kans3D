@@ -8,7 +8,6 @@
 
 #include "Kans3D/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
-#include "ImGuizmo.h"
 // Temp
 
 namespace Kans
@@ -54,7 +53,6 @@ namespace Kans
 
         m_Renderer->NewFrame();
         ImGui::NewFrame();
-        ImGuizmo::BeginFrame();
     }
 
     void ImGuiLayer::End()

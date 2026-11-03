@@ -5,7 +5,9 @@
 #include <string>
 #include <imgui.h>
 #include <glm/glm.hpp>
+#include "Gizmo/TransformGizmo.h"
 #include "Kans3D/Geometry/MeshOperations.h"
+#include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Entity.h"
 
 namespace Kans
@@ -57,8 +59,23 @@ namespace Kans
         // A left press on the scene image; the drag and release are followed in Update.
         void Press(ImVec2 mouse) { m_Press = mouse; }
         Release Update(Entity entity, const View& view);
-        // The gizmo on the selection; `operation`/`mode` are ImGuizmo values.
-        void DrawGizmo(Entity entity, const View& view, int operation, int mode, const float* snap);
+        // The transform gizmo on the selection: hover, drag, release or cancel from `input`. Local
+        // orientation follows the selected elements' normal. `extrude` (Shift) when a move begins
+        // extrudes the selected faces or boundary edges once and moves the copy. Cancel restores
+        // the mesh and selection from before the drag.
+        Gizmo::Event Manipulate(Entity                    entity,
+                                const View&               view,
+                                Gizmo::Mode               mode,
+                                Gizmo::Orientation        orientation,
+                                const Gizmo::Settings&    settings,
+                                const Gizmo::Input&       input,
+                                bool                      extrude);
+        // The gizmo's handles as of the last Manipulate (none when it was not shown).
+        void AppendGizmoDraws(std::vector<GizmoDraw>& out) const;
+        const Gizmo::TransformGizmo& GetGizmo() const { return m_Gizmo; }
+        // Replaces the element selection (converted to the current mode's element type).
+        void SetSelection(MeshSelection selection);
+        const MeshSelection& GetSelection() const { return m_Selection; }
         // Mode buttons for the viewport toolbar.
         void DrawModeButtons(Entity entity);
         // The operations panel shown in element modes.
@@ -74,7 +91,6 @@ namespace Kans
         // what the operation returns when `reselect` is set.
         bool Apply(Entity entity, const char* name, const Operation& operation, bool reselect = false);
         void Validate(Entity entity);
-        void SetSelection(MeshSelection selection);
         bool Selected(uint32_t index) const;
         bool Selected(MeshEdge edge) const;
         void Toggle(const MeshSelection& picked, bool add);
@@ -89,10 +105,13 @@ namespace Kans
         std::optional<ImVec2> m_Press;
         bool                  m_Dragging = false;
 
-        // Gizmo drag: the mesh and pivot when it started.
-        bool         m_Manipulating = false;
-        EditableMesh m_StartMesh;
-        glm::mat4    m_Pivot {1}, m_StartPivot {1};
+        // Gizmo drag: the mesh it transforms (extruded when Shift started it) and, for cancel,
+        // the mesh and selection from before.
+        Gizmo::TransformGizmo m_Gizmo;
+        bool                  m_Manipulating = false, m_GizmoShown = false;
+        EditableMesh          m_StartMesh;
+        EditableMeshComponent m_Original;
+        MeshSelection         m_OriginalSelection;
 
         // Operation settings.
         float m_ExtrudeDistance = 0.5f, m_InsetAmount = 0.1f, m_WeldDistance = 0.01f;

@@ -5,7 +5,6 @@
 #include <glm/gtc/type_ptr.hpp>
 #include "Components/MaterialAssignment.h"
 
-#include "ImGuizmo.h"
 // TestInclude
 #include "Kans3D/Core/Log/Log.h"
 #include "Kans3D/Renderer/Features/Editor/EditorRenderFeatures.h"

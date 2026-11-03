@@ -3,7 +3,6 @@
 #include <set>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include "ImGuizmo.h"
 #include "Kans3D/Editor/EditorCamera.h"
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Scene.h"
@@ -44,19 +43,6 @@ namespace Kans
             return s.Type == ElementType::Vertex ? s.Vertices.size() :
                    s.Type == ElementType::Edge   ? s.Edges.size() :
                                                    s.Faces.size();
-        }
-
-        // Rotation of a transform without its scale, for the gizmo's local orientation.
-        glm::mat4 Orientation(const glm::mat4& transform)
-        {
-            glm::mat4 rotation(1.0f);
-            for (int axis = 0; axis < 3; ++axis)
-            {
-                const glm::vec3 column(transform[axis]);
-                const float     length = glm::length(column);
-                rotation[axis]         = glm::vec4(length > 0.0f ? column / length : glm::vec3(0.0f), 0.0f);
-            }
-            return rotation;
         }
     } // namespace
 
@@ -319,77 +305,115 @@ namespace Kans
         draw->PopClipRect();
     }
 
-    void MeshEditTool::DrawGizmo(Entity entity, const View& view, int operation, int mode, const float* snap)
+    Gizmo::Event MeshEditTool::Manipulate(Entity                 entity,
+                                          const View&            view,
+                                          Gizmo::Mode            mode,
+                                          Gizmo::Orientation     orientation,
+                                          const Gizmo::Settings& settings,
+                                          const Gizmo::Input&    input,
+                                          bool                   extrude)
     {
         Validate(entity);
-        if (!IsEditing(entity) || operation < 0)
+        m_GizmoShown = false;
+        if (!IsEditing(entity))
         {
+            m_Gizmo.Reset();
             m_Manipulating = false;
-            return;
+            return Gizmo::Event::None;
         }
         const auto& component = entity.GetComponent<EditableMeshComponent>();
-        const auto  vertices  = SelectionVertices(component.Mesh, m_Selection);
-        if (vertices.empty() && !m_Manipulating)
-            return;
-        const glm::mat4 world = view.Scene->GetWorldTransform(entity);
-        if (!m_Manipulating)
+        if (SelectionVertices(component.Mesh, m_Selection).empty() && !m_Gizmo.IsDragging())
         {
-            // Pivot: the selection's centre, oriented like the entity in local mode.
-            const glm::vec3 centre = glm::vec3(world * glm::vec4(SelectionCentroid(component.Mesh, m_Selection), 1.0f));
-            m_Pivot                = glm::translate(glm::mat4(1.0f), centre) *
-                      (mode == ImGuizmo::LOCAL ? Orientation(world) : glm::mat4(1.0f));
+            m_Gizmo.Reset();
+            return Gizmo::Event::None;
         }
-        const glm::mat4 before = m_Pivot;
-        ImGuizmo::SetOrthographic(view.Camera->IsOrthographic());
-        ImGuizmo::SetDrawlist();
-        ImGuizmo::SetRect(view.Min.x, view.Min.y, view.Max.x - view.Min.x, view.Max.y - view.Min.y);
-        ImGuizmo::Manipulate(glm::value_ptr(view.Camera->GetViewMatrix()),
-                             glm::value_ptr(view.Camera->GetProjectionMatrix()),
-                             static_cast<ImGuizmo::OPERATION>(operation),
-                             static_cast<ImGuizmo::MODE>(mode),
-                             glm::value_ptr(m_Pivot),
-                             nullptr,
-                             snap);
-        if (!ImGuizmo::IsUsing())
+        const glm::mat4   world = view.Scene->GetWorldTransform(entity);
+        const Gizmo::View gv    = Gizmo::View::From(*view.Camera, {view.Min.x, view.Min.y},
+                                                    {view.Max.x - view.Min.x, view.Max.y - view.Min.y});
+        // Pivot: the selection's centre. Local orientation stands on the elements' normal, with
+        // the entity's X kept as level as it can be.
+        Gizmo::Pivot pivot;
+        pivot.Position = glm::vec3(world * glm::vec4(SelectionCentroid(component.Mesh, m_Selection), 1.0f));
+        pivot.Axes     = Gizmo::ResolveAxes(orientation, world, gv);
+        if (orientation == Gizmo::Orientation::Local)
         {
-            m_Manipulating = false;
-            return;
-        }
-        if (!m_Manipulating)
-        {
-            m_Manipulating = true;
-            m_StartPivot   = before;
-            m_StartMesh    = component.Mesh;
-            // Shift while starting a move extrudes the selected faces (or boundary edges) and moves the copy.
-            if (ImGui::GetIO().KeyShift && operation == ImGuizmo::TRANSLATE &&
-                (m_Mode == Mode::Face || m_Mode == Mode::Edge))
+            glm::vec3 normal = glm::transpose(glm::inverse(glm::mat3(world))) * SelectionNormal(component.Mesh, m_Selection);
+            if (glm::length(normal) > 1e-6f)
             {
-                constexpr float seed = 1e-4f; // Extrusion needs a nonzero distance; the drag sets the real one.
-                auto            result =
-                    m_Mode == Mode::Face ?
-                                   ExtrudeFaces(m_StartMesh, m_Selection.Faces, seed,
-                                                m_ExtrudeIndividual ? ExtrudeMode::Individual : ExtrudeMode::Group) :
-                                   ExtrudeEdges(m_StartMesh, m_Selection.Edges, seed);
-                if (!result)
-                    Fail("Extrude: " + result.Error);
-                else if (m_Mode == Mode::Face)
-                    m_Selection.Faces = result.Faces;
-                else
-                    m_Selection.Edges = result.Edges;
+                normal         = glm::normalize(normal);
+                glm::vec3 side = pivot.Axes[0] - normal * glm::dot(pivot.Axes[0], normal);
+                if (glm::length(side) < 1e-4f)
+                    side = pivot.Axes[1] - normal * glm::dot(pivot.Axes[1], normal);
+                side       = glm::normalize(side);
+                pivot.Axes = glm::mat3(side, glm::cross(normal, side), normal);
             }
         }
+        m_GizmoShown     = true;
+        const auto event = m_Gizmo.Update(gv, pivot, mode, settings, input);
+        switch (event)
+        {
+            case Gizmo::Event::None:
+                return event;
+            case Gizmo::Event::Cancelled:
+                entity.PatchComponent<EditableMeshComponent>([&](EditableMeshComponent& c) { c = m_Original; });
+                m_Selection    = m_OriginalSelection;
+                m_Manipulating = false;
+                return event;
+            case Gizmo::Event::Began:
+            {
+                m_Manipulating      = true;
+                m_Original          = component;
+                m_OriginalSelection = m_Selection;
+                m_StartMesh         = component.Mesh;
+                // Shift while starting a move extrudes the selected faces (or boundary edges) and moves the copy.
+                if (extrude && m_Gizmo.GetDelta().Op == Gizmo::Operation::Translate &&
+                    (m_Mode == Mode::Face || m_Mode == Mode::Edge))
+                {
+                    constexpr float seed = 1e-4f; // Extrusion needs a nonzero distance; the drag sets the real one.
+                    auto            result =
+                        m_Mode == Mode::Face ?
+                                       ExtrudeFaces(m_StartMesh, m_Selection.Faces, seed,
+                                                    m_ExtrudeIndividual ? ExtrudeMode::Individual : ExtrudeMode::Group) :
+                                       ExtrudeEdges(m_StartMesh, m_Selection.Edges, seed);
+                    if (!result)
+                    {
+                        Fail("Extrude: " + result.Error);
+                        m_StartMesh = component.Mesh;
+                    }
+                    else if (m_Mode == Mode::Face)
+                        m_Selection.Faces = result.Faces;
+                    else
+                        m_Selection.Edges = result.Edges;
+                }
+                break;
+            }
+            case Gizmo::Event::Dragged:
+            case Gizmo::Event::Committed:
+                break;
+        }
+        if (!m_Manipulating)
+            return event;
+        if (event == Gizmo::Event::Committed)
+            m_Manipulating = false;
         // The drag so far, as a world-space change, applied to the mesh it started from.
-        const glm::mat4 delta = glm::inverse(world) * (m_Pivot * glm::inverse(m_StartPivot)) * world;
+        const glm::mat4 delta = glm::inverse(world) * m_Gizmo.GetDelta().Matrix() * world;
         EditableMesh    mesh  = m_StartMesh;
         if (auto result = TransformVertices(mesh, SelectionVertices(mesh, m_Selection), delta); !result)
         {
             Fail("Transform: " + result.Error);
-            return;
+            return event;
         }
         entity.PatchComponent<EditableMeshComponent>([&](EditableMeshComponent& c) {
             c.Mesh = std::move(mesh);
             c.Shape.reset();
         });
+        return event;
+    }
+
+    void MeshEditTool::AppendGizmoDraws(std::vector<GizmoDraw>& out) const
+    {
+        if (m_GizmoShown)
+            m_Gizmo.AppendDraws(out);
     }
 
     bool MeshEditTool::Apply(Entity entity, const char* name, const Operation& operation, bool reselect)

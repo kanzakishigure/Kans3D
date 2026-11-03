@@ -76,7 +76,6 @@ target_link_libraries(Kans3D PUBLIC
     stb_image
     glm
     EnTT
-    ImGuizmo
     assimp
     VulkanMemoryAllocator
     harfbuzz

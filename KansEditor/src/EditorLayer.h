@@ -145,7 +145,8 @@ namespace Kans
         void CreateRagdollForModel(const std::filesystem::path& model);
         void AssignPendingRagdolls();
         // The preview scene rendered through the ragdoll editor's camera.
-        uintptr_t RenderRagdollPreview(const Ref<Scene>& scene, const EditorCamera& camera, glm::uvec2 size);
+        uintptr_t RenderRagdollPreview(const Ref<Scene>& scene, const EditorCamera& camera, glm::uvec2 size,
+                                       const std::vector<GizmoDraw>& gizmo);
         struct PendingRagdoll
         {
             std::filesystem::path File;

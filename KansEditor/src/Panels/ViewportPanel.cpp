@@ -10,7 +10,7 @@
 #include "Kans3D/Input/Input.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Scene/Components.h"
-#include "ImGuizmo.h"
+#include "Gizmo/ViewAxes.h"
 #include "UI/BloomSettingsWidget.h"
 #include "UI/EditorIcons.h"
 #include "UI/MaterialSlotRow.h"
@@ -127,12 +127,10 @@ namespace Kans
                     m_Hierarchy.SetSelected(hit);
             }
         }
-        // Its own gizmo ID, so a gizmo in another panel (the ragdoll editor's) never moves the selection.
-        ImGuizmo::PushID("SceneView");
-        DrawGizmo();
-        ImGuizmo::PopID();
         DrawToolbar();
-        DrawViewCube();
+        DrawViewAxes();
+        // After the toolbar and the axis widget, so the gizmo knows whether they have the pointer.
+        DrawGizmo();
         DrawStatsOverlay();
         // After the overlays, so clicks on their widgets do not navigate.
         HandleNavigation();
@@ -345,7 +343,7 @@ namespace Kans
         const bool     overImage = m_ImageHovered && !ImGui::IsAnyItemHovered() && !overCube;
         if (m_Navigation == Navigation::None && overImage)
         {
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !m_SwallowRightClick)
                 m_Navigation = Navigation::Look;
             else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
                 m_Navigation = Navigation::Pan;
@@ -356,8 +354,8 @@ namespace Kans
             if (m_Navigation != Navigation::None)
                 ImGui::SetWindowFocus();
             // A plain left click selects what is under the cursor.
-            else if (!io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsOver() &&
-                     !ImGuizmo::IsUsing())
+            else if (!io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_Gizmo.WantsPointer() &&
+                     !m_MeshTool.GetGizmo().WantsPointer())
             {
                 if (m_MeshTool.IsEditing(m_Hierarchy.GetSelected()) && !UsesSceneCamera())
                     m_MeshTool.Press(io.MousePos);
@@ -430,14 +428,20 @@ namespace Kans
         }
         if (io.KeyCtrl)
             return;
-        if (ImGui::IsKeyPressed(ImGuiKey_Q, false))
-            m_GizmoType = -1;
-        if (ImGui::IsKeyPressed(ImGuiKey_W, false))
-            m_GizmoType = ImGuizmo::TRANSLATE;
-        if (ImGui::IsKeyPressed(ImGuiKey_E, false))
-            m_GizmoType = ImGuizmo::ROTATE;
-        if (ImGui::IsKeyPressed(ImGuiKey_R, false))
-            m_GizmoType = ImGuizmo::SCALE;
+        // The tool stays while a drag is in progress.
+        if (!IsGizmoDragging())
+        {
+            if (ImGui::IsKeyPressed(ImGuiKey_Q, false))
+                m_Tool = Tool::Select;
+            if (ImGui::IsKeyPressed(ImGuiKey_W, false))
+                m_Tool = Tool::Move;
+            if (ImGui::IsKeyPressed(ImGuiKey_E, false))
+                m_Tool = Tool::Rotate;
+            if (ImGui::IsKeyPressed(ImGuiKey_R, false))
+                m_Tool = Tool::Scale;
+            if (ImGui::IsKeyPressed(ImGuiKey_Y, false))
+                m_Tool = Tool::Transform;
+        }
         if (ImGui::IsKeyPressed(ImGuiKey_F, false))
             FocusSelection();
     }
@@ -585,20 +589,115 @@ namespace Kans
         draw->PopClipRect();
     }
 
-    void ViewportPanel::DrawViewCube()
+    void ViewportPanel::DrawViewAxes()
     {
+        using EditorTheme::Px;
         m_CubeMin = m_CubeMax = {};
+        const ImGuiIO& io = ImGui::GetIO();
+        // An alignment in progress turns the camera a step each frame.
+        if (m_ViewAnimation)
+        {
+            constexpr float ViewAnimationSeconds = 0.25f;
+            m_ViewAnimation->Time += io.DeltaTime / ViewAnimationSeconds;
+            if (m_ViewAnimation->Time >= 1.0f)
+            {
+                static const std::pair<EditorCamera::View, const char*> names[] = {
+                    {EditorCamera::View::Top, "Top"},     {EditorCamera::View::Bottom, "Bottom"},
+                    {EditorCamera::View::Front, "Front"}, {EditorCamera::View::Back, "Back"},
+                    {EditorCamera::View::Right, "Right"}, {EditorCamera::View::Left, "Left"}};
+                m_Camera.SetView(m_ViewAnimation->Target);
+                for (const auto& [view, name] : names)
+                    if (view == m_ViewAnimation->Target)
+                        m_ViewName = name;
+                m_ViewAnimation.reset();
+            }
+            else
+            {
+                const auto [yaw, pitch] = Gizmo::InterpolateView(m_ViewAnimation->From, m_ViewAnimation->To, m_ViewAnimation->Time);
+                m_Camera.SetRotation(yaw, pitch);
+            }
+        }
         if (UsesSceneCamera())
             return;
-        const ImVec2 size(EditorTheme::Px(96.0f), EditorTheme::Px(96.0f));
-        const ImVec2 position(m_Max.x - size.x - EditorTheme::Px(10.0f), m_Min.y + EditorTheme::Px(50.0f));
-        m_CubeMin = position;
-        m_CubeMax = {position.x + size.x, position.y + size.y};
-        glm::mat4 view = m_Camera.GetViewMatrix();
-        ImGuizmo::SetDrawlist();
-        ImGuizmo::ViewManipulate(glm::value_ptr(view), m_Camera.GetDistance(), position, size, IM_COL32(0, 0, 0, 0));
-        if (view != m_Camera.GetViewMatrix())
-            m_Camera.SetViewMatrix(view);
+        const float     radius = Px(36.0f), ball = Px(9.0f);
+        const glm::vec2 centre(m_Max.x - Px(10.0f) - radius - ball - Px(4.0f), m_Min.y + Px(50.0f) + radius + ball + Px(4.0f));
+        const float     reach = radius + ball + Px(4.0f);
+        m_CubeMin             = {centre.x - reach, centre.y - reach};
+        m_CubeMax             = {centre.x + reach, centre.y + reach};
+        const auto      balls = Gizmo::ViewAxisBalls(m_Camera.GetViewMatrix(), centre, radius);
+        const glm::vec2 mouse(io.MousePos.x, io.MousePos.y);
+        const bool      over =
+            ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(m_CubeMin, m_CubeMax, false) &&
+            glm::length(mouse - centre) <= reach && !IsGizmoDragging() && m_Navigation == Navigation::None;
+        const int hovered = over && !m_AxisOrbiting ? Gizmo::PickViewAxisBall(balls, mouse, ball) : -1;
+
+        // Press: a ball, or the background (which orbits when dragged).
+        if (over && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            m_AxisPressActive = true;
+            m_AxisPressed     = hovered;
+            m_AxisPress       = mouse;
+            m_AxisOrbiting    = false;
+        }
+        if (m_AxisPressActive)
+        {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            {
+                if (!m_AxisOrbiting && glm::length(mouse - m_AxisPress) > Px(3.0f))
+                    m_AxisOrbiting = true, m_ViewAnimation.reset();
+                if (m_AxisOrbiting)
+                    m_Camera.Orbit({io.MouseDelta.x, io.MouseDelta.y});
+            }
+            else
+            {
+                if (!m_AxisOrbiting && m_AxisPressed >= 0 && hovered == m_AxisPressed)
+                {
+                    // Looks from the ball's side; the side already looked from flips to the opposite.
+                    int  axis     = balls[size_t(m_AxisPressed)].Axis;
+                    bool negative = balls[size_t(m_AxisPressed)].Negative;
+                    if (Gizmo::IsLookingFrom(m_Camera, axis, negative))
+                        negative = !negative;
+                    const auto target = Gizmo::BallView(axis, negative);
+                    m_ViewAnimation   = ViewAnimation {{m_Camera.GetYaw(), m_Camera.GetPitch()}, EditorCamera::ViewAngles(target), 0.0f, target};
+                }
+                m_AxisPressActive = m_AxisOrbiting = false;
+                m_AxisPressed     = -1;
+            }
+        }
+
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        if (over || m_AxisPressActive)
+            draw->AddCircleFilled({centre.x, centre.y}, reach, IM_COL32(255, 255, 255, 28), 48);
+        static const ImU32 colors[3]   = {IM_COL32(235, 64, 70, 255), IM_COL32(115, 205, 46, 255), IM_COL32(62, 132, 245, 255)};
+        static const char* labels[3]   = {"X", "Y", "Z"};
+        for (int i = 0; i < 6; ++i)
+        {
+            const auto&  b     = balls[size_t(i)];
+            const ImVec2 at {b.Screen.x, b.Screen.y};
+            const ImU32  color = colors[b.Axis];
+            if (!b.Negative)
+                draw->AddLine({centre.x, centre.y}, at, color, Px(2.0f));
+            if (b.Negative)
+            {
+                // Negative directions: a darker disc with the axis colour as its rim.
+                draw->AddCircleFilled(at, ball * 0.85f, (color & 0x00FFFFFF) | (110u << 24), 24);
+                draw->AddCircle(at, ball * 0.85f, color, 24, Px(1.5f));
+            }
+            else
+            {
+                draw->AddCircleFilled(at, ball, color, 24);
+                const ImVec2 size = ImGui::CalcTextSize(labels[b.Axis]);
+                draw->AddText({at.x - size.x * 0.5f, at.y - size.y * 0.5f}, IM_COL32(20, 20, 24, 255), labels[b.Axis]);
+            }
+            if (i == hovered)
+                draw->AddCircle(at, ball + Px(1.5f), IM_COL32(255, 255, 255, 230), 24, Px(2.0f));
+        }
+        if (hovered >= 0)
+        {
+            const auto& b = balls[size_t(hovered)];
+            ImGui::SetTooltip("View from %s%s (click again for the opposite side; drag to orbit)", b.Negative ? "-" : "+",
+                              labels[b.Axis]);
+        }
     }
 
     void ViewportPanel::DrawStatsOverlay()
@@ -617,93 +716,109 @@ namespace Kans
 
     // ---------------------------------------------------------------------- gizmo and toolbar
 
+    Gizmo::Settings ViewportPanel::GizmoSettings() const
+    {
+        Gizmo::Settings settings;
+        settings.Size          = EditorTheme::Px(m_GizmoSize);
+        settings.PickRadius    = EditorTheme::Px(10.0f);
+        settings.Snap          = m_GizmoSnap;
+        settings.TranslateStep = m_SnapMove;
+        settings.RotateStep    = m_SnapRotate;
+        settings.ScaleStep     = m_SnapScale;
+        return settings;
+    }
+
     void ViewportPanel::DrawGizmo()
     {
-        Entity selected = m_Hierarchy.GetSelected();
-        if (!selected || m_GizmoType < 0 || (m_Playing && !m_UseEditorCameraInPlay && m_Scene->GetCameraEntity()) ||
-            IsPaintingCloth())
+        m_SwallowRightClick = false;
+        Entity     selected = m_Hierarchy.GetSelected();
+        const bool shown    = selected && m_Tool != Tool::Select && !UsesSceneCamera() && !IsPaintingCloth();
+        if (!shown)
+        {
+            // The selection went away (or the tool changed) mid-drag: put things back.
+            if (m_Gizmo.IsDragging() && m_GizmoTargets.IsActive())
+                m_GizmoTargets.Restore();
+            m_GizmoTargets.Clear();
+            m_Gizmo.Reset();
+            m_Client->SetGizmo({});
             return;
-        // A physics handle under the pointer (or being dragged) takes the click.
-        if (m_PhysicsHandleHot)
-            return;
-        const bool  snap      = m_GizmoSnap || ImGui::GetIO().KeyCtrl;
-        const float step      = m_GizmoType == ImGuizmo::ROTATE ? m_SnapRotate :
-                                m_GizmoType == ImGuizmo::SCALE  ? m_SnapScale :
-                                                                  m_SnapMove;
-        const float snapValues[3] = {step, step, step};
+        }
+        const ImGuiIO& io = ImGui::GetIO();
+        Gizmo::Input   input;
+        input.Mouse      = {io.MousePos.x, io.MousePos.y};
+        input.Down       = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        input.Pressed    = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        input.Released   = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+        input.Cancel     = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+        input.InvertSnap = io.KeyCtrl;
+        // A physics handle under the pointer (or being dragged), a toolbar control, the axis
+        // widget or navigation has the pointer.
+        input.Allowed = m_ImageHovered && !ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive() && !io.KeyAlt &&
+                        m_Navigation == Navigation::None && !m_PhysicsHandleHot && !m_AxisPressActive &&
+                        !ImGui::IsMouseHoveringRect(m_CubeMin, m_CubeMax, false);
+        const bool dragging = IsGizmoDragging();
+        const auto mode     = m_Tool == Tool::Rotate    ? Gizmo::Mode::Rotate :
+                              m_Tool == Tool::Scale     ? Gizmo::Mode::Scale :
+                              m_Tool == Tool::Transform ? Gizmo::Mode::Combined :
+                                                          Gizmo::Mode::Translate;
+        const auto settings = GizmoSettings();
+        const auto view     = Gizmo::View::From(m_Camera, {m_Min.x, m_Min.y}, {m_Max.x - m_Min.x, m_Max.y - m_Min.y});
+        std::vector<GizmoDraw>       draws;
+        const Gizmo::TransformGizmo* gizmo = &m_Gizmo;
         if (m_MeshTool.IsEditing(selected))
         {
             // In element modes the gizmo moves the selected vertices, edges or faces.
-            m_MeshTool.DrawGizmo(selected, EditView(), m_GizmoType, m_GizmoMode, snap ? snapValues : nullptr);
-            return;
+            m_MeshTool.Manipulate(selected, EditView(), mode, m_Orientation, settings, input, io.KeyShift);
+            m_MeshTool.AppendGizmoDraws(draws);
+            gizmo = &m_MeshTool.GetGizmo();
         }
-        ImGuizmo::SetOrthographic(m_Camera.IsOrthographic());
-        ImGuizmo::SetDrawlist();
-        ImGuizmo::SetRect(m_Min.x, m_Min.y, m_Max.x - m_Min.x, m_Max.y - m_Min.y);
-
-        // The gizmo works on the world transform; results go back to the local one.
-        glm::mat4   transform = m_Scene->GetWorldTransform(selected);
-        ImGuizmo::Manipulate(glm::value_ptr(m_Camera.GetViewMatrix()),
-                             glm::value_ptr(m_Camera.GetProjectionMatrix()),
-                             static_cast<ImGuizmo::OPERATION>(m_GizmoType),
-                             static_cast<ImGuizmo::MODE>(m_GizmoMode),
-                             glm::value_ptr(transform),
-                             nullptr,
-                             snap ? snapValues : nullptr);
-        if (!ImGuizmo::IsUsing())
-            return;
-
-        if (m_Hierarchy.SelectionSize() > 1)
+        else
         {
-            // The same world-space change for every selected subtree root, so rotation and
-            // scale pivot on the primary entity. Children of selected entities follow them.
-            const glm::mat4 delta = transform * glm::inverse(m_Scene->GetWorldTransform(selected));
-            for (Entity entity : m_Hierarchy.TopMostSelected())
+            // Entities scale along their own axes, so the scale handles follow the active entity.
+            const auto orientation = mode == Gizmo::Mode::Scale ? Gizmo::Orientation::Local : m_Orientation;
+            const auto targets     = m_Hierarchy.TopMostSelected();
+            const auto pivot       = Gizmo::SelectionPivot(*m_Scene, targets, selected, m_PivotMode, orientation, view);
+            switch (m_Gizmo.Update(view, pivot, mode, settings, input))
             {
-                const glm::mat4 world   = delta * m_Scene->GetWorldTransform(entity);
-                const Entity    owner   = m_Scene->GetParent(entity);
-                const glm::mat4 local   = owner ? glm::inverse(m_Scene->GetWorldTransform(owner)) * world : world;
-                glm::vec3       position, rotation, size;
-                Math::DecomposeTransform(local, position, rotation, size);
-                entity.PatchComponent<TransformComponent>([&](TransformComponent& tc) {
-                    tc.Position = position;
-                    tc.Rotation = rotation;
-                    tc.Scale    = size;
-                });
+                case Gizmo::Event::Began:
+                    m_GizmoTargets.Begin(*m_Scene, targets);
+                    break;
+                case Gizmo::Event::Dragged:
+                    m_GizmoTargets.Apply(m_Gizmo.GetDelta());
+                    break;
+                case Gizmo::Event::Committed:
+                    // The editor records the step once the button is up (EditorLayer::TrackSceneEdits).
+                    m_GizmoTargets.Apply(m_Gizmo.GetDelta());
+                    m_GizmoTargets.Clear();
+                    break;
+                case Gizmo::Event::Cancelled:
+                    m_GizmoTargets.Restore();
+                    m_GizmoTargets.Clear();
+                    break;
+                case Gizmo::Event::None:
+                    break;
             }
-            return;
+            m_Gizmo.AppendDraws(draws);
         }
+        if (dragging && !IsGizmoDragging() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            m_SwallowRightClick = true;
+        m_Client->SetGizmo(std::move(draws));
+        DrawGizmoReadout(*gizmo);
+    }
 
-        const Entity    parent = m_Scene->GetParent(selected);
-        const glm::mat4 local  = parent ? glm::inverse(m_Scene->GetWorldTransform(parent)) * transform : transform;
-        glm::vec3       translation, rotation, scale;
-        Math::DecomposeTransform(local, translation, rotation, scale);
-        // Edit through PatchComponent so the scene's render world sees the change.
-        selected.PatchComponent<TransformComponent>([&](TransformComponent& tc) {
-        switch (m_GizmoType)
-        {
-            case ImGuizmo::TRANSLATE:
-                tc.Position = translation;
-                break;
-            case ImGuizmo::ROTATE:
-            {
-                // Map the stored rotation to [-pi, pi], the range the decomposition returns.
-                glm::vec3 original = tc.Rotation;
-                for (int i = 0; i < 3; ++i)
-                    original[i] = fmodf(original[i] + glm::pi<float>(), glm::two_pi<float>()) - glm::pi<float>();
-                glm::vec3 delta = rotation - original;
-                // Avoid drift from numeric precision.
-                for (int i = 0; i < 3; ++i)
-                    if (fabs(delta[i]) < 0.001f)
-                        delta[i] = 0.0f;
-                tc.Rotation += delta;
-                break;
-            }
-            case ImGuizmo::SCALE:
-                tc.Scale = scale;
-                break;
-        }
-        });
+    void ViewportPanel::DrawGizmoReadout(const Gizmo::TransformGizmo& gizmo)
+    {
+        const std::string text = gizmo.Readout();
+        if (text.empty())
+            return;
+        using EditorTheme::Px;
+        ImDrawList*     draw = ImGui::GetWindowDrawList();
+        const glm::vec2 at   = gizmo.ReadoutPosition();
+        const ImVec2    size = ImGui::CalcTextSize(text.c_str());
+        const ImVec2    pad {Px(6.0f), Px(3.0f)};
+        draw->AddRectFilled({at.x, at.y}, {at.x + size.x + pad.x * 2, at.y + size.y + pad.y * 2}, IM_COL32(18, 18, 22, 215),
+                            Px(4.0f));
+        draw->AddText({at.x + pad.x, at.y + pad.y}, IM_COL32(240, 240, 240, 255), text.c_str());
     }
 
     void ViewportPanel::DrawToolbar()
@@ -714,11 +829,12 @@ namespace Kans
 
         // Left: transform tools; space and snapping; editable-mesh element modes.
         float x = OverlayGroup({m_Min.x + Px(10.0f), top}, [&] {
-            const std::pair<int, std::pair<const char*, const char*>> tools[] = {
-                {-1, {ICON_FA_POINTER, "Select (Q)"}},
-                {ImGuizmo::TRANSLATE, {ICON_FA_ARROWS_MOVE, "Move (W)"}},
-                {ImGuizmo::ROTATE, {ICON_FA_ROTATE, "Rotate (E)"}},
-                {ImGuizmo::SCALE, {ICON_FA_SCALE, "Scale (R)"}},
+            const std::pair<Tool, std::pair<const char*, const char*>> tools[] = {
+                {Tool::Select, {ICON_FA_POINTER, "Select (Q)"}},
+                {Tool::Move, {ICON_FA_ARROWS_MOVE, "Move (W)"}},
+                {Tool::Rotate, {ICON_FA_ROTATE, "Rotate (E)"}},
+                {Tool::Scale, {ICON_FA_SCALE, "Scale (R)"}},
+                {Tool::Transform, {ICON_FA_EXPAND, "Move, rotate and scale (Y)"}},
             };
             bool first = true;
             for (const auto& [type, info] : tools)
@@ -726,24 +842,43 @@ namespace Kans
                 if (!first)
                     ImGui::SameLine();
                 first = false;
-                if (ToolButton(info.first, info.second, m_GizmoType == type))
-                    m_GizmoType = type;
+                if (ToolButton(info.first, info.second, m_Tool == type, !IsGizmoDragging()))
+                    m_Tool = type;
             }
         }) + gap;
         x = OverlayGroup({x, top}, [&] {
-            const bool local = m_GizmoMode == ImGuizmo::LOCAL;
-            if (Widgets::TextButton(local ? ICON_FA_CUBE : ICON_FA_GLOBE,
-                                    local ? "Local" : "World",
-                                    local ? "Local space (click for world)" : "World space (click for local)"))
-                m_GizmoMode = local ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
+            // Orientation: local, world, view (each click moves to the next).
+            const auto orientation = m_Orientation;
+            const char* icon  = orientation == Gizmo::Orientation::Local ? ICON_FA_CUBE :
+                                orientation == Gizmo::Orientation::World ? ICON_FA_GLOBE :
+                                                                           ICON_FA_VIDEO;
+            const char* label = orientation == Gizmo::Orientation::Local ? "Local" :
+                                orientation == Gizmo::Orientation::World ? "World" :
+                                                                           "View";
+            const char* tip   = orientation == Gizmo::Orientation::Local ? "Local axes (click for world)" :
+                                orientation == Gizmo::Orientation::World ? "World axes (click for view)" :
+                                                                           "View axes (click for local)";
+            if (Widgets::TextButton(icon, label, tip) && !IsGizmoDragging())
+                m_Orientation = orientation == Gizmo::Orientation::Local ? Gizmo::Orientation::World :
+                                orientation == Gizmo::Orientation::World ? Gizmo::Orientation::View :
+                                                                           Gizmo::Orientation::Local;
+            ImGui::SameLine();
+            // Pivot: the selection's median point or the active entity.
+            const bool median = m_PivotMode == Gizmo::PivotMode::Median;
+            if (ToolButton(median ? ICON_FA_CIRCLE_DOT : ICON_FA_THUMBTACK,
+                           median ? "Pivot: the selection's median point (click for the active entity)" :
+                                    "Pivot: the active entity (click for the median point)",
+                           false,
+                           !IsGizmoDragging()))
+                m_PivotMode = median ? Gizmo::PivotMode::Active : Gizmo::PivotMode::Median;
             ImGui::SameLine();
             if (ToolButton(ICON_FA_MAGNET, "Snap (or hold Ctrl while dragging)", m_GizmoSnap))
                 m_GizmoSnap = !m_GizmoSnap;
             ImGui::SameLine();
-            float*      snapStep = m_GizmoType == ImGuizmo::ROTATE ? &m_SnapRotate :
-                                   m_GizmoType == ImGuizmo::SCALE  ? &m_SnapScale :
-                                                                     &m_SnapMove;
-            const char* format   = m_GizmoType == ImGuizmo::ROTATE ? "%.0f°" : "%.2f";
+            float*      snapStep = m_Tool == Tool::Rotate ? &m_SnapRotate :
+                                   m_Tool == Tool::Scale  ? &m_SnapScale :
+                                                            &m_SnapMove;
+            const char* format   = m_Tool == Tool::Rotate ? "%.0f°" : "%.2f";
             ImGui::SetNextItemWidth(Px(64.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {Px(6.0f), (Px(26.0f) - ImGui::GetFontSize()) * 0.5f});
             ImGui::DragFloat("##snap", snapStep, 0.05f, 0.01f, 360.0f, format);
@@ -855,6 +990,8 @@ namespace Kans
                 const auto label = [](const char* icon, const char* text) { return std::string(icon) + "  " + text; };
                 ImGui::Checkbox(label(ICON_FA_LIGHTBULB, "Light and camera icons").c_str(), &m_ShowIcons);
                 ImGui::Checkbox(label(ICON_FA_CHART_LINE, "Statistics").c_str(), &m_ShowStats);
+                ImGui::SetNextItemWidth(EditorTheme::Px(120.0f));
+                ImGui::SliderFloat("Gizmo size", &m_GizmoSize, 60.0f, 220.0f, "%.0f px");
                 ImGui::Checkbox(label(ICON_FA_BORDER_ALL, "Grid").c_str(), &state.EnableGridShader);
                 if (state.EnableGridShader && PropertyGrid::Begin("##Grid", 96.0f))
                 {

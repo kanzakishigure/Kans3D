@@ -42,6 +42,6 @@ namespace Kans
         void AddPasses(RenderExtensionPoint point, const RenderFeatureContext& context) override;
     };
     // Registers the editor's overlays (grid, debug shells, selection and drag-preview
-    // outlines); called by each editor viewport for its own feature set.
+    // outlines, transform handles); called by each editor viewport for its own feature set.
     void RegisterDefaultEditorFeatures(RenderFeatureSet& features);
 } // namespace Kans

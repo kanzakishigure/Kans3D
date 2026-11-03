@@ -3,7 +3,6 @@
 #include <functional>
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Scene/Components.h"
-#include "ImGuizmo.h"
 #include "Physics/PhysicsEditing.h"
 #include "Physics/SecondaryMotionEditing.h"
 #include "Physics/VehicleFieldEditing.h"
@@ -162,7 +161,7 @@ namespace Kans
         const float    radius    = 5.0f;
         bool           anyActive = false;
         // While the transform gizmo drags, the handles only show.
-        const bool gizmoBusy = ImGuizmo::IsUsing();
+        const bool gizmoBusy = IsGizmoDragging();
         // One handle: a dot that drags along `direction` (world) from `position` (world).
         const auto handle = [&](ImGuiID                                               id,
                                 glm::vec3                                             position,

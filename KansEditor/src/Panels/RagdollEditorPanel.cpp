@@ -5,7 +5,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include "ImGuizmo.h"
 #include "Kans3D/Asset/AssetRegistry.h"
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/FileSystem/FileSystem.h"
@@ -606,9 +605,13 @@ namespace Kans
         ImDrawList* draw = ImGui::GetWindowDrawList();
         m_Preview.Step(io.DeltaTime);
         // The preview scene rendered, or a plain backdrop.
+        // Last frame's gizmo handles; this frame sets them again when the gizmo still shows.
+        const std::vector<GizmoDraw> handles = std::move(m_GizmoDraws);
+        m_GizmoDraws.clear();
         const uintptr_t image =
             m_Render && m_Preview.GetScene() ?
-                m_Render(m_Preview.GetScene(), m_Camera, {uint32_t(std::max(1.0f, size.x)), uint32_t(std::max(1.0f, size.y))}) :
+                m_Render(m_Preview.GetScene(), m_Camera, {uint32_t(std::max(1.0f, size.x)), uint32_t(std::max(1.0f, size.y))},
+                         handles) :
                 0;
         if (image)
         {
@@ -754,44 +757,71 @@ namespace Kans
         if (!anyActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             m_Drag.reset();
 
-        // The move/rotate gizmo: the primitive's offset or the joint frame (its own ImGuizmo ID, so the
-        // scene view's gizmo never takes its drags).
+        // The move/rotate gizmo on the primitive's offset or the joint frame, in local axes.
         m_GizmoWasUsing = false;
         if (m_GizmoOperation != 0 && boneFrame && !m_Drag)
         {
             const bool joint = m_GizmoOperation == 3;
             if ((joint && constraint < 0) || (!joint && (body < 0 || m_Primitive >= int(data->Bodies[size_t(body)].Shapes.size()))))
+            {
+                m_Gizmo.Reset();
                 return;
+            }
             const Physics::ShapeOffset offset =
                 joint ? data->Constraints[size_t(constraint)].Frame :
                         Edit::OffsetOf(data->Bodies[size_t(body)].Shapes[size_t(m_Primitive)]);
-            glm::mat4 world = *boneFrame * glm::translate(glm::mat4(1.0f), offset.Position) * glm::mat4_cast(offset.Rotation);
-            ImGuizmo::PushID("RagdollEditor");
-            ImGuizmo::SetOrthographic(m_Camera.IsOrthographic());
-            ImGuizmo::SetDrawlist();
-            ImGuizmo::SetRect(m_Min.x, m_Min.y, m_Max.x - m_Min.x, m_Max.y - m_Min.y);
-            ImGuizmo::Manipulate(glm::value_ptr(m_Camera.GetViewMatrix()),
-                                 glm::value_ptr(m_Camera.GetProjectionMatrix()),
-                                 m_GizmoOperation == 1 ? ImGuizmo::TRANSLATE : ImGuizmo::ROTATE,
-                                 ImGuizmo::LOCAL,
-                                 glm::value_ptr(world));
-            m_GizmoWasUsing = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
-            const bool using_ = ImGuizmo::IsUsing();
-            ImGuizmo::PopID();
-            if (using_)
+            const glm::mat4 world =
+                *boneFrame * glm::translate(glm::mat4(1.0f), offset.Position) * glm::mat4_cast(offset.Rotation);
+            const auto view = Gizmo::View::From(m_Camera, {m_Min.x, m_Min.y}, {m_Max.x - m_Min.x, m_Max.y - m_Min.y});
+            Gizmo::Pivot pivot;
+            pivot.Position = glm::vec3(world[3]);
+            pivot.Axes     = Gizmo::ResolveAxes(Gizmo::Orientation::Local, world, view);
+            Gizmo::Settings settings;
+            settings.Size       = EditorTheme::Px(100.0f);
+            settings.PickRadius = EditorTheme::Px(10.0f);
+            Gizmo::Input input;
+            input.Mouse      = {io.MousePos.x, io.MousePos.y};
+            input.Down       = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+            input.Pressed    = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+            input.Released   = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+            input.Cancel     = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+            input.InvertSnap = io.KeyCtrl;
+            input.Allowed    = hovered;
+            const auto mode  = m_GizmoOperation == 1 ? Gizmo::Mode::Translate : Gizmo::Mode::Rotate;
+            const auto event = m_Gizmo.Update(view, pivot, mode, settings, input);
+            m_GizmoWasUsing  = m_Gizmo.WantsPointer();
+            if (event == Gizmo::Event::Began)
             {
-                RagdollData copy = *data;
+                m_GizmoStart      = *data;
+                m_GizmoStartWorld = world;
+            }
+            else if (event == Gizmo::Event::Cancelled)
+                Edited(m_GizmoStart);
+            else if (event == Gizmo::Event::Dragged || event == Gizmo::Event::Committed)
+            {
+                const glm::mat4 moved = m_Gizmo.GetDelta().Matrix() * m_GizmoStartWorld;
+                RagdollData     copy  = m_GizmoStart;
                 if (joint)
-                    SetFromMatrix(copy.Constraints[size_t(constraint)].Frame, glm::inverse(*boneFrame) * world);
+                    SetFromMatrix(copy.Constraints[size_t(constraint)].Frame, glm::inverse(*boneFrame) * moved);
                 else
                 {
-                    auto moved = offset;
-                    SetFromMatrix(moved, glm::inverse(*boneFrame) * world);
-                    Edit::SetOffset(copy.Bodies[size_t(body)].Shapes[size_t(m_Primitive)], moved);
+                    auto changed = Edit::OffsetOf(copy.Bodies[size_t(body)].Shapes[size_t(m_Primitive)]);
+                    SetFromMatrix(changed, glm::inverse(*boneFrame) * moved);
+                    Edit::SetOffset(copy.Bodies[size_t(body)].Shapes[size_t(m_Primitive)], changed);
                 }
                 Edited(copy);
             }
+            m_Gizmo.AppendDraws(m_GizmoDraws);
+            if (const std::string text = m_Gizmo.Readout(); !text.empty())
+            {
+                const glm::vec2 at = m_Gizmo.ReadoutPosition();
+                const ImVec2    sz = ImGui::CalcTextSize(text.c_str());
+                draw->AddRectFilled({at.x, at.y}, {at.x + sz.x + 12.0f, at.y + sz.y + 6.0f}, IM_COL32(18, 18, 22, 215), 4.0f);
+                draw->AddText({at.x + 6.0f, at.y + 3.0f}, IM_COL32(240, 240, 240, 255), text.c_str());
+            }
         }
+        else
+            m_Gizmo.Reset();
     }
 
     // ---------------------------------------------------------------------- details

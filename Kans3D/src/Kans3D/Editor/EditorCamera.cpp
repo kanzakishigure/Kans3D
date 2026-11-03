@@ -3,6 +3,7 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <tuple>
 
 namespace Kans
 {
@@ -94,35 +95,41 @@ namespace Kans
         UpdateView();
     }
 
-    void EditorCamera::SetView(View view)
+    std::pair<float, float> EditorCamera::ViewAngles(View view)
     {
         constexpr float pi = glm::pi<float>();
         switch (view)
         {
             case View::Perspective:
-                m_Yaw = pi * 0.25f, m_Pitch = -pi / 6.0f;
-                break;
+                return {pi * 0.25f, -pi / 6.0f};
             case View::Top:
-                m_Yaw = 0.0f, m_Pitch = -PitchLimit;
-                break;
+                return {0.0f, -PitchLimit};
             case View::Bottom:
-                m_Yaw = 0.0f, m_Pitch = PitchLimit;
-                break;
+                return {0.0f, PitchLimit};
             case View::Front:
-                m_Yaw = 0.0f, m_Pitch = 0.0f;
-                break;
+                return {0.0f, 0.0f};
             case View::Back:
-                m_Yaw = pi, m_Pitch = 0.0f;
-                break;
+                return {pi, 0.0f};
             case View::Right:
-                m_Yaw = pi * 0.5f, m_Pitch = 0.0f;
-                break;
+                return {pi * 0.5f, 0.0f};
             case View::Left:
-                m_Yaw = -pi * 0.5f, m_Pitch = 0.0f;
-                break;
+                return {-pi * 0.5f, 0.0f};
         }
+        return {0.0f, 0.0f};
+    }
+
+    void EditorCamera::SetView(View view)
+    {
+        std::tie(m_Yaw, m_Pitch) = ViewAngles(view);
         m_Orthographic = view != View::Perspective;
         UpdateProjection();
+        UpdateView();
+    }
+
+    void EditorCamera::SetRotation(float yaw, float pitch)
+    {
+        m_Yaw   = yaw;
+        m_Pitch = glm::clamp(pitch, -PitchLimit, PitchLimit);
         UpdateView();
     }
 

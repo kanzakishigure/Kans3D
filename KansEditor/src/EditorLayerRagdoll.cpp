@@ -32,15 +32,16 @@ namespace Kans
             m_ContentBrowserPanel.Refresh();
         });
         m_RagdollEditor.SetPreviewRenderer(
-            [this](const Ref<Scene>& scene, const EditorCamera& camera, glm::uvec2 size) {
-                return RenderRagdollPreview(scene, camera, size);
+            [this](const Ref<Scene>& scene, const EditorCamera& camera, glm::uvec2 size, const std::vector<GizmoDraw>& gizmo) {
+                return RenderRagdollPreview(scene, camera, size, gizmo);
             });
         m_ContentBrowserPanel.SetCreateRagdollCallback(
             [this](const std::filesystem::path& model) { CreateRagdollForModel(model); });
         m_ViewportPanel.SetWheelSelection([this](Entity vehicle) { return m_PropertiesPanel.GetSelectedWheel(vehicle); });
     }
 
-    uintptr_t EditorLayer::RenderRagdollPreview(const Ref<Scene>& scene, const EditorCamera& camera, glm::uvec2 size)
+    uintptr_t EditorLayer::RenderRagdollPreview(const Ref<Scene>& scene, const EditorCamera& camera, glm::uvec2 size,
+                                                const std::vector<GizmoDraw>& gizmo)
     {
         if (!scene || !m_Viewport || !m_Assets)
             return 0;
@@ -64,6 +65,7 @@ namespace Kans
         if (!scene->GetPhysicsWorld())
             scene->UpdateModelPoses();
         m_RagdollPreview->Resize(size);
+        m_RagdollPreview->SetGizmo(gizmo);
         m_RagdollPreview->RenderEditor(camera);
         return m_RagdollPreview->GetOutput();
     }

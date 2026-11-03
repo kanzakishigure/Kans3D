@@ -7,6 +7,8 @@
 #include "Kans3D/Editor/EditorCamera.h"
 #include "Kans3D/UI/UIInput.h"
 #include "ClothPaintTool.h"
+#include "Gizmo/GizmoTargets.h"
+#include "Gizmo/TransformGizmo.h"
 #include "HierarchyPanel.h"
 #include "MeshEditTool.h"
 #include "Physics/VehicleFieldEditing.h"
@@ -20,10 +22,21 @@ namespace Kans
     //
     // Navigation: right drag looks around (WASD/QE fly, Shift faster, wheel
     // changes the speed), Alt+left drag orbits, middle drag pans, the wheel
-    // dollies, F frames the selection. Q/W/E/R pick the gizmo tool.
+    // dollies, F frames the selection. Q/W/E/R/Y pick the tool (select, move, rotate, scale,
+    // all three). The transform gizmo (Gizmo/TransformGizmo) moves the selection about its
+    // median point or the active entity; Esc or a right click cancels a drag, and releasing
+    // it is one undo step. The axis widget in the corner aligns or orbits the view.
     class ViewportPanel
     {
     public:
+        enum class Tool : uint8_t
+        {
+            Select,
+            Move,
+            Rotate,
+            Scale,
+            Transform // Move, rotate and scale handles together.
+        };
         // Shows the scene's primary camera outside play mode (timeline camera cuts in preview).
         void SetPreviewSceneCamera(bool show) { m_PreviewSceneCamera = show; }
         // Play mode: where the game image is (letterboxed at a chosen resolution) and the
@@ -57,6 +70,13 @@ namespace Kans
         void Draw();
 
         bool          IsHovered() const { return m_Hovered; }
+        // Whether a transform gizmo drag is in progress (the editor records undo steps after it).
+        bool          IsGizmoDragging() const { return m_Gizmo.IsDragging() || m_MeshTool.GetGizmo().IsDragging(); }
+        Tool          GetTool() const { return m_Tool; }
+        void          SetTool(Tool tool) { m_Tool = tool; }
+        void          SetGizmoOrientation(Gizmo::Orientation orientation) { m_Orientation = orientation; }
+        void          SetPivotMode(Gizmo::PivotMode mode) { m_PivotMode = mode; }
+        const Gizmo::TransformGizmo& GetGizmo() const { return m_Gizmo; }
         bool          IsNavigating() const { return m_Navigation != Navigation::None; }
         EditorCamera& GetCamera() { return m_Camera; }
         void          FocusSelection();
@@ -86,7 +106,8 @@ namespace Kans
         void Render();
         // Icons for lights and cameras, camera frustums and light directions.
         void DrawSceneOverlays();
-        void DrawViewCube();
+        // The view-axis widget: click a ball to look along it, drag to orbit.
+        void DrawViewAxes();
         void DrawStatsOverlay();
         // Projects a world point to the screen; false when behind the camera.
         bool ToScreen(const glm::vec3& point, ImVec2& screen) const;
@@ -94,6 +115,8 @@ namespace Kans
         void HandleShortcuts();
         void DrawToolbar();
         void DrawGizmo();
+        Gizmo::Settings GizmoSettings() const;
+        void            DrawGizmoReadout(const Gizmo::TransformGizmo& gizmo);
         // Physics (ViewportPhysics.cpp): the selection's collider, controller and joint gizmos,
         // the View menu's debug toggles, and the collider and hinge-limit handles.
         void DrawPhysicsOverlay();
@@ -136,14 +159,32 @@ namespace Kans
         SceneViewMode m_ViewMode  = SceneViewMode::Lit;
         GridSettings  m_Grid;
         bool          m_ShowIcons = true, m_ShowStats = false;
-        // Clickable overlay icons of this frame, and the view cube's area.
+        // Clickable overlay icons of this frame, and the view-axis widget's area.
         std::vector<std::pair<ImVec2, UUID>> m_Icons;
         ImVec2                               m_CubeMin {}, m_CubeMax {};
+        // The view-axis widget: the pressed ball (-1: the background), whether the press became an
+        // orbit drag, and an alignment in progress (yaw and pitch, eased over ViewAnimationSeconds).
+        int       m_AxisPressed = -1;
+        bool      m_AxisPressActive = false, m_AxisOrbiting = false;
+        glm::vec2 m_AxisPress {0};
+        struct ViewAnimation
+        {
+            std::pair<float, float> From, To;
+            float                   Time = 0.0f;
+            EditorCamera::View      Target;
+        };
+        std::optional<ViewAnimation> m_ViewAnimation;
 
-        // Gizmo: ImGuizmo operation (-1 = none) and mode (0 = local, 1 = world).
-        int   m_GizmoType  = 7;
-        int   m_GizmoMode  = 0;
-        bool  m_GizmoSnap  = false;
+        // Transform tool, orientation, pivot and snapping (the toolbar's settings).
+        Tool                  m_Tool        = Tool::Move;
+        Gizmo::Orientation    m_Orientation = Gizmo::Orientation::Local;
+        Gizmo::PivotMode      m_PivotMode   = Gizmo::PivotMode::Median;
+        bool                  m_GizmoSnap   = false;
+        float                 m_GizmoSize   = 110.0f; // Axis length in pixels at scale 1.
+        Gizmo::TransformGizmo m_Gizmo;
+        Gizmo::GizmoTargets   m_GizmoTargets;
+        // A right click that cancelled a drag; it does not start looking around too.
+        bool                  m_SwallowRightClick = false;
         // Last chosen orthographic view, for the camera button's label.
         const char* m_ViewName = "Perspective";
         // The right-hand toolbar's measured width, to right-align it.

@@ -6,6 +6,7 @@
 #include <vector>
 #include <imgui.h>
 #include "Kans3D/Editor/EditorAssetChoice.h"
+#include "Gizmo/TransformGizmo.h"
 #include "Kans3D/Editor/EditorCamera.h"
 #include "Physics/RagdollEditing.h"
 
@@ -29,9 +30,10 @@ namespace Kans
 
         void SetAssetManager(AssetManager* assets) { m_Assets = assets; }
         void SetAssetChoices(std::vector<EditorAssetChoice> choices) { m_Choices = std::move(choices); }
-        // Renders the preview scene through the camera at a size and returns the image to show (0:
-        // none); without one the overlay draws on a plain backdrop.
-        using PreviewRenderer = std::function<uintptr_t(const Ref<Scene>&, const EditorCamera&, glm::uvec2)>;
+        // Renders the preview scene through the camera at a size, with the transform gizmo's handles,
+        // and returns the image to show (0: none); without one the overlay draws on a plain backdrop.
+        using PreviewRenderer =
+            std::function<uintptr_t(const Ref<Scene>&, const EditorCamera&, glm::uvec2, const std::vector<GizmoDraw>&)>;
         void SetPreviewRenderer(PreviewRenderer render) { m_Render = std::move(render); }
         // After a save: rebuild the file.
         void SetSavedCallback(std::function<void(const std::filesystem::path&)> saved) { m_Saved = std::move(saved); }
@@ -111,6 +113,12 @@ namespace Kans
         };
         std::optional<Drag> m_Drag;
         bool                m_GizmoWasUsing = false;
+        // The move/rotate gizmo, the data and handle transform when its drag began, and the
+        // handles for the next preview frame.
+        Gizmo::TransformGizmo  m_Gizmo;
+        RagdollData            m_GizmoStart;
+        glm::mat4              m_GizmoStartWorld {1};
+        std::vector<GizmoDraw> m_GizmoDraws;
 
         // Generation (new asset, or Regenerate).
         RagdollGenerationOptions                          m_Options;

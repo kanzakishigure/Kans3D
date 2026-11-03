@@ -2,6 +2,7 @@
 #include "EditorRenderFeatures.h"
 #include "Kans3D/Renderer/RenderFrame.h"
 #include "Kans3D/Renderer/Resource/EditorGridPass.h"
+#include "TransformGizmoFeature.h"
 
 namespace Kans
 {
@@ -11,6 +12,8 @@ namespace Kans
         features.Register("DebugGeometry", std::make_unique<DebugGeometryFeature>());
         features.Register("EditorSelection", std::make_unique<EditorSelectionFeature>());
         features.Register("EditorPreview", std::make_unique<EditorPreviewFeature>());
+        // Last, so the handles draw over every other overlay.
+        features.Register("TransformGizmo", std::make_unique<TransformGizmoFeature>());
     }
     void EditorGridFeature::AddPasses(RenderExtensionPoint point, const RenderFeatureContext& context)
     {

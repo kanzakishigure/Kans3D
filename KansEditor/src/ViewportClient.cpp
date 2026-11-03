@@ -9,7 +9,7 @@ namespace Kans
     namespace
     {
         // Editor overlays; game views (the scene camera) render without them.
-        constexpr const char* EditorOnlyFeatures[] = {"EditorGrid", "EditorSelection", "EditorPreview"};
+        constexpr const char* EditorOnlyFeatures[] = {"EditorGrid", "EditorSelection", "EditorPreview", "TransformGizmo"};
     } // namespace
 
     ViewportClient::ViewportClient() :
@@ -122,6 +122,7 @@ namespace Kans
         m_Highlights           = {}; // Editor intents never reach a game view.
         m_LastEditorHighlights = {};
         m_Preview.reset();
+        m_Gizmo.clear();
         Render(std::move(view), false);
         return true;
     }
@@ -148,6 +149,9 @@ namespace Kans
         if (editorFeatures)
             m_LastEditorHighlights = view.Highlights;
         view.Preview             = std::move(m_Preview);
+        if (editorFeatures)
+            view.Gizmo = std::move(m_Gizmo);
+        m_Gizmo.clear();
         m_Highlights             = {};
         m_Preview.reset();
         m_Last = m_Renderer->Render(m_Scene->GetRenderWorld(), view, *m_Target);

@@ -7,6 +7,7 @@
 #include "Kans3D/Scene/EnvironmentSettings.h"
 #include "Kans3D/UI/UIInstance.h"
 #include "Graph/GraphCapture.h"
+#include "GizmoDraw.h"
 #include "ImmediatePassState.h"
 #include "RenderSettings.h"
 #include "Resource/Camera.h"
@@ -277,6 +278,8 @@ namespace Kans
         ViewEnvironment                    EnvironmentMaps;
         RenderHardware::Handle<RenderHardware::Texture> BrdfLUT;
         std::optional<PrefabPreview>                    Preview;
+        // Editor transform handles, drawn last over the display image (TransformGizmo feature).
+        std::vector<GizmoDraw> Gizmo;
     };
     // Scene-camera game view: no editor features, highlights or previews.
     std::optional<RenderView> MakeRuntimeView(Scene& scene, glm::uvec2 viewport);

@@ -46,6 +46,12 @@ namespace Kans
         void SetOrthographic(bool orthographic);
         // Adopts an externally edited view matrix, keeping the focus distance.
         void SetViewMatrix(const glm::mat4& view);
+        // Turns around the focus to a yaw and pitch (radians; pitch is clamped short of straight up/down).
+        void SetRotation(float yaw, float pitch);
+        float GetYaw() const { return m_Yaw; }
+        float GetPitch() const { return m_Pitch; }
+        // The yaw and pitch SetView uses for a view.
+        static std::pair<float, float> ViewAngles(View view);
 
         bool             IsOrthographic() const { return m_Orthographic; }
         const glm::mat4& GetViewMatrix() const { return m_View; }

@@ -57,6 +57,8 @@ namespace Kans
         // Consumed by the next rendered frame.
         void SetHighlights(ViewHighlights highlights) { m_Highlights = std::move(highlights); }
         void SetPreview(AssetID prefab, const glm::mat4& transform) { m_Preview = PrefabPreview {prefab, transform}; }
+        // Transform handles for the next editor frame (drawn by the TransformGizmo feature).
+        void SetGizmo(std::vector<GizmoDraw> draws) { m_Gizmo = std::move(draws); }
 
         // Renders through the editor camera, or through the scene's primary camera
         // with no editor features (false when the scene has no camera).
@@ -85,6 +87,7 @@ namespace Kans
         ViewHighlights                       m_Highlights;
         ViewHighlights                       m_LastEditorHighlights;
         std::optional<PrefabPreview>         m_Preview;
+        std::vector<GizmoDraw>               m_Gizmo;
         RenderResult                         m_Last;
 
         std::chrono::steady_clock::time_point m_StartTime = std::chrono::steady_clock::now();
