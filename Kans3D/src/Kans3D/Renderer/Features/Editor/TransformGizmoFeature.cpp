@@ -13,17 +13,17 @@ namespace Kans
 layout(location=0) in vec3 Position;
 layout(location=1) in vec3 Normal;
 struct Item { mat4 Model; vec4 Color; };
-layout(set=0,binding=0,std140) uniform Parameters { mat4 ViewProjection; mat4 View; vec4 Options; Item Items[64]; } p;
+layout(set=0,binding=0,std140) uniform Parameters { mat4 ViewProjection; mat4 View; vec4 Options; Item Items[128]; } p;
 layout(location=0) out vec4 HandleColor;
 void main() {
-    Item item = p.Items[gl_InstanceIndex % 64];
+    Item item = p.Items[gl_InstanceIndex % 128];
     gl_Position = p.ViewProjection * (item.Model * vec4(Position, 1));
     float shade = 1.0;
     if (dot(Normal, Normal) > 0.25) {
         vec3 n = normalize(mat3(p.View) * (transpose(inverse(mat3(item.Model))) * Normal));
         shade = 0.62 + 0.38 * abs(n.z);
     }
-    HandleColor = vec4(item.Color.rgb * shade, item.Color.a * (gl_InstanceIndex >= 64 ? p.Options.x : 1.0));
+    HandleColor = vec4(item.Color.rgb * shade, item.Color.a * (gl_InstanceIndex >= 128 ? p.Options.x : 1.0));
 }
 )glsl";
         constexpr const char* Fragment = R"glsl(#version 450
@@ -46,7 +46,7 @@ void main() { Color = HandleColor; }
             glm::vec4 Options;
             Item      Items[TransformGizmoFeature::MaxDraws];
         };
-        static_assert(TransformGizmoFeature::MaxDraws == 64, "The shader's item array has 64 entries.");
+        static_assert(TransformGizmoFeature::MaxDraws == 128, "The shader's item array has 128 entries.");
 
         struct MeshBuilder
         {

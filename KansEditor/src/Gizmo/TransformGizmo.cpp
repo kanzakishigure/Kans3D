@@ -333,10 +333,17 @@ namespace Kans::Gizmo
     Handle TransformGizmo::HitTest(const View& view, const Pivot& pivot, Mode mode, const Settings& settings,
                                    glm::vec2 mouse) const
     {
+        return Pick(view, pivot, mode, settings, mouse).Id;
+    }
+
+    int HandlePriority(Handle handle) { return Priority(handle); }
+
+    Hit TransformGizmo::Pick(const View& view, const Pivot& pivot, Mode mode, const Settings& settings, glm::vec2 mouse) const
+    {
         const glm::vec3 p      = pivot.Position;
         const auto      centre = view.ToScreen(p);
         if (!centre)
-            return Handle::None;
+            return {};
         const float     s     = WorldSize(view, p, settings);
         const glm::vec3 sight = view.DirectionTo(p);
         const float     pick  = settings.PickRadius;
@@ -435,8 +442,8 @@ namespace Kans::Gizmo
         if (hits.empty())
         {
             if (mode == Mode::Rotate && fromCentre <= RingRadius * settings.Size)
-                return Handle::Trackball;
-            return Handle::None;
+                return {Handle::Trackball, view.Depth(p), fromCentre};
+            return {};
         }
         // The nearest depth wins; within a small depth band, priority and then distance.
         float nearest = std::numeric_limits<float>::max();
@@ -453,7 +460,7 @@ namespace Kans::Gizmo
             if (priority > bestPriority || (priority == bestPriority && h.Distance < best.Distance))
                 best = h, bestPriority = priority;
         }
-        return best.Id;
+        return {best.Id, best.Depth, best.Distance};
     }
 
     // ---------------------------------------------------------------------- state machine

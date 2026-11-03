@@ -6,6 +6,8 @@
 #include <vector>
 #include <imgui.h>
 #include "Kans3D/Editor/EditorAssetChoice.h"
+#include "Gizmo/Handles.h"
+#include "Gizmo/ModalTransform.h"
 #include "Gizmo/TransformGizmo.h"
 #include "Kans3D/Editor/EditorCamera.h"
 #include "Physics/RagdollEditing.h"
@@ -57,6 +59,11 @@ namespace Kans
         // The panel's contents in the current window (the screenshot test draws them directly).
         void DrawContents();
         bool HasFocus() const { return m_Focused; }
+        // Whether a handle, the gizmo or a modal G/R is changing the data.
+        bool IsTransforming() const { return m_Handles.IsDragging() || m_Gizmo.IsDragging() || m_Modal.IsActive(); }
+        const Gizmo::HandleContext&  Handles() const { return m_Handles; }
+        const Gizmo::ModalTransform& Modal() const { return m_Modal; }
+        static constexpr Gizmo::HandleId GizmoHandleId = 0x7261676467697a6dull;
         bool Save();
         bool Undo();
         bool Redo();
@@ -77,8 +84,6 @@ namespace Kans
         void DrawGenerate();
         void DrawClosePrompt();
         void Frame();
-        // Viewport handles: a dot dragged along a screen direction, or around a plane.
-        bool Handle(ImGuiID id, glm::vec3 position, glm::vec3 along, glm::vec4 tint, const char* tooltip, float* travel);
         bool ToScreen(glm::vec3 point, ImVec2& out) const;
         // The skeleton (from the preview) and its asset ID.
         const SkeletonData* Skeleton() const { return m_Preview.GetSkeleton(); }
@@ -103,16 +108,14 @@ namespace Kans
         int                      m_Primitive = 0;
         int                      m_GizmoOperation = 0; // 0 none, 1 move primitive, 2 rotate primitive, 3 rotate joint frame.
 
-        // A handle being dragged: which one, where the pointer started, and the data then.
-        struct Drag
-        {
-            ImGuiID     Handle = 0;
-            ImVec2      Start {};
-            glm::vec2   PixelsPerUnit {0.0f};
-            RagdollData Data;
-        };
-        std::optional<Drag> m_Drag;
-        bool                m_GizmoWasUsing = false;
+        // The preview's handles (primitive sizes, limits), which share hover with the gizmo.
+        Gizmo::HandleContext m_Handles;
+        bool                 m_GizmoWasUsing = false;
+        // Modal G and R on the selected primitive: the data and its transform when it began.
+        Gizmo::ModalTransform m_Modal;
+        RagdollData           m_ModalStart;
+        glm::mat4             m_ModalStartWorld {1};
+        bool                  m_ModalWasActive = false;
         // The move/rotate gizmo, the data and handle transform when its drag began, and the
         // handles for the next preview frame.
         Gizmo::TransformGizmo  m_Gizmo;

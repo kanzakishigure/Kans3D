@@ -22,7 +22,8 @@ namespace Kans
     // Click selects the element under the cursor (Shift adds or removes), a left
     // drag selects with a rectangle, the move/rotate/scale gizmo transforms the
     // selection around its centre and Shift while starting a move extrudes the
-    // selected faces or boundary edges. 1-4 switch Object/Vertex/Edge/Face.
+    // selected faces or boundary edges (as does E over the view, through the viewport's modal
+    // transform). 1-4 switch Object/Vertex/Edge/Face.
     class MeshEditTool
     {
     public:
@@ -70,6 +71,16 @@ namespace Kans
                                 const Gizmo::Settings&    settings,
                                 const Gizmo::Input&       input,
                                 bool                      extrude);
+        // The selection's pivot: its centre, with axes from `orientation` (Local stands on the
+        // selected elements' normal). Empty without an element selection.
+        std::optional<Gizmo::Pivot> SelectionPivot(Entity entity, const View& view, Gizmo::Orientation orientation) const;
+        // Transforms driven from outside (the viewport's modal G, R, S and E): BeginTransform keeps
+        // the mesh and selection (extruding the selected faces or boundary edges once when asked),
+        // ApplyDelta transforms the selection of that mesh by a world-space delta from its start,
+        // and EndTransform keeps the result or restores the mesh and selection exactly.
+        bool BeginTransform(Entity entity, bool extrude);
+        void ApplyDelta(Entity entity, const View& view, const Gizmo::Delta& delta);
+        void EndTransform(Entity entity, bool keep);
         // The gizmo's handles as of the last Manipulate (none when it was not shown).
         void AppendGizmoDraws(std::vector<GizmoDraw>& out) const;
         const Gizmo::TransformGizmo& GetGizmo() const { return m_Gizmo; }

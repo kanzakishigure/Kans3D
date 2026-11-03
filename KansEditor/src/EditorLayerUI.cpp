@@ -251,7 +251,10 @@ namespace Kans
                 ImGui::IsKeyDown(ImGuiKey_Y))
                 return;
         }
-        if (io.KeyCtrl)
+        // A transform in progress (gizmo, handle or modal G/R/S, where Ctrl toggles snapping) ends
+        // before the scene can be saved, replaced, undone or played.
+        const bool transforming = m_ViewportPanel.IsGizmoDragging();
+        if (io.KeyCtrl && !transforming)
         {
             if (ImGui::IsKeyPressed(ImGuiKey_N, false))
                 ConfirmDiscard("creating a new scene", [this] { Record(NewScene()); });

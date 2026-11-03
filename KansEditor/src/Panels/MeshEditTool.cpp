@@ -305,28 +305,13 @@ namespace Kans
         draw->PopClipRect();
     }
 
-    Gizmo::Event MeshEditTool::Manipulate(Entity                 entity,
-                                          const View&            view,
-                                          Gizmo::Mode            mode,
-                                          Gizmo::Orientation     orientation,
-                                          const Gizmo::Settings& settings,
-                                          const Gizmo::Input&    input,
-                                          bool                   extrude)
+    std::optional<Gizmo::Pivot> MeshEditTool::SelectionPivot(Entity entity, const View& view, Gizmo::Orientation orientation) const
     {
-        Validate(entity);
-        m_GizmoShown = false;
         if (!IsEditing(entity))
-        {
-            m_Gizmo.Reset();
-            m_Manipulating = false;
-            return Gizmo::Event::None;
-        }
+            return std::nullopt;
         const auto& component = entity.GetComponent<EditableMeshComponent>();
-        if (SelectionVertices(component.Mesh, m_Selection).empty() && !m_Gizmo.IsDragging())
-        {
-            m_Gizmo.Reset();
-            return Gizmo::Event::None;
-        }
+        if (SelectionVertices(component.Mesh, m_Selection).empty())
+            return std::nullopt;
         const glm::mat4   world = view.Scene->GetWorldTransform(entity);
         const Gizmo::View gv    = Gizmo::View::From(*view.Camera, {view.Min.x, view.Min.y},
                                                     {view.Max.x - view.Min.x, view.Max.y - view.Min.y});
@@ -348,65 +333,118 @@ namespace Kans
                 pivot.Axes = glm::mat3(side, glm::cross(normal, side), normal);
             }
         }
+        return pivot;
+    }
+
+    bool MeshEditTool::BeginTransform(Entity entity, bool extrude)
+    {
+        if (!IsEditing(entity))
+            return false;
+        const auto& component = entity.GetComponent<EditableMeshComponent>();
+        if (SelectionVertices(component.Mesh, m_Selection).empty())
+            return false;
+        m_Manipulating      = true;
+        m_Original          = component;
+        m_OriginalSelection = m_Selection;
+        m_StartMesh         = component.Mesh;
+        // Extrusion copies the selected faces (or boundary edges) once; the transform moves the copy.
+        if (extrude && (m_Mode == Mode::Face || m_Mode == Mode::Edge))
+        {
+            constexpr float seed = 1e-4f; // Extrusion needs a nonzero distance; the drag sets the real one.
+            auto            result =
+                m_Mode == Mode::Face ?
+                               ExtrudeFaces(m_StartMesh, m_Selection.Faces, seed,
+                                            m_ExtrudeIndividual ? ExtrudeMode::Individual : ExtrudeMode::Group) :
+                               ExtrudeEdges(m_StartMesh, m_Selection.Edges, seed);
+            if (!result)
+            {
+                Fail("Extrude: " + result.Error);
+                m_StartMesh = component.Mesh;
+            }
+            else if (m_Mode == Mode::Face)
+                m_Selection.Faces = result.Faces;
+            else
+                m_Selection.Edges = result.Edges;
+        }
+        return true;
+    }
+
+    void MeshEditTool::ApplyDelta(Entity entity, const View& view, const Gizmo::Delta& delta)
+    {
+        if (!m_Manipulating || !IsEditing(entity))
+            return;
+        // The change so far, as a world-space matrix, applied to the mesh it started from.
+        const glm::mat4 world = view.Scene->GetWorldTransform(entity);
+        const glm::mat4 local = glm::inverse(world) * delta.Matrix() * world;
+        EditableMesh    mesh  = m_StartMesh;
+        if (auto result = TransformVertices(mesh, SelectionVertices(mesh, m_Selection), local); !result)
+        {
+            Fail("Transform: " + result.Error);
+            return;
+        }
+        entity.PatchComponent<EditableMeshComponent>([&](EditableMeshComponent& c) {
+            c.Mesh = std::move(mesh);
+            c.Shape.reset();
+        });
+    }
+
+    void MeshEditTool::EndTransform(Entity entity, bool keep)
+    {
+        if (!m_Manipulating)
+            return;
+        m_Manipulating = false;
+        if (keep || !entity || !entity.HasComponent<EditableMeshComponent>())
+            return;
+        entity.PatchComponent<EditableMeshComponent>([&](EditableMeshComponent& c) { c = m_Original; });
+        m_Selection = m_OriginalSelection;
+    }
+
+    Gizmo::Event MeshEditTool::Manipulate(Entity                 entity,
+                                          const View&            view,
+                                          Gizmo::Mode            mode,
+                                          Gizmo::Orientation     orientation,
+                                          const Gizmo::Settings& settings,
+                                          const Gizmo::Input&    input,
+                                          bool                   extrude)
+    {
+        Validate(entity);
+        m_GizmoShown = false;
+        if (!IsEditing(entity))
+        {
+            m_Gizmo.Reset();
+            m_Manipulating = false;
+            return Gizmo::Event::None;
+        }
+        const auto pivot = SelectionPivot(entity, view, orientation);
+        if (!pivot && !m_Gizmo.IsDragging())
+        {
+            m_Gizmo.Reset();
+            return Gizmo::Event::None;
+        }
+        const Gizmo::View gv = Gizmo::View::From(*view.Camera, {view.Min.x, view.Min.y},
+                                                 {view.Max.x - view.Min.x, view.Max.y - view.Min.y});
         m_GizmoShown     = true;
-        const auto event = m_Gizmo.Update(gv, pivot, mode, settings, input);
+        const auto event = m_Gizmo.Update(gv, pivot.value_or(Gizmo::Pivot {}), mode, settings, input);
         switch (event)
         {
             case Gizmo::Event::None:
                 return event;
             case Gizmo::Event::Cancelled:
-                entity.PatchComponent<EditableMeshComponent>([&](EditableMeshComponent& c) { c = m_Original; });
-                m_Selection    = m_OriginalSelection;
-                m_Manipulating = false;
+                EndTransform(entity, false);
                 return event;
             case Gizmo::Event::Began:
-            {
-                m_Manipulating      = true;
-                m_Original          = component;
-                m_OriginalSelection = m_Selection;
-                m_StartMesh         = component.Mesh;
                 // Shift while starting a move extrudes the selected faces (or boundary edges) and moves the copy.
-                if (extrude && m_Gizmo.GetDelta().Op == Gizmo::Operation::Translate &&
-                    (m_Mode == Mode::Face || m_Mode == Mode::Edge))
-                {
-                    constexpr float seed = 1e-4f; // Extrusion needs a nonzero distance; the drag sets the real one.
-                    auto            result =
-                        m_Mode == Mode::Face ?
-                                       ExtrudeFaces(m_StartMesh, m_Selection.Faces, seed,
-                                                    m_ExtrudeIndividual ? ExtrudeMode::Individual : ExtrudeMode::Group) :
-                                       ExtrudeEdges(m_StartMesh, m_Selection.Edges, seed);
-                    if (!result)
-                    {
-                        Fail("Extrude: " + result.Error);
-                        m_StartMesh = component.Mesh;
-                    }
-                    else if (m_Mode == Mode::Face)
-                        m_Selection.Faces = result.Faces;
-                    else
-                        m_Selection.Edges = result.Edges;
-                }
+                BeginTransform(entity, extrude && m_Gizmo.GetDelta().Op == Gizmo::Operation::Translate);
                 break;
-            }
             case Gizmo::Event::Dragged:
             case Gizmo::Event::Committed:
                 break;
         }
         if (!m_Manipulating)
             return event;
+        ApplyDelta(entity, view, m_Gizmo.GetDelta());
         if (event == Gizmo::Event::Committed)
-            m_Manipulating = false;
-        // The drag so far, as a world-space change, applied to the mesh it started from.
-        const glm::mat4 delta = glm::inverse(world) * m_Gizmo.GetDelta().Matrix() * world;
-        EditableMesh    mesh  = m_StartMesh;
-        if (auto result = TransformVertices(mesh, SelectionVertices(mesh, m_Selection), delta); !result)
-        {
-            Fail("Transform: " + result.Error);
-            return event;
-        }
-        entity.PatchComponent<EditableMeshComponent>([&](EditableMeshComponent& c) {
-            c.Mesh = std::move(mesh);
-            c.Shape.reset();
-        });
+            EndTransform(entity, true);
         return event;
     }
 

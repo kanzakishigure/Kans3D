@@ -14,6 +14,7 @@
 #include "UI/BloomSettingsWidget.h"
 #include "UI/EditorIcons.h"
 #include "UI/MaterialSlotRow.h"
+#include "UI/ModalInput.h"
 #include "UI/PropertyGrid.h"
 #include "UI/Widgets.h"
 
@@ -108,6 +109,8 @@ namespace Kans
         }
         AcceptDrop();
         DrawSceneOverlays();
+        m_ModalThisFrame = m_Modal.IsActive();
+        BeginHandles();
         DrawPhysicsOverlay();
         // Cloth painting takes the left button over the cloth (selection and the gizmo wait).
         if (m_ClothPaint.IsActive() && !UsesSceneCamera() && !m_Playing)
@@ -341,7 +344,8 @@ namespace Kans
         const ImGuiIO& io        = ImGui::GetIO();
         const bool     overCube  = ImGui::IsMouseHoveringRect(m_CubeMin, m_CubeMax, false);
         const bool     overImage = m_ImageHovered && !ImGui::IsAnyItemHovered() && !overCube;
-        if (m_Navigation == Navigation::None && overImage)
+        // A modal transform owns the buttons (its clicks confirm or cancel it).
+        if (m_Navigation == Navigation::None && overImage && !m_ModalThisFrame)
         {
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !m_SwallowRightClick)
                 m_Navigation = Navigation::Look;
@@ -355,7 +359,7 @@ namespace Kans
                 ImGui::SetWindowFocus();
             // A plain left click selects what is under the cursor.
             else if (!io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_Gizmo.WantsPointer() &&
-                     !m_MeshTool.GetGizmo().WantsPointer())
+                     !m_MeshTool.GetGizmo().WantsPointer() && !m_Handles.WantsPointer())
             {
                 if (m_MeshTool.IsEditing(m_Hierarchy.GetSelected()) && !UsesSceneCamera())
                     m_MeshTool.Press(io.MousePos);
@@ -409,7 +413,8 @@ namespace Kans
     void ViewportPanel::HandleShortcuts()
     {
         const ImGuiIO& io = ImGui::GetIO();
-        if ((!m_Hovered && !m_Focused) || io.WantTextInput || m_Navigation != Navigation::None)
+        // A modal transform takes the keys (axis letters, digits, Tab, Backspace) this frame.
+        if ((!m_Hovered && !m_Focused) || io.WantTextInput || m_Navigation != Navigation::None || m_ModalThisFrame)
             return;
         m_MeshTool.HandleShortcuts(m_Hierarchy.GetSelected());
         if (!m_MeshTool.IsEditing(m_Hierarchy.GetSelected()))
@@ -437,7 +442,8 @@ namespace Kans
                 m_Tool = Tool::Move;
             if (ImGui::IsKeyPressed(ImGuiKey_E, false))
                 m_Tool = Tool::Rotate;
-            if (ImGui::IsKeyPressed(ImGuiKey_R, false))
+            // Over the view R rotates modally (Blender); elsewhere, or by preference, it picks the scale tool.
+            if (ImGui::IsKeyPressed(ImGuiKey_R, false) && (m_RPicksScaleTool || !m_ImageHovered))
                 m_Tool = Tool::Scale;
             if (ImGui::IsKeyPressed(ImGuiKey_Y, false))
                 m_Tool = Tool::Transform;
@@ -728,19 +734,165 @@ namespace Kans
         return settings;
     }
 
+    Gizmo::View ViewportPanel::GizmoView() const
+    {
+        return Gizmo::View::From(m_Camera, {m_Min.x, m_Min.y}, {m_Max.x - m_Min.x, m_Max.y - m_Min.y});
+    }
+
+    void ViewportPanel::BeginHandles()
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        Gizmo::Input   input;
+        input.Mouse      = {io.MousePos.x, io.MousePos.y};
+        input.Down       = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        input.Pressed    = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        input.Released   = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+        input.Cancel     = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+        input.InvertSnap = io.KeyCtrl;
+        input.Alt        = io.KeyAlt;
+        // Alt starts orbiting, so it only changes a drag already running (a box face's other side).
+        input.Allowed = m_ImageHovered && !ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive() && !io.KeyAlt &&
+                        m_Navigation == Navigation::None && !m_AxisPressActive &&
+                        !ImGui::IsMouseHoveringRect(m_CubeMin, m_CubeMax, false) && !m_Modal.IsActive() &&
+                        !m_Gizmo.IsDragging() && !m_MeshTool.GetGizmo().IsDragging() && !UsesSceneCamera();
+        m_Handles.Begin(GizmoView(), input, GizmoSettings());
+        m_HandlesWereDragging = m_Handles.IsDragging();
+    }
+
+    bool ViewportPanel::StartModal(Gizmo::Operation op, bool extrude)
+    {
+        Entity          selected = m_Hierarchy.GetSelected();
+        const auto      view     = GizmoView();
+        const glm::vec2 mouse(ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y);
+        Gizmo::Pivot    pivot;
+        glm::mat3       local(1.0f);
+        if (m_MeshTool.IsEditing(selected))
+        {
+            const auto first = m_MeshTool.SelectionPivot(selected, EditView(), m_Orientation);
+            const auto own   = m_MeshTool.SelectionPivot(selected, EditView(), Gizmo::Orientation::Local);
+            if (!first || !own || !m_MeshTool.BeginTransform(selected, extrude))
+                return false;
+            pivot         = *first;
+            local         = own->Axes;
+            m_ModalTarget = ModalTarget::Mesh;
+        }
+        else
+        {
+            const auto targets = m_Hierarchy.TopMostSelected();
+            if (extrude || targets.empty())
+                return false;
+            pivot = Gizmo::SelectionPivot(*m_Scene, targets, selected, m_PivotMode, m_Orientation, view);
+            local = Gizmo::ResolveAxes(Gizmo::Orientation::Local, m_Scene->GetWorldTransform(selected), view);
+            m_GizmoTargets.Begin(*m_Scene, targets);
+            m_ModalTarget = ModalTarget::Entities;
+        }
+        m_Gizmo.Reset();
+        m_Modal.Start(op, view, pivot, m_Orientation, local, GizmoSettings(), mouse);
+        return true;
+    }
+
+    bool ViewportPanel::UpdateModal(std::vector<GizmoDraw>& draws)
+    {
+        const ImGuiIO& io       = ImGui::GetIO();
+        Entity         selected = m_Hierarchy.GetSelected();
+        const bool     editing  = m_MeshTool.IsEditing(selected);
+        if (!m_Modal.IsActive())
+        {
+            const bool ready = selected && m_ImageHovered && !UsesSceneCamera() && !IsPaintingCloth() && !io.WantTextInput &&
+                               !io.KeyCtrl && !io.KeyAlt && m_Navigation == Navigation::None && !ImGui::IsAnyItemActive() &&
+                               !m_Gizmo.IsDragging() && !m_MeshTool.GetGizmo().IsDragging() && !m_Handles.IsDragging() &&
+                               !ImGui::IsMouseDown(ImGuiMouseButton_Left);
+            if (!ready)
+                return false;
+            const auto mode    = m_MeshTool.GetMode();
+            bool       started = false;
+            if (ImGui::IsKeyPressed(ImGuiKey_G, false))
+                started = StartModal(Gizmo::Operation::Translate, false);
+            else if (!m_RPicksScaleTool && ImGui::IsKeyPressed(ImGuiKey_R, false))
+                started = StartModal(Gizmo::Operation::Rotate, false);
+            else if (ImGui::IsKeyPressed(ImGuiKey_S, false))
+                started = StartModal(Gizmo::Operation::Scale, false);
+            else if (editing && (mode == MeshEditTool::Mode::Face || mode == MeshEditTool::Mode::Edge) &&
+                     ImGui::IsKeyPressed(ImGuiKey_E, false))
+                started = StartModal(Gizmo::Operation::Translate, true); // Extrude, then move.
+            if (!started)
+                return false;
+            m_ModalThisFrame = true;
+            m_Modal.AppendDraws(draws);
+            return true;
+        }
+        m_ModalThisFrame = true;
+        // The selection or the editor view went away: put things back.
+        const bool lost  = !selected || UsesSceneCamera() || (m_ModalTarget == ModalTarget::Mesh && !editing);
+        const auto input = Widgets::ModalTransformInput(lost);
+        const auto  event = m_Modal.Update(GizmoView(), input);
+        const auto& delta = m_Modal.GetDelta();
+        switch (event)
+        {
+            case Gizmo::Event::Dragged:
+            case Gizmo::Event::Committed:
+                if (m_ModalTarget == ModalTarget::Entities)
+                    m_GizmoTargets.Apply(delta);
+                else if (m_ModalTarget == ModalTarget::Mesh)
+                    m_MeshTool.ApplyDelta(selected, EditView(), delta);
+                if (event == Gizmo::Event::Committed)
+                {
+                    // One undo step: the editor records once the keys and buttons are up.
+                    m_GizmoTargets.Clear();
+                    if (m_ModalTarget == ModalTarget::Mesh)
+                        m_MeshTool.EndTransform(selected, true);
+                }
+                break;
+            case Gizmo::Event::Cancelled:
+                if (m_ModalTarget == ModalTarget::Entities && m_GizmoTargets.IsActive())
+                    m_GizmoTargets.Restore();
+                m_GizmoTargets.Clear();
+                if (m_ModalTarget == ModalTarget::Mesh)
+                    m_MeshTool.EndTransform(selected, false);
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+                    m_SwallowRightClick = true;
+                break;
+            default:
+                break;
+        }
+        if (!m_Modal.IsActive())
+            m_ModalTarget = ModalTarget::None;
+        m_Modal.AppendDraws(draws);
+        return true;
+    }
+
+    void ViewportPanel::DrawModalStatus()
+    {
+        // The status line along the bottom of the view, like Blender's header text.
+        Widgets::DrawModalTransformStatus(m_Modal, {m_Min.x + EditorTheme::Px(10.0f), m_Max.y - EditorTheme::Px(10.0f)},
+                                          EditorTheme::Px(1.0f));
+    }
+
     void ViewportPanel::DrawGizmo()
     {
         m_SwallowRightClick = false;
-        Entity     selected = m_Hierarchy.GetSelected();
-        const bool shown    = selected && m_Tool != Tool::Select && !UsesSceneCamera() && !IsPaintingCloth();
+        // A right click that cancelled a handle drag does not start looking around either.
+        if (m_HandlesWereDragging && !m_Handles.IsDragging() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            m_SwallowRightClick = true;
+        std::vector<GizmoDraw> draws;
+        const bool             modal    = UpdateModal(draws);
+        Entity                 selected = m_Hierarchy.GetSelected();
+        // While a modal transform runs the gizmo hides, as in Blender.
+        const bool shown = !modal && selected && m_Tool != Tool::Select && !UsesSceneCamera() && !IsPaintingCloth();
         if (!shown)
         {
             // The selection went away (or the tool changed) mid-drag: put things back.
-            if (m_Gizmo.IsDragging() && m_GizmoTargets.IsActive())
-                m_GizmoTargets.Restore();
-            m_GizmoTargets.Clear();
+            if (!modal)
+            {
+                if (m_Gizmo.IsDragging() && m_GizmoTargets.IsActive())
+                    m_GizmoTargets.Restore();
+                m_GizmoTargets.Clear();
+            }
             m_Gizmo.Reset();
-            m_Client->SetGizmo({});
+            m_Handles.End();
+            m_Handles.AppendDraws(draws);
+            m_Client->SetGizmo(std::move(draws));
+            DrawModalStatus();
             return;
         }
         const ImGuiIO& io = ImGui::GetIO();
@@ -751,10 +903,10 @@ namespace Kans
         input.Released   = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
         input.Cancel     = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
         input.InvertSnap = io.KeyCtrl;
-        // A physics handle under the pointer (or being dragged), a toolbar control, the axis
-        // widget or navigation has the pointer.
+        // A toolbar control, the axis widget or navigation has the pointer; a handle being
+        // dragged, or winning the hover, too (resolved below).
         input.Allowed = m_ImageHovered && !ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive() && !io.KeyAlt &&
-                        m_Navigation == Navigation::None && !m_PhysicsHandleHot && !m_AxisPressActive &&
+                        m_Navigation == Navigation::None && !m_AxisPressActive &&
                         !ImGui::IsMouseHoveringRect(m_CubeMin, m_CubeMax, false);
         const bool dragging = IsGizmoDragging();
         const auto mode     = m_Tool == Tool::Rotate    ? Gizmo::Mode::Rotate :
@@ -762,11 +914,12 @@ namespace Kans
                               m_Tool == Tool::Transform ? Gizmo::Mode::Combined :
                                                           Gizmo::Mode::Translate;
         const auto settings = GizmoSettings();
-        const auto view     = Gizmo::View::From(m_Camera, {m_Min.x, m_Min.y}, {m_Max.x - m_Min.x, m_Max.y - m_Min.y});
-        std::vector<GizmoDraw>       draws;
+        const auto view     = GizmoView();
         const Gizmo::TransformGizmo* gizmo = &m_Gizmo;
         if (m_MeshTool.IsEditing(selected))
         {
+            m_Handles.End();
+            input.Allowed = input.Allowed && !m_Handles.IsDragging();
             // In element modes the gizmo moves the selected vertices, edges or faces.
             m_MeshTool.Manipulate(selected, EditView(), mode, m_Orientation, settings, input, io.KeyShift);
             m_MeshTool.AppendGizmoDraws(draws);
@@ -778,6 +931,17 @@ namespace Kans
             const auto orientation = mode == Gizmo::Mode::Scale ? Gizmo::Orientation::Local : m_Orientation;
             const auto targets     = m_Hierarchy.TopMostSelected();
             const auto pivot       = Gizmo::SelectionPivot(*m_Scene, targets, selected, m_PivotMode, orientation, view);
+            // The gizmo takes part in the handles' hover resolution: one of them is hot.
+            if (!m_Gizmo.IsDragging() && input.Allowed)
+            {
+                const auto hit = m_Gizmo.Pick(view, pivot, mode, settings, input.Mouse);
+                if (hit.Id != Gizmo::Handle::None)
+                    m_Handles.Offer(GizmoHandleId, hit.Depth, hit.Distance, Gizmo::HandlePriority(hit.Id));
+            }
+            m_Handles.End();
+            if (!m_Gizmo.IsDragging())
+                input.Allowed = input.Allowed && !m_Handles.IsDragging() &&
+                                (m_Handles.Hot() == 0 || m_Handles.Hot() == GizmoHandleId);
             switch (m_Gizmo.Update(view, pivot, mode, settings, input))
             {
                 case Gizmo::Event::Began:
@@ -800,22 +964,21 @@ namespace Kans
             }
             m_Gizmo.AppendDraws(draws);
         }
+        m_Handles.AppendDraws(draws);
         if (dragging && !IsGizmoDragging() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
             m_SwallowRightClick = true;
         m_Client->SetGizmo(std::move(draws));
-        DrawGizmoReadout(*gizmo);
+        DrawGizmoReadout(gizmo->Readout(), gizmo->ReadoutPosition());
     }
 
-    void ViewportPanel::DrawGizmoReadout(const Gizmo::TransformGizmo& gizmo)
+    void ViewportPanel::DrawGizmoReadout(const std::string& text, glm::vec2 at)
     {
-        const std::string text = gizmo.Readout();
         if (text.empty())
             return;
         using EditorTheme::Px;
-        ImDrawList*     draw = ImGui::GetWindowDrawList();
-        const glm::vec2 at   = gizmo.ReadoutPosition();
-        const ImVec2    size = ImGui::CalcTextSize(text.c_str());
-        const ImVec2    pad {Px(6.0f), Px(3.0f)};
+        ImDrawList*  draw = ImGui::GetWindowDrawList();
+        const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+        const ImVec2 pad {Px(6.0f), Px(3.0f)};
         draw->AddRectFilled({at.x, at.y}, {at.x + size.x + pad.x * 2, at.y + size.y + pad.y * 2}, IM_COL32(18, 18, 22, 215),
                             Px(4.0f));
         draw->AddText({at.x + pad.x, at.y + pad.y}, IM_COL32(240, 240, 240, 255), text.c_str());
@@ -824,16 +987,26 @@ namespace Kans
     void ViewportPanel::DrawToolbar()
     {
         using EditorTheme::Px;
-        const float top = m_Min.y + Px(8.0f);
-        const float gap = Px(6.0f);
+        const float top  = m_Min.y + Px(8.0f);
+        const float left = m_Min.x + Px(10.0f);
+        // The right-hand group starts where last frame's width puts it. The left groups collapse
+        // to fit before it: first tight (icons only, closer together), then the element modes and
+        // the secondary-motion preview move into an overflow menu.
+        const float rightStart = m_Max.x - Px(10.0f) - m_RightToolbarWidth;
+        const float available  = rightStart - Px(6.0f) - left;
+        int         level      = 0;
+        while (level < 2 && m_ToolbarWidths[level] > available)
+            ++level;
+        const bool  tight = level >= 1;
+        const float gap   = tight ? Px(3.0f) : Px(6.0f);
 
         // Left: transform tools; space and snapping; editable-mesh element modes.
-        float x = OverlayGroup({m_Min.x + Px(10.0f), top}, [&] {
+        float x = OverlayGroup({left, top}, [&] {
             const std::pair<Tool, std::pair<const char*, const char*>> tools[] = {
                 {Tool::Select, {ICON_FA_POINTER, "Select (Q)"}},
-                {Tool::Move, {ICON_FA_ARROWS_MOVE, "Move (W)"}},
-                {Tool::Rotate, {ICON_FA_ROTATE, "Rotate (E)"}},
-                {Tool::Scale, {ICON_FA_SCALE, "Scale (R)"}},
+                {Tool::Move, {ICON_FA_ARROWS_MOVE, "Move (W; G over the view moves from the pointer)"}},
+                {Tool::Rotate, {ICON_FA_ROTATE, "Rotate (E; R over the view rotates from the pointer)"}},
+                {Tool::Scale, {ICON_FA_SCALE, "Scale (R away from the view; S over it scales from the pointer)"}},
                 {Tool::Transform, {ICON_FA_EXPAND, "Move, rotate and scale (Y)"}},
             };
             bool first = true;
@@ -858,7 +1031,8 @@ namespace Kans
             const char* tip   = orientation == Gizmo::Orientation::Local ? "Local axes (click for world)" :
                                 orientation == Gizmo::Orientation::World ? "World axes (click for view)" :
                                                                            "View axes (click for local)";
-            if (Widgets::TextButton(icon, label, tip) && !IsGizmoDragging())
+            const bool clicked = tight ? ToolButton(icon, tip) : Widgets::TextButton(icon, label, tip);
+            if (clicked && !IsGizmoDragging())
                 m_Orientation = orientation == Gizmo::Orientation::Local ? Gizmo::Orientation::World :
                                 orientation == Gizmo::Orientation::World ? Gizmo::Orientation::View :
                                                                            Gizmo::Orientation::Local;
@@ -879,16 +1053,15 @@ namespace Kans
                                    m_Tool == Tool::Scale  ? &m_SnapScale :
                                                             &m_SnapMove;
             const char* format   = m_Tool == Tool::Rotate ? "%.0f°" : "%.2f";
-            ImGui::SetNextItemWidth(Px(64.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {Px(6.0f), (Px(26.0f) - ImGui::GetFontSize()) * 0.5f});
+            ImGui::SetNextItemWidth(tight ? Px(48.0f) : Px(64.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {tight ? Px(4.0f) : Px(6.0f), (Px(26.0f) - ImGui::GetFontSize()) * 0.5f});
             ImGui::DragFloat("##snap", snapStep, 0.05f, 0.01f, 360.0f, format);
             ImGui::PopStyleVar();
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Snap step for the current tool");
         }) + gap;
-        x = OverlayGroup({x, top}, [&] { m_MeshTool.DrawModeButtons(m_Hierarchy.GetSelected()); }) + gap;
         // Secondary motion: spring bones and cloth run on the edit scene's animated pose.
-        OverlayGroup({x, top}, [&] {
+        const auto motion = [&] {
             const bool previewing = m_Scene->IsSecondaryMotionPreviewEnabled();
             if (ToolButton(ICON_FA_WIND,
                            previewing ? "Preview secondary motion (on): springs and cloth follow the animated pose" :
@@ -899,7 +1072,26 @@ namespace Kans
             ImGui::SameLine();
             if (ToolButton(ICON_FA_ROTATE_LEFT, "Reset the secondary-motion preview", false, previewing && !m_Playing))
                 m_Scene->ResetSecondaryMotion();
-        });
+        };
+        float leftEnd = x;
+        if (level < 2)
+        {
+            x       = OverlayGroup({x, top}, [&] { m_MeshTool.DrawModeButtons(m_Hierarchy.GetSelected()); }) + gap;
+            leftEnd = OverlayGroup({x, top}, motion);
+        }
+        else
+            leftEnd = OverlayGroup({x, top}, [&] {
+                if (ToolButton(ICON_FA_ELLIPSIS_VERTICAL, "More: element modes and the secondary-motion preview"))
+                    ImGui::OpenPopup("##ViewportMore");
+                if (ImGui::BeginPopup("##ViewportMore"))
+                {
+                    m_MeshTool.DrawModeButtons(m_Hierarchy.GetSelected());
+                    motion();
+                    ImGui::EndPopup();
+                }
+            });
+        m_ToolbarWidths[level] = leftEnd - left;
+        m_ToolbarLayout        = {leftEnd, rightStart, level};
         if (!UsesSceneCamera())
         {
             if (IsPaintingCloth())
@@ -992,6 +1184,10 @@ namespace Kans
                 ImGui::Checkbox(label(ICON_FA_CHART_LINE, "Statistics").c_str(), &m_ShowStats);
                 ImGui::SetNextItemWidth(EditorTheme::Px(120.0f));
                 ImGui::SliderFloat("Gizmo size", &m_GizmoSize, 60.0f, 220.0f, "%.0f px");
+                ImGui::Checkbox(label(ICON_FA_SCALE, "R picks the scale tool over the view").c_str(), &m_RPicksScaleTool);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Off: R over the view rotates from the pointer (G moves, S scales, as in Blender).\n"
+                                      "On: R is the scale tool's key everywhere; G and S stay modal.");
                 ImGui::Checkbox(label(ICON_FA_BORDER_ALL, "Grid").c_str(), &state.EnableGridShader);
                 if (state.EnableGridShader && PropertyGrid::Begin("##Grid", 96.0f))
                 {

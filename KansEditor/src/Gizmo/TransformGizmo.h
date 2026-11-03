@@ -144,6 +144,7 @@ namespace Kans::Gizmo
         bool      Cancel     = false; // Esc or a right click.
         bool      InvertSnap = false; // Ctrl.
         bool      Allowed    = true;
+        bool      Alt        = false; // Handles: a box face edits both sides.
     };
 
     // The change since the drag began, about Pivot (the pivot at the start).
@@ -162,6 +163,16 @@ namespace Kans::Gizmo
         // The world-space change as one matrix (rotation and scale about the pivot).
         glm::mat4 Matrix() const;
     };
+
+    // A handle under the pointer: which, its depth in front of the camera and its screen distance.
+    struct Hit
+    {
+        Gizmo::Handle Id       = Gizmo::Handle::None;
+        float         Depth    = 0.0f;
+        float         Distance = 0.0f;
+    };
+    // The tie-break order at equal depth: centre 4 > planes 3 > axes and cubes 2 > rings 1.
+    int HandlePriority(Handle handle);
 
     Operation OperationOf(Handle handle, Mode mode);
     // The pivot axes for an orientation: the active object's world transform (Local), the
@@ -187,6 +198,8 @@ namespace Kans::Gizmo
         Event Update(const View& view, const Pivot& pivot, Mode mode, const Settings& settings, const Input& input);
         // The handle under `mouse` (no state change).
         Handle HitTest(const View& view, const Pivot& pivot, Mode mode, const Settings& settings, glm::vec2 mouse) const;
+        // The same with the depth and distance that decided it (for shared hover resolution).
+        Hit Pick(const View& view, const Pivot& pivot, Mode mode, const Settings& settings, glm::vec2 mouse) const;
         // Starts a drag on `handle` at `mouse` without a hit test (G/R/S-style tools).
         void Begin(const View& view, const Pivot& pivot, Mode mode, const Settings& settings, Handle handle, glm::vec2 mouse);
         // Drops a drag without an event (the selection went away).

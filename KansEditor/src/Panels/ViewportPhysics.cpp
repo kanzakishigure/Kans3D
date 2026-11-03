@@ -5,6 +5,7 @@
 #include "Kans3D/Scene/Components.h"
 #include "Physics/PhysicsEditing.h"
 #include "Physics/SecondaryMotionEditing.h"
+#include "Physics/ShapeHandles.h"
 #include "Physics/VehicleFieldEditing.h"
 #include "UI/EditorIcons.h"
 #include "ViewportPanel.h"
@@ -79,7 +80,6 @@ namespace Kans
 
     void ViewportPanel::DrawPhysicsOverlay()
     {
-        m_PhysicsHandleHot = false;
         if (!m_Scene)
             return;
         // While the scene runs, the physics world draws what this viewport asks for as well.
@@ -149,128 +149,99 @@ namespace Kans
         // Handles edit authored data, so not while the scene runs.
         if (selected && !m_Playing && !m_MeshTool.IsEditing(selected) && !IsPaintingCloth())
             PhysicsHandles(selected);
-        else
-            m_PhysicsDrag.reset();
     }
 
     void ViewportPanel::PhysicsHandles(Entity selected)
     {
-        Scene&         scene     = *m_Scene;
-        ImDrawList*    draw      = ImGui::GetWindowDrawList();
-        const ImGuiIO& io        = ImGui::GetIO();
-        const float    radius    = 5.0f;
-        bool           anyActive = false;
-        // While the transform gizmo drags, the handles only show.
-        const bool gizmoBusy = IsGizmoDragging();
-        // One handle: a dot that drags along `direction` (world) from `position` (world).
-        const auto handle = [&](ImGuiID                                               id,
-                                glm::vec3                                             position,
-                                glm::vec3                                             along,
-                                glm::vec4                                             tint,
-                                const std::function<void(const PhysicsDrag&, float)>& drag,
-                                const std::function<PhysicsDrag::ShapeVariant()>&     capture,
-                                const char*                                           tooltip) {
-            ImVec2 at, ahead;
-            if (!ToScreen(position, at) || !ToScreen(position + along, ahead))
-                return;
-            if (gizmoBusy)
-            {
-                draw->AddCircleFilled(at, radius, Color(tint));
-                return;
-            }
-            ImGui::SetCursorScreenPos({at.x - radius - 2, at.y - radius - 2});
-            ImGui::PushID(int(id));
-            ImGui::InvisibleButton("##physicsHandle", {2 * radius + 4, 2 * radius + 4});
-            const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
-            if (ImGui::IsItemActivated())
-                m_PhysicsDrag = PhysicsDrag {id, io.MousePos, {ahead.x - at.x, ahead.y - at.y}, capture()};
-            if (active && m_PhysicsDrag && m_PhysicsDrag->Handle == id)
-            {
-                // The pointer's travel along the handle's screen direction, in shape units.
-                const glm::vec2 travel {io.MousePos.x - m_PhysicsDrag->Start.x, io.MousePos.y - m_PhysicsDrag->Start.y};
-                const glm::vec2 unit    = m_PhysicsDrag->PixelsPerUnit;
-                const float     length2 = glm::dot(unit, unit);
-                drag(*m_PhysicsDrag, length2 > 1e-6f ? glm::dot(travel, unit) / length2 : 0.0f);
-                anyActive = true;
-            }
-            if (hovered && !active && tooltip)
-                ImGui::SetTooltip("%s", tooltip);
-            ImGui::PopID();
-            m_PhysicsHandleHot |= hovered || active;
-            const ImU32 fill = hovered || active ? IM_COL32(255, 255, 255, 255) : Color(tint);
-            draw->AddCircleFilled(at, radius, fill);
-            draw->AddCircle(at, radius, IM_COL32(20, 20, 20, 220), 0, 1.5f);
+        Scene&           scene   = *m_Scene;
+        auto&            handles = m_Handles;
+        const glm::mat4  world   = scene.GetWorldTransform(selected);
+        const uint64_t   owner   = uint64_t(selected.GetUUID());
+        // Stable IDs: the entity, the kind of handle and its index.
+        const auto id = [&](uint64_t kind, uint64_t index = 0) {
+            return Gizmo::MakeHandleId(Gizmo::MakeHandleId(owner, kind), index);
+        };
+        const auto tip = [](const Gizmo::HandleResult& r, const char* text) {
+            if (r.Hovered && !r.Active && text)
+                ImGui::SetTooltip("%s", text);
+        };
+        const auto knob = [](glm::vec4 color) {
+            Gizmo::HandleStyle style;
+            style.Color = color;
+            style.Stem  = false;
+            return style;
+        };
+        // A handle that drags `start` (kept from the drag's start) by a distance along `along`
+        // from `position`; `apply` writes the dragged (or, cancelled, the start) value.
+        const auto distanceHandle = [&](Gizmo::HandleId hid, glm::vec3 position, glm::vec3 along, glm::vec4 color,
+                                        const char* text, const auto& current, const auto& apply) {
+            using T = std::decay_t<decltype(current)>;
+            Gizmo::LinearHandle h;
+            h.Origin       = position;
+            h.Direction    = along;
+            h.Style        = knob(color);
+            float distance = 0.0f;
+            const auto r   = handles.Linear(hid, h, distance);
+            if (r.Started)
+                handles.Stash(current);
+            if (r.Changed)
+                if (const T* start = handles.Stashed<T>())
+                    apply(*start, distance, r.Cancelled);
+            tip(r, text);
         };
 
-        // Primitive colliders: the handle pulls in offset space, mapped through the world.
-        const auto shapeHandles = [&](auto tag, int kind) {
+        // Primitive colliders: box faces (Alt: both sides), sphere radii, capsule caps and radii.
+        const auto collider = [&](auto tag, uint64_t kind, const char* text) {
             using T = typename decltype(tag)::type;
             if (!selected.HasComponent<T>())
                 return;
-            const auto&     shape  = selected.GetComponent<T>().Shape;
-            const glm::mat4 matrix = scene.GetWorldTransform(selected) * shape.Offset.Matrix();
-            for (const auto& h : PhysicsEditing::Handles(shape))
-            {
-                const glm::vec3 position = glm::vec3(matrix * glm::vec4(h.Position, 1.0f));
-                const glm::vec3 along    = glm::vec3(matrix * glm::vec4(h.Direction, 0.0f));
-                handle(
-                    ImGuiID(kind * 16 + h.ID),
-                    position,
-                    along,
-                    SelectedCollider,
-                    [&, id = h.ID](const PhysicsDrag& d, float distance) {
-                        using Shape   = std::decay_t<decltype(shape)>;
-                        const Shape s = PhysicsEditing::DragHandle(std::get<Shape>(d.Shape), id, distance);
-                        selected.PatchComponent<T>([&](T& c) { c.Shape = s; });
-                    },
-                    [&] { return PhysicsDrag::ShapeVariant(shape); },
-                    "Drag to resize the collider");
-            }
+            auto       shape = selected.GetComponent<T>().Shape;
+            const auto r     = ShapeHandles::Edit(handles, id(kind), world, shape, SelectedCollider);
+            if (r.Changed)
+                selected.PatchComponent<T>([&](T& c) { c.Shape = shape; });
+            tip(r, text);
         };
-        shapeHandles(std::common_type<BoxColliderComponent> {}, 1);
-        shapeHandles(std::common_type<SphereColliderComponent> {}, 2);
-        shapeHandles(std::common_type<CapsuleColliderComponent> {}, 3);
+        collider(std::common_type<BoxColliderComponent> {}, 1, "Drag to resize the collider (Alt: both sides)");
+        collider(std::common_type<SphereColliderComponent> {}, 2, "Drag to resize the collider");
+        collider(std::common_type<CapsuleColliderComponent> {}, 3, "Drag to resize the collider (Alt: both ends)");
 
-        // Motion colliders (sphere, capsule, box faces and the plane along its normal).
+        // Motion colliders: the same primitives, and the plane along its normal.
         if (selected.HasComponent<MotionColliderComponent>())
         {
-            const auto&     shape  = selected.GetComponent<MotionColliderComponent>().Shape;
-            const auto      offset = std::visit([](const auto& s) { return s.Offset; }, shape);
-            const glm::mat4 matrix = scene.GetWorldTransform(selected) * offset.Matrix();
-            for (const auto& h : SecondaryMotionEditing::Handles(shape))
-                handle(
-                    ImGuiID(5 * 16 + h.ID),
-                    glm::vec3(matrix * glm::vec4(h.Position, 1.0f)),
-                    glm::vec3(matrix * glm::vec4(h.Direction, 0.0f)),
-                    SecondaryMotionEditing::ColliderColor,
-                    [&, id = h.ID](const PhysicsDrag& d, float distance) {
-                        const auto start = std::visit(
-                            [](const auto& s) -> std::optional<Physics::MotionColliderShape> {
-                                using S = std::decay_t<decltype(s)>;
-                                if constexpr (std::is_same_v<S, Physics::Box> || std::is_same_v<S, Physics::Sphere> ||
-                                              std::is_same_v<S, Physics::Capsule> || std::is_same_v<S, Physics::Plane>)
-                                    return Physics::MotionColliderShape(s);
-                                else
-                                    return std::nullopt;
-                            },
-                            d.Shape);
-                        if (!start)
-                            return;
-                        const auto resized = SecondaryMotionEditing::DragHandle(*start, id, distance);
-                        selected.PatchComponent<MotionColliderComponent>([&](auto& c) { c.Shape = resized; });
-                    },
-                    [&] {
-                        return std::visit([](const auto& s) { return PhysicsDrag::ShapeVariant(s); }, shape);
-                    },
-                    std::holds_alternative<Physics::Plane>(shape) ? "Drag to move the plane along its normal" :
-                                                                    "Drag to resize the collider");
+            auto shape = selected.GetComponent<MotionColliderComponent>().Shape;
+            std::visit(
+                [&](auto& s) {
+                    using S = std::decay_t<decltype(s)>;
+                    if constexpr (std::is_same_v<S, Physics::Plane>)
+                    {
+                        const glm::mat4 matrix = world * s.Offset.Matrix();
+                        const auto      h      = SecondaryMotionEditing::Handles(s).front();
+                        distanceHandle(id(5), glm::vec3(matrix * glm::vec4(h.Position, 1.0f)),
+                                       glm::vec3(matrix * glm::vec4(h.Direction, 0.0f)), SecondaryMotionEditing::ColliderColor,
+                                       "Drag to move the plane along its normal", s,
+                                       [&](const Physics::Plane& start, float distance, bool cancelled) {
+                                           const Physics::Plane moved =
+                                               cancelled ? start : SecondaryMotionEditing::DragHandle(start, 0, distance);
+                                           selected.PatchComponent<MotionColliderComponent>([&](auto& c) { c.Shape = moved; });
+                                       });
+                    }
+                    else if constexpr (std::is_same_v<S, Physics::Box> || std::is_same_v<S, Physics::Sphere> ||
+                                       std::is_same_v<S, Physics::Capsule>)
+                    {
+                        const auto r = ShapeHandles::Edit(handles, id(5), world, s, SecondaryMotionEditing::ColliderColor);
+                        if (r.Changed)
+                            selected.PatchComponent<MotionColliderComponent>([&](auto& c) { c.Shape = s; });
+                        tip(r, "Drag to resize the collider");
+                    }
+                },
+                shape);
         }
 
         // Vehicle wheels: the radius on top and the attach position along the chassis axes, for the
         // card's selected wheel (every wheel while none is selected).
         if (selected.HasComponent<VehicleComponent>())
         {
-            const auto&     wheels = selected.GetComponent<VehicleComponent>().Wheels;
+            const auto      wheels = selected.GetComponent<VehicleComponent>().Wheels;
             const glm::mat4 frame  = VehicleFieldEditing::ChassisFrame(scene, selected);
             const int       chosen = m_SelectedWheel ? m_SelectedWheel(selected) : -1;
             const char*     tips[] = {"Drag to set the wheel radius", "Drag to move the wheel along X",
@@ -280,88 +251,120 @@ namespace Kans
                 if (chosen >= 0 && int(w) != chosen)
                     continue;
                 for (const auto& h : VehicleFieldEditing::WheelHandles(wheels[w]))
-                    handle(
-                        ImGuiID(1000 + w * 8 + size_t(h.ID)),
-                        glm::vec3(frame * glm::vec4(h.Position, 1.0f)),
-                        glm::vec3(frame * glm::vec4(h.Direction, 0.0f)),
-                        h.ID == 0 ? VehicleFieldEditing::WheelColor : glm::vec4(h.Direction * 0.8f + 0.2f, 1.0f),
-                        [&, w, id = h.ID](const PhysicsDrag& d, float distance) {
-                            const auto* start = std::get_if<VehicleWheel>(&d.Shape);
-                            if (!start)
-                                return;
-                            const auto moved = VehicleFieldEditing::DragWheelHandle(*start, id, distance);
-                            selected.PatchComponent<VehicleComponent>([&](VehicleComponent& c) {
-                                if (w < c.Wheels.size())
-                                    c.Wheels[w] = moved;
-                            });
-                        },
-                        [&, w] { return PhysicsDrag::ShapeVariant(wheels[w]); },
-                        tips[h.ID]);
+                    distanceHandle(id(6, w * 8 + size_t(h.ID)), glm::vec3(frame * glm::vec4(h.Position, 1.0f)),
+                                   glm::vec3(frame * glm::vec4(h.Direction, 0.0f)),
+                                   h.ID == 0 ? VehicleFieldEditing::WheelColor : glm::vec4(h.Direction * 0.8f + 0.2f, 1.0f),
+                                   tips[h.ID], wheels[w], [&, w, hid = h.ID](const VehicleWheel& start, float distance, bool cancelled) {
+                                       const auto moved = cancelled ? start : VehicleFieldEditing::DragWheelHandle(start, hid, distance);
+                                       selected.PatchComponent<VehicleComponent>([&](VehicleComponent& c) {
+                                           if (w < c.Wheels.size())
+                                               c.Wheels[w] = moved;
+                                       });
+                                   });
             }
         }
 
-        // Wind zones and force fields: radius or box faces, and a wind zone's falloff band.
-        const auto fieldHandles = [&](auto tag, int kind) {
+        // Wind zones and force fields: a sphere's radii or a box's faces (both sides: the field
+        // stays centred on its entity), and a wind zone's falloff band inside along +X.
+        const auto fieldHandles = [&](auto tag, uint64_t kind) {
             using T = typename decltype(tag)::type;
             if (!selected.HasComponent<T>())
                 return;
-            const auto      values = VehicleFieldEditing::ShapeOf(selected.GetComponent<T>());
-            const glm::mat4 world  = scene.GetWorldTransform(selected);
-            for (const auto& h : VehicleFieldEditing::FieldHandles(values))
-                handle(
-                    ImGuiID(kind * 16 + h.ID),
-                    glm::vec3(world * glm::vec4(h.Position, 1.0f)),
-                    glm::vec3(world * glm::vec4(h.Direction, 0.0f)),
-                    h.ID == VehicleFieldEditing::BandHandle ? glm::vec4(1.0f, 0.9f, 0.3f, 1.0f) : VehicleFieldEditing::FieldColor,
-                    [&, id = h.ID](const PhysicsDrag& d, float distance) {
-                        const auto* start = std::get_if<VehicleFieldEditing::FieldShapeValues>(&d.Shape);
-                        if (!start)
-                            return;
-                        const auto resized = VehicleFieldEditing::DragFieldHandle(*start, id, distance);
-                        selected.PatchComponent<T>([&](T& c) { VehicleFieldEditing::Apply(c, resized); });
-                    },
-                    [&] { return PhysicsDrag::ShapeVariant(values); },
-                    h.ID == VehicleFieldEditing::BandHandle ? "Drag to set the falloff band (full strength inside)" :
-                                                              "Drag to resize the field");
+            const auto start  = VehicleFieldEditing::ShapeOf(selected.GetComponent<T>());
+            auto       values = start;
+            Gizmo::HandleResult r;
+            if (values.Shape == FieldShape::Sphere)
+            {
+                Gizmo::SphereHandle h;
+                h.Frame     = world;
+                h.MinRadius = PhysicsEditing::MinimumSize;
+                h.Style     = knob(VehicleFieldEditing::FieldColor);
+                h.Style.Stem = true;
+                float radius = std::abs(values.Radius);
+                r            = handles.Sphere(id(kind), h, radius);
+                values.Radius = radius;
+            }
+            else if (values.Shape == FieldShape::Box)
+            {
+                Gizmo::BoxHandle h;
+                h.Frame      = world;
+                h.MinHalf    = PhysicsEditing::MinimumSize;
+                h.LockCenter = true;
+                h.Style      = knob(VehicleFieldEditing::FieldColor);
+                h.Style.Knob = Gizmo::KnobShape::Cube;
+                h.Style.Stem = true;
+                glm::vec3 centre(0.0f), half = glm::abs(values.HalfExtents);
+                r                  = handles.Box(id(kind), h, centre, half);
+                values.HalfExtents = half;
+            }
+            else
+                return;
+            tip(r, "Drag to resize the field");
+            if (values.HasBand)
+            {
+                // The band's inner edge: full strength inside it, fading out to the shape.
+                const float outer = values.Shape == FieldShape::Sphere ? std::abs(values.Radius) : std::abs(values.HalfExtents.x);
+                Gizmo::LinearHandle band;
+                band.Origin    = glm::vec3(world[3]);
+                band.Direction = glm::vec3(world * glm::vec4(1, 0, 0, 0));
+                band.Min       = 0.0f;
+                band.Max       = outer;
+                band.Style     = knob({1.0f, 0.9f, 0.3f, 1.0f});
+                float inner    = outer * (1.0f - std::clamp(values.Band, 0.0f, 1.0f));
+                const auto b   = handles.Linear(id(kind, 1), band, inner);
+                if (b.Changed && outer > 0.0f)
+                    values.Band = 1.0f - inner / outer;
+                tip(b, "Drag to set the falloff band (full strength inside)");
+                r |= b;
+            }
+            if (r.Started)
+                handles.Stash(start);
+            if (r.Cancelled)
+                if (const auto* kept = handles.Stashed<VehicleFieldEditing::FieldShapeValues>())
+                    values = *kept;
+            if (r.Changed)
+                selected.PatchComponent<T>([&](T& c) { VehicleFieldEditing::Apply(c, values); });
         };
         fieldHandles(std::common_type<WindZoneComponent> {}, 7);
         fieldHandles(std::common_type<ForceFieldComponent> {}, 8);
 
-        // Hinge limits: the arc's two ends follow the pointer around the hinge axis.
+        // Hinge limits: the arc's two ends turn about the hinge axis (Ctrl inverts snapping).
         if (selected.HasComponent<JointComponent>() && selected.GetComponent<JointComponent>().Type == JointType::Hinge)
         {
-            const auto&     joint = selected.GetComponent<JointComponent>();
-            const glm::mat4 frame = PhysicsEditing::JointFrame(scene.GetWorldTransform(selected));
+            const auto      joint = selected.GetComponent<JointComponent>();
+            const glm::mat4 frame = PhysicsEditing::JointFrame(world);
             for (int end = 0; end < 2; ++end)
             {
-                const float     degrees  = end ? joint.HingeUpperAngle : joint.HingeLowerAngle;
-                const glm::vec3 position = PhysicsEditing::HingeArcPoint(frame, degrees);
-                handle(
-                    ImGuiID(4 * 16 + end),
-                    position,
-                    glm::vec3(0.0f),
-                    {1.0f, 0.8f, 0.1f, 1.0f},
-                    [&, end](const PhysicsDrag&, float) {
-                        const glm::vec2 pixel(io.MousePos.x - m_Min.x, io.MousePos.y - m_Min.y);
-                        const auto [origin, direction] = m_Camera.ScreenRay(pixel);
-                        auto angle                     = PhysicsEditing::HingeAngleAt(frame, origin, direction);
-                        if (!angle)
-                            return;
-                        float value = *angle;
-                        if (m_GizmoSnap || io.KeyCtrl)
-                            value = std::round(value / m_SnapRotate) * m_SnapRotate;
-                        selected.PatchComponent<JointComponent>([&](JointComponent& c) {
-                            if (end)
-                                c.HingeUpperAngle = std::max(value, c.HingeLowerAngle);
-                            else
-                                c.HingeLowerAngle = std::min(value, c.HingeUpperAngle);
-                        });
-                    },
-                    [] { return PhysicsDrag::ShapeVariant(); },
-                    end ? "Drag to set the upper limit (Ctrl snaps)" : "Drag to set the lower limit (Ctrl snaps)");
+                Gizmo::AngleHandle h;
+                h.Center    = glm::vec3(frame[3]);
+                h.Axis      = glm::vec3(frame[0]);
+                h.Reference = glm::vec3(frame[1]);
+                h.Radius    = glm::length(PhysicsEditing::HingeArcPoint(frame, 0.0f) - h.Center);
+                h.Min       = end ? joint.HingeLowerAngle : -180.0f;
+                h.Max       = end ? 180.0f : joint.HingeUpperAngle;
+                h.Snap      = m_SnapRotate;
+                h.SnapOn    = m_GizmoSnap;
+                h.Style     = knob({1.0f, 0.8f, 0.1f, 1.0f});
+                h.Style.Stem = true;
+                float      degrees = end ? joint.HingeUpperAngle : joint.HingeLowerAngle;
+                const auto r       = handles.Angle(id(4, uint64_t(end)), h, degrees);
+                if (r.Started)
+                    handles.Stash(joint);
+                if (r.Changed)
+                {
+                    const JointComponent* start = handles.Stashed<JointComponent>();
+                    selected.PatchComponent<JointComponent>([&](JointComponent& c) {
+                        if (r.Cancelled && start)
+                            c = *start;
+                        else if (end)
+                            c.HingeUpperAngle = std::max(degrees, c.HingeLowerAngle);
+                        else
+                            c.HingeLowerAngle = std::min(degrees, c.HingeUpperAngle);
+                    });
+                }
+                tip(r, end ? "Drag to set the upper limit (Ctrl inverts snapping)" :
+                             "Drag to set the lower limit (Ctrl inverts snapping)");
             }
         }
-        if (!anyActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
-            m_PhysicsDrag.reset();
     }
 } // namespace Kans

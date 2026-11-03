@@ -12,7 +12,9 @@
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Scene/Scene.h"
 #include "Components/ComponentEditors.h"
+#include "Physics/ShapeHandles.h"
 #include "UI/EditorIcons.h"
+#include "UI/ModalInput.h"
 #include "UI/PropertyGrid.h"
 
 namespace Kans
@@ -90,7 +92,8 @@ namespace Kans
         m_Source = *source;
         m_Preview.SetSource(m_Source, m_Assets);
         m_Framed = false;
-        m_Drag.reset();
+        m_Handles.Reset();
+        m_Modal.Reset();
         m_Selected.clear();
         if (!m_Session.GetData().Bodies.empty())
             Select(m_Session.GetData().Bodies.front().Bone);
@@ -164,13 +167,13 @@ namespace Kans
 
     bool RagdollEditorPanel::Undo()
     {
-        m_Drag.reset();
+        m_Handles.Reset();
         return m_Session.Undo();
     }
 
     bool RagdollEditorPanel::Redo()
     {
-        m_Drag.reset();
+        m_Handles.Reset();
         return m_Session.Redo();
     }
 
@@ -243,11 +246,11 @@ namespace Kans
         ImGui::BeginChild("##details", {0.0f, avail.y});
         DrawDetails();
         ImGui::EndChild();
-        // A finished interaction (a drag, a field, the gizmo) becomes one undo step.
-        if (m_Session.IsOpen() && !m_Drag && !ImGui::IsAnyItemActive() &&
+        // A finished interaction (a drag, a field, the gizmo, a modal G/R) becomes one undo step.
+        if (m_Session.IsOpen() && !m_Handles.IsDragging() && !m_Modal.IsActive() && !ImGui::IsAnyItemActive() &&
             !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             m_Session.Commit();
-        if (m_Focused && !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl)
+        if (m_Focused && !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl && !m_Modal.IsActive())
         {
             if (ImGui::IsKeyPressed(ImGuiKey_S, false))
                 Save();
@@ -547,38 +550,6 @@ namespace Kans
         return true;
     }
 
-    bool RagdollEditorPanel::Handle(ImGuiID id, glm::vec3 position, glm::vec3 along, glm::vec4 tint, const char* tooltip,
-                                    float* travel)
-    {
-        const float radius = 5.0f;
-        ImVec2      at, ahead;
-        if (!ToScreen(position, at) || !ToScreen(position + along, ahead))
-            return false;
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-        ImGui::SetCursorScreenPos({at.x - radius - 2, at.y - radius - 2});
-        ImGui::PushID(int(id));
-        ImGui::InvisibleButton("##ragdollHandle", {2 * radius + 4, 2 * radius + 4});
-        const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
-        const ImGuiIO& io = ImGui::GetIO();
-        if (ImGui::IsItemActivated() && m_Session.IsOpen())
-            m_Drag = Drag {id, io.MousePos, {ahead.x - at.x, ahead.y - at.y}, m_Session.GetData()};
-        bool dragging = false;
-        if (active && m_Drag && m_Drag->Handle == id)
-        {
-            const glm::vec2 moved {io.MousePos.x - m_Drag->Start.x, io.MousePos.y - m_Drag->Start.y};
-            const float     length2 = glm::dot(m_Drag->PixelsPerUnit, m_Drag->PixelsPerUnit);
-            if (travel)
-                *travel = length2 > 1e-6f ? glm::dot(moved, m_Drag->PixelsPerUnit) / length2 : 0.0f;
-            dragging = true;
-        }
-        if (hovered && !active && tooltip)
-            ImGui::SetTooltip("%s", tooltip);
-        ImGui::PopID();
-        draw->AddCircleFilled(at, radius, hovered || active ? IM_COL32(255, 255, 255, 255) : Color(tint));
-        draw->AddCircle(at, radius, IM_COL32(20, 20, 20, 220), 0, 1.5f);
-        return dragging;
-    }
-
     void RagdollEditorPanel::Frame()
     {
         const SkeletonData* skeleton = Skeleton();
@@ -624,9 +595,10 @@ namespace Kans
         const bool hovered = ImGui::IsItemHovered();
         if (hovered && io.MouseWheel != 0.0f)
             m_Camera.Dolly(io.MouseWheel);
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Right))
+        // A modal transform's right and middle clicks cancel it or pick its axis.
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Right) && !m_Modal.IsActive())
             m_Camera.Orbit({io.MouseDelta.x, io.MouseDelta.y});
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle) && !m_Modal.IsActive())
             m_Camera.Pan({io.MouseDelta.x, io.MouseDelta.y});
 
         const SkeletonData* skeleton = Skeleton();
@@ -666,14 +638,39 @@ namespace Kans
                 draw->AddLine(a, b, Color(line.Color), 1.5f);
         }
         draw->PopClipRect();
+
+        // Handles and the gizmo share one hover resolution; G and R transform the primitive modally.
+        const auto view = Gizmo::View::From(m_Camera, {m_Min.x, m_Min.y}, {m_Max.x - m_Min.x, m_Max.y - m_Min.y});
+        Gizmo::Settings settings;
+        settings.Size       = EditorTheme::Px(100.0f);
+        settings.PickRadius = EditorTheme::Px(10.0f);
+        Gizmo::Input input;
+        input.Mouse      = {io.MousePos.x, io.MousePos.y};
+        input.Down       = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        input.Pressed    = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        input.Released   = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+        input.Cancel     = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+        input.InvertSnap = io.KeyCtrl;
+        input.Alt        = io.KeyAlt;
+        Gizmo::Input handleInput = input;
+        handleInput.Allowed      = hovered && !io.KeyAlt && !m_Modal.IsActive() && !m_Gizmo.IsDragging();
+        m_Handles.Begin(view, handleInput, settings);
         if (!data || simulating || !skeleton)
         {
-            m_Drag.reset();
+            m_Handles.End();
+            m_Handles.Reset();
+            if (m_Modal.IsActive())
+            {
+                m_Modal.Reset();
+                if (data)
+                    Edited(m_ModalStart);
+            }
             return;
         }
 
         // Click a body to select it.
-        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_GizmoWasUsing)
+        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_GizmoWasUsing && !m_Handles.WantsPointer() &&
+            !m_ModalWasActive)
         {
             float       best = 24.0f;
             std::string picked;
@@ -693,101 +690,110 @@ namespace Kans
                 Select(picked);
         }
 
-        bool anyActive = false;
-        const int body = primary.empty() ? -1 : Edit::FindBody(*data, primary);
+        const int  body      = primary.empty() ? -1 : Edit::FindBody(*data, primary);
         const auto boneFrame = primary.empty() ? std::nullopt : m_Preview.BodyFrame(primary);
-        // Primitive resize handles.
-        if (body >= 0 && boneFrame && m_Kind == Selection::Body && m_Primitive < int(data->Bodies[size_t(body)].Shapes.size()))
+        const bool hasPrimitive =
+            body >= 0 && boneFrame && m_Primitive < int(data->Bodies[size_t(body)].Shapes.size());
+        // Primitive resize handles (box faces: Alt resizes both sides).
+        if (hasPrimitive && m_Kind == Selection::Body)
         {
-            const auto&     shape  = data->Bodies[size_t(body)].Shapes[size_t(m_Primitive)];
-            const glm::mat4 matrix = *boneFrame * Edit::OffsetOf(shape).Matrix();
-            for (const auto& h : Edit::Handles(shape))
+            auto shape = data->Bodies[size_t(body)].Shapes[size_t(m_Primitive)];
+            const Gizmo::HandleResult r = std::visit(
+                [&](auto& s) {
+                    return ShapeHandles::Edit(m_Handles, Gizmo::MakeHandleId(100, uint64_t(m_Primitive)), *boneFrame, s,
+                                              Edit::SelectedBodyColor);
+                },
+                shape);
+            if (r.Changed)
             {
-                float travel = 0.0f;
-                if (Handle(ImGuiID(100 + h.ID), glm::vec3(matrix * glm::vec4(h.Position, 1.0f)),
-                           glm::vec3(matrix * glm::vec4(h.Direction, 0.0f)), Edit::SelectedBodyColor, "Drag to resize",
-                           &travel))
-                {
-                    anyActive  = true;
-                    auto start = m_Drag->Data;
-                    auto& s    = start.Bodies[size_t(body)].Shapes[size_t(m_Primitive)];
-                    s          = Edit::DragHandle(s, h.ID, travel);
-                    Edited(start);
-                }
+                RagdollData copy                                    = m_Session.GetData();
+                copy.Bodies[size_t(body)].Shapes[size_t(m_Primitive)] = shape;
+                Edited(copy);
             }
+            if (r.Hovered && !r.Active)
+                ImGui::SetTooltip("Drag to resize (Alt: both sides)");
         }
-        // Limit handles: twist ends on the arc, swing Y and Z on the cone.
+        // Limit handles: twist ends on the arc, swing Y and Z on the cone, turned from where they
+        // were grabbed; a cancel puts the data from the drag's start back.
         const int constraint = primary.empty() ? -1 : Edit::FindConstraint(*data, primary);
         if (constraint >= 0 && boneFrame && m_Kind == Selection::Constraint)
         {
             const auto&     c     = data->Constraints[size_t(constraint)];
             const glm::mat4 frame = Edit::ConstraintFrame(*boneFrame, c);
-            const glm::vec2 pixel(io.MousePos.x - m_Min.x, io.MousePos.y - m_Min.y);
-            const auto [origin, direction] = m_Camera.ScreenRay(pixel);
-            const auto limit = [&](ImGuiID id, glm::vec3 at, const char* tip, auto&& write) {
-                float travel = 0.0f;
-                if (!Handle(id, at, glm::vec3(0.0f), Edit::LimitColor, tip, &travel))
-                    return;
-                anyActive  = true;
-                auto start = m_Drag->Data;
-                write(start.Constraints[size_t(constraint)]);
-                Edited(start);
+            const glm::vec3 centre(frame[3]);
+            const auto limit = [&](uint64_t id, glm::vec3 axis, glm::vec3 reference, glm::vec3 knob, float degrees,
+                                   std::optional<float> low, const char* tip, auto&& write) {
+                Gizmo::AngleHandle h;
+                h.Center     = centre;
+                h.Axis       = axis;
+                h.Reference  = reference;
+                h.Radius     = glm::length(knob - centre);
+                h.Min        = low;
+                h.Style.Color = Edit::LimitColor;
+                const auto r = m_Handles.Angle(Gizmo::MakeHandleId(200, id), h, degrees);
+                if (r.Started)
+                    m_Handles.Stash(m_Session.GetData());
+                if (r.Changed)
+                    if (const RagdollData* start = m_Handles.Stashed<RagdollData>())
+                    {
+                        RagdollData copy = *start;
+                        if (!r.Cancelled)
+                            write(copy.Constraints[size_t(constraint)], degrees);
+                        Edited(copy);
+                    }
+                if (r.Hovered && !r.Active)
+                    ImGui::SetTooltip("%s", tip);
             };
-            limit(200, Edit::TwistPoint(frame, c.TwistLow, limitRadius * 0.6f), "Drag to set the twist low limit",
-                  [&](RagdollConstraint& k) {
-                      if (auto a = Edit::TwistAngleAt(frame, origin, direction))
-                          Edit::SetTwistLimit(k, false, *a);
-                  });
-            limit(201, Edit::TwistPoint(frame, c.TwistHigh, limitRadius * 0.6f), "Drag to set the twist high limit",
-                  [&](RagdollConstraint& k) {
-                      if (auto a = Edit::TwistAngleAt(frame, origin, direction))
-                          Edit::SetTwistLimit(k, true, *a);
-                  });
-            limit(202, Edit::SwingPoint(frame, 1, c.SwingY, limitRadius), "Drag to set swing Y",
-                  [&](RagdollConstraint& k) {
-                      if (auto a = Edit::SwingAngleAt(frame, 1, origin, direction))
-                          Edit::SetSwingLimit(k, 1, *a);
-                  });
-            limit(203, Edit::SwingPoint(frame, 2, c.SwingZ, limitRadius), "Drag to set swing Z",
-                  [&](RagdollConstraint& k) {
-                      if (auto a = Edit::SwingAngleAt(frame, 2, origin, direction))
-                          Edit::SetSwingLimit(k, 2, *a);
-                  });
+            const glm::vec3 x(frame[0]), y(frame[1]), z(frame[2]);
+            limit(0, x, y, Edit::TwistPoint(frame, c.TwistLow, limitRadius * 0.6f), c.TwistLow, std::nullopt,
+                  "Drag to set the twist low limit", [](RagdollConstraint& k, float a) { Edit::SetTwistLimit(k, false, a); });
+            limit(1, x, y, Edit::TwistPoint(frame, c.TwistHigh, limitRadius * 0.6f), c.TwistHigh, std::nullopt,
+                  "Drag to set the twist high limit", [](RagdollConstraint& k, float a) { Edit::SetTwistLimit(k, true, a); });
+            limit(2, y, x, Edit::SwingPoint(frame, 1, c.SwingY, limitRadius), c.SwingY, 0.0f, "Drag to set swing Y",
+                  [](RagdollConstraint& k, float a) { Edit::SetSwingLimit(k, 1, a); });
+            limit(3, z, x, Edit::SwingPoint(frame, 2, c.SwingZ, limitRadius), c.SwingZ, 0.0f, "Drag to set swing Z",
+                  [](RagdollConstraint& k, float a) { Edit::SetSwingLimit(k, 2, a); });
         }
-        if (!anyActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
-            m_Drag.reset();
 
         // The move/rotate gizmo on the primitive's offset or the joint frame, in local axes.
         m_GizmoWasUsing = false;
-        if (m_GizmoOperation != 0 && boneFrame && !m_Drag)
-        {
-            const bool joint = m_GizmoOperation == 3;
-            if ((joint && constraint < 0) || (!joint && (body < 0 || m_Primitive >= int(data->Bodies[size_t(body)].Shapes.size()))))
-            {
-                m_Gizmo.Reset();
-                return;
-            }
+        const bool joint = m_GizmoOperation == 3;
+        const bool gizmoShown =
+            m_GizmoOperation != 0 && boneFrame && !m_Handles.IsDragging() && !m_Modal.IsActive() &&
+            ((joint && constraint >= 0) || (!joint && hasPrimitive));
+        // The primitive's (or the joint frame's) world transform.
+        const auto placed = [&](bool jointFrame) {
             const Physics::ShapeOffset offset =
-                joint ? data->Constraints[size_t(constraint)].Frame :
-                        Edit::OffsetOf(data->Bodies[size_t(body)].Shapes[size_t(m_Primitive)]);
-            const glm::mat4 world =
-                *boneFrame * glm::translate(glm::mat4(1.0f), offset.Position) * glm::mat4_cast(offset.Rotation);
-            const auto view = Gizmo::View::From(m_Camera, {m_Min.x, m_Min.y}, {m_Max.x - m_Min.x, m_Max.y - m_Min.y});
-            Gizmo::Pivot pivot;
-            pivot.Position = glm::vec3(world[3]);
-            pivot.Axes     = Gizmo::ResolveAxes(Gizmo::Orientation::Local, world, view);
-            Gizmo::Settings settings;
-            settings.Size       = EditorTheme::Px(100.0f);
-            settings.PickRadius = EditorTheme::Px(10.0f);
-            Gizmo::Input input;
-            input.Mouse      = {io.MousePos.x, io.MousePos.y};
-            input.Down       = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-            input.Pressed    = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-            input.Released   = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
-            input.Cancel     = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
-            input.InvertSnap = io.KeyCtrl;
-            input.Allowed    = hovered;
-            const auto mode  = m_GizmoOperation == 1 ? Gizmo::Mode::Translate : Gizmo::Mode::Rotate;
+                jointFrame ? data->Constraints[size_t(constraint)].Frame :
+                             Edit::OffsetOf(data->Bodies[size_t(body)].Shapes[size_t(m_Primitive)]);
+            return *boneFrame * glm::translate(glm::mat4(1.0f), offset.Position) * glm::mat4_cast(offset.Rotation);
+        };
+        // Writes a moved world transform back into the primitive's offset or the joint frame.
+        const auto write = [&](RagdollData copy, bool jointFrame, const glm::mat4& moved) {
+            if (jointFrame)
+                SetFromMatrix(copy.Constraints[size_t(constraint)].Frame, glm::inverse(*boneFrame) * moved);
+            else
+            {
+                auto changed = Edit::OffsetOf(copy.Bodies[size_t(body)].Shapes[size_t(m_Primitive)]);
+                SetFromMatrix(changed, glm::inverse(*boneFrame) * moved);
+                Edit::SetOffset(copy.Bodies[size_t(body)].Shapes[size_t(m_Primitive)], changed);
+            }
+            Edited(copy);
+        };
+        if (gizmoShown)
+        {
+            const glm::mat4 world = placed(joint);
+            Gizmo::Pivot    pivot;
+            pivot.Position  = glm::vec3(world[3]);
+            pivot.Axes      = Gizmo::ResolveAxes(Gizmo::Orientation::Local, world, view);
+            const auto mode = m_GizmoOperation == 1 ? Gizmo::Mode::Translate : Gizmo::Mode::Rotate;
+            input.Allowed   = hovered;
+            if (!m_Gizmo.IsDragging() && input.Allowed)
+                if (const auto hit = m_Gizmo.Pick(view, pivot, mode, settings, input.Mouse); hit.Id != Gizmo::Handle::None)
+                    m_Handles.Offer(GizmoHandleId, hit.Depth, hit.Distance, Gizmo::HandlePriority(hit.Id));
+            m_Handles.End();
+            if (!m_Gizmo.IsDragging())
+                input.Allowed = input.Allowed && (m_Handles.Hot() == 0 || m_Handles.Hot() == GizmoHandleId);
             const auto event = m_Gizmo.Update(view, pivot, mode, settings, input);
             m_GizmoWasUsing  = m_Gizmo.WantsPointer();
             if (event == Gizmo::Event::Began)
@@ -798,19 +804,7 @@ namespace Kans
             else if (event == Gizmo::Event::Cancelled)
                 Edited(m_GizmoStart);
             else if (event == Gizmo::Event::Dragged || event == Gizmo::Event::Committed)
-            {
-                const glm::mat4 moved = m_Gizmo.GetDelta().Matrix() * m_GizmoStartWorld;
-                RagdollData     copy  = m_GizmoStart;
-                if (joint)
-                    SetFromMatrix(copy.Constraints[size_t(constraint)].Frame, glm::inverse(*boneFrame) * moved);
-                else
-                {
-                    auto changed = Edit::OffsetOf(copy.Bodies[size_t(body)].Shapes[size_t(m_Primitive)]);
-                    SetFromMatrix(changed, glm::inverse(*boneFrame) * moved);
-                    Edit::SetOffset(copy.Bodies[size_t(body)].Shapes[size_t(m_Primitive)], changed);
-                }
-                Edited(copy);
-            }
+                write(m_GizmoStart, joint, m_Gizmo.GetDelta().Matrix() * m_GizmoStartWorld);
             m_Gizmo.AppendDraws(m_GizmoDraws);
             if (const std::string text = m_Gizmo.Readout(); !text.empty())
             {
@@ -821,7 +815,47 @@ namespace Kans
             }
         }
         else
+        {
             m_Gizmo.Reset();
+            m_Handles.End();
+        }
+        m_Handles.AppendDraws(m_GizmoDraws);
+
+        // Modal G (move) and R (rotate) on the selected primitive's offset, from the pointer.
+        m_ModalWasActive = m_Modal.IsActive();
+        if (!m_Modal.IsActive() && hovered && hasPrimitive && m_Kind == Selection::Body && !m_Handles.IsDragging() &&
+            !m_Gizmo.IsDragging() && !io.KeyCtrl && !io.KeyAlt && !io.WantTextInput &&
+            !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        {
+            const bool move = ImGui::IsKeyPressed(ImGuiKey_G, false), turn = ImGui::IsKeyPressed(ImGuiKey_R, false);
+            if (move || turn)
+            {
+                const glm::mat4 world = placed(false);
+                Gizmo::Pivot    pivot;
+                pivot.Position    = glm::vec3(world[3]);
+                pivot.Axes        = Gizmo::ResolveAxes(Gizmo::Orientation::Local, world, view);
+                m_ModalStart      = *data;
+                m_ModalStartWorld = world;
+                m_Modal.Start(move ? Gizmo::Operation::Translate : Gizmo::Operation::Rotate, view, pivot,
+                              Gizmo::Orientation::Local, pivot.Axes, settings, input.Mouse);
+                m_ModalWasActive = true;
+            }
+        }
+        else if (m_Modal.IsActive())
+        {
+            const auto event = m_Modal.Update(view, Widgets::ModalTransformInput(!hasPrimitive || m_Kind != Selection::Body));
+            if (event == Gizmo::Event::Cancelled)
+                Edited(m_ModalStart);
+            else if (event == Gizmo::Event::Dragged || event == Gizmo::Event::Committed)
+            {
+                if (m_Modal.GetDelta().Op == Gizmo::Operation::Scale)
+                    Edited(m_ModalStart); // Offsets do not scale: S does nothing here.
+                else
+                    write(m_ModalStart, false, m_Modal.GetDelta().Matrix() * m_ModalStartWorld);
+            }
+        }
+        m_Modal.AppendDraws(m_GizmoDraws);
+        Widgets::DrawModalTransformStatus(m_Modal, {m_Min.x + 8.0f, m_Max.y - 8.0f});
     }
 
     // ---------------------------------------------------------------------- details

@@ -8,6 +8,8 @@
 #include "Kans3D/UI/UIInput.h"
 #include "ClothPaintTool.h"
 #include "Gizmo/GizmoTargets.h"
+#include "Gizmo/Handles.h"
+#include "Gizmo/ModalTransform.h"
 #include "Gizmo/TransformGizmo.h"
 #include "HierarchyPanel.h"
 #include "MeshEditTool.h"
@@ -26,6 +28,12 @@ namespace Kans
     // all three). The transform gizmo (Gizmo/TransformGizmo) moves the selection about its
     // median point or the active entity; Esc or a right click cancels a drag, and releasing
     // it is one undo step. The axis widget in the corner aligns or orbits the view.
+    //
+    // Over the view, G, R and S move, rotate and scale the selection from the pointer
+    // (Gizmo/ModalTransform, as in Blender), and in face or edge mode E extrudes and moves; R
+    // then is not the scale tool's key there (it still is with the pointer elsewhere, or always
+    // with SetRPicksScaleTool). Physics and other authored shapes are edited with handles
+    // (Gizmo/Handles) that share one hover resolution with the transform gizmo.
     class ViewportPanel
     {
     public:
@@ -71,7 +79,29 @@ namespace Kans
 
         bool          IsHovered() const { return m_Hovered; }
         // Whether a transform gizmo drag is in progress (the editor records undo steps after it).
-        bool          IsGizmoDragging() const { return m_Gizmo.IsDragging() || m_MeshTool.GetGizmo().IsDragging(); }
+        // Whether a transform is in progress: a gizmo or handle drag, or a modal G/R/S (the editor
+        // records undo steps after it and holds back its own shortcuts).
+        bool IsGizmoDragging() const
+        {
+            return m_Gizmo.IsDragging() || m_MeshTool.GetGizmo().IsDragging() || m_Modal.IsActive() || m_Handles.IsDragging();
+        }
+        bool                         IsModal() const { return m_Modal.IsActive(); }
+        const Gizmo::ModalTransform& GetModal() const { return m_Modal; }
+        const Gizmo::HandleContext&  GetHandles() const { return m_Handles; }
+        MeshEditTool&                GetMeshTool() { return m_MeshTool; }
+        // The industry-standard choice for R: the scale tool even over the view (G and S stay modal).
+        void SetRPicksScaleTool(bool on) { m_RPicksScaleTool = on; }
+        bool RPicksScaleTool() const { return m_RPicksScaleTool; }
+        // The overlay toolbar as last drawn: the left groups' right edge, the right group's left
+        // edge, and how far it collapsed (0: full, 1: tight, 2: some groups in the overflow menu).
+        struct ToolbarLayout
+        {
+            float LeftEnd = 0.0f, RightStart = 0.0f;
+            int   Level = 0;
+        };
+        ToolbarLayout GetToolbarLayout() const { return m_ToolbarLayout; }
+        // The handle ID the transform gizmo takes part in hover resolution under.
+        static constexpr Gizmo::HandleId GizmoHandleId = 0x7472616E73666F72ull;
         Tool          GetTool() const { return m_Tool; }
         void          SetTool(Tool tool) { m_Tool = tool; }
         void          SetGizmoOrientation(Gizmo::Orientation orientation) { m_Orientation = orientation; }
@@ -116,7 +146,15 @@ namespace Kans
         void DrawToolbar();
         void DrawGizmo();
         Gizmo::Settings GizmoSettings() const;
-        void            DrawGizmoReadout(const Gizmo::TransformGizmo& gizmo);
+        Gizmo::View     GizmoView() const;
+        void            DrawGizmoReadout(const std::string& text, glm::vec2 at);
+        // Modal G/R/S: starts one from the keys over the view, or runs the one in progress
+        // (adding its guide lines to `draws`); true while one runs this frame.
+        bool UpdateModal(std::vector<GizmoDraw>& draws);
+        bool StartModal(Gizmo::Operation op, bool extrude);
+        void DrawModalStatus();
+        // The handle frame: input for this frame's handles, before any panel declares them.
+        void BeginHandles();
         // Physics (ViewportPhysics.cpp): the selection's collider, controller and joint gizmos,
         // the View menu's debug toggles, and the collider and hinge-limit handles.
         void DrawPhysicsOverlay();
@@ -195,19 +233,23 @@ namespace Kans
         // Physics debug drawing this viewport adds (editor-local; neither the scene nor the project
         // saves it). Outside play, colliders and joints are drawn from their components.
         PhysicsDebugFlags m_PhysicsView = PhysicsDebugFlags::None;
-        // The physics handle being dragged: its owner, which handle, the pointer where the drag
-        // started, the screen offset one shape unit along the handle makes, and the shape then.
-        struct PhysicsDrag
+        // Handles of this viewport (physics shapes, wheels, fields, joint limits) and the hover
+        // resolution they share with the transform gizmo.
+        Gizmo::HandleContext       m_Handles;
+        // Modal G/R/S and what it transforms; whether one ran this frame (its keys and clicks
+        // then do nothing else).
+        enum class ModalTarget : uint8_t
         {
-            using ShapeVariant  = std::variant<std::monostate, Physics::Box, Physics::Sphere, Physics::Capsule, Physics::Plane,
-                                               VehicleWheel, VehicleFieldEditing::FieldShapeValues>;
-            ImGuiID      Handle = 0;
-            ImVec2       Start {};
-            glm::vec2    PixelsPerUnit {0.0f};
-            ShapeVariant Shape;
+            None,
+            Entities,
+            Mesh
         };
-        std::optional<PhysicsDrag> m_PhysicsDrag;
-        bool                       m_PhysicsHandleHot = false; // Hovered or dragged: the transform gizmo waits.
+        Gizmo::ModalTransform      m_Modal;
+        ModalTarget                m_ModalTarget = ModalTarget::None;
+        bool                       m_ModalThisFrame = false, m_RPicksScaleTool = false, m_HandlesWereDragging = false;
+        // The toolbar's widths at each collapse level when last drawn there (0: not yet).
+        float                      m_ToolbarWidths[3] = {0.0f, 0.0f, 0.0f};
+        ToolbarLayout              m_ToolbarLayout;
         std::function<int(Entity)> m_SelectedWheel;
         ClothPaintTool             m_ClothPaint;
     };

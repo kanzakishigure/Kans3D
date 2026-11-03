@@ -13,7 +13,7 @@ namespace Kans
     class TransformGizmoFeature final : public RenderFeature
     {
     public:
-        static constexpr uint32_t MaxDraws      = 64;
+        static constexpr uint32_t MaxDraws      = 128;
         static constexpr float    OccludedAlpha = 0.25f;
 
         bool RunsAt(RenderExtensionPoint point) const override { return point == RenderExtensionPoint::Overlay; }
