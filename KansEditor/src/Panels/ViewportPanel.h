@@ -11,6 +11,7 @@
 #include "Gizmo/Handles.h"
 #include "Gizmo/ModalTransform.h"
 #include "Gizmo/TransformGizmo.h"
+#include "Gizmo/ViewCube.h"
 #include "HierarchyPanel.h"
 #include "MeshEditTool.h"
 #include "Panels/VfxGizmos.h"
@@ -113,9 +114,12 @@ namespace Kans
         void          SetTool(Tool tool) { m_Tool = tool; }
         void          SetGizmoOrientation(Gizmo::Orientation orientation) { m_Orientation = orientation; }
         void          SetPivotMode(Gizmo::PivotMode mode) { m_PivotMode = mode; }
+        void          SetGizmoSnap(bool snap) { m_GizmoSnap = snap; }
         const Gizmo::TransformGizmo& GetGizmo() const { return m_Gizmo; }
         bool          IsNavigating() const { return m_Navigation != Navigation::None; }
         EditorCamera& GetCamera() { return m_Camera; }
+        // The view cube: its cells as last drawn, hover and press.
+        const Gizmo::ViewCube& GetViewCube() const { return m_ViewCube; }
         void          FocusSelection();
         // Cloth painting (ClothPaintTool): the editor starts it from the Cloth card and routes
         // Ctrl+S / Ctrl+Z / Ctrl+Y to it while it runs.
@@ -143,8 +147,9 @@ namespace Kans
         void Render();
         // Icons for lights and cameras, camera frustums and light directions.
         void DrawSceneOverlays();
-        // The view-axis widget: click a ball to look along it, drag to orbit.
-        void DrawViewAxes();
+        // The view cube: click a face, edge or corner to look from it, drag to orbit.
+        void      DrawViewCube();
+        glm::vec2 ViewCubeCentre() const;
         void DrawStatsOverlay();
         // Projects a world point to the screen; false when behind the camera.
         bool ToScreen(const glm::vec3& point, ImVec2& screen) const;
@@ -208,28 +213,19 @@ namespace Kans
         SceneViewMode m_ViewMode  = SceneViewMode::Lit;
         GridSettings  m_Grid;
         bool          m_ShowIcons = true, m_ShowStats = false;
-        // Clickable overlay icons of this frame, and the view-axis widget's area.
+        // Clickable overlay icons of this frame, and the view cube's area.
         std::vector<std::pair<ImVec2, UUID>> m_Icons;
         ImVec2                               m_CubeMin {}, m_CubeMax {};
-        // The view-axis widget: the pressed ball (-1: the background), whether the press became an
-        // orbit drag, and an alignment in progress (yaw and pitch, eased over ViewAnimationSeconds).
-        int       m_AxisPressed = -1;
-        bool      m_AxisPressActive = false, m_AxisOrbiting = false;
-        glm::vec2 m_AxisPress {0};
-        struct ViewAnimation
-        {
-            std::pair<float, float> From, To;
-            float                   Time = 0.0f;
-            EditorCamera::View      Target;
-        };
-        std::optional<ViewAnimation> m_ViewAnimation;
+        // The view cube in the top right corner, ViewCubeHalf pixels (at scale 1) to a face.
+        static constexpr float ViewCubeHalf = 27.0f;
+        Gizmo::ViewCube        m_ViewCube;
 
         // Transform tool, orientation, pivot and snapping (the toolbar's settings).
         Tool                  m_Tool        = Tool::Move;
         Gizmo::Orientation    m_Orientation = Gizmo::Orientation::Local;
         Gizmo::PivotMode      m_PivotMode   = Gizmo::PivotMode::Median;
         bool                  m_GizmoSnap   = false;
-        float                 m_GizmoSize   = 110.0f; // Axis length in pixels at scale 1.
+        float                 m_GizmoSize   = 85.0f; // Axis length in pixels at scale 1.
         Gizmo::TransformGizmo m_Gizmo;
         Gizmo::GizmoTargets   m_GizmoTargets;
         // A right click that cancelled a drag; it does not start looking around too.

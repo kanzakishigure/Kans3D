@@ -2362,7 +2362,7 @@ namespace Kans
             settings = m_SnapSettings();
         else
         {
-            settings.Size       = EditorTheme::Px(110.0f);
+            settings.Size       = EditorTheme::Px(85.0f);
             settings.PickRadius = EditorTheme::Px(10.0f);
         }
         const VfxGizmos::Pointer pointer {Gizmo::View::From(m_PreviewCamera, min, size), input, settings};

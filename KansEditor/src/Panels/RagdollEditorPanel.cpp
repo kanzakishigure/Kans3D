@@ -642,7 +642,7 @@ namespace Kans
         // Handles and the gizmo share one hover resolution; G and R transform the primitive modally.
         const auto view = Gizmo::View::From(m_Camera, {m_Min.x, m_Min.y}, {m_Max.x - m_Min.x, m_Max.y - m_Min.y});
         Gizmo::Settings settings;
-        settings.Size       = EditorTheme::Px(100.0f);
+        settings.Size       = EditorTheme::Px(80.0f);
         settings.PickRadius = EditorTheme::Px(10.0f);
         Gizmo::Input input;
         input.Mouse      = {io.MousePos.x, io.MousePos.y};

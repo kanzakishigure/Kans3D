@@ -10,7 +10,7 @@
 #include "Kans3D/Input/Input.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Scene/Components.h"
-#include "Gizmo/ViewAxes.h"
+#include "Gizmo/ViewCube.h"
 #include "UI/BloomSettingsWidget.h"
 #include "UI/EditorIcons.h"
 #include "UI/MaterialSlotRow.h"
@@ -134,8 +134,8 @@ namespace Kans
             }
         }
         DrawToolbar();
-        DrawViewAxes();
-        // After the toolbar and the axis widget, so the gizmo knows whether they have the pointer.
+        DrawViewCube();
+        // After the toolbar and the view cube, so the gizmo knows whether they have the pointer.
         DrawGizmo();
         DrawStatsOverlay();
         // After the overlays, so clicks on their widgets do not navigate.
@@ -598,115 +598,98 @@ namespace Kans
         draw->PopClipRect();
     }
 
-    void ViewportPanel::DrawViewAxes()
+    void ViewportPanel::DrawViewCube()
     {
         using EditorTheme::Px;
         m_CubeMin = m_CubeMax = {};
         const ImGuiIO& io = ImGui::GetIO();
-        // An alignment in progress turns the camera a step each frame.
-        if (m_ViewAnimation)
-        {
-            constexpr float ViewAnimationSeconds = 0.25f;
-            m_ViewAnimation->Time += io.DeltaTime / ViewAnimationSeconds;
-            if (m_ViewAnimation->Time >= 1.0f)
-            {
-                static const std::pair<EditorCamera::View, const char*> names[] = {
-                    {EditorCamera::View::Top, "Top"},     {EditorCamera::View::Bottom, "Bottom"},
-                    {EditorCamera::View::Front, "Front"}, {EditorCamera::View::Back, "Back"},
-                    {EditorCamera::View::Right, "Right"}, {EditorCamera::View::Left, "Left"}};
-                m_Camera.SetView(m_ViewAnimation->Target);
-                for (const auto& [view, name] : names)
-                    if (view == m_ViewAnimation->Target)
-                        m_ViewName = name;
-                m_ViewAnimation.reset();
-            }
-            else
-            {
-                const auto [yaw, pitch] = Gizmo::InterpolateView(m_ViewAnimation->From, m_ViewAnimation->To, m_ViewAnimation->Time);
-                m_Camera.SetRotation(yaw, pitch);
-            }
-        }
         if (UsesSceneCamera())
+        {
+            // Hidden, but an alignment in progress still finishes.
+            m_ViewCube.Animate(m_Camera, io.DeltaTime);
+            if (const char* name = m_ViewCube.TakeFinishedViewName())
+                m_ViewName = name;
             return;
-        const float     radius = Px(36.0f), ball = Px(9.0f);
-        const glm::vec2 centre(m_Max.x - Px(10.0f) - radius - ball - Px(4.0f), m_Min.y + Px(50.0f) + radius + ball + Px(4.0f));
-        const float     reach = radius + ball + Px(4.0f);
-        m_CubeMin             = {centre.x - reach, centre.y - reach};
-        m_CubeMax             = {centre.x + reach, centre.y + reach};
-        const auto      balls = Gizmo::ViewAxisBalls(m_Camera.GetViewMatrix(), centre, radius);
+        }
+        const float     half   = Px(ViewCubeHalf);
+        const float     reach  = half * 1.9f; // The turned cube's corners, with room to grab around them.
+        const glm::vec2 centre = ViewCubeCentre();
+        m_CubeMin              = {centre.x - reach, centre.y - reach};
+        m_CubeMax              = {centre.x + reach, centre.y + reach};
         const glm::vec2 mouse(io.MousePos.x, io.MousePos.y);
-        const bool      over =
-            ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(m_CubeMin, m_CubeMax, false) &&
-            glm::length(mouse - centre) <= reach && !IsGizmoDragging() && m_Navigation == Navigation::None;
-        const int hovered = over && !m_AxisOrbiting ? Gizmo::PickViewAxisBall(balls, mouse, ball) : -1;
-
-        // Press: a ball, or the background (which orbits when dragged).
-        if (over && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-        {
-            m_AxisPressActive = true;
-            m_AxisPressed     = hovered;
-            m_AxisPress       = mouse;
-            m_AxisOrbiting    = false;
-        }
-        if (m_AxisPressActive)
-        {
-            if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
-            {
-                if (!m_AxisOrbiting && glm::length(mouse - m_AxisPress) > Px(3.0f))
-                    m_AxisOrbiting = true, m_ViewAnimation.reset();
-                if (m_AxisOrbiting)
-                    m_Camera.Orbit({io.MouseDelta.x, io.MouseDelta.y});
-            }
-            else
-            {
-                if (!m_AxisOrbiting && m_AxisPressed >= 0 && hovered == m_AxisPressed)
-                {
-                    // Looks from the ball's side; the side already looked from flips to the opposite.
-                    int  axis     = balls[size_t(m_AxisPressed)].Axis;
-                    bool negative = balls[size_t(m_AxisPressed)].Negative;
-                    if (Gizmo::IsLookingFrom(m_Camera, axis, negative))
-                        negative = !negative;
-                    const auto target = Gizmo::BallView(axis, negative);
-                    m_ViewAnimation   = ViewAnimation {{m_Camera.GetYaw(), m_Camera.GetPitch()}, EditorCamera::ViewAngles(target), 0.0f, target};
-                }
-                m_AxisPressActive = m_AxisOrbiting = false;
-                m_AxisPressed     = -1;
-            }
-        }
+        Gizmo::ViewCubeInput input;
+        input.Mouse     = mouse;
+        input.Over      = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(m_CubeMin, m_CubeMax, false) &&
+                     glm::length(mouse - centre) <= reach && !IsGizmoDragging() && m_Navigation == Navigation::None;
+        input.Pressed   = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        input.Down      = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        input.DeltaTime = io.DeltaTime;
+        m_ViewCube.Update(m_Camera, centre, half, input);
+        if (const char* name = m_ViewCube.TakeFinishedViewName())
+            m_ViewName = name;
 
         ImDrawList* draw = ImGui::GetWindowDrawList();
-        if (over || m_AxisPressActive)
-            draw->AddCircleFilled({centre.x, centre.y}, reach, IM_COL32(255, 255, 255, 28), 48);
-        static const ImU32 colors[3]   = {IM_COL32(235, 64, 70, 255), IM_COL32(115, 205, 46, 255), IM_COL32(62, 132, 245, 255)};
-        static const char* labels[3]   = {"X", "Y", "Z"};
-        for (int i = 0; i < 6; ++i)
+        if (input.Over || m_ViewCube.IsPressed())
+            draw->AddCircleFilled({centre.x, centre.y}, reach, IM_COL32(255, 255, 255, 22), 48);
+        // Cells back to front: a neutral face in the middle, darker edge and corner cells, the
+        // hovered direction (a face, or an edge or corner across its faces) in the accent colour.
+        const auto hovered = m_ViewCube.GetHovered();
+        const auto shade   = [](glm::vec3 c, float facing, float alpha) {
+            const glm::vec3 lit = glm::clamp(c * (0.62f + 0.38f * facing), 0.0f, 1.0f);
+            return IM_COL32(int(lit.r * 255), int(lit.g * 255), int(lit.b * 255), int(alpha * 255));
+        };
+        static const glm::vec3 axisTint[3] = {{0.92f, 0.25f, 0.27f}, {0.45f, 0.80f, 0.18f}, {0.24f, 0.52f, 0.96f}};
+        for (const auto& cell : m_ViewCube.GetCells())
         {
-            const auto&  b     = balls[size_t(i)];
-            const ImVec2 at {b.Screen.x, b.Screen.y};
-            const ImU32  color = colors[b.Axis];
-            if (!b.Negative)
-                draw->AddLine({centre.x, centre.y}, at, color, Px(2.0f));
-            if (b.Negative)
-            {
-                // Negative directions: a darker disc with the axis colour as its rim.
-                draw->AddCircleFilled(at, ball * 0.85f, (color & 0x00FFFFFF) | (110u << 24), 24);
-                draw->AddCircle(at, ball * 0.85f, color, 24, Px(1.5f));
-            }
+            const glm::ivec3 d      = cell.Direction;
+            const bool       isFace = std::abs(d.x) + std::abs(d.y) + std::abs(d.z) == 1;
+            glm::vec3        color  = glm::mix(glm::vec3(isFace ? 0.40f : 0.30f), axisTint[cell.Face % 3], 0.16f);
+            if (hovered && *hovered == d)
+                color = glm::vec3(0.30f, 0.62f, 1.0f) / 0.62f; // The accent, lit the same on every face.
+            ImVec2 points[4];
+            for (int k = 0; k < 4; ++k)
+                points[k] = {cell.Screen[size_t(k)].x, cell.Screen[size_t(k)].y};
+            draw->AddConvexPolyFilled(points, 4, shade(color, cell.Facing, 0.94f));
+            draw->AddPolyline(points, 4, IM_COL32(20, 21, 24, 150), ImDrawFlags_Closed, Px(1.0f));
+        }
+        // The labels on the faces turned toward the camera.
+        ImFont* font = ImGui::GetFont();
+        for (const auto& label : m_ViewCube.GetLabels())
+        {
+            if (label.Facing < 0.3f)
+                continue;
+            // Fitted into the face's width on the screen.
+            float left = FLT_MAX, right = -FLT_MAX;
+            for (const auto& cell : m_ViewCube.GetCells())
+                if (cell.Face == label.Face)
+                    for (const auto& corner : cell.Screen)
+                        left = std::min(left, corner.x), right = std::max(right, corner.x);
+            float        size   = ImGui::GetFontSize() * 0.8f;
+            const ImVec2 full   = font->CalcTextSizeA(size, FLT_MAX, 0.0f, label.Text);
+            size *= std::min(1.0f, 0.86f * (right - left) / std::max(full.x, 1.0f));
+            if (size < ImGui::GetFontSize() * 0.45f)
+                continue;
+            const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, label.Text);
+            const int    alpha  = int(255 * glm::clamp((label.Facing - 0.3f) / 0.35f, 0.0f, 1.0f));
+            draw->AddText(font, size, {label.Screen.x - extent.x * 0.5f, label.Screen.y - extent.y * 0.5f},
+                          IM_COL32(235, 236, 240, alpha), label.Text);
+        }
+        if (hovered && !m_ViewCube.IsPressed())
+        {
+            const glm::ivec3 d = *hovered;
+            if (const auto face = Gizmo::FaceView(d))
+                ImGui::SetTooltip("View from the %s (click again for the opposite side; drag to orbit)",
+                                  Gizmo::ViewCubeFaceName(d.x > 0 ? 0 : d.y > 0 ? 1 : d.z > 0 ? 2 : d.x < 0 ? 3 : d.y < 0 ? 4 : 5));
             else
-            {
-                draw->AddCircleFilled(at, ball, color, 24);
-                const ImVec2 size = ImGui::CalcTextSize(labels[b.Axis]);
-                draw->AddText({at.x - size.x * 0.5f, at.y - size.y * 0.5f}, IM_COL32(20, 20, 24, 255), labels[b.Axis]);
-            }
-            if (i == hovered)
-                draw->AddCircle(at, ball + Px(1.5f), IM_COL32(255, 255, 255, 230), 24, Px(2.0f));
+                ImGui::SetTooltip("View from %s%s%s (drag to orbit)", d.y > 0 ? "top " : d.y < 0 ? "bottom " : "",
+                                  d.z > 0 ? "front " : d.z < 0 ? "back " : "", d.x > 0 ? "right" : d.x < 0 ? "left" : "");
         }
-        if (hovered >= 0)
-        {
-            const auto& b = balls[size_t(hovered)];
-            ImGui::SetTooltip("View from %s%s (click again for the opposite side; drag to orbit)", b.Negative ? "-" : "+",
-                              labels[b.Axis]);
-        }
+    }
+
+    glm::vec2 ViewportPanel::ViewCubeCentre() const
+    {
+        using EditorTheme::Px;
+        return {m_Max.x - Px(14.0f) - Px(ViewCubeHalf) * 1.9f, m_Min.y + Px(48.0f) + Px(ViewCubeHalf) * 1.9f};
     }
 
     void ViewportPanel::DrawStatsOverlay()
@@ -755,7 +738,7 @@ namespace Kans
         input.Alt        = io.KeyAlt;
         // Alt starts orbiting, so it only changes a drag already running (a box face's other side).
         input.Allowed = m_ImageHovered && !ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive() && !io.KeyAlt &&
-                        m_Navigation == Navigation::None && !m_AxisPressActive &&
+                        m_Navigation == Navigation::None && !m_ViewCube.IsPressed() &&
                         !ImGui::IsMouseHoveringRect(m_CubeMin, m_CubeMax, false) && !m_Modal.IsActive() &&
                         !m_Gizmo.IsDragging() && !m_MeshTool.GetGizmo().IsDragging() && !UsesSceneCamera();
         m_Handles.Begin(GizmoView(), input, GizmoSettings());
@@ -948,10 +931,10 @@ namespace Kans
         input.Released   = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
         input.Cancel     = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
         input.InvertSnap = io.KeyCtrl;
-        // A toolbar control, the axis widget or navigation has the pointer; a handle being
+        // A toolbar control, the view cube or navigation has the pointer; a handle being
         // dragged, or winning the hover, too (resolved below).
         input.Allowed = m_ImageHovered && !ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive() && !io.KeyAlt &&
-                        m_Navigation == Navigation::None && !m_AxisPressActive &&
+                        m_Navigation == Navigation::None && !m_ViewCube.IsPressed() &&
                         !ImGui::IsMouseHoveringRect(m_CubeMin, m_CubeMax, false);
         const bool dragging = IsGizmoDragging();
         const auto mode     = m_Tool == Tool::Rotate    ? Gizmo::Mode::Rotate :

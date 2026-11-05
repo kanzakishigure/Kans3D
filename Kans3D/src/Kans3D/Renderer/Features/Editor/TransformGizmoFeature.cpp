@@ -8,22 +8,72 @@ namespace Kans
 {
     namespace
     {
-        // Instances at or above MaxDraws are the occluded copies (faded); the index wraps.
+        // Instance i < MaxDraws draws item i; +MaxDraws is its occluded copy (faded) and
+        // +2 MaxDraws its dark silhouette (widened by Options.w pixels). Params.x is the kind:
+        // 0 a shaded solid, 1 flat, 2 an arc band, 3 a sector, 4 ticks.
         constexpr const char* Vertex   = R"glsl(#version 450
 layout(location=0) in vec3 Position;
 layout(location=1) in vec3 Normal;
-struct Item { mat4 Model; vec4 Color; };
+struct Item { mat4 Model; vec4 Color; vec4 Params; };
 layout(set=0,binding=0,std140) uniform Parameters { mat4 ViewProjection; mat4 View; vec4 Options; Item Items[128]; } p;
 layout(location=0) out vec4 HandleColor;
+vec4 ClipOf(mat4 model, vec3 local) { return p.ViewProjection * (model * vec4(local, 1)); }
+// The unit screen direction from `a` toward `b` (pixels; zero when they coincide).
+vec2 ScreenDirection(vec4 a, vec4 b) {
+    vec2 d = (b.xy / b.w - a.xy / a.w) * p.Options.yz;
+    return dot(d, d) > 1e-12 ? normalize(d) : vec2(0);
+}
+vec4 Shift(vec4 clip, vec2 direction, float pixels) {
+    clip.xy += direction * (pixels * 2.0) / p.Options.yz * clip.w;
+    return clip;
+}
+vec2 Across(vec2 d) { return vec2(-d.y, d.x); }
 void main() {
-    Item item = p.Items[gl_InstanceIndex % 128];
-    gl_Position = p.ViewProjection * (item.Model * vec4(Position, 1));
-    float shade = 1.0;
-    if (dot(Normal, Normal) > 0.25) {
-        vec3 n = normalize(mat3(p.View) * (transpose(inverse(mat3(item.Model))) * Normal));
-        shade = 0.62 + 0.38 * abs(n.z);
+    Item  item     = p.Items[gl_InstanceIndex % 128];
+    bool  occluded = (gl_InstanceIndex / 128) % 2 == 1;
+    bool  outline  = gl_InstanceIndex >= 256;
+    int   kind     = int(item.Params.x + 0.5);
+    float extra    = outline ? p.Options.w : 0.0;
+    float shade    = 1.0;
+    vec4  clip;
+    if (kind == 2) {
+        float a = item.Params.y + Position.x * item.Params.z;
+        vec3  c = vec3(cos(a), sin(a), 0), t = vec3(-sin(a), cos(a), 0);
+        clip    = ClipOf(item.Model, c);
+        vec2 d  = ScreenDirection(clip, ClipOf(item.Model, c + t * 0.01));
+        // Where the circle is seen end-on, across the radius instead.
+        if (d == vec2(0))
+            d = Across(ScreenDirection(clip, ClipOf(item.Model, c * 1.01)));
+        clip = Shift(clip, Across(d), Position.y * (item.Params.w + extra));
+    } else if (kind == 3) {
+        float a = item.Params.y + Position.x * item.Params.z;
+        clip    = ClipOf(item.Model, Position.y * vec3(cos(a), sin(a), 0));
+    } else if (kind == 4) {
+        if (Position.x >= item.Params.w) {
+            gl_Position = vec4(2, 2, 2, 1);
+            HandleColor = vec4(0);
+            return;
+        }
+        float a = item.Params.y + Position.x * item.Params.z;
+        vec3  r = vec3(cos(a), sin(a), 0);
+        vec3  c = r * mix(1.03 - extra * 0.01, 1.15 + extra * 0.01, Position.y);
+        clip    = ClipOf(item.Model, c);
+        vec2 d  = ScreenDirection(clip, ClipOf(item.Model, c + r * 0.01));
+        clip    = Shift(clip, Across(d), Position.z * (0.75 + extra));
+    } else {
+        clip = ClipOf(item.Model, Position);
+        if (dot(Normal, Normal) > 0.25) {
+            if (outline)
+                clip = Shift(clip, ScreenDirection(clip, ClipOf(item.Model, Position + Normal * 0.01)), extra);
+            else if (kind == 0) {
+                vec3 n = normalize(mat3(p.View) * (transpose(inverse(mat3(item.Model))) * Normal));
+                shade  = 0.62 + 0.38 * abs(n.z);
+            }
+        }
     }
-    HandleColor = vec4(item.Color.rgb * shade, item.Color.a * (gl_InstanceIndex >= 128 ? p.Options.x : 1.0));
+    gl_Position = clip;
+    vec3 rgb    = outline ? item.Color.rgb * 0.2 : item.Color.rgb * shade;
+    HandleColor = vec4(rgb, item.Color.a * (occluded ? p.Options.x : 1.0));
 }
 )glsl";
         constexpr const char* Fragment = R"glsl(#version 450
@@ -38,7 +88,7 @@ void main() { Color = HandleColor; }
         struct Item
         {
             glm::mat4 Model;
-            glm::vec4 Color;
+            glm::vec4 Color, Params;
         };
         struct Parameters
         {
@@ -47,6 +97,32 @@ void main() { Color = HandleColor; }
             Item      Items[TransformGizmoFeature::MaxDraws];
         };
         static_assert(TransformGizmoFeature::MaxDraws == 128, "The shader's item array has 128 entries.");
+        static_assert(sizeof(Parameters) <= 16384, "The block fits the smallest uniform range Vulkan allows.");
+
+        // The shader's kind for a draw (Params.x).
+        float KindOf(const GizmoDraw& draw)
+        {
+            switch (draw.Shape)
+            {
+                case GizmoShape::Arc:
+                    return 2;
+                case GizmoShape::Sector:
+                    return 3;
+                case GizmoShape::Ticks:
+                    return 4;
+                default:
+                    return draw.Flat ? 1.0f : 0.0f;
+            }
+        }
+        // Solids and bands get a dark silhouette; flat fills, lines and sectors do not.
+        bool HasOutline(const GizmoDraw& draw)
+        {
+            if (IsGizmoLineShape(draw.Shape) || draw.Shape == GizmoShape::Sector)
+                return false;
+            if (draw.Shape == GizmoShape::Arc || draw.Shape == GizmoShape::Ticks)
+                return true;
+            return !draw.Flat && draw.Shape != GizmoShape::Quad && draw.Shape != GizmoShape::Disc;
+        }
 
         struct MeshBuilder
         {
@@ -212,6 +288,55 @@ void main() { Color = HandleColor; }
         }
         end(GizmoShape::Circle);
 
+        // The parametric shapes: the shader places their vertices from Params. Both windings,
+        // since they are seen from either side.
+        const auto both = [&](uint32_t a, uint32_t b, uint32_t c) {
+            m.Triangle(a, b, c);
+            m.Triangle(a, c, b);
+        };
+        begin(GizmoShape::Arc);
+        {
+            // x: the fraction along the arc, y: the side (-1 or 1).
+            constexpr uint32_t segments = 128;
+            const uint32_t     first    = uint32_t(m.Vertices.size());
+            for (uint32_t i = 0; i <= segments; ++i)
+            {
+                m.Add({float(i) / segments, -1, 0}, glm::vec3(0));
+                m.Add({float(i) / segments, 1, 0}, glm::vec3(0));
+            }
+            for (uint32_t i = 0; i < segments; ++i)
+            {
+                const uint32_t a = first + 2 * i;
+                both(a, a + 2, a + 3);
+                both(a, a + 3, a + 1);
+            }
+        }
+        end(GizmoShape::Arc);
+
+        begin(GizmoShape::Sector);
+        {
+            // x: the fraction along the arc, y: 0 at the centre and 1 on the rim.
+            constexpr uint32_t segments = 128;
+            const uint32_t     centre   = m.Add({0, 0, 0}, glm::vec3(0));
+            const uint32_t     first    = uint32_t(m.Vertices.size());
+            for (uint32_t i = 0; i <= segments; ++i)
+                m.Add({float(i) / segments, 1, 0}, glm::vec3(0));
+            for (uint32_t i = 0; i < segments; ++i)
+                both(centre, first + i, first + i + 1);
+        }
+        end(GizmoShape::Sector);
+
+        begin(GizmoShape::Ticks);
+        // x: the mark's index, y: 0 inside and 1 outside, z: the side.
+        for (uint32_t k = 0; k < GizmoMaxTicks; ++k)
+        {
+            const uint32_t a = m.Add({float(k), 0, -1}, glm::vec3(0)), b = m.Add({float(k), 0, 1}, glm::vec3(0)),
+                           c = m.Add({float(k), 1, 1}, glm::vec3(0)), d = m.Add({float(k), 1, -1}, glm::vec3(0));
+            both(a, b, c);
+            both(a, c, d);
+        }
+        end(GizmoShape::Ticks);
+
         const size_t vertexBytes = m.Vertices.size() * sizeof(HandleVertex);
         const size_t indexBytes  = m.Indices.size() * sizeof(uint32_t);
         m_Vertices               = device.CreateBuffer({vertexBytes, BufferUsage::Vertex, MemoryUsage::Upload});
@@ -253,9 +378,14 @@ void main() { Color = HandleColor; }
             DeviceProjection(view.Scene.sceneCamera.camera.GetProjectionMatrix() * view.Scene.sceneCamera.viewMatrix,
                              device->GetCoordinateConventions());
         parameters.View    = view.Scene.sceneCamera.viewMatrix;
-        parameters.Options = {OccludedAlpha, 0, 0, 0};
+        parameters.Options = {OccludedAlpha, float(std::max(view.Viewport.x, 1u)), float(std::max(view.Viewport.y, 1u)),
+                              OutlinePixels};
         for (size_t i = 0; i < count; ++i)
-            parameters.Items[i] = {view.Gizmo[i].Transform, view.Gizmo[i].Color};
+        {
+            const auto& draw    = view.Gizmo[i];
+            parameters.Items[i] = {draw.Transform, draw.Color,
+                                   {KindOf(draw), draw.Params.y, draw.Params.z, draw.Params.w}};
+        }
         // Only the used items are written.
         const size_t bytes   = offsetof(Parameters, Items) + count * sizeof(Item);
         auto         uniform = TakeUniform(*device);
@@ -289,12 +419,13 @@ void main() { Color = HandleColor; }
         BindGroupDesc group;
         group.Layout = desc.GroupLayouts[0];
         group.Entries.push_back({0, uniform, 0, sizeof(Parameters)});
-        const auto pipeline = [&](bool lines, bool occluded) {
+        const auto pipeline = [&](bool lines, bool occluded, bool outline) {
             auto d                   = desc;
             d.Primitive              = lines ? Topology::LineList : Topology::TriangleList;
             d.DepthStencil.DepthTest = d.HasDepthStencil;
-            // The visible part writes depth so the handles hide each other's far sides.
-            d.DepthStencil.DepthWrite   = d.HasDepthStencil && !occluded && !lines;
+            // The visible part writes depth so the handles hide each other's far sides; the
+            // silhouettes do not, so the handle drawn over one is never refused.
+            d.DepthStencil.DepthWrite   = d.HasDepthStencil && !occluded && !lines && !outline;
             d.DepthStencil.DepthCompare = occluded ? CompareOp::Greater : CompareOp::LessEqual;
             return renderer.CachedPipeline(d);
         };
@@ -309,19 +440,28 @@ void main() { Color = HandleColor; }
         {
             if (occluded && !desc.HasDepthStencil)
                 continue;
-            int bound = -1;
+            int        bound = -1;
+            const auto bind  = [&](bool lines, bool outline) {
+                const int key = int(lines) | int(outline) << 1;
+                if (key == bound)
+                    return;
+                commands.BindPipeline(pipeline(lines, occluded, outline));
+                commands.BindGroup(bindGroup);
+                bound = key;
+            };
             for (size_t i = 0; i < count; ++i)
             {
-                const auto& draw  = view.Gizmo[i];
-                const bool  lines = IsGizmoLineShape(draw.Shape);
-                if (int(lines) != bound)
+                const auto&    draw     = view.Gizmo[i];
+                const bool     lines    = IsGizmoLineShape(draw.Shape);
+                const auto&    range    = m_Shapes[size_t(draw.Shape)];
+                const uint32_t instance = uint32_t(i + (occluded ? MaxDraws : 0));
+                if (HasOutline(draw))
                 {
-                    commands.BindPipeline(pipeline(lines, occluded));
-                    commands.BindGroup(bindGroup);
-                    bound = int(lines);
+                    bind(false, true);
+                    commands.DrawIndexed(range.Count, 1, range.First, 0, instance + 2 * MaxDraws);
                 }
-                const auto& range = m_Shapes[size_t(draw.Shape)];
-                commands.DrawIndexed(range.Count, 1, range.First, 0, uint32_t(i + (occluded ? MaxDraws : 0)));
+                bind(lines, false);
+                commands.DrawIndexed(range.Count, 1, range.First, 0, instance);
             }
         }
         commands.EndRendering();

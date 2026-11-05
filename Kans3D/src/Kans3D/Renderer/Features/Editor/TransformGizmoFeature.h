@@ -6,8 +6,8 @@
 namespace Kans
 {
     class Renderer;
-    // Editor transform handles (RenderView::Gizmo) as solid, lightly shaded meshes over the
-    // display image, after tone mapping. The part behind scene geometry is drawn first at
+    // Editor transform handles (RenderView::Gizmo) as solid, lightly shaded meshes with a thin
+    // dark silhouette, and flat bands, sectors and ticks, over the display image, after tone mapping. The part behind scene geometry is drawn first at
     // OccludedAlpha, then the visible part depth-tested. The unit meshes are built once per
     // feature; each frame writes one small uniform block taken from a reused set.
     class TransformGizmoFeature final : public RenderFeature
@@ -15,6 +15,7 @@ namespace Kans
     public:
         static constexpr uint32_t MaxDraws      = 128;
         static constexpr float    OccludedAlpha = 0.25f;
+        static constexpr float    OutlinePixels = 1.0f; // The silhouette's width around a handle.
 
         bool RunsAt(RenderExtensionPoint point) const override { return point == RenderExtensionPoint::Overlay; }
         void AddPasses(RenderExtensionPoint point, const RenderFeatureContext& context) override;

@@ -117,8 +117,14 @@ namespace Kans::Gizmo
 
     struct Settings
     {
-        float Size       = 110.0f; // Axis length in pixels.
-        float PickRadius = 10.0f;  // Pixels around a handle's screen shape.
+        float Size       = 85.0f; // Axis length in pixels.
+        float PickRadius = 10.0f; // Pixels around a handle's screen shape.
+        // The uniform scale centre's pick radius in pixels; inside it the centre wins over every
+        // other handle.
+        float CenterPickRadius = 15.0f;
+        // Ring bands' thickness in pixels (axis rings, then the outer view ring).
+        float RingThickness     = 3.5f;
+        float ViewRingThickness = 2.0f;
         // Axes and planes closer than this to edge-on cannot be picked; they fade in over twice it.
         float EdgeOnDegrees = 5.0f;
         bool  Snap          = false; // The toolbar setting; Input::InvertSnap flips it.
@@ -175,6 +181,20 @@ namespace Kans::Gizmo
     };
     // The tie-break order at equal depth: centre 4 > planes 3 > axes and cubes 2 > rings 1.
     int HandlePriority(Handle handle);
+
+    // The part of an axis ring facing the camera: the arc from Middle - HalfAngle to Middle +
+    // HalfAngle, turning from Middle toward Side (Middle x Side is the ring's normal). A ring
+    // point is shown and picked when its radial direction r has r . toCamera >= -RingBackTolerance
+    // (a little past half the ring; all of it when the ring faces the camera).
+    struct RingArc
+    {
+        glm::vec3 Middle {1, 0, 0}, Side {0, 1, 0};
+        float     HalfAngle = 3.14159265f;
+        bool      Contains(glm::vec3 radial) const;
+    };
+    inline constexpr float RingBackTolerance = 0.08f;
+    // `normal` is the ring's axis; `toCamera` the unit direction from its centre to the camera.
+    RingArc FacingArc(glm::vec3 normal, glm::vec3 toCamera);
 
     Operation OperationOf(Handle handle, Mode mode);
     // The pivot axes for an orientation: the active object's world transform (Local), the

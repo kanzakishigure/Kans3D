@@ -14,12 +14,17 @@ namespace Kans::Gizmo
         constexpr float Pi = glm::pi<float>();
 
         // Handle layout, in fractions of the axis length.
-        constexpr float AxisStart = 0.12f, ArrowShaftEnd = 0.80f, ScaleShaftEnd = 0.86f;
-        constexpr float ShaftRadius = 0.012f, ConeRadius = 0.055f;
-        constexpr float ScaleCube = 0.92f, ScaleCubeHalf = 0.06f;
-        constexpr float CombinedCube = 1.2f, CombinedCubeHalf = 0.045f;
-        constexpr float PlaneLow = 0.22f, PlaneHigh = 0.42f;
-        constexpr float CenterRadius = 0.065f;
+        // Arrows: a short shaft and a long tip, as in UE5 and Blender.
+        constexpr float AxisStart = 0.12f, ArrowShaftEnd = 0.72f, ScaleShaftEnd = 0.86f;
+        constexpr float ShaftRadius = 0.016f, ConeRadius = 0.07f;
+        constexpr float ScaleCube = 0.92f, ScaleCubeHalf = 0.065f;
+        constexpr float CombinedCube = 1.2f, CombinedCubeHalf = 0.05f;
+        // Plane squares (Blender's): about a fifth of the axis on a side, clear of the centre and
+        // the arrow roots; the scale ones further out, so the uniform centre stays free.
+        constexpr float PlaneLow = 0.28f, PlaneHigh = 0.46f;
+        constexpr float ScalePlaneLow = 0.40f, ScalePlaneHigh = 0.58f;
+        constexpr float PlaneFillAlpha = 0.35f, PlaneHoverAlpha = 0.85f;
+        constexpr float CenterRadius = 0.065f, ScaleCenterRadius = 0.1f;
         constexpr float RingRadius = 0.9f, CombinedRingRadius = 0.72f, ViewRingRadius = 1.1f;
         constexpr int   RingSamples = 96;
         // Rings closer than this to edge-on rotate by screen-space travel along their tangent.
@@ -103,6 +108,11 @@ namespace Kans::Gizmo
         }
 
         float RingRadiusOf(Mode mode) { return mode == Mode::Combined ? CombinedRingRadius : RingRadius; }
+        void  PlaneRange(Mode mode, float& low, float& high)
+        {
+            low  = mode == Mode::Scale ? ScalePlaneLow : PlaneLow;
+            high = mode == Mode::Scale ? ScalePlaneHigh : PlaneHigh;
+        }
 
         bool HasTranslate(Mode m) { return m == Mode::Translate || m == Mode::Combined; }
         bool HasPlanes(Mode m) { return m != Mode::Rotate; }
@@ -134,19 +144,22 @@ namespace Kans::Gizmo
             Handle Id       = Handle::None;
             float  Depth    = 0.0f;
             float  Distance = 0.0f;
+            int    Rank     = 0;     // The priority it competes with.
+            bool   Margin   = false; // Only near the handle: it counts where nothing else is.
         };
 
-        // The closest screen point of a ring to `mouse`, its distance and its world point.
-        float RingDistance(const View& view, glm::vec3 centre, glm::vec3 u, glm::vec3 v, float radius, glm::vec2 mouse,
+        // The closest screen point of a ring's arc to `mouse`, its distance and its world point.
+        float RingDistance(const View& view, glm::vec3 centre, const RingArc& arc, float radius, glm::vec2 mouse,
                            glm::vec3& closest)
         {
             float                    best = std::numeric_limits<float>::max();
             std::optional<glm::vec2> previous;
             glm::vec3                previousWorld {0};
-            for (int i = 0; i <= RingSamples; ++i)
+            const int                samples = std::max(8, int(std::ceil(RingSamples * arc.HalfAngle / Pi)));
+            for (int i = 0; i <= samples; ++i)
             {
-                const float     a     = 2.0f * Pi * float(i) / RingSamples;
-                const glm::vec3 world = centre + (u * std::cos(a) + v * std::sin(a)) * radius;
+                const float     a     = arc.HalfAngle * (2.0f * float(i) / samples - 1.0f);
+                const glm::vec3 world = centre + (arc.Middle * std::cos(a) + arc.Side * std::sin(a)) * radius;
                 const auto      at    = view.ToScreen(world);
                 if (at && previous)
                 {
@@ -161,6 +174,40 @@ namespace Kans::Gizmo
             return best;
         }
     } // namespace
+
+    // ---------------------------------------------------------------------- rings
+
+    bool RingArc::Contains(glm::vec3 radial) const
+    {
+        const float length = glm::length(radial);
+        if (length < 1e-12f)
+            return true;
+        const float c = glm::dot(radial / length, Middle);
+        const float s = glm::dot(radial / length, Side);
+        return std::abs(std::atan2(s, c)) <= HalfAngle + 1e-5f;
+    }
+
+    RingArc FacingArc(glm::vec3 normal, glm::vec3 toCamera)
+    {
+        normal = glm::normalize(normal);
+        // The camera direction within the ring's plane: its length b says how far the ring is
+        // turned from facing the camera. Shown where b cos(angle from it) >= -tolerance.
+        const glm::vec3 inPlane = toCamera - normal * glm::dot(toCamera, normal);
+        const float     b       = glm::length(inPlane);
+        RingArc         arc;
+        if (b < 1e-6f)
+        {
+            const glm::mat3 frame = FrameAlong(normal);
+            arc.Middle            = frame[0];
+            arc.Side              = frame[1];
+            arc.HalfAngle         = Pi;
+            return arc;
+        }
+        arc.Middle    = inPlane / b;
+        arc.Side      = glm::cross(normal, arc.Middle);
+        arc.HalfAngle = std::acos(glm::clamp(-RingBackTolerance / b, -1.0f, 1.0f));
+        return arc;
+    }
 
     // ---------------------------------------------------------------------- camera
 
@@ -347,9 +394,13 @@ namespace Kans::Gizmo
         const float     s     = WorldSize(view, p, settings);
         const glm::vec3 sight = view.DirectionTo(p);
         const float     pick  = settings.PickRadius;
+        const float fromCentre = glm::length(mouse - *centre);
+        // The uniform scale centre takes its whole zone, before the plane squares and axis roots.
+        if (mode == Mode::Scale && fromCentre <= std::max(pick, settings.CenterPickRadius))
+            return {Handle::Center, view.Depth(p), fromCentre};
         std::vector<Candidate> hits;
-        const auto      add = [&](Handle id, glm::vec3 at, float distance) {
-            hits.push_back({id, view.Depth(at), distance});
+        const auto      add = [&](Handle id, glm::vec3 at, float distance, bool margin = false) {
+            hits.push_back({id, view.Depth(at), distance, Priority(id), margin});
         };
         // A world segment on the screen: the distance to it and the world point there.
         const auto segment = [&](glm::vec3 a, glm::vec3 b, float& distance, glm::vec3& at) {
@@ -388,9 +439,11 @@ namespace Kans::Gizmo
             {
                 int u, v;
                 PlaneAxes(i, u, v);
+                float low, high;
+                PlaneRange(mode, low, high);
                 const glm::vec3 du = pivot.Axes[u] * s, dv = pivot.Axes[v] * s;
-                const glm::vec3 corners[4] = {p + du * PlaneLow + dv * PlaneLow, p + du * PlaneHigh + dv * PlaneLow,
-                                              p + du * PlaneHigh + dv * PlaneHigh, p + du * PlaneLow + dv * PlaneHigh};
+                const glm::vec3 corners[4] = {p + du * low + dv * low, p + du * high + dv * low, p + du * high + dv * high,
+                                              p + du * low + dv * high};
                 glm::vec2 screen[4];
                 bool      valid = true;
                 for (int c = 0; c < 4; ++c)
@@ -402,7 +455,8 @@ namespace Kans::Gizmo
                 }
                 if (valid)
                 {
-                    // Inside the convex quad (either winding), or within a third of the pick radius of it.
+                    // Inside the convex square (either winding), or within the pick radius of it
+                    // where no other handle is.
                     float sign = 0, edge = std::numeric_limits<float>::max();
                     bool  inside = true;
                     for (int c = 0; c < 4; ++c)
@@ -416,22 +470,23 @@ namespace Kans::Gizmo
                         float t = 0;
                         edge    = std::min(edge, SegmentDistance(mouse, a, b, t));
                     }
-                    if (inside || edge <= pick / 3.0f)
-                        add(PlaneHandle(i), p + (du + dv) * ((PlaneLow + PlaneHigh) * 0.5f), inside ? 0.0f : edge);
+                    const glm::vec3 middle = p + (du + dv) * ((low + high) * 0.5f);
+                    if (inside)
+                        add(PlaneHandle(i), middle, 0.0f);
+                    else if (edge <= pick)
+                        add(PlaneHandle(i), middle, edge, true);
                 }
             }
             if (mode == Mode::Rotate || mode == Mode::Combined)
             {
-                int u, v;
-                PlaneAxes(i, u, v);
+                // Only the camera-facing arc: the back half is neither drawn nor picked.
                 glm::vec3   at;
-                const float d = RingDistance(view, p, pivot.Axes[u], pivot.Axes[v], RingRadiusOf(mode) * s, mouse, at);
+                const float d = RingDistance(view, p, FacingArc(axis, -sight), RingRadiusOf(mode) * s, mouse, at);
                 if (d <= pick)
                     add(RingHandle(i), at, d);
             }
         }
-        const float fromCentre = glm::length(mouse - *centre);
-        if (mode != Mode::Rotate && fromCentre <= std::max(pick, CenterRadius * settings.Size))
+        if (mode != Mode::Rotate && mode != Mode::Scale && fromCentre <= std::max(pick, CenterRadius * settings.Size))
             add(Handle::Center, p, fromCentre);
         if (mode == Mode::Rotate || mode == Mode::Combined)
         {
@@ -445,6 +500,9 @@ namespace Kans::Gizmo
                 return {Handle::Trackball, view.Depth(p), fromCentre};
             return {};
         }
+        // Margins only fill empty space.
+        if (std::any_of(hits.begin(), hits.end(), [](const Candidate& h) { return !h.Margin; }))
+            hits.erase(std::remove_if(hits.begin(), hits.end(), [](const Candidate& h) { return h.Margin; }), hits.end());
         // The nearest depth wins; within a small depth band, priority and then distance.
         float nearest = std::numeric_limits<float>::max();
         for (const auto& h : hits)
@@ -456,7 +514,7 @@ namespace Kans::Gizmo
         {
             if (h.Depth > nearest + band)
                 continue;
-            const int priority = Priority(h.Id);
+            const int priority = h.Rank;
             if (priority > bestPriority || (priority == bestPriority && h.Distance < best.Distance))
                 best = h, bestPriority = priority;
         }
@@ -589,11 +647,8 @@ namespace Kans::Gizmo
                     if (handle == Handle::RingView)
                         grab = p + view.Up() * (ViewRingRadius * m_StartSize);
                     else
-                    {
-                        int u, v;
-                        PlaneAxes(i, u, v);
-                        RingDistance(view, p, pivot.Axes[u], pivot.Axes[v], RingRadiusOf(mode) * m_StartSize, mouse, grab);
-                    }
+                        RingDistance(view, p, FacingArc(m_Axis, -view.DirectionTo(p)), RingRadiusOf(mode) * m_StartSize, mouse,
+                                     grab);
                     const glm::vec3 radial = grab - p;
                     m_StartVector = glm::length(radial) > 0 ? glm::normalize(radial) : FrameAlong(m_Axis)[0];
                     const glm::vec3 tangent = glm::cross(m_Axis, m_StartVector);
@@ -739,22 +794,33 @@ namespace Kans::Gizmo
         const glm::mat3& axes    = m_Pivot.Axes;
         const glm::mat3 facing(m_View.Right(), m_View.Up(), -m_View.Forward());
         const auto      shows    = [&](Handle h) { return !dragging || h == m_Active; };
+        const auto      hot      = [&](Handle h) { return h == m_Hovered || (dragging && h == m_Active); };
         const auto      tint     = [&](Handle h, glm::vec4 color) {
-            if (h == m_Hovered || (dragging && h == m_Active))
+            if (hot(h))
                 color = glm::vec4(glm::mix(glm::vec3(color), glm::vec3(1.0f), settings.HoverBrighten), color.a);
             return color;
         };
-        const auto      add = [&](GizmoShape shape, const glm::mat4& transform, glm::vec4 color) {
+        const auto      add = [&](GizmoShape shape, const glm::mat4& transform, glm::vec4 color, glm::vec4 params = glm::vec4(0),
+                             bool flat = false) {
             if (color.a > 0.0f)
-                out.push_back({shape, transform, color});
+                out.push_back({shape, transform, color, params, flat});
         };
         const auto      line = [&](glm::vec3 a, glm::vec3 b, glm::vec4 color) {
             const glm::vec3 d = b - a;
             if (glm::length(d) > 0.0f)
                 add(GizmoShape::Line, Place(a, FrameAlong(d), glm::vec3(1, 1, glm::length(d))), color);
         };
+        // A flat band along a circle about `normal` from `from`, `span` radians toward
+        // normal x from; `thickness` pixels across.
+        const auto      band = [&](glm::vec3 normal, glm::vec3 from, float radius, float first, float span, float thickness,
+                              glm::vec4 color) {
+            const glm::mat3 frame(from, glm::cross(normal, from), normal);
+            add(GizmoShape::Arc, Place(p, frame, glm::vec3(radius)), color, {0, first, span, thickness * 0.5f});
+        };
         const float guide = 1000.0f * s;
         const Operation op = dragging ? m_Delta.Op : Operation::None;
+        float planeLow, planeHigh;
+        PlaneRange(m_Mode, planeLow, planeHigh);
 
         for (int i = 0; i < 3; ++i)
         {
@@ -813,38 +879,49 @@ namespace Kans::Gizmo
                 const float  fade = PlaneVisibility(axis, sight, settings.EdgeOnDegrees);
                 if (shows(h) && (fade > 0.0f || dragging))
                 {
+                    // A flat square in the normal axis' colour: a see-through fill with a solid
+                    // edge, filled in when hot.
                     int u, v;
                     PlaneAxes(i, u, v);
-                    const float half   = (PlaneHigh - PlaneLow) * 0.5f;
+                    const float half   = (planeHigh - planeLow) * 0.5f;
                     glm::vec2   scale(1.0f);
                     if (dragging && op == Operation::Scale)
                         scale = {m_Delta.Scale[u], m_Delta.Scale[v]};
-                    const float     mid = (PlaneLow + PlaneHigh) * 0.5f;
+                    const float     mid = (planeLow + planeHigh) * 0.5f;
                     const glm::vec3 c   = p + axes[u] * (mid * scale.x * s) + axes[v] * (mid * scale.y * s);
                     const glm::mat3 frame(axes[u], axes[v], axis);
-                    glm::vec4       color = tint(h, base);
-                    color.a = (h == m_Hovered || dragging ? 0.8f : 0.55f) * (dragging ? 1.0f : fade);
-                    add(GizmoShape::Quad, Place(c, frame, {half * s, half * s, 1.0f}), color);
+                    const float     alpha = dragging ? 1.0f : fade;
+                    const glm::vec4 color = tint(h, base);
+                    add(GizmoShape::Quad, Place(c, frame, {half * s, half * s, 1.0f}),
+                        glm::vec4(glm::vec3(color), (hot(h) ? PlaneHoverAlpha : PlaneFillAlpha) * alpha), {}, true);
+                    add(GizmoShape::Square, Place(c, frame, {half * s, half * s, 1.0f}), glm::vec4(glm::vec3(color), alpha));
                     if (dragging)
                     {
                         // The constrained plane: both axes as guide lines and an outline around the handle.
                         line(start - axes[u] * guide, start + axes[u] * guide, glm::vec4(glm::vec3(settings.AxisColors[u]), 0.7f));
                         line(start - axes[v] * guide, start + axes[v] * guide, glm::vec4(glm::vec3(settings.AxisColors[v]), 0.7f));
-                        add(GizmoShape::Square, Place(p + (axes[u] + axes[v]) * (PlaneHigh * 0.5f * s), frame,
-                                                      {PlaneHigh * 0.5f * s, PlaneHigh * 0.5f * s, 1.0f}),
+                        add(GizmoShape::Square, Place(p + (axes[u] + axes[v]) * (planeHigh * 0.5f * s), frame,
+                                                      {planeHigh * 0.5f * s, planeHigh * 0.5f * s, 1.0f}),
                             glm::vec4(glm::vec3(base), 0.9f));
                     }
                 }
             }
             if (m_Mode == Mode::Rotate || m_Mode == Mode::Combined)
             {
+                // Idle: the camera-facing arc only. Dragging: the whole active ring.
                 const Handle h = RingHandle(i);
                 if (shows(h))
                 {
-                    int u, v;
-                    PlaneAxes(i, u, v);
-                    const float r = RingRadiusOf(m_Mode) * s;
-                    add(GizmoShape::Torus, Place(p, glm::mat3(axes[u], axes[v], axis), glm::vec3(r)), tint(h, base));
+                    const float     r         = RingRadiusOf(m_Mode) * s;
+                    const float     thickness = settings.RingThickness * (hot(h) ? 1.35f : 1.0f);
+                    const glm::vec4 color     = tint(h, base);
+                    if (dragging)
+                        band(m_Axis, m_StartVector, r, 0.0f, 2.0f * Pi, thickness, color);
+                    else
+                    {
+                        const RingArc arc = FacingArc(axis, -sight);
+                        band(axis, arc.Middle, r, -arc.HalfAngle, 2.0f * arc.HalfAngle, thickness, color);
+                    }
                 }
             }
         }
@@ -853,8 +930,9 @@ namespace Kans::Gizmo
             const glm::vec4 color = tint(Handle::Center, settings.CenterColor);
             if (m_Mode == Mode::Scale)
             {
+                // Drawn after the axes and clear of every plane square, so nothing covers it.
                 const float f = dragging ? m_Delta.Scale.x : 1.0f;
-                add(GizmoShape::Sphere, Place(p, facing, glm::vec3(CenterRadius * 1.2f * f * s)), color);
+                add(GizmoShape::Sphere, Place(p, facing, glm::vec3(ScaleCenterRadius * f * s)), color);
             }
             else
             {
@@ -864,26 +942,37 @@ namespace Kans::Gizmo
                     line(start, p, glm::vec4(glm::vec3(settings.ViewColor), 0.8f));
             }
         }
-        if (m_Mode == Mode::Rotate || m_Mode == Mode::Combined)
+        // The outer view ring: thin and light. The trackball inside the rings has no drawing.
+        if ((m_Mode == Mode::Rotate || m_Mode == Mode::Combined) && shows(Handle::RingView))
         {
-            if (shows(Handle::RingView))
-                add(GizmoShape::Torus, Place(p, facing, glm::vec3(ViewRingRadius * s)), tint(Handle::RingView, settings.ViewColor));
-            if (m_Mode == Mode::Rotate && (shows(Handle::Trackball) || (dragging && m_Active == Handle::Trackball)))
-            {
-                add(GizmoShape::Circle, Place(p, facing, glm::vec3(RingRadius * s)), glm::vec4(glm::vec3(settings.ViewColor), 0.3f));
-                if (m_Hovered == Handle::Trackball || (dragging && m_Active == Handle::Trackball))
-                    add(GizmoShape::Disc, Place(p, facing, glm::vec3(RingRadius * s)), glm::vec4(glm::vec3(settings.ViewColor), 0.08f));
-            }
+            const float thickness = settings.ViewRingThickness * (hot(Handle::RingView) ? 1.5f : 1.0f);
+            const float alpha     = hot(Handle::RingView) ? 0.9f : 0.5f;
+            const glm::vec3 axis  = dragging ? m_Axis : -sight;
+            const glm::vec3 from  = dragging ? m_StartVector : glm::normalize(facing[0] - axis * glm::dot(facing[0], axis));
+            band(axis, from, ViewRingRadius * s, 0.0f, 2.0f * Pi, thickness,
+                 glm::vec4(glm::vec3(tint(Handle::RingView, settings.ViewColor)), alpha));
         }
         if (dragging && op == Operation::Rotate && m_Active != Handle::Trackball)
         {
-            // The swept angle: spokes to where the grab started and where it is now.
+            // UE5's swept angle: a see-through pie slice from the grab to now, its two spokes
+            // and, while snapping, a tick at every step around the ring.
+            const int       i     = AxisOf(m_Active);
             const float     r     = (m_Active == Handle::RingView ? ViewRingRadius : RingRadiusOf(m_Mode)) * s;
+            const glm::vec3 base  = i >= 0 ? glm::vec3(settings.AxisColors[i]) : glm::vec3(settings.ViewColor);
+            const glm::mat3 frame(m_StartVector, glm::cross(m_Axis, m_StartVector), m_Axis);
+            const float     swept = glm::clamp(m_Delta.Angle, -2.0f * Pi, 2.0f * Pi);
+            add(GizmoShape::Sector, Place(p, frame, glm::vec3(r)), glm::vec4(base, 0.3f), {0, 0, swept, 0});
             const glm::vec3 from  = m_StartVector * r;
             const glm::vec3 to    = glm::angleAxis(m_Delta.Angle, m_Axis) * from;
-            const glm::vec4 color = glm::vec4(glm::vec3(settings.ViewColor), 0.8f);
-            line(p, p + from, color);
-            line(p, p + to, color);
+            line(p, p + from, glm::vec4(base, 0.9f));
+            line(p, p + to, glm::vec4(glm::vec3(settings.ViewColor), 0.9f));
+            if (m_Snap && settings.RotateStep > 0.0f)
+            {
+                const float step  = glm::radians(settings.RotateStep);
+                const float count = std::min(float(GizmoMaxTicks), std::ceil(2.0f * Pi / step - 1e-3f));
+                add(GizmoShape::Ticks, Place(p, frame, glm::vec3(r)), glm::vec4(glm::vec3(settings.ViewColor), 0.9f),
+                    {0, 0, step, count});
+            }
         }
     }
 
