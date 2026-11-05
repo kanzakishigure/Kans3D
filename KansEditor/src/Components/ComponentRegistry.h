@@ -18,6 +18,10 @@ namespace Kans
     {
         class ChainPicker;
     }
+    namespace VfxGizmos
+    {
+        class SceneHandles;
+    }
 
     // The parts a material slot row stands for: each entity's subtree sections using that slot.
     using SlotParts = std::vector<std::pair<UUID, uint32_t>>;
@@ -74,6 +78,8 @@ namespace Kans
         virtual void OpenRagdollEditor(AssetID /*ragdoll*/) {}
         // Particle systems: open a .vfxsystem in the VFX system editor.
         virtual void OpenVfxSystem(AssetID /*system*/) {}
+        // The scene viewport's VFX handles (which emitter and module, and whether they edit the asset).
+        virtual VfxGizmos::SceneHandles* GetVfxHandles() { return nullptr; }
         virtual void CreateRagdoll(Entity) {}
         // Vehicles: the wheel row selected in the card, which the viewport highlights (-1: none).
         virtual int  GetSelectedWheel(Entity) { return -1; }

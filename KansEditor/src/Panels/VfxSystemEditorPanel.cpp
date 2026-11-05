@@ -112,6 +112,10 @@ namespace Kans
         m_PreviewKey    = {size_t(-1), 0};
         m_PreviewFramed = false;
         m_Preview->SetSun(m_Sun, SunDirection(m_SunYaw, m_SunPitch));
+        m_GizmoUse.clear();
+        m_GizmoGrid.clear();
+        m_Gizmos.Reset();
+        m_Handles.Reset();
         return true;
     }
 
@@ -196,8 +200,18 @@ namespace Kans
         return true;
     }
 
-    bool VfxSystemEditorPanel::Undo() { return m_Document.Undo(); }
-    bool VfxSystemEditorPanel::Redo() { return m_Document.Redo(); }
+    bool VfxSystemEditorPanel::Undo()
+    {
+        if (m_Gizmos.IsDragging())
+            return false; // A handle drag is one step; it ends first.
+        return m_Document.Undo();
+    }
+    bool VfxSystemEditorPanel::Redo()
+    {
+        if (m_Gizmos.IsDragging())
+            return false;
+        return m_Document.Redo();
+    }
 
     std::optional<fs::path> VfxSystemEditorPanel::DuplicateToProject(const fs::path& directory)
     {
@@ -1082,10 +1096,29 @@ namespace Kans
         const bool open = PropertyGrid::BeginGroup(name.c_str(), &enabled, &toggled, false);
         if (expanding)
             ImGui::SetScrollHereY(0.4f); // A row opened for the user (added, or a diagnostic) comes into view.
+        // The selected (or newly expanded) use gets the viewport handles.
+        if (expanding && VfxGizmos::HasHandles(use, m_Context))
+            m_GizmoUse = use.Guid;
         ImVec2     bmin, bmax;
         if (PropertyGrid::LastGroupHeading(bmin, bmax))
         {
             auto* draw = ImGui::GetWindowDrawList();
+            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseHoveringRect(bmin, bmax) &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                m_GizmoUse = use.Guid;
+            if (m_GizmoUse == use.Guid)
+            {
+                // Selected: an accent edge in the handles' colour, and a marker when it has handles.
+                const ImU32 accent = ImGui::GetColorU32(ImVec4(VfxGizmos::Accent.r, VfxGizmos::Accent.g, VfxGizmos::Accent.b, 1.0f));
+                draw->AddRectFilled({bmin.x - Px(1.0f), bmin.y}, {bmin.x + Px(1.0f), bmax.y}, accent);
+                if (VfxGizmos::HasHandles(use, m_Context))
+                {
+                    const float y = bmin.y + (bmax.y - bmin.y - ImGui::GetFontSize()) * 0.5f;
+                    draw->AddText({bmax.x - Px(140.0f), y}, accent, ICON_FA_ARROWS_MOVE);
+                    if (ImGui::IsMouseHoveringRect({bmax.x - Px(142.0f), bmin.y}, {bmax.x - Px(124.0f), bmax.y}))
+                        ImGui::SetTooltip("Its handles show in the preview");
+                }
+            }
             // Category colour on the left edge of the band.
             const uint32_t category = VfxModuleEditing::CategoryColor(info ? info->Data.Category : std::string());
             draw->AddRectFilled({bmin.x - Px(4.0f), bmin.y}, {bmin.x - Px(1.0f), bmax.y}, category | 0xff000000);
@@ -1953,6 +1986,9 @@ namespace Kans
                 ImGui::BeginDisabled(!own);
                 if (b.Kind == "Grid3D")
                 {
+                    bool shown = m_GizmoGrid == name;
+                    if (PropertyGrid::Checkbox("Bounds handles", shown))
+                        m_GizmoGrid = shown ? name : std::string();
                     glm::vec3 resolution(b.Resolution);
                     if (PropertyGrid::Vec3("Resolution", resolution, 32.0f, 0.2f))
                         b.Resolution = glm::uvec3(glm::clamp(glm::round(resolution), glm::vec3(1), glm::vec3(128))), edit(true);
@@ -2137,6 +2173,13 @@ namespace Kans
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Frame the bounds");
         ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, m_ShowHandles ? palette.Accent : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        if (ImGui::Button(ICON_FA_ARROWS_MOVE))
+            m_ShowHandles = !m_ShowHandles;
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Handles for the selected module, the emitter's bounds and its grids");
+        ImGui::SameLine();
         if (ImGui::Button("View"))
             ImGui::OpenPopup("##previewview");
         ImGui::SameLine(0, Px(2.0f));
@@ -2152,6 +2195,8 @@ namespace Kans
         if (ImGui::BeginPopup("##previewview"))
         {
             ImGui::MenuItem("Grid", nullptr, &m_Look.Grid);
+            ImGui::MenuItem("Handles", nullptr, &m_ShowHandles);
+            ImGui::MenuItem("Keep bounds centred", nullptr, &m_LockBounds);
             bool floor = p.HasFloor(), sphere = p.HasSphere();
             if (ImGui::MenuItem("Floor plane (collides)", nullptr, &floor))
                 p.SetFloor(floor);
@@ -2281,6 +2326,70 @@ namespace Kans
         }
     }
 
+    VfxGizmos::Selection VfxSystemEditorPanel::GizmoSelection() const
+    {
+        VfxGizmos::Selection selection;
+        selection.Emitter = Handle();
+        selection.Use     = m_GizmoUse;
+        selection.Grid    = m_GizmoGrid;
+        return selection;
+    }
+
+    Gizmo::Input VfxSystemEditorPanel::PreviewHandleInput(ImVec2 min, ImVec2 size) const
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        Gizmo::Input   input;
+        input.Mouse      = {io.MousePos.x, io.MousePos.y};
+        input.Down       = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        input.Pressed    = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        input.Released   = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+        input.Cancel     = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+        input.InvertSnap = io.KeyCtrl;
+        input.Alt        = io.KeyAlt;
+        input.Shift      = io.KeyShift;
+        input.AxisKey    = ImGui::IsKeyDown(ImGuiKey_X) ? 0 : ImGui::IsKeyDown(ImGuiKey_Y) ? 1 : ImGui::IsKeyDown(ImGuiKey_Z) ? 2 : -1;
+        // Over the view, and no widget (nor a camera drag of the view itself) has the pointer.
+        input.Allowed = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(min, {min.x + size.x, min.y + size.y}) &&
+                        !ImGui::IsAnyItemActive();
+        return input;
+    }
+
+    std::vector<GizmoDraw> VfxSystemEditorPanel::UpdatePreviewHandles(const Gizmo::Input& input, glm::vec2 min, glm::vec2 size)
+    {
+        std::vector<GizmoDraw> draws;
+        Gizmo::Settings        settings;
+        if (m_SnapSettings)
+            settings = m_SnapSettings();
+        else
+        {
+            settings.Size       = EditorTheme::Px(110.0f);
+            settings.PickRadius = EditorTheme::Px(10.0f);
+        }
+        const VfxGizmos::Pointer pointer {Gizmo::View::From(m_PreviewCamera, min, size), input, settings};
+        m_PreviewView = pointer.View;
+        m_Handles.Begin(pointer.View, pointer.Input, pointer.Settings);
+        const bool shown = m_IsOpen && m_ShowHandles;
+        if (shown)
+        {
+            VfxGizmos::Options options;
+            if (const auto* instance = m_Preview->Instance())
+                options.Owner = instance->OwnerTransform();
+            options.Editable         = !ReadOnly();
+            options.LockBoundsCenter = m_LockBounds;
+            m_Gizmos.Declare(m_Handles, pointer, m_Document, m_Context, GizmoSelection(), options);
+        }
+        m_Handles.End();
+        if (shown)
+        {
+            m_Gizmos.Update(m_Handles, pointer);
+            m_Gizmos.AppendDraws(draws);
+        }
+        else
+            m_Gizmos.Reset();
+        m_Handles.AppendDraws(draws);
+        return draws;
+    }
+
     void VfxSystemEditorPanel::DrawPreviewOverlay(ImVec2 min, ImVec2 size)
     {
         using EditorTheme::Px;
@@ -2352,6 +2461,23 @@ namespace Kans
                 draw->AddText({at.x, at.y - ImGui::GetTextLineHeight() - Px(2.0f)}, IM_COL32(230, 230, 230, 255), label);
             }
         }
+        // Grid3D lattices of the handles, the dragged value and why an edit was refused.
+        for (const auto& line : m_Gizmos.Lattice())
+        {
+            ImVec2 a, b;
+            if (project(line.From, a) && project(line.To, b))
+                draw->AddLine(a, b, line.Color, Px(1.0f));
+        }
+        if (const auto& text = m_Gizmos.Readout(); !text.empty())
+        {
+            const glm::vec2 at  = m_Gizmos.ReadoutPosition();
+            const ImVec2    box = ImGui::CalcTextSize(text.c_str());
+            const ImVec2    pad {Px(6.0f), Px(3.0f)};
+            draw->AddRectFilled({at.x, at.y}, {at.x + box.x + pad.x * 2, at.y + box.y + pad.y * 2}, IM_COL32(18, 18, 22, 215), Px(4.0f));
+            draw->AddText({at.x + pad.x, at.y + pad.y}, IM_COL32(240, 240, 240, 255), text.c_str());
+        }
+        if (const auto& message = m_Gizmos.Message(); !message.empty() && !ReadOnly())
+            draw->AddText({min.x + Px(8.0f), min.y + Px(6.0f)}, ImGui::GetColorU32(EditorTheme::Colors().Warning), message.c_str());
         draw->PopClipRect();
     }
 
@@ -2453,6 +2579,14 @@ namespace Kans
         m_Preview->Camera = m_PreviewCamera.GetPosition();
         m_Preview->Advance(io.DeltaTime);
         m_Preview->UpdateSlice(ImGui::GetTime());
+        // Handles before the image: their draws go into this frame's render, and a press on one
+        // takes the left button before the camera orbits.
+        const bool handlesWereDragging = m_Gizmos.IsDragging();
+        m_Look.Gizmo = UpdatePreviewHandles(PreviewHandleInput(min, size), {min.x, min.y}, {size.x, size.y});
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_Gizmos.IsDragging())
+            m_SwallowRight = false;
+        if (handlesWereDragging && !m_Gizmos.IsDragging() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            m_SwallowRight = true; // The right click cancelled a drag: it does not orbit too.
         PreviewFrame frame;
         if (m_Render)
             frame = m_Render(m_Preview->GetScene(), m_PreviewCamera, {uint32_t(size.x), uint32_t(size.y)}, m_Look);
@@ -2472,7 +2606,11 @@ namespace Kans
                                ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
         if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f)
             m_PreviewCamera.Dolly(io.MouseWheel);
-        if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Left) || ImGui::IsMouseDragging(ImGuiMouseButton_Right)))
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Right))
+            m_SwallowRight = false;
+        const bool handleOwnsLeft = m_Gizmos.IsDragging() || handlesWereDragging;
+        if (ImGui::IsItemActive() && ((ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !handleOwnsLeft) ||
+                                      (ImGui::IsMouseDragging(ImGuiMouseButton_Right) && !m_SwallowRight)))
             m_PreviewCamera.Orbit({io.MouseDelta.x, io.MouseDelta.y});
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
             m_PreviewCamera.Pan({io.MouseDelta.x, io.MouseDelta.y});

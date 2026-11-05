@@ -169,6 +169,19 @@ namespace Kans
         void                                               OpenVfxSystem(const std::filesystem::path& file);
         // Project products of `type` with their source files.
         std::vector<std::pair<AssetID, std::filesystem::path>> ProjectVfxAssets(AssetType type);
+        // The scene viewport's handles for particle entities, and the read-only copies of the
+        // systems they show while no system editor has them open (reloaded when the file changes).
+        VfxGizmos::SceneHandles m_VfxSceneHandles;
+        struct VfxSceneDocument
+        {
+            VfxSystemEditing::SystemDocument Document;
+            VfxSystemEditing::ModuleLibrary  Library;
+            VfxSystemEditing::Context        Context;
+            std::filesystem::file_time_type  Written {};
+        };
+        std::map<std::filesystem::path, std::unique_ptr<VfxSceneDocument>> m_VfxSceneDocuments;
+        void BindVfxSceneHandles();
+        VfxGizmos::SceneHandles::Source VfxSceneSource(AssetID system, bool forEditing);
         Scope<ViewportClient>       m_RagdollPreview;
         // Published Material of a .material source, or invalid.
         AssetID                                  FindPublishedMaterial(const std::filesystem::path& file);

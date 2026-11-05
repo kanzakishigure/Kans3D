@@ -13,6 +13,7 @@
 #include "Gizmo/TransformGizmo.h"
 #include "HierarchyPanel.h"
 #include "MeshEditTool.h"
+#include "Panels/VfxGizmos.h"
 #include "Physics/VehicleFieldEditing.h"
 #include "ViewportClient.h"
 
@@ -74,6 +75,11 @@ namespace Kans
         void SetPlaying(bool playing) { m_Playing = playing; }
         // The wheel row the Vehicle card has selected (-1: none), highlighted in the view.
         void SetWheelSelection(std::function<int(Entity)> selected) { m_SelectedWheel = std::move(selected); }
+        // The handles of a selected particle entity's system (shown read-only unless the card's
+        // "Edit asset in viewport" is on); null: none.
+        void SetVfxHandles(VfxGizmos::SceneHandles* handles) { m_VfxHandles = handles; }
+        // The toolbar's gizmo size, pick radius and snapping (other viewports' handles use them).
+        Gizmo::Settings ToolbarSettings() const { return GizmoSettings(); }
 
         void Draw();
 
@@ -83,7 +89,8 @@ namespace Kans
         // records undo steps after it and holds back its own shortcuts).
         bool IsGizmoDragging() const
         {
-            return m_Gizmo.IsDragging() || m_MeshTool.GetGizmo().IsDragging() || m_Modal.IsActive() || m_Handles.IsDragging();
+            return m_Gizmo.IsDragging() || m_MeshTool.GetGizmo().IsDragging() || m_Modal.IsActive() || m_Handles.IsDragging() ||
+                   (m_VfxHandles && m_VfxHandles->IsDragging());
         }
         bool                         IsModal() const { return m_Modal.IsActive(); }
         const Gizmo::ModalTransform& GetModal() const { return m_Modal; }
@@ -160,6 +167,10 @@ namespace Kans
         void DrawPhysicsOverlay();
         void DrawPhysicsMenu();
         void PhysicsHandles(Entity selected);
+        // The selected particle entity's VFX handles (declared with the others), and their update
+        // and draws once the hover is resolved.
+        void VfxHandles(Entity selected);
+        void EndVfxHandles(std::vector<GizmoDraw>& draws);
         // A world segment on the overlay, clipped at the near plane.
         void OverlaySegment(ImDrawList* draw, glm::vec3 a, glm::vec3 b, ImU32 color, float thickness) const;
         void AcceptDrop();
@@ -236,6 +247,9 @@ namespace Kans
         // Handles of this viewport (physics shapes, wheels, fields, joint limits) and the hover
         // resolution they share with the transform gizmo.
         Gizmo::HandleContext       m_Handles;
+        Gizmo::Input               m_HandleInput;
+        VfxGizmos::SceneHandles*   m_VfxHandles = nullptr;
+        bool                       m_VfxDeclared = false;
         // Modal G/R/S and what it transforms; whether one ran this frame (its keys and clicks
         // then do nothing else).
         enum class ModalTarget : uint8_t

@@ -5,6 +5,7 @@
 #include "Kans3D/Scene/Scene.h"
 #include "ComponentEditors.h"
 #include "ParticleSystemEditing.h"
+#include "Panels/VfxGizmos.h"
 #include "Physics/PhysicsEditing.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
@@ -197,6 +198,68 @@ namespace Kans
             const int zero  = 0;
             if (PropertyGrid::Int("Force field layer", layer, 0, 31, &zero))
                 c.FieldLayer = uint32_t(std::clamp(layer, 0, 31));
+            PropertyGrid::EndGroup();
+        }
+
+        // The scene viewport's handles: read-only unless "Edit asset in viewport" is on, which edits
+        // the system asset itself (every instance) and leaves it unsaved until it is saved.
+        if (auto* handles = ui.GetVfxHandles(); handles && c.System.IsValid() && PropertyGrid::BeginGroup("Viewport handles"))
+        {
+            auto& choice = handles->ChoiceFor(entity.GetUUID());
+            bool  edit   = choice.Edit;
+            if (PropertyGrid::Row("Edit asset in viewport",
+                                  "Off: the handles only show the shapes. On: dragging them edits the system asset (every "
+                                  "instance) through its system editor, which stays unsaved until you save it",
+                                  edit))
+            {
+                if (ImGui::Checkbox("##editasset", &edit))
+                    handles->SetEdit(entity.GetUUID(), c.System, edit);
+            }
+            const auto source = handles->Resolve(c.System, false);
+            if (source.Document && source.Context)
+            {
+                const auto& data = source.Document->Data();
+                if (!VfxSystemEditing::FindHandle(data, choice.Emitter) && !data.Emitters.empty())
+                    choice.Emitter = data.Emitters.front().Guid;
+                if (PropertyGrid::Row("Emitter", "Whose module and bounds get handles"))
+                {
+                    const auto* current = VfxSystemEditing::FindHandle(data, choice.Emitter);
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    if (ImGui::BeginCombo("##vfxemitter", current ? current->Name.c_str() : "None"))
+                    {
+                        for (const auto& h : data.Emitters)
+                            if (ImGui::Selectable(h.Name.c_str(), h.Guid == choice.Emitter))
+                                choice.Emitter = h.Guid, choice.Use.clear();
+                        ImGui::EndCombo();
+                    }
+                }
+                const auto uses = VfxGizmos::UsesWithHandles(data, *source.Context, choice.Emitter);
+                if (PropertyGrid::Row("Module", "The module whose spatial inputs get handles"))
+                {
+                    std::string label = "Bounds only";
+                    for (const auto& [guid, name] : uses)
+                        if (guid == choice.Use)
+                            label = name;
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    if (ImGui::BeginCombo("##vfxuse", label.c_str()))
+                    {
+                        if (ImGui::Selectable("Bounds only", choice.Use.empty()))
+                            choice.Use.clear();
+                        for (const auto& [guid, name] : uses)
+                            if (ImGui::Selectable(name.c_str(), guid == choice.Use))
+                                choice.Use = guid;
+                        ImGui::EndCombo();
+                    }
+                }
+                if (choice.Edit && source.Document->IsDirty())
+                    PropertyGrid::Text("Asset", "Unsaved: save it in the system editor (Ctrl+S)", true);
+            }
+            if (!handles->Message().empty() && PropertyGrid::Row(ICON_FA_TRIANGLE_EXCLAMATION, "Why edit mode is off"))
+            {
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(ComponentEditors::ErrorColor, "%s", handles->Message().c_str());
+                ImGui::PopTextWrapPos();
+            }
             PropertyGrid::EndGroup();
         }
 

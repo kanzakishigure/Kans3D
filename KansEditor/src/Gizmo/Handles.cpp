@@ -96,7 +96,8 @@ namespace Kans::Gizmo
         m_KnobDraws.push_back({id, first, m_Draws.size() - first});
         // Hover: within the pick radius of the knob's centre (or of its drawn size, if larger).
         const float distance = glm::length(m_Input.Mouse - *screen);
-        if (m_Input.Allowed && m_Active == 0 && distance <= std::max(m_Settings.PickRadius, style.KnobPixels + 2.0f))
+        if (style.Interactive && m_Input.Allowed && m_Active == 0 &&
+            distance <= std::max(m_Settings.PickRadius, style.KnobPixels + 2.0f))
             m_Candidates.push_back({id, m_View.Depth(at), distance, KnobPriority});
     }
 
@@ -271,7 +272,7 @@ namespace Kans::Gizmo
         if ((r.Active && !r.Started) || r.Committed)
         {
             const Ray ray  = m_View.RayAt(m_Input.Mouse);
-            const bool snap = SnapsNow(false) && h.Snap > 0.0f;
+            const bool snap = SnapsNow(h.SnapOn) && h.Snap > 0.0f;
             if (h.Mode == PointHandle::Constraint::Line)
             {
                 if (const auto t = ClosestLineParameter(ray, m_Drag.Origin, m_Drag.Direction))
@@ -306,6 +307,8 @@ namespace Kans::Gizmo
             linear.Origin    = centre;
             linear.Direction = glm::vec3(h.Frame * glm::vec4(Unit(part / 2, part % 2 ? 1.0f : -1.0f), 0.0f));
             linear.Min       = h.MinRadius;
+            linear.Snap      = h.Snap;
+            linear.SnapOn    = h.SnapOn;
             linear.Style     = h.Style;
             result |= Linear(MakeHandleId(id, uint64_t(part) + 1), linear, radius);
         }
@@ -323,6 +326,8 @@ namespace Kans::Gizmo
             LinearHandle linear;
             linear.Origin    = centre;
             linear.Direction = glm::vec3(h.Frame * glm::vec4(Unit(axis, sign), 0.0f));
+            linear.Snap      = h.Snap;
+            linear.SnapOn    = h.SnapOn;
             linear.Style     = h.Style;
             float             reach = std::abs(halfExtents[axis]);
             const HandleResult r    = Linear(MakeHandleId(id, uint64_t(part) + 1), linear, reach);

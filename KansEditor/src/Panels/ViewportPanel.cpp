@@ -112,6 +112,9 @@ namespace Kans
         m_ModalThisFrame = m_Modal.IsActive();
         BeginHandles();
         DrawPhysicsOverlay();
+        // A particle entity's VFX handles edit (or show) its system asset, outside play.
+        if (!m_Playing && !editing)
+            VfxHandles(selected);
         // Cloth painting takes the left button over the cloth (selection and the gizmo wait).
         if (m_ClothPaint.IsActive() && !UsesSceneCamera() && !m_Playing)
         {
@@ -756,7 +759,47 @@ namespace Kans
                         !ImGui::IsMouseHoveringRect(m_CubeMin, m_CubeMax, false) && !m_Modal.IsActive() &&
                         !m_Gizmo.IsDragging() && !m_MeshTool.GetGizmo().IsDragging() && !UsesSceneCamera();
         m_Handles.Begin(GizmoView(), input, GizmoSettings());
-        m_HandlesWereDragging = m_Handles.IsDragging();
+        m_HandleInput         = input;
+        m_HandlesWereDragging = m_Handles.IsDragging() || (m_VfxHandles && m_VfxHandles->IsDragging());
+        m_VfxDeclared         = false;
+    }
+
+    void ViewportPanel::VfxHandles(Entity selected)
+    {
+        if (!m_VfxHandles || !selected || !selected.HasComponent<ParticleSystemComponent>() || UsesSceneCamera())
+            return;
+        const auto&             c = selected.GetComponent<ParticleSystemComponent>();
+        VfxGizmos::Pointer      pointer {GizmoView(), m_HandleInput, GizmoSettings()};
+        // ImGui's Shift and the axis keys choose a point handle's constraint as the drag starts.
+        pointer.Input.Shift   = ImGui::GetIO().KeyShift;
+        pointer.Input.AxisKey = ImGui::IsKeyDown(ImGuiKey_X) ? 0 : ImGui::IsKeyDown(ImGuiKey_Y) ? 1 : ImGui::IsKeyDown(ImGuiKey_Z) ? 2 : -1;
+        m_HandleInput         = pointer.Input;
+        m_VfxHandles->Declare(m_Handles, pointer, selected.GetUUID(), c.System, m_Scene->GetWorldTransform(selected));
+        m_VfxDeclared = true;
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->PushClipRect(m_Min, m_Max, true);
+        for (const auto& line : m_VfxHandles->GetGizmos().Lattice())
+            OverlaySegment(draw, line.From, line.To, line.Color, 1.0f);
+        draw->PopClipRect();
+    }
+
+    void ViewportPanel::EndVfxHandles(std::vector<GizmoDraw>& draws)
+    {
+        if (!m_VfxHandles)
+            return;
+        if (!m_VfxDeclared)
+        {
+            // Nothing declared this frame (deselected, playing): drop a drag of it.
+            if (m_VfxHandles->IsDragging())
+                m_VfxHandles->Reset();
+            return;
+        }
+        m_VfxHandles->Update(m_Handles, {GizmoView(), m_HandleInput, GizmoSettings()});
+        m_VfxHandles->GetGizmos().AppendDraws(draws);
+        const auto& gizmos = m_VfxHandles->GetGizmos();
+        DrawGizmoReadout(gizmos.Readout(), gizmos.ReadoutPosition());
+        if (!gizmos.Message().empty() && gizmos.IsDragging())
+            ImGui::SetTooltip("%s", gizmos.Message().c_str());
     }
 
     bool ViewportPanel::StartModal(Gizmo::Operation op, bool extrude)
@@ -872,7 +915,8 @@ namespace Kans
     {
         m_SwallowRightClick = false;
         // A right click that cancelled a handle drag does not start looking around either.
-        if (m_HandlesWereDragging && !m_Handles.IsDragging() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+        if (m_HandlesWereDragging && !m_Handles.IsDragging() && !(m_VfxHandles && m_VfxHandles->IsDragging()) &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Right))
             m_SwallowRightClick = true;
         std::vector<GizmoDraw> draws;
         const bool             modal    = UpdateModal(draws);
@@ -890,6 +934,7 @@ namespace Kans
             }
             m_Gizmo.Reset();
             m_Handles.End();
+            EndVfxHandles(draws);
             m_Handles.AppendDraws(draws);
             m_Client->SetGizmo(std::move(draws));
             DrawModalStatus();
@@ -919,6 +964,7 @@ namespace Kans
         if (m_MeshTool.IsEditing(selected))
         {
             m_Handles.End();
+            EndVfxHandles(draws);
             input.Allowed = input.Allowed && !m_Handles.IsDragging();
             // In element modes the gizmo moves the selected vertices, edges or faces.
             m_MeshTool.Manipulate(selected, EditView(), mode, m_Orientation, settings, input, io.KeyShift);
@@ -939,8 +985,9 @@ namespace Kans
                     m_Handles.Offer(GizmoHandleId, hit.Depth, hit.Distance, Gizmo::HandlePriority(hit.Id));
             }
             m_Handles.End();
+            EndVfxHandles(draws);
             if (!m_Gizmo.IsDragging())
-                input.Allowed = input.Allowed && !m_Handles.IsDragging() &&
+                input.Allowed = input.Allowed && !m_Handles.IsDragging() && !(m_VfxHandles && m_VfxHandles->IsDragging()) &&
                                 (m_Handles.Hot() == 0 || m_Handles.Hot() == GizmoHandleId);
             switch (m_Gizmo.Update(view, pivot, mode, settings, input))
             {

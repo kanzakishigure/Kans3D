@@ -145,6 +145,8 @@ namespace Kans::Gizmo
         bool      InvertSnap = false; // Ctrl.
         bool      Allowed    = true;
         bool      Alt        = false; // Handles: a box face edits both sides.
+        bool      Shift      = false; // Point handles: the drag stays on the frame's ground plane.
+        int       AxisKey    = -1;    // Point handles: X, Y or Z held (0-2) keeps the drag on that axis.
     };
 
     // The change since the drag began, about Pivot (the pivot at the start).

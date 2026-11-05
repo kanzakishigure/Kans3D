@@ -993,16 +993,72 @@ namespace Kans
             GridSettings grid;
             grid.Enabled = look.Grid;
             client->SetGrid(grid);
+            client->SetGizmo(look.Gizmo);
             client->Resize(size);
             client->RenderEditor(camera);
             frame.Image              = client->GetOutput();
             frame.VfxGpuMilliseconds = VfxPreview::VfxGpuMilliseconds(client->GetLastResult().FrameStats);
             return frame;
         });
+        // The preview's handles snap with the scene viewport's toolbar settings.
+        panel->SetSnapSettings([this] { return m_ViewportPanel.ToolbarSettings(); });
         if (panel->Open(file))
             m_VfxSystemEditors.push_back(std::move(panel));
         else
             Record(AssetError {AssetErrorCode::InvalidData, panel->Status()});
+    }
+
+    void EditorLayer::BindVfxSceneHandles()
+    {
+        m_VfxSceneHandles.SetSource([this](AssetID system, bool forEditing) { return VfxSceneSource(system, forEditing); });
+        m_ViewportPanel.SetVfxHandles(&m_VfxSceneHandles);
+        m_PropertiesPanel.SetVfxHandles(&m_VfxSceneHandles);
+    }
+
+    VfxGizmos::SceneHandles::Source EditorLayer::VfxSceneSource(AssetID system, bool forEditing)
+    {
+        const auto file = SourceFileOf(system);
+        if (file.empty())
+            return {};
+        const auto open = [&]() -> VfxGizmos::SceneHandles::Source {
+            std::error_code e;
+            for (auto& editor : m_VfxSystemEditors)
+                if (editor->IsOpen() && std::filesystem::equivalent(editor->GetFile(), file, e))
+                    return {&editor->Document(), &editor->GetContext(), true};
+            return {};
+        };
+        // Edits go through the asset's system editor (opened for them): its undo, dirty marker and Save.
+        if (auto source = open(); source.Document)
+            return source;
+        if (forEditing)
+        {
+            OpenVfxSystem(file);
+            if (auto source = open(); source.Document)
+                return source;
+        }
+        // Otherwise a read-only copy to draw the handles from.
+        std::error_code e;
+        const auto      written = std::filesystem::last_write_time(file, e);
+        auto&           cached  = m_VfxSceneDocuments[file];
+        if (!cached || cached->Written != written)
+        {
+            cached = std::make_unique<VfxSceneDocument>();
+            cached->Library.Load(ProjectVfxAssets(AssetType::VfxModule));
+            cached->Context.Modules  = &cached->Library;
+            cached->Context.Emitters = [emitters = ProjectVfxAssets(AssetType::VfxEmitter)](AssetID id) {
+                for (const auto& [asset, path] : emitters)
+                    if (asset == id || asset.GetSourceID() == id.GetSourceID())
+                        return Vfx::DecodeEmitter(YAML::LoadFile(path.string()));
+                throw std::invalid_argument("Missing VFX emitter " + id.ToString());
+            };
+            cached->Written = written;
+            if (cached->Document.Open(file))
+            {
+                cached.reset();
+                return {};
+            }
+        }
+        return {&cached->Document, &cached->Context, false};
     }
 
     void EditorLayer::DrawVfxModuleEditors()

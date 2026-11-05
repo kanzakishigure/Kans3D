@@ -82,6 +82,7 @@ namespace Kans
             [this] { m_TimelinePanel.Draw(); });
         BindSecondaryMotion();
         BindRagdolls();
+        BindVfxSceneHandles();
         m_PropertiesPanel.SetOpenTimeline([this](Entity owner) {
             m_TimelinePanel.Open(owner);
             m_Panels.Open(PanelID::Timeline);

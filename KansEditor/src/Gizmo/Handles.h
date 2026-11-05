@@ -45,6 +45,8 @@ namespace Kans::Gizmo
         KnobShape Knob = KnobShape::Sphere;
         float     KnobPixels = 5.0f; // Knob radius on the screen.
         bool      Stem       = true; // A line from the handle's origin (or StemFrom) to the knob.
+        // False: drawn only, never hot (handles shown read-only).
+        bool      Interactive = true;
     };
 
     // A point dragged freely on the view plane, along a line or on a plane.
@@ -58,7 +60,8 @@ namespace Kans::Gizmo
         };
         Constraint  Mode = Constraint::Screen;
         glm::vec3   Axis {0, 0, 1};
-        float       Snap = 0.0f; // World units, per constrained axis of the drag (relative).
+        float       Snap   = 0.0f;  // World units, per constrained axis of the drag (relative).
+        bool        SnapOn = false; // The toolbar setting (Ctrl inverts it).
         HandleStyle Style;
     };
 
@@ -94,6 +97,8 @@ namespace Kans::Gizmo
         float       MinHalf   = 0.001f;
         bool        Symmetric = false; // The default; Alt flips it.
         bool        LockCenter = false; // Always symmetric (shapes centred on their entity).
+        float       Snap   = 0.0f;  // Rounds the dragged face's travel (Ctrl inverts SnapOn).
+        bool        SnapOn = false;
         HandleStyle Style;
     };
     // A radius knob on each side of each axis of Frame (LinearHandles from the centre).
@@ -101,6 +106,8 @@ namespace Kans::Gizmo
     {
         glm::mat4   Frame {1.0f};
         float       MinRadius = 0.001f;
+        float       Snap   = 0.0f; // Rounds the radius (Ctrl inverts SnapOn).
+        bool        SnapOn = false;
         HandleStyle Style;
     };
     // A capsule along Frame's axis Axis: two cap knobs (each moves its end alone, or both with

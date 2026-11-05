@@ -9,6 +9,8 @@
 #include <memory>
 #include <imgui.h>
 #include "Kans3D/Editor/EditorCamera.h"
+#include "Gizmo/Handles.h"
+#include "Panels/VfxGizmos.h"
 #include "Panels/VfxPreview.h"
 #include "Panels/VfxSystemEditing.h"
 #include "UI/NodeCanvas.h"
@@ -38,7 +40,8 @@ namespace Kans
         // How the preview viewport looks besides its scene.
         struct PreviewLook
         {
-            bool Grid = true;
+            bool                   Grid = true;
+            std::vector<GizmoDraw> Gizmo; // This frame's handles and wireframes (the TransformGizmo feature).
         };
         // A rendered preview frame: the image to show (0: none) and the GPU time of its VFX passes
         // when the device has timestamps.
@@ -63,6 +66,8 @@ namespace Kans
         void SetOpenModuleCallback(std::function<void(const std::filesystem::path&)> open) { m_OpenModule = std::move(open); }
         // Renders the preview scene (without one the preview draws its overlay on a backdrop).
         void SetPreviewRenderer(PreviewRenderer render) { m_Render = std::move(render); }
+        // The scene viewport toolbar's snapping (the preview's handles use it; Ctrl inverts).
+        void SetSnapSettings(std::function<Gizmo::Settings()> settings) { m_SnapSettings = std::move(settings); }
 
         bool                                Open(const std::filesystem::path& file);
         bool                                IsOpen() const { return m_IsOpen; }
@@ -108,6 +113,22 @@ namespace Kans
 
         // Rows shown expanded (a module use GUID), and the row a diagnostic highlights.
         void Expand(const std::string& use) { m_ExpandPending.insert(use); }
+
+        // ---- Viewport handles (VfxGizmos) ----
+        // The module use whose spatial inputs get handles in the preview (a click on its band, or
+        // expanding it, selects it), and a Grid3D data interface picked in the parameters panel.
+        void               SelectUse(const std::string& use) { m_GizmoUse = use; }
+        const std::string& SelectedUse() const { return m_GizmoUse; }
+        void               SelectGrid(const std::string& grid) { m_GizmoGrid = grid; }
+        VfxGizmos::Selection GizmoSelection() const;
+        // One preview handle frame over the view at `min` with `size` (DrawPreview calls it each
+        // frame); returns the handle and wireframe draws for the preview render.
+        std::vector<GizmoDraw>       UpdatePreviewHandles(const Gizmo::Input& input, glm::vec2 min, glm::vec2 size);
+        const VfxGizmos::Gizmos&     Gizmos() const { return m_Gizmos; }
+        const Gizmo::HandleContext&  Handles() const { return m_Handles; }
+        const Gizmo::View&           PreviewView() const { return m_PreviewView; } // As of the last handle frame.
+        bool&                        ShowHandles() { return m_ShowHandles; }
+        bool&                        LockBoundsCenter() { return m_LockBounds; }
 
         // ---- Preview ----
         VfxPreview::Session&       Preview() { return *m_Preview; }
@@ -175,6 +196,7 @@ namespace Kans
         void DrawPreviewTimeline();
         void DrawPreviewStats();
         void DrawPreviewOverlay(ImVec2 min, ImVec2 size);
+        Gizmo::Input PreviewHandleInput(ImVec2 min, ImVec2 size) const;
         void DrawPreviewControls();
         void DrawSpreadsheet();
         void UpdatePreviewProduct();
@@ -274,6 +296,14 @@ namespace Kans
         int                                      m_EmitCount = 10;
         SheetState                               m_Sheet;
         int                                      m_SheetFrame = -10;
+        // Viewport handles over the preview: the selected use, the shared hover resolution, and
+        // whether a right click cancelled a drag (it does not orbit then).
+        VfxGizmos::Gizmos                        m_Gizmos;
+        Gizmo::HandleContext                     m_Handles;
+        Gizmo::View                              m_PreviewView;
+        std::string                              m_GizmoUse, m_GizmoGrid;
+        bool                                     m_ShowHandles = true, m_LockBounds = false, m_SwallowRight = false;
+        std::function<Gizmo::Settings()>         m_SnapSettings;
         std::vector<VfxSystemEditing::StackDiagnostic> m_Diagnostics;
 
         UnsavedChanges m_Closing;
