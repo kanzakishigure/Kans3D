@@ -4,6 +4,7 @@
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Scene/Components.h"
 #include "Physics/PhysicsEditing.h"
+#include "Physics/RagdollEditing.h"
 #include "Physics/SecondaryMotionEditing.h"
 #include "Physics/ShapeHandles.h"
 #include "Physics/VehicleFieldEditing.h"
@@ -62,7 +63,7 @@ namespace Kans
             {PhysicsDebugFlags::Sleeping, ICON_FA_CIRCLE "  Sleeping bodies (playing)"},
             {PhysicsDebugFlags::Joints, ICON_FA_LINK "  Joints"},
             {PhysicsDebugFlags::CentersOfMass, ICON_FA_WEIGHT_HANGING "  Centers of mass (playing)"},
-            {PhysicsDebugFlags::Ragdolls, ICON_FA_PERSON_FALLING "  Ragdolls (playing)"},
+            {PhysicsDebugFlags::Ragdolls, ICON_FA_PERSON_FALLING "  Ragdolls"},
             {PhysicsDebugFlags::Vehicles, ICON_FA_CAR "  Vehicles"},
             {PhysicsDebugFlags::Fields, ICON_FA_TORNADO "  Fields"},
             {PhysicsDebugFlags::FieldArrows, ICON_FA_WIND "  Field arrows"},
@@ -120,6 +121,8 @@ namespace Kans
                     if (joints)
                         PhysicsEditing::DrawJoint(lines, scene, e);
                 });
+            // Ragdoll bodies and limit cones from the bound asset at the current pose.
+            RagdollEditing::DrawSceneRagdolls(lines, scene, m_PhysicsView);
         }
         if (selected)
         {

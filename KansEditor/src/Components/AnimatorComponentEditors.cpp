@@ -140,6 +140,11 @@ namespace Kans::ComponentEditors
             // States, transitions, parameters and layers are edited in the graph window.
             if (ImGui::Button(ICON_FA_DIAGRAM_PROJECT "  Open graph", {-FLT_MIN, 0}))
                 ui.OpenAnimatorGraph();
+            // A ragdoll generated on the skeleton (the ragdoll editor's dialog), assigned once imported.
+            ImGui::BeginDisabled(!a.Skeleton.IsValid() && !a.SkeletonSource);
+            if (ImGui::Button(ICON_FA_PERSON_FALLING "  Create ragdoll", {-FLT_MIN, 0}))
+                ui.CreateRagdoll(entity);
+            ImGui::EndDisabled();
             PropertyGrid::EndFree();
             PropertyGrid::EndGroup();
         }

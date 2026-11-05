@@ -241,7 +241,7 @@ namespace Kans::ComponentEditors
                     ImGui::SameLine();
                     if (RowButton(ICON_FA_PLUS "  Generate",
                                   "Generate a .ragdoll from the Animator's skeleton and assign it",
-                                  skeleton != nullptr))
+                                  skeleton != nullptr || skeletonID.IsValid()))
                         ui.CreateRagdoll(entity);
                 }
                 std::string status;

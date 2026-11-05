@@ -2,6 +2,7 @@
 #include "RagdollAsset.h"
 #include <set>
 #include <stdexcept>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include "Kans3D/Asset/Loader/Loader.h"
 #include "PhysicsSerialization.h"
@@ -131,7 +132,10 @@ namespace Kans
             }
             auto&   body      = d.Bodies[owners[i]];
             int32_t ownerBone = s.FindJoint(body.Bone);
-            auto    inverse   = glm::inverse(bind[ownerBone]);
+            // The body's frame as the runtime places it: the bone's position and rotation without its
+            // scale, so offsets stay in metres under a scaled root (a centimetre FBX's 0.01).
+            const auto rigid   = Physics::TransformShape({}, bind[ownerBone]);
+            auto       inverse = glm::inverse(glm::translate(glm::mat4(1), rigid.Position) * glm::mat4_cast(rigid.Rotation));
             auto    a = glm::vec3(inverse * glm::vec4(head, 1)), b = glm::vec3(inverse * glm::vec4(tail, 1));
             Physics::ShapeOffset offset;
             offset.Position = (a + b) * .5f;

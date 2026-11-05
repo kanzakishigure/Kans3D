@@ -10,16 +10,68 @@
 #include "Kans3D/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Renderer/DebugDraw.h"
+#include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Scene/Scene.h"
 #include "Components/ComponentEditors.h"
 #include "Physics/ShapeHandles.h"
 #include "UI/EditorIcons.h"
 #include "UI/ModalInput.h"
 #include "UI/PropertyGrid.h"
+#include "ViewportClient.h"
 
 namespace Kans
 {
     namespace Edit = RagdollEditing;
+
+    RagdollPreviewRenderer::RagdollPreviewRenderer()  = default;
+    RagdollPreviewRenderer::~RagdollPreviewRenderer() = default;
+
+    void RagdollPreviewRenderer::SetAssetManager(AssetManager* assets)
+    {
+        m_Assets = assets;
+        if (m_Client)
+            m_Client->SetAssetManager(assets);
+    }
+
+    void RagdollPreviewRenderer::Reset()
+    {
+        m_Client.reset();
+        m_Assets = nullptr;
+    }
+
+    uintptr_t RagdollPreviewRenderer::Render(const Ref<Scene>&             scene,
+                                             const EditorCamera&           camera,
+                                             glm::uvec2                    size,
+                                             const std::vector<GizmoDraw>& gizmo,
+                                             const Scene*                  environment)
+    {
+        if (!scene || !m_Assets)
+            return 0;
+        if (!m_Client)
+        {
+            m_Client = std::make_unique<ViewportClient>();
+            m_Client->SetAssetManager(m_Assets);
+        }
+        if (m_Client->GetScene() != scene)
+        {
+            if (environment && scene->GetRenderWorld().EnvironmentPath.empty())
+            {
+                scene->GetRenderWorld().EnvironmentPath = environment->GetRenderWorld().EnvironmentPath;
+                scene->GetRenderWorld().EnvironmentRoot = environment->GetRenderWorld().EnvironmentRoot;
+            }
+            m_Client->SetScene(scene);
+            // No map to light it (the edited scene has none): the renderer's defaults.
+            if (!scene->GetRenderWorld().EnvironmentPath.empty())
+                m_Client->PrepareEnvironment(m_EnvironmentSizes);
+        }
+        // Outside a run the model shows its bind pose.
+        if (!scene->GetPhysicsWorld())
+            scene->UpdateModelPoses();
+        m_Client->Resize(size);
+        m_Client->SetGizmo(gizmo);
+        m_Client->RenderEditor(camera);
+        return m_Client->GetOutput();
+    }
 
     namespace
     {

@@ -1400,9 +1400,27 @@ namespace Kans
             for (const auto& record : m_Registry->GetAllProducts())
                 if (record.Target == EditorAssetTarget &&
                     record.Metadata.assetID.GetSourceID() == source.sourceAssetID)
+                {
                     ImGui::BulletText("%s  #%llu",
                                       ProductTypeName(record.Metadata.Type),
                                       static_cast<unsigned long long>(record.Metadata.assetID.GetLocalID()));
+                    // A skeleton product's menu: a ragdoll generated on it (opens the ragdoll editor).
+                    if (record.Metadata.Type != AssetType::Skeleton)
+                        continue;
+                    ImGui::PushID(static_cast<int>(record.Metadata.assetID.GetLocalID()));
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Right-click for Create Ragdoll");
+                    if (ImGui::BeginPopupContextItem("##SkeletonProduct"))
+                    {
+                        if (ImGui::MenuItem(Label(ICON_FA_PERSON_FALLING, "Create Ragdoll").c_str(),
+                                            nullptr,
+                                            false,
+                                            bool(m_CreateRagdollFromSkeleton)))
+                            m_CreateRagdollFromSkeleton(record.Metadata.assetID);
+                        ImGui::EndPopup();
+                    }
+                    ImGui::PopID();
+                }
             ImGui::TreePop();
         }
         if (CanImport(path))

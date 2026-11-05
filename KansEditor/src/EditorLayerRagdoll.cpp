@@ -44,37 +44,17 @@ namespace Kans
             });
         m_ContentBrowserPanel.SetCreateRagdollCallback(
             [this](const std::filesystem::path& model) { CreateRagdollForModel(model); });
+        m_ContentBrowserPanel.SetCreateRagdollFromSkeletonCallback([this](AssetID skeleton) { CreateRagdollForSkeleton(skeleton); });
         m_ViewportPanel.SetWheelSelection([this](Entity vehicle) { return m_PropertiesPanel.GetSelectedWheel(vehicle); });
     }
 
     uintptr_t EditorLayer::RenderRagdollPreview(const Ref<Scene>& scene, const EditorCamera& camera, glm::uvec2 size,
                                                 const std::vector<GizmoDraw>& gizmo)
     {
-        if (!scene || !m_Viewport || !m_Assets)
+        if (!m_Viewport || !m_Assets)
             return 0;
-        if (!m_RagdollPreview)
-        {
-            m_RagdollPreview = CreateScope<ViewportClient>();
-            m_RagdollPreview->SetAssetManager(m_Assets.get());
-        }
-        if (m_RagdollPreview->GetScene() != scene)
-        {
-            // The editor's environment lights the preview.
-            if (m_ActiveScene && scene->GetRenderWorld().EnvironmentPath.empty())
-            {
-                scene->GetRenderWorld().EnvironmentPath = m_ActiveScene->GetRenderWorld().EnvironmentPath;
-                scene->GetRenderWorld().EnvironmentRoot = m_ActiveScene->GetRenderWorld().EnvironmentRoot;
-            }
-            m_RagdollPreview->SetScene(scene);
-            m_RagdollPreview->PrepareEnvironment();
-        }
-        // Outside a run the model shows its bind pose.
-        if (!scene->GetPhysicsWorld())
-            scene->UpdateModelPoses();
-        m_RagdollPreview->Resize(size);
-        m_RagdollPreview->SetGizmo(gizmo);
-        m_RagdollPreview->RenderEditor(camera);
-        return m_RagdollPreview->GetOutput();
+        m_RagdollPreview.SetAssetManager(m_Assets.get());
+        return m_RagdollPreview.Render(scene, camera, size, gizmo, m_ActiveScene.get());
     }
 
     void EditorLayer::OpenRagdollFile(const std::filesystem::path& file, Entity character)
@@ -120,32 +100,19 @@ namespace Kans
 
     void EditorLayer::CreateRagdollFor(Entity character)
     {
-        if (!m_ActiveScene || !character || m_Play.IsActive() || !character.HasComponent<AnimatorComponent>())
+        if (!m_ActiveScene || !character || m_Play.IsActive())
             return;
-        const auto& a = character.GetComponent<AnimatorComponent>();
-        if (!a.SkeletonSource)
+        const auto products = m_AssetImports ? m_AssetImports->GetRuntimeAssetRegistry()->GetAllProducts() :
+                                               std::vector<ProductRecord> {};
+        auto       found    = RagdollEditing::SourceFromEntity(*m_ActiveScene, character, m_Assets.get(), products,
+                                                               EditorAssetTarget);
+        if (const auto* reason = std::get_if<std::string>(&found))
         {
-            Record(AssetError {AssetErrorCode::NotFound, "The Animator's skeleton is not loaded yet"});
+            Record(AssetError {AssetErrorCode::NotFound, *reason});
             return;
         }
-        RagdollEditing::PreviewSource source;
-        source.Skeleton       = a.Skeleton;
-        source.SkeletonSource = a.SkeletonSource;
-        source.Controller     = a.Controller;
-        if (character.HasComponent<PrefabInstanceComponent>())
-            source.Model = character.GetComponent<PrefabInstanceComponent>().Prefab;
-        // The skinned mesh fits the bodies' radii.
-        Ref<const MeshAsset>        mesh;
-        std::function<void(Entity)> find = [&](Entity e) {
-            if (mesh)
-                return;
-            if (auto m = m_ActiveScene->ResolveMesh(e); m && !m->GetData().Skin.empty() && m->GetData().Skeleton == a.Skeleton)
-                mesh = m;
-            for (Entity child : m_ActiveScene->GetChildren(e))
-                find(child);
-        };
-        find(character);
-        const auto model     = SourceFileOf(a.Skeleton);
+        auto&      created   = std::get<RagdollEditing::CreateSource>(found);
+        const auto model     = SourceFileOf(created.Source.Skeleton);
         auto       directory = model.empty() ? m_ContentBrowserPanel.GetCurrentFolder() : model.parent_path();
         if (directory.empty() && m_AssetImports)
             directory = m_AssetImports->GetConfig().AssetDirectory;
@@ -153,7 +120,7 @@ namespace Kans
             SafeStem((model.empty() ? character.GetComponent<TagComponent>().Tag : model.stem().u8string()) + "_Ragdoll");
         const UUID owner = character.GetUUID();
         m_RagdollEditor.SetAssetManager(m_Assets.get());
-        m_RagdollEditor.BeginCreate(directory, stem, source, mesh, [this, owner](const std::filesystem::path& file) {
+        m_RagdollEditor.BeginCreate(directory, stem, created.Source, created.Mesh, [this, owner](const std::filesystem::path& file) {
             m_PendingRagdolls.push_back({file, owner});
         });
     }
@@ -166,35 +133,33 @@ namespace Kans
             Record(AssetError {AssetErrorCode::NotFound, file.filename().u8string() + " is not an imported model"});
             return;
         }
-        RagdollEditing::PreviewSource source;
-        AssetID                       meshID;
-        for (const auto& product : m_AssetImports->GetRuntimeAssetRegistry()->GetAllProducts())
+        BeginRagdollFromImport(file, *sourceID, {});
+    }
+
+    void EditorLayer::CreateRagdollForSkeleton(AssetID skeleton)
+    {
+        const auto file = SourceFileOf(skeleton);
+        if (!skeleton.IsValid() || file.empty() || !m_Assets || !m_AssetImports)
         {
-            if (product.Metadata.assetID.GetSourceID() != *sourceID || product.Target != EditorAssetTarget)
-                continue;
-            if (product.Metadata.Type == AssetType::Skeleton)
-                source.Skeleton = product.Metadata.assetID;
-            else if (product.Metadata.Type == AssetType::Model)
-                source.Model = product.Metadata.assetID;
-            else if (product.Metadata.Type == AssetType::Mesh && !meshID.IsValid())
-                meshID = product.Metadata.assetID;
-        }
-        if (!source.Skeleton.IsValid())
-        {
-            Record(AssetError {AssetErrorCode::NotFound, file.filename().u8string() + " has no skeleton"});
+            Record(AssetError {AssetErrorCode::NotFound, "The skeleton has no imported source"});
             return;
         }
-        auto skeleton = m_Assets->Load<SkeletonAsset>(source.Skeleton);
-        if (const auto* error = std::get_if<AssetError>(&skeleton))
-            return Record(*error);
-        source.SkeletonSource = std::get<Ref<const SkeletonAsset>>(skeleton);
-        Ref<const MeshAsset> mesh;
-        if (meshID.IsValid())
-            if (auto loaded = m_Assets->Load<MeshAsset>(meshID); std::holds_alternative<Ref<const MeshAsset>>(loaded))
-                if (const auto& m = std::get<Ref<const MeshAsset>>(loaded); m->GetData().Skeleton == source.Skeleton)
-                    mesh = m;
+        BeginRagdollFromImport(file, skeleton.GetSourceID(), skeleton);
+    }
+
+    void EditorLayer::BeginRagdollFromImport(const std::filesystem::path& file, SourceAssetID import, AssetID skeleton)
+    {
+        auto found = RagdollEditing::SourceFromImport(m_AssetImports->GetRuntimeAssetRegistry()->GetAllProducts(), import,
+                                                      skeleton, *m_Assets, EditorAssetTarget);
+        if (const auto* reason = std::get_if<std::string>(&found))
+        {
+            Record(AssetError {AssetErrorCode::NotFound, file.filename().u8string() + ": " + *reason});
+            return;
+        }
+        auto& created = std::get<RagdollEditing::CreateSource>(found);
         m_RagdollEditor.SetAssetManager(m_Assets.get());
-        m_RagdollEditor.BeginCreate(file.parent_path(), SafeStem(file.stem().u8string() + "_Ragdoll"), source, mesh, {});
+        m_RagdollEditor.BeginCreate(file.parent_path(), SafeStem(file.stem().u8string() + "_Ragdoll"), created.Source,
+                                    created.Mesh, {});
     }
 
     void EditorLayer::AssignPendingRagdolls()

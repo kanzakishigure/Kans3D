@@ -1,6 +1,7 @@
 #pragma once
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -10,11 +11,39 @@
 #include "Gizmo/ModalTransform.h"
 #include "Gizmo/TransformGizmo.h"
 #include "Kans3D/Editor/EditorCamera.h"
+#include "Kans3D/Renderer/Renderer.h"
 #include "Physics/RagdollEditing.h"
 
 namespace Kans
 {
     class AssetManager;
+    class ViewportClient;
+
+    // The ragdoll editor's preview renderer: the preview scene through the editor camera in its own
+    // viewport client, lit by the edited scene's environment and shown at the model's current pose.
+    class RagdollPreviewRenderer
+    {
+    public:
+        RagdollPreviewRenderer();
+        ~RagdollPreviewRenderer();
+        void SetAssetManager(AssetManager* assets);
+        // Drops the viewport client and its asset leases.
+        void Reset();
+        // The image-based lighting's precompute sizes (the editor's defaults unless set).
+        void SetEnvironmentSizes(EnvironmentPrecomputeSizes sizes) { m_EnvironmentSizes = sizes; }
+        // `environment`: the scene whose environment lights a preview scene without its own (none: unlit by one).
+        uintptr_t Render(const Ref<Scene>&             scene,
+                         const EditorCamera&           camera,
+                         glm::uvec2                    size,
+                         const std::vector<GizmoDraw>& gizmo,
+                         const Scene*                  environment = nullptr);
+        ViewportClient* GetClient() const { return m_Client.get(); }
+
+    private:
+        std::unique_ptr<ViewportClient> m_Client;
+        AssetManager*                   m_Assets = nullptr;
+        EnvironmentPrecomputeSizes      m_EnvironmentSizes;
+    };
 
     // Edits a .ragdoll asset (in the manner of UE's Physics Asset Editor): a skeleton tree marking
     // the bones with bodies and constraints, a preview of the model (or bare skeleton) with the body

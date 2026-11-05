@@ -145,6 +145,9 @@ namespace Kans
         // The generation dialog for a skinned entity (assigned to it once imported) or a model file.
         void CreateRagdollFor(Entity character);
         void CreateRagdollForModel(const std::filesystem::path& model);
+        // A skeleton product (the Content Browser's product list): the model and mesh of its import.
+        void CreateRagdollForSkeleton(AssetID skeleton);
+        void BeginRagdollFromImport(const std::filesystem::path& file, SourceAssetID import, AssetID skeleton);
         void AssignPendingRagdolls();
         // The preview scene rendered through the ragdoll editor's camera.
         uintptr_t RenderRagdollPreview(const Ref<Scene>& scene, const EditorCamera& camera, glm::uvec2 size,
@@ -182,7 +185,7 @@ namespace Kans
         std::map<std::filesystem::path, std::unique_ptr<VfxSceneDocument>> m_VfxSceneDocuments;
         void BindVfxSceneHandles();
         VfxGizmos::SceneHandles::Source VfxSceneSource(AssetID system, bool forEditing);
-        Scope<ViewportClient>       m_RagdollPreview;
+        RagdollPreviewRenderer      m_RagdollPreview;
         // Published Material of a .material source, or invalid.
         AssetID                                  FindPublishedMaterial(const std::filesystem::path& file);
         // Content-browser thumbnail of a .material file: rendered a few per frame,

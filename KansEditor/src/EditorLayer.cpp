@@ -178,7 +178,7 @@ namespace Kans
         m_RagdollEditor.SetPreviewRenderer({});
         m_RagdollEditor.SetAssetManager(nullptr);
         m_RagdollEditor.Preview().SetSource({}, nullptr);
-        m_RagdollPreview.reset();
+        m_RagdollPreview.Reset();
         if (m_Viewport)
         {
             m_ViewportPanel.SetContext({}, nullptr);

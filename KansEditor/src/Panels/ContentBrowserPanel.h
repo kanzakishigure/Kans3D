@@ -55,6 +55,11 @@ namespace Kans
         void SetCreateInstanceCallback(PathCallback callback) { m_CreateInstance = std::move(callback); }
         // "Create Ragdoll" of a model file (its skeleton).
         void SetCreateRagdollCallback(PathCallback callback) { m_CreateRagdoll = std::move(callback); }
+        // "Create Ragdoll" of a skeleton product in the details' product list.
+        void SetCreateRagdollFromSkeletonCallback(std::function<void(AssetID)> callback)
+        {
+            m_CreateRagdollFromSkeleton = std::move(callback);
+        }
         // "Extract Materials" of an imported model.
         void SetExtractMaterialsCallback(PathCallback callback) { m_ExtractMaterials = std::move(callback); }
         void SetErrorCallback(std::function<void(const std::string&)> callback) { m_ReportError = std::move(callback); }
@@ -140,6 +145,7 @@ namespace Kans
         // ---- callbacks and services ----
         PathCallback m_OpenFile, m_CreateMaterial, m_Import, m_ImportSettings, m_ExtractMaterials;
         PathCallback              m_CreateUI, m_CreateTimeline, m_CreatePhysicsMaterial, m_CreateRagdoll;
+        std::function<void(AssetID)> m_CreateRagdollFromSkeleton;
         PathCallback              m_CreateVfxModule, m_CreateVfxSystem, m_CreateVfxEmitter;
         MaterialThumbnailProvider m_MaterialThumbnail;
         PathCallback              m_CreateInstance;

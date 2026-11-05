@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -504,6 +505,85 @@ namespace Kans::RagdollEditing
         }
     }
 
+    SceneRagdollCounts DrawSceneRagdolls(DebugDraw& draw, const Scene& scene, PhysicsDebugFlags flags)
+    {
+        SceneRagdollCounts counts;
+        if (!(uint32_t(flags) & uint32_t(PhysicsDebugFlags::Ragdolls)) || scene.GetPhysicsWorld())
+            return counts;
+        AssetManager*               assets = scene.GetAssetManager();
+        std::function<void(Entity)> visit  = [&](Entity e) {
+            for (Entity child : scene.GetChildren(e))
+                visit(child);
+            if (!e.HasComponent<RagdollComponent>() || !e.HasComponent<AnimatorComponent>())
+                return;
+            const auto& c = e.GetComponent<RagdollComponent>();
+            const auto& a = e.GetComponent<AnimatorComponent>();
+            if (!c.Enabled || !a.SkeletonSource)
+                return;
+            // The asset as the runtime would take it: the loaded asset, else the code-bound source.
+            Ref<const RagdollAsset> asset;
+            if (c.Asset.IsValid() && assets)
+                asset = assets->Request<RagdollAsset>(c.Asset).Asset;
+            if (!asset)
+                asset = c.Source;
+            if (!asset)
+                return;
+            const auto&    data     = asset->GetData();
+            const auto&    skeleton = a.SkeletonSource->GetData();
+            RagdollBinding binding;
+            try
+            {
+                binding = BindRagdoll(data, skeleton, a.Skeleton);
+            }
+            catch (const std::exception&)
+            {
+                return;
+            }
+            if (!binding || binding.Bones.size() != data.Bodies.size())
+                return;
+            // The animated model pose when the Animator has evaluated one, else the bind pose.
+            const bool             animated = a.PreviewPose.Model.size() == skeleton.Joints.size();
+            std::vector<glm::mat4> bind;
+            if (!animated)
+            {
+                bind.resize(skeleton.Joints.size());
+                for (size_t i = 0; i < skeleton.Joints.size(); ++i)
+                {
+                    const int32_t parent = skeleton.Joints[i].Parent;
+                    bind[i] = (parent >= 0 && parent < int32_t(i) ? bind[size_t(parent)] : glm::mat4(1.0f)) *
+                              skeleton.Joints[i].BindLocal.Matrix();
+                }
+            }
+            const glm::mat4 world = scene.GetWorldTransform(e);
+            for (size_t j = 0; j < data.Bodies.size(); ++j)
+            {
+                const uint32_t bone = binding.Bones[j];
+                if (bone >= skeleton.Joints.size())
+                    continue;
+                // The body's frame as the runtime places its actor: position and rotation only.
+                const glm::mat4 frame = PhysicsEditing::JointFrame(world * (animated ? a.PreviewPose.Model[bone] : bind[bone]));
+                DrawBody(draw, frame, data.Bodies[j], BodyColor);
+                ++counts.Bodies;
+                if (binding.Parents[j] < 0)
+                    continue;
+                const int constraint = FindConstraint(data, data.Bodies[j].Bone);
+                if (constraint < 0)
+                    continue;
+                const auto&     limits = data.Constraints[size_t(constraint)];
+                const glm::mat4 joint  = ConstraintFrame(frame, limits);
+                const glm::vec3 origin = glm::vec3(joint[3]);
+                // The frame's swing axes (DrawLimits draws the twist axis).
+                draw.Line(origin, glm::vec3(joint * glm::vec4(0, SceneLimitRadius * 0.7f, 0, 1)), {0.3f, 1.0f, 0.3f, 1.0f});
+                draw.Line(origin, glm::vec3(joint * glm::vec4(0, 0, SceneLimitRadius * 0.7f, 1)), {0.3f, 0.5f, 1.0f, 1.0f});
+                DrawLimits(draw, joint, limits, SceneLimitRadius);
+                ++counts.Joints;
+            }
+        };
+        for (Entity root : scene.GetRootEntities())
+            visit(root);
+        return counts;
+    }
+
     // ---------------------------------------------------------------- files
 
     std::variant<RagdollData, AssetError> LoadRagdollFile(const std::filesystem::path& file)
@@ -670,6 +750,98 @@ namespace Kans::RagdollEditing
             const bool saved = save ? save() : !Save().has_value();
             return saved ? UnsavedChanges::SaveResult::Saved : UnsavedChanges::SaveResult::Failed;
         });
+    }
+
+    // ---------------------------------------------------------------- create ragdoll
+
+    std::variant<CreateSource, std::string> SourceFromImport(const std::vector<ProductRecord>& products,
+                                                             SourceAssetID                     import,
+                                                             AssetID                           skeleton,
+                                                             AssetManager&                     assets,
+                                                             const std::string&                target)
+    {
+        CreateSource result;
+        result.Source.Skeleton = skeleton;
+        std::vector<AssetID> meshes;
+        for (const auto& product : products)
+        {
+            if (product.Metadata.assetID.GetSourceID() != import || product.Target != target)
+                continue;
+            if (product.Metadata.Type == AssetType::Skeleton && !skeleton.IsValid() && !result.Source.Skeleton.IsValid())
+                result.Source.Skeleton = product.Metadata.assetID;
+            else if (product.Metadata.Type == AssetType::Model && !result.Source.Model.IsValid())
+                result.Source.Model = product.Metadata.assetID;
+            else if (product.Metadata.Type == MeshAsset::GetStaticType())
+                meshes.push_back(product.Metadata.assetID);
+        }
+        if (!result.Source.Skeleton.IsValid())
+            return std::string("The import has no skeleton");
+        auto loaded = assets.Load<SkeletonAsset>(result.Source.Skeleton);
+        if (const auto* error = std::get_if<AssetError>(&loaded))
+            return error->Message;
+        result.Source.SkeletonSource = std::get<Ref<const SkeletonAsset>>(loaded);
+        // Products are listed in no particular order: the lowest local ID is the import's first mesh.
+        std::sort(meshes.begin(), meshes.end(), [](AssetID a, AssetID b) { return a.GetLocalID() < b.GetLocalID(); });
+        for (const AssetID id : meshes)
+            if (auto mesh = assets.Load<MeshAsset>(id); std::holds_alternative<Ref<const MeshAsset>>(mesh))
+                if (const auto& m = std::get<Ref<const MeshAsset>>(mesh);
+                    !m->GetData().Skin.empty() && m->GetData().Skeleton == result.Source.Skeleton)
+                {
+                    result.Mesh = m;
+                    break;
+                }
+        return result;
+    }
+
+    std::variant<CreateSource, std::string> SourceFromEntity(const Scene&                      scene,
+                                                             Entity                            entity,
+                                                             AssetManager*                     assets,
+                                                             const std::vector<ProductRecord>& products,
+                                                             const std::string&                target)
+    {
+        if (!entity)
+            return std::string("No entity is selected");
+        const std::string name = entity.GetComponent<TagComponent>().Tag;
+        if (!entity.HasComponent<AnimatorComponent>())
+            return name + " has no Animator, so there is no skeleton to build a ragdoll on";
+        const auto& a = entity.GetComponent<AnimatorComponent>();
+        if (!a.Skeleton.IsValid() && !a.SkeletonSource)
+            return name + "'s Animator has no skeleton";
+        CreateSource result;
+        // The import's model and mesh when the skeleton is a product; the entity's own come first.
+        if (a.Skeleton.IsValid() && assets)
+            if (auto import = SourceFromImport(products, a.Skeleton.GetSourceID(), a.Skeleton, *assets, target);
+                std::holds_alternative<CreateSource>(import))
+                result = std::get<CreateSource>(std::move(import));
+        result.Source.Skeleton = a.Skeleton;
+        if (a.SkeletonSource)
+            result.Source.SkeletonSource = a.SkeletonSource;
+        if (!result.Source.SkeletonSource)
+        {
+            if (!assets)
+                return name + "'s Animator skeleton is not loaded";
+            auto loaded = assets->Load<SkeletonAsset>(a.Skeleton);
+            if (const auto* error = std::get_if<AssetError>(&loaded))
+                return name + "'s Animator skeleton did not load: " + error->Message;
+            result.Source.SkeletonSource = std::get<Ref<const SkeletonAsset>>(loaded);
+        }
+        result.Source.Controller = a.Controller;
+        if (entity.HasComponent<PrefabInstanceComponent>())
+            result.Source.Model = entity.GetComponent<PrefabInstanceComponent>().Prefab;
+        // A skinned mesh under the entity on the same skeleton fits the radii.
+        Ref<const MeshAsset>        own;
+        std::function<void(Entity)> find = [&](Entity e) {
+            if (own)
+                return;
+            if (auto m = scene.ResolveMesh(e); m && !m->GetData().Skin.empty() && m->GetData().Skeleton == a.Skeleton)
+                own = m;
+            for (Entity child : scene.GetChildren(e))
+                find(child);
+        };
+        find(entity);
+        if (own)
+            result.Mesh = own;
+        return result;
     }
 
     // ---------------------------------------------------------------- preview

@@ -8,6 +8,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include "Kans3D/Asset/AssetError.h"
+#include "Kans3D/Asset/Product/ProductRecord.h"
 #include "Kans3D/Physics/RagdollAsset.h"
 #include "PhysicsEditing.h"
 #include "UnsavedChanges.h"
@@ -16,6 +17,7 @@ namespace Kans
 {
     class AssetManager;
     class DebugDraw;
+    class MeshAsset;
     class Scene;
 } // namespace Kans
 
@@ -125,6 +127,19 @@ namespace Kans::RagdollEditing
     void DrawBody(DebugDraw& draw, const glm::mat4& boneFrame, const RagdollBody& body, glm::vec4 color);
     // The constraint's twist arc and elliptical swing cone at `frame`.
     void DrawLimits(DebugDraw& draw, const glm::mat4& frame, const RagdollConstraint& constraint, float radius);
+    // The limit radius of the scene view's ragdoll debug draw (metres).
+    inline constexpr float SceneLimitRadius = 0.15f;
+    struct SceneRagdollCounts
+    {
+        int Bodies = 0, Joints = 0;
+    };
+    // The scene view's Ragdolls debug flag outside play: every entity whose ragdoll binds to its
+    // Animator's skeleton (the asset through the scene's asset manager, never blocking, or the
+    // code-bound source) draws its bodies' primitives at the current animated pose (the bind pose
+    // before one is evaluated) and, for each body joined to a parent body, the constraint frame and
+    // its limit cone. Nothing without the flag, and nothing while the scene runs: the physics world
+    // draws its own ragdolls then.
+    SceneRagdollCounts DrawSceneRagdolls(DebugDraw& draw, const Scene& scene, PhysicsDebugFlags flags);
 
     // ---- Files ----
 
@@ -200,6 +215,31 @@ namespace Kans::RagdollEditing
         AssetID                  Model;      // Invalid: the bare skeleton.
         AssetID                  Controller; // The animated pose that pose matching follows.
     };
+
+    // ---- Create Ragdoll ----
+
+    // What Create Ragdoll generates from: the skeleton and model to preview, and the skinned mesh that
+    // fits the bodies' radii (none when the import has no mesh on the skeleton).
+    struct CreateSource
+    {
+        PreviewSource        Source;
+        Ref<const MeshAsset> Mesh;
+    };
+    // From one import's products (`target` only): its skeleton, or `skeleton` when valid (a skeleton
+    // product), its model, and the first mesh skinned to that skeleton; loaded through `assets`.
+    std::variant<CreateSource, std::string> SourceFromImport(const std::vector<ProductRecord>& products,
+                                                             SourceAssetID                     import,
+                                                             AssetID                           skeleton,
+                                                             AssetManager&                     assets,
+                                                             const std::string&                target);
+    // From an entity's Animator skeleton (loaded when the Animator has not yet): the controller it
+    // plays, its prefab's model, and the skinned mesh under it on that skeleton, else the mesh and
+    // model of the skeleton's import. The reason when the entity has no skeleton to use.
+    std::variant<CreateSource, std::string> SourceFromEntity(const Scene&                      scene,
+                                                             Entity                            entity,
+                                                             AssetManager*                     assets,
+                                                             const std::vector<ProductRecord>& products,
+                                                             const std::string&                target);
 
     // The ragdoll simulated in a private scene with a ground plane: Simulate drops it from the
     // current pose, Reset puts it back. It works on a copy of the data and never touches the edited
