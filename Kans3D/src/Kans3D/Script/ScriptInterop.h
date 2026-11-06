@@ -9,8 +9,8 @@
 
 namespace Kans::Scripting
 {
-    // ABI 11 appends VfxCommand; native and managed tables must change together.
-    constexpr uint32_t ApiVersion = 11;
+    // ABI 12 appends MouseState and LoadScene; native and managed tables must change together.
+    constexpr uint32_t ApiVersion = 12;
     enum class ComponentType : uint32_t
     {
 #define KANS_COMPONENT(id, name) name = id,
@@ -130,6 +130,10 @@ namespace Kans::Scripting
         int32_t(KANS_SCRIPT_CALL* PhysicsCommand)(uint64_t, int32_t, int32_t, Value*, Vector3*, const char*) = nullptr;
         int32_t(KANS_SCRIPT_CALL* PhysicsQuery)(const PhysicsQueryData*, PhysicsHitData*, int32_t, int32_t)  = nullptr;
         int32_t(KANS_SCRIPT_CALL* VfxCommand)(uint64_t, int32_t, int32_t, const char*, Value*, const Value*) = nullptr;
+        // Mouse queries (ScriptInput): 0 position, 1 delta, 2 scroll, 3 button held.
+        int32_t(KANS_SCRIPT_CALL* MouseState)(int32_t, int32_t, Value*) = nullptr;
+        // Queues a scene switch at the end of the frame: 1 queued, 0 not playing, -1 invalid path.
+        int32_t(KANS_SCRIPT_CALL* LoadScene)(const char*) = nullptr;
     };
     struct ManagedApi
     {
@@ -156,6 +160,6 @@ namespace Kans::Scripting
     static_assert(sizeof(Vector3) == 12);
     static_assert(sizeof(Value) == 24);
     static_assert(sizeof(UIEventData) == 64);
-    static_assert(sizeof(NativeApi) == 8 + 23 * sizeof(void*));
+    static_assert(sizeof(NativeApi) == 8 + 25 * sizeof(void*));
     static_assert(sizeof(ManagedApi) == 8 + 17 * sizeof(void*));
 } // namespace Kans::Scripting

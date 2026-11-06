@@ -207,7 +207,20 @@ namespace Kans
         }
     }
 
-    void EditorLayer::UndoScene(int steps)
+    VfxSystemEditing::SystemDocument* EditorLayer::ViewportVfxDocument()
+    {
+        Entity selected = m_HierarchyPanel.GetSelected();
+        if (!selected || !selected.HasComponent<ParticleSystemComponent>() || m_VfxSceneHandles.IsDragging())
+            return nullptr;
+        const auto* choice = m_VfxSceneHandles.Find(selected.GetUUID());
+        if (!choice || !choice->Edit)
+            return nullptr;
+        // Only an open system editor's document: its undo, dirty marker and Save.
+        const auto source = m_VfxSceneHandles.Resolve(selected.GetComponent<ParticleSystemComponent>().System, false);
+        return source.Editor ? source.Document : nullptr;
+    }
+
+    void EditorLayer::UndoScene(int steps, bool routed)
     {
         if (!m_ActiveScene || m_Play.IsActive())
             return;
@@ -215,18 +228,21 @@ namespace Kans
         // Pending changes become a step first, so they can be undone too.
         m_History.Record(*m_ActiveScene);
         m_EditPending = false;
-        for (int i = 0; i < steps && m_History.Undo(*m_ActiveScene); ++i)
+        // With a VFX asset edited in the viewport, the newer of its step and the scene's goes first.
+        auto* asset = routed ? ViewportVfxDocument() : nullptr;
+        for (int i = 0; i < steps && UndoRouting::Undo(m_History, *m_ActiveScene, asset) != UndoRouting::Target::None; ++i)
             ;
     }
 
-    void EditorLayer::RedoScene(int steps)
+    void EditorLayer::RedoScene(int steps, bool routed)
     {
         if (!m_ActiveScene || m_Play.IsActive())
             return;
         m_TimelinePanel.StopPreview();
         m_History.Record(*m_ActiveScene);
         m_EditPending = false;
-        for (int i = 0; i < steps && m_History.Redo(*m_ActiveScene); ++i)
+        auto* asset = routed ? ViewportVfxDocument() : nullptr;
+        for (int i = 0; i < steps && UndoRouting::Redo(m_History, *m_ActiveScene, asset) != UndoRouting::Target::None; ++i)
             ;
     }
 
@@ -255,34 +271,39 @@ namespace Kans
                 ImGui::IsKeyDown(ImGuiKey_Y))
                 return;
         }
-        // A transform in progress (gizmo, handle or modal G/R/S, where Ctrl toggles snapping) ends
-        // before the scene can be saved, replaced, undone or played.
-        const bool transforming = m_ViewportPanel.IsGizmoDragging();
-        if (io.KeyCtrl && !transforming)
+        // A transform in progress (gizmo, handle or modal G/R/S, where Ctrl toggles snapping) holds
+        // the keys (the viewport's DragCapture gate): it ends before the scene can be saved, replaced,
+        // undone or played.
+        const DragCapture capture = m_ViewportPanel.Capture();
+        const auto        pressed = [&](ImGuiKey key, bool repeat) {
+            return ImGui::IsKeyPressed(key, repeat) && !capture.Captures(key, io.KeyCtrl);
+        };
+        if (io.KeyCtrl && !capture.Active())
         {
-            if (ImGui::IsKeyPressed(ImGuiKey_N, false))
+            if (pressed(ImGuiKey_N, false))
                 ConfirmDiscard("creating a new scene", [this] { Record(NewScene()); });
-            if (ImGui::IsKeyPressed(ImGuiKey_O, false))
+            if (pressed(ImGuiKey_O, false))
                 ConfirmDiscard("opening another scene", [this] { m_SceneDialog = SceneDialog::Open; });
-            if (!material && ImGui::IsKeyPressed(ImGuiKey_S, false))
+            if (!material && pressed(ImGuiKey_S, false))
             {
                 if (io.KeyShift)
                     m_SceneDialog = SceneDialog::Save;
                 else
                     SaveCurrentScene();
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_Space, false))
+            if (pressed(ImGuiKey_Space, false))
                 m_Panels.Toggle(PanelID::ContentBrowser);
-            if (!material && ImGui::IsKeyPressed(ImGuiKey_Z, true))
+            // Undo and redo reach the VFX asset edited in the viewport too (UndoRouting).
+            if (!material && pressed(ImGuiKey_Z, true))
             {
                 if (io.KeyShift)
                     RedoScene();
                 else
                     UndoScene();
             }
-            if (!material && ImGui::IsKeyPressed(ImGuiKey_Y, true))
+            if (!material && pressed(ImGuiKey_Y, true))
                 RedoScene();
-            if (ImGui::IsKeyPressed(ImGuiKey_P, false))
+            if (pressed(ImGuiKey_P, false))
             {
                 if (io.KeyShift)
                     TogglePause();
@@ -309,6 +330,9 @@ namespace Kans
             // Pending edits become a step first; play itself is not recorded.
             m_History.Record(*m_ActiveScene);
             m_EditPending = false;
+            // SceneManager.Load paths are relative to the project root.
+            std::error_code error;
+            m_Play.SetProjectRoot(m_AssetImports ? m_AssetImports->GetConfig().RootDirectory : std::filesystem::current_path(error));
         }
         m_Play.Play(*m_ActiveScene);
     }
@@ -503,17 +527,20 @@ namespace Kans
         }
         if (ImGui::BeginMenu("Edit"))
         {
-            const auto undo = m_History.UndoLabels();
-            const auto redo = m_History.RedoLabels();
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_UNDO, undo.empty() ? "Undo" : ("Undo " + undo.front()).c_str()).c_str(),
+            const auto undo     = m_History.UndoLabels();
+            const auto redo     = m_History.RedoLabels();
+            const auto* asset   = ViewportVfxDocument();
+            const auto undoNext = UndoRouting::Describe(m_History, asset, false);
+            const auto redoNext = UndoRouting::Describe(m_History, asset, true);
+            if (ImGui::MenuItem(MenuLabel(ICON_FA_UNDO, undoNext.empty() ? "Undo" : ("Undo " + undoNext).c_str()).c_str(),
                                 "Ctrl+Z",
                                 false,
-                                !undo.empty() && !m_Play.IsActive()))
+                                !undoNext.empty() && !m_Play.IsActive()))
                 UndoScene();
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_REDO, redo.empty() ? "Redo" : ("Redo " + redo.front()).c_str()).c_str(),
+            if (ImGui::MenuItem(MenuLabel(ICON_FA_REDO, redoNext.empty() ? "Redo" : ("Redo " + redoNext).c_str()).c_str(),
                                 "Ctrl+Y",
                                 false,
-                                !redo.empty() && !m_Play.IsActive()))
+                                !redoNext.empty() && !m_Play.IsActive()))
                 RedoScene();
             ImGui::Separator();
             // Jump several steps at once.
@@ -525,7 +552,7 @@ namespace Kans
                     ImGui::PushID(int(1000 + i));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
                     if (ImGui::MenuItem(redo[i].c_str()))
-                        RedoScene(int(i + 1));
+                        RedoScene(int(i + 1), false); // The scene's own steps.
                     ImGui::PopStyleColor();
                     ImGui::PopID();
                 }
@@ -534,7 +561,7 @@ namespace Kans
                 {
                     ImGui::PushID(int(i));
                     if (ImGui::MenuItem(undo[i].c_str()))
-                        UndoScene(int(i + 1));
+                        UndoScene(int(i + 1), false);
                     ImGui::PopID();
                 }
                 ImGui::EndMenu();
@@ -588,11 +615,12 @@ namespace Kans
                 if (ToolButton(ICON_FA_FLOPPY_DISK, "Save scene (Ctrl+S)", false, !m_Play.IsActive()))
                     SaveCurrentScene();
                 ImGui::SameLine();
-                const auto undo    = m_History.UndoLabels();
-                const auto redo    = m_History.RedoLabels();
-                const auto undoTip = undo.empty() ? std::string("Nothing to undo") : "Undo " + undo.front() + " (Ctrl+Z)";
-                const auto redoTip = redo.empty() ? std::string("Nothing to redo") : "Redo " + redo.front() + " (Ctrl+Y)";
-                const bool editing = !m_Play.IsActive();
+                const auto* asset   = ViewportVfxDocument();
+                const auto  undo    = UndoRouting::Describe(m_History, asset, false);
+                const auto  redo    = UndoRouting::Describe(m_History, asset, true);
+                const auto  undoTip = undo.empty() ? std::string("Nothing to undo") : "Undo " + undo + " (Ctrl+Z)";
+                const auto  redoTip = redo.empty() ? std::string("Nothing to redo") : "Redo " + redo + " (Ctrl+Y)";
+                const bool  editing = !m_Play.IsActive();
                 if (ToolButton(ICON_FA_UNDO, undoTip.c_str(), false, editing && !undo.empty()))
                     UndoScene();
                 ImGui::SameLine();
@@ -646,6 +674,11 @@ namespace Kans
                 importing = true;
             }
         const std::string importText = importing ? ICON_FA_SPINNER "  Importing " + m_StatusName + "..." : "";
+        // While a VFX asset is edited in the viewport, which document Ctrl+Z changes next.
+        std::string undoText;
+        if (const auto* asset = m_Play.IsActive() ? nullptr : ViewportVfxDocument())
+            if (const auto next = UndoRouting::Describe(m_History, asset, false); !next.empty())
+                undoText = ICON_FA_UNDO "  Ctrl+Z: " + next;
         const std::string errorText =
             m_SceneFileError.empty() ? "" : ICON_FA_CIRCLE_XMARK "  " + m_SceneFileError.substr(0, 80);
         const float spacing = EditorTheme::Px(EditorTheme::Space4);
@@ -654,6 +687,8 @@ namespace Kans
             width += ImGui::CalcTextSize(importText.c_str()).x + spacing;
         if (!errorText.empty())
             width += ImGui::CalcTextSize(errorText.c_str()).x + spacing;
+        if (!undoText.empty())
+            width += ImGui::CalcTextSize(undoText.c_str()).x + spacing;
         const float textY = bar.Min.y + (bar.GetHeight() - ImGui::GetTextLineHeight()) * 0.5f;
         ImGui::SetCursorScreenPos({std::max(x, bar.Max.x - width - EditorTheme::Px(EditorTheme::Space3)), textY});
         ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset = 0.0f; // textY is already centred.
@@ -672,6 +707,11 @@ namespace Kans
         if (!importText.empty())
         {
             ImGui::TextColored(AccentColor, "%s", importText.c_str());
+            ImGui::SameLine(0, spacing);
+        }
+        if (!undoText.empty())
+        {
+            ImGui::TextColored(EditorTheme::Colors().TextDim, "%s", undoText.c_str());
             ImGui::SameLine(0, spacing);
         }
         ImGui::PushStyleColor(ImGuiCol_Text, m_Play.IsActive() ? EditorTheme::Colors().TypeModel : EditorTheme::Colors().TextDim);

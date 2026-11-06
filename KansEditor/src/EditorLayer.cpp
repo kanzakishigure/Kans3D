@@ -270,7 +270,12 @@ namespace Kans
         }
         else
             m_UIInput = {};
-        if (!m_Play.Update(*m_ActiveScene, ts) && !m_Play.IsActive())
+        const uint64_t loads   = m_Play.GetSceneLoadCount();
+        const bool     updated = m_Play.Update(*m_ActiveScene, ts);
+        // A script loaded another scene: the selection named entities of the one it replaced.
+        if (m_Play.GetSceneLoadCount() != loads)
+            m_HierarchyPanel.SetSelected({});
+        if (!updated && !m_Play.IsActive())
         {
             m_ActiveScene->UpdateModelPoses();
             // Springs and cloth on the edit pose; nothing is written to the scene.

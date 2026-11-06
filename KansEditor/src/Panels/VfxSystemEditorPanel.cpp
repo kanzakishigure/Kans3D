@@ -59,19 +59,6 @@ namespace Kans
                     return "Light Renderer";
             }
         }
-        bool AssetIDField(const char* label, AssetID& id)
-        {
-            std::string text = id.IsValid() ? id.ToString() : std::string();
-            if (!PropertyGrid::Row(label, "An asset ID (source:local); drop or paste it"))
-                return false;
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            if (ImGui::InputTextWithHint("##asset", "None", &text, ImGuiInputTextFlags_EnterReturnsTrue))
-            {
-                id = text.empty() ? AssetID {} : AssetID::FromString(text);
-                return true;
-            }
-            return false;
-        }
         template<size_t N>
         bool EnumCombo(const char* label, const char* const (&items)[N], int& value)
         {
@@ -84,6 +71,85 @@ namespace Kans
             return false;
         }
     } // namespace
+
+    // ---------------------------------------------------------------------- asset pickers
+
+    std::optional<AssetID> VfxSystemEditorPanel::DroppedAsset(const ImGuiPayload& payload, AssetType type)
+    {
+        std::error_code error;
+        const auto      file = fs::weakly_canonical(
+            fs::u8path(std::string(static_cast<const char*>(payload.Data), size_t(payload.DataSize))), error);
+        if (error || !m_AssetChoices)
+            return std::nullopt;
+        std::optional<AssetType> other;
+        for (const auto& choice : m_AssetChoices())
+            if (choice.SourcePath == file)
+            {
+                if (choice.Type == type)
+                    return choice.ID;
+                other = choice.Type;
+            }
+        m_Status = other ? *AssetTypeMismatch(type, *other) : file.filename().u8string() + " is not an imported asset";
+        return std::nullopt;
+    }
+
+    bool VfxSystemEditorPanel::AssetCombo(const char* id, AssetType type, AssetID& asset, float width)
+    {
+        ImGui::PushID(id);
+        bool        changed = false;
+        std::string preview = asset.IsValid() ? "(missing) " + asset.ToString() : "None";
+        if (m_AssetChoices)
+            for (const auto& choice : m_AssetChoices())
+                if (choice.ID == asset)
+                    preview = choice.Name;
+        ImGui::SetNextItemWidth(width);
+        if (ImGui::BeginCombo("##asset", preview.c_str(), ImGuiComboFlags_HeightLarge))
+        {
+            if (ImGui::IsWindowAppearing())
+            {
+                m_AssetFilter.clear();
+                ImGui::SetKeyboardFocusHere();
+            }
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputTextWithHint("##filter", ICON_FA_MAGNIFYING_GLASS "  Filter", &m_AssetFilter);
+            if (ImGui::Selectable("None", !asset.IsValid()) && asset.IsValid())
+                asset = {}, changed = true;
+            std::string needle = m_AssetFilter;
+            std::transform(needle.begin(), needle.end(), needle.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+            if (m_AssetChoices)
+                for (const auto& choice : m_AssetChoices())
+                {
+                    if (choice.Type != type)
+                        continue;
+                    std::string name = choice.Name;
+                    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                    if (!needle.empty() && name.find(needle) == std::string::npos)
+                        continue;
+                    const bool selected = choice.ID == asset;
+                    if (ImGui::Selectable(choice.Name.c_str(), selected) && !selected)
+                        asset = choice.ID, changed = true;
+                }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s\nA %s asset; drop one from the Content Browser.", preview.c_str(), AssetTypeLabel(type).c_str());
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("asset_payload"))
+                if (auto dropped = DroppedAsset(*payload, type); dropped && *dropped != asset)
+                    asset = *dropped, changed = true;
+            ImGui::EndDragDropTarget();
+        }
+        ImGui::PopID();
+        return changed;
+    }
+
+    bool VfxSystemEditorPanel::AssetRow(const char* label, AssetType type, AssetID& asset)
+    {
+        if (!PropertyGrid::Row(label, (AssetTypeLabel(type) + " asset; pick one or drop it from the Content Browser").c_str()))
+            return false;
+        return AssetCombo(label, type, asset, -FLT_MIN);
+    }
 
     // ---------------------------------------------------------------------- document
 
@@ -1296,6 +1362,16 @@ namespace Kans
                         ImGui::SetTooltip("Click to edit the %s", info.Interface == "Gradient" ? "gradient" : "curve");
                     if (clicked)
                         info.Interface == "Gradient" ? OpenGradientEditor(use.Guid, path) : OpenCurveEditor(use.Guid, path);
+                    // A curve module dropped from the Content Browser references its table instead.
+                    if (ImGui::BeginDragDropTargetCustom(ImRect(min, {min.x + width, min.y + high}), ImGui::GetID("##curvedrop")))
+                    {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("asset_payload"))
+                            if (auto dropped = DroppedAsset(*payload, AssetType::VfxModule))
+                                Apply([&](Vfx::System& s, const Context& c) {
+                                    return PickInputAsset(s, c, handle, use.Guid, path, *dropped, AssetType::VfxModule);
+                                });
+                        ImGui::EndDragDropTarget();
+                    }
                 }
                 else if (info.Interface == "Grid3D")
                 {
@@ -1359,21 +1435,16 @@ namespace Kans
                 }
                 else if (!info.Interface.empty() && info.Interface != "ForceFields")
                 {
-                    // Asset-backed bindings (vector fields, meshes, textures): the asset ID.
+                    // Asset-backed bindings (vector fields, meshes, textures): a picker of that type.
                     auto binding = current && current->Kind == Vfx::InputKind::DataInterface ? current->Interface : Vfx::InterfaceBinding {};
                     if (binding.Kind.empty())
                         binding.Kind = info.Interface == "Mesh" ? "StaticMesh" : info.Interface;
-                    std::string text = binding.Asset.IsValid() ? binding.Asset.ToString() : std::string();
-                    if (ImGui::InputTextWithHint("##asset", (info.Interface + " asset ID").c_str(), &text, ImGuiInputTextFlags_EnterReturnsTrue))
-                    {
-                        binding.Asset = text.empty() ? AssetID {} : AssetID::FromString(text);
-                        if (info.Interface == "Mesh")
-                            binding.Source = "Asset";
-                        Vfx::Input input;
-                        input.Kind      = Vfx::InputKind::DataInterface;
-                        input.Interface = binding;
-                        set(path, input, false);
-                    }
+                    const auto type  = BindingAssetType(binding.Kind);
+                    AssetID    asset = binding.Asset;
+                    if (type == AssetType::None)
+                        ImGui::TextDisabled("%s", binding.Kind.c_str());
+                    else if (AssetCombo("##asset", type, asset, width))
+                        Apply([&](Vfx::System& s, const Context& c) { return PickInputAsset(s, c, handle, use.Guid, path, asset, type); });
                 }
                 else if (info.Interface == "ForceFields")
                     ImGui::TextDisabled("Scene force fields");
@@ -1682,13 +1753,13 @@ namespace Kans
                 };
                 if (!error.empty())
                     PropertyGrid::Text("Error", error);
-                if (AssetIDField("Material", r.Material))
+                if (AssetRow("Material", AssetType::Material, r.Material))
                     edit(false);
                 if (r.Kind == Vfx::RendererKind::Mesh)
                     for (size_t k = 0; k < r.Meshes.size(); ++k)
                     {
                         ImGui::PushID(int(k));
-                        if (AssetIDField("Mesh", r.Meshes[k].Mesh))
+                        if (AssetRow("Mesh", AssetType::StaticMesh, r.Meshes[k].Mesh))
                             edit(false);
                         if (PropertyGrid::Vec3("Mesh scale", r.Meshes[k].Scale, 1.0f, 0.01f))
                             edit(true);
@@ -2020,14 +2091,14 @@ namespace Kans
                 }
                 else if (b.Kind == "VectorField")
                 {
-                    if (AssetIDField("Field asset", b.Asset))
+                    if (AssetRow("Field asset", AssetType::VectorField, b.Asset))
                         edit(false);
                     if (PropertyGrid::Float("Intensity", b.Intensity, 0.01f))
                         edit(true);
                 }
                 else if (b.Kind == "StaticMesh" || b.Kind == "SkeletalMesh")
                 {
-                    if (AssetIDField("Mesh asset", b.Asset))
+                    if (AssetRow("Mesh asset", AssetType::StaticMesh, b.Asset))
                         edit(false);
                     if (PropertyGrid::InputText("Entity path", b.EntityPath))
                         edit(false);

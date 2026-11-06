@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
+#include <filesystem>
 #include <optional>
+#include <string>
 #include "Kans3D/Core/TimeStep.h"
 #include "Kans3D/UI/UIInput.h"
 #include "SceneSnapshot.h"
@@ -44,6 +46,22 @@ namespace Kans
             return Update(scene, ts);
         }
 
+        // Runtime scene changes (SceneManager.Load). A script asks for a scene by its path relative
+        // to the project root; the session switches at the end of that frame, after every script's
+        // Update and the rest of the scene update, as Godot defers change_scene and Unity applies
+        // LoadScene on the next frame. The switch stops the running scene (OnRuntimeStop: scripts
+        // end, physics and audio stop) and starts the loaded one the way Play does, in the same Scene
+        // object and the same play session: play mode and the play clock continue, static C# state
+        // stays. The edit-time scene is never written: like Unity's play mode, Stop restores the
+        // snapshot taken when Play began, whichever scenes were loaded since. A file that cannot be
+        // read keeps the current scene running and records LastLoadError.
+        void SetProjectRoot(std::filesystem::path root) { m_ProjectRoot = std::move(root); }
+        const std::filesystem::path& GetProjectRoot() const { return m_ProjectRoot; }
+        // The scene loaded last during this session (project-relative; empty: still the edited one).
+        const std::string& GetLoadedScene() const { return m_LoadedScene; }
+        uint64_t           GetSceneLoadCount() const { return m_SceneLoads; }
+        const std::string& GetLastLoadError() const { return m_LoadError; }
+
         // Counters reset on a new Play and when returning to Edit.
         float GetPlayTime() const { return m_PlayTime; }
         uint64_t GetFrameCount() const { return m_FrameCount; }
@@ -51,6 +69,8 @@ namespace Kans
 
     private:
         void Reset();
+        void FeedScriptMouse();
+        void LoadRequestedScene(Scene& scene);
         void         Start(Scene& scene, bool simulate);
         UIInputState m_UIInput;
         UIViewport   m_UIViewport;
@@ -62,5 +82,9 @@ namespace Kans
         bool                         m_Simulating    = false;
         float                       m_PlayTime = 0.0f;
         uint64_t                    m_FrameCount = 0;
+        std::filesystem::path       m_ProjectRoot;
+        std::string                 m_LoadedScene, m_LoadError;
+        uint64_t                    m_SceneLoads = 0;
+        std::optional<glm::vec2>    m_LastPointer; // Game-view pixels, for the script mouse delta.
     };
 } // namespace Kans

@@ -46,7 +46,7 @@ namespace Kans.Interop
             if (native->Log == null || native->HasComponent == null || native->GetTranslation == null ||
                 native->SetTranslation == null || native->GetRotation == null || native->SetRotation == null || native->IsKeyPressed == null ||
                 native->SetMaterialParameter == null || native->ClearMaterialParameter == null || native->GetMaterialParameter == null || native->AddComponent == null || native->DestroyEntity == null ||
-                native->ComponentProperty == null || native->WidgetProperty == null || native->ReadUIEvent == null || native->UIUtility == null || native->AnimationCommand == null || native->ReadAnimationEvent == null || native->TimelineCommand == null || native->ReadTimelineEvent == null || native->PhysicsCommand == null || native->PhysicsQuery == null || native->VfxCommand == null) return -1;
+                native->ComponentProperty == null || native->WidgetProperty == null || native->ReadUIEvent == null || native->UIUtility == null || native->AnimationCommand == null || native->ReadAnimationEvent == null || native->TimelineCommand == null || native->ReadTimelineEvent == null || native->PhysicsCommand == null || native->PhysicsQuery == null || native->VfxCommand == null || native->MouseState == null || native->LoadScene == null) return -1;
             InternalCalls.Api = *native;
             *managed = new ManagedApi {
                 Version = NativeApi.ApiVersion, Size = (uint)sizeof(ManagedApi), Shutdown = &Shutdown, LoadAssembly = &LoadAssembly,

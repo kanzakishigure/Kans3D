@@ -140,10 +140,36 @@ namespace Kans
         RightSuper = 347,
         Menu = 348
     };
+    public enum MouseButton
+    {
+        Left = 0,
+        Right = 1,
+        Middle = 2,
+        Button3 = 3,
+        Button4 = 4,
+        Button5 = 5,
+        Button6 = 6,
+        Button7 = 7
+    }
     static public class Input
     {
-       
         public static bool IsKeyPressed(KeyCode keycode) => InternalCalls.Input_IsKeyPressed(keycode);
- 
+
+        // The mouse over the game view this frame: position in game-view pixels (origin top-left,
+        // Y down), the movement since the previous frame, and this frame's wheel (Y vertical,
+        // X horizontal). All zero outside play.
+        public static Vector2 GetMousePosition() => Mouse(0);
+        public static Vector2 GetMouseDelta() => Mouse(1);
+        public static Vector2 GetMouseScroll() => Mouse(2);
+        public static unsafe bool IsMouseButtonPressed(MouseButton button)
+        {
+            Interop.PropertyValue value = default;
+            return InternalCalls.Api.MouseState(3, (int)button, &value) > 0 && value.Integer != 0;
+        }
+        private static unsafe Vector2 Mouse(int query)
+        {
+            Interop.PropertyValue value = default;
+            return InternalCalls.Api.MouseState(query, 0, &value) > 0 ? new Vector2(value.X, value.Y) : new Vector2(0, 0);
+        }
     }
 }

@@ -29,6 +29,7 @@
 #include "Panels/UIDesignerPanel.h"
 #include "Panels/ViewportPanel.h"
 #include "SceneHistory.h"
+#include "UndoRouting.h"
 #include "UI/ConsolePanel.h"
 #include "UI/PanelManager.h"
 #include "UI/SceneFileDialog.h"
@@ -242,7 +243,9 @@ namespace Kans
         void HandleShortcuts();
         // Records a history step once an interaction that may have edited the scene ends.
         void TrackSceneEdits();
-        void UndoScene(int steps = 1);
+        // `routed`: the VFX asset edited in the viewport takes part (UndoRouting); the History
+        // menu lists the scene's own steps and passes false.
+        void UndoScene(int steps = 1, bool routed = true);
         // Play mode: the scene runs from a snapshot that Stop restores.
         void StartPlay();
         // Simulate: physics without scripts, restored on stop like play.
@@ -251,7 +254,10 @@ namespace Kans
         void TogglePause();
         // Returns the right edge of the controls.
         float DrawPlayControls(ImVec2 position);
-        void RedoScene(int steps = 1);
+        void RedoScene(int steps = 1, bool routed = true);
+        // The selected particle entity's system document while "Edit asset in viewport" is on and
+        // its system editor is open; null otherwise.
+        VfxSystemEditing::SystemDocument* ViewportVfxDocument();
         void OpenImporter(const std::filesystem::path& file);
         void OpenMaterial(const std::filesystem::path& file);
         void CreateMaterial(const std::filesystem::path& directory);

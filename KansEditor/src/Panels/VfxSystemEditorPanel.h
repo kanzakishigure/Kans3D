@@ -8,6 +8,7 @@
 #include <vector>
 #include <memory>
 #include <imgui.h>
+#include "Kans3D/Editor/EditorAssetChoice.h"
 #include "Kans3D/Editor/EditorCamera.h"
 #include "Gizmo/Handles.h"
 #include "Panels/VfxGizmos.h"
@@ -66,6 +67,10 @@ namespace Kans
         void SetOpenModuleCallback(std::function<void(const std::filesystem::path&)> open) { m_OpenModule = std::move(open); }
         // Renders the preview scene (without one the preview draws its overlay on a backdrop).
         void SetPreviewRenderer(PreviewRenderer render) { m_Render = std::move(render); }
+        // The project's published assets, for the stack's asset pickers (vector fields, meshes,
+        // materials, textures and curve modules).
+        using AssetChoices = std::function<const std::vector<EditorAssetChoice>&()>;
+        void SetAssetChoices(AssetChoices choices) { m_AssetChoices = std::move(choices); }
         // The scene viewport toolbar's snapping (the preview's handles use it; Ctrl inverts).
         void SetSnapSettings(std::function<Gizmo::Settings()> settings) { m_SnapSettings = std::move(settings); }
 
@@ -220,6 +225,13 @@ namespace Kans
         void DrawPrompts();
         void Shortcuts();
         bool ValueEditor(const char* id, Vfx::Value& value, Vfx::Type kind, const Vfx::Parameter* spec);
+        // An asset combo of `type` (choices filtered by type) taking a source dropped from the Content
+        // Browser; a dropped asset of another type is refused in the status line. True when changed.
+        bool AssetCombo(const char* id, AssetType type, AssetID& asset, float width);
+        bool AssetRow(const char* label, AssetType type, AssetID& asset);
+        // The asset a Content Browser drop names (a source path), when it is one of `type`; else the
+        // status line says why.
+        std::optional<AssetID> DroppedAsset(const ImGuiPayload& payload, AssetType type);
         std::string Handle() const; // The emitter of the stack shown ("" for the system).
 
         EditorAssetImportService*                          m_Service = nullptr;
@@ -304,6 +316,8 @@ namespace Kans
         std::string                              m_GizmoUse, m_GizmoGrid;
         bool                                     m_ShowHandles = true, m_LockBounds = false, m_SwallowRight = false;
         std::function<Gizmo::Settings()>         m_SnapSettings;
+        AssetChoices                             m_AssetChoices;
+        std::string                              m_AssetFilter;
         std::vector<VfxSystemEditing::StackDiagnostic> m_Diagnostics;
 
         UnsavedChanges m_Closing;

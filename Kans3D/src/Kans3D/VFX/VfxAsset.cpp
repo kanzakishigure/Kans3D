@@ -426,7 +426,8 @@ namespace Kans::Vfx
                                            "AddSimulationStage",
                                            "RemoveSimulationStage",
                                            "MoveSimulationStage",
-                                           "ReplaceSimulationStage"};
+                                           "ReplaceSimulationStage",
+                                           "MoveRenderer"};
         YAML::Node            HandlerNode(const EventHandler& h)
         {
             YAML::Node n;
@@ -532,6 +533,12 @@ namespace Kans::Vfx
                     a["Enabled"] = x.Enabled;
                 if (x.Action == Override::Kind::AddRenderer || x.Action == Override::Kind::ReplaceRenderer)
                     a["Renderer"] = RendererNode(x.Render);
+                if (x.Action == Override::Kind::MoveModule && x.ToStage)
+                {
+                    a["ToStage"] = StageName(*x.ToStage);
+                    if (!x.ToContainer.empty())
+                        a["ToContainer"] = x.ToContainer;
+                }
                 n.push_back(a);
             }
             return n;
@@ -565,6 +572,15 @@ namespace Kans::Vfx
                     x.Enabled = a["Enabled"].as<bool>();
                 if (x.Action == Override::Kind::AddRenderer || x.Action == Override::Kind::ReplaceRenderer)
                     x.Render = ReadRenderer(a["Renderer"]);
+                if (x.Action == Override::Kind::MoveModule && a["ToStage"])
+                {
+                    x.ToStage     = Parse<Stage>(a["ToStage"], Stages);
+                    x.ToContainer = a["ToContainer"].as<std::string>("");
+                    Check(*x.ToStage >= Stage::EmitterSpawn, "VFX module move cannot target a system stage");
+                    Check((*x.ToStage != Stage::EventHandler && *x.ToStage != Stage::SimulationStage) ||
+                              !x.ToContainer.empty(),
+                          "VFX module move into " + std::string(StageName(*x.ToStage)) + " requires ToContainer");
+                }
                 r.push_back(x);
             }
             return r;
@@ -1148,10 +1164,67 @@ namespace Kans::Vfx
             return "Simulation Iterations must be 1–64: " + s.Guid;
         return std::nullopt;
     }
-    void ApplyOverrides(Emitter& e, const std::vector<Override>& overrides)
+    std::string MoveAcrossStagesError(const std::string& use, Stage to)
+    {
+        return "VFX module " + use + " cannot move to " + StageName(to) + ": the stage is not in its AllowedStages";
+    }
+    namespace
+    {
+        // The stack `kind` names (the handler or simulation stage `container` for those stages).
+        Stack* EmitterStack(Emitter& e, Stage kind, const std::string& container)
+        {
+            if (kind == Stage::EventHandler)
+            {
+                auto h = std::find_if(
+                    e.Handlers.begin(), e.Handlers.end(), [&](const auto& h) { return h.Guid == container; });
+                Check(h != e.Handlers.end(), "Missing VFX handler override target: " + container);
+                return &h->Modules;
+            }
+            if (kind == Stage::SimulationStage)
+            {
+                auto s = std::find_if(e.SimulationStages.begin(), e.SimulationStages.end(), [&](const auto& s) {
+                    return s.Guid == container;
+                });
+                Check(s != e.SimulationStages.end(), "Missing simulation stage override target: " + container);
+                e.Stages.erase(Stage::SimulationStage);
+                return &s->Modules;
+            }
+            return &e.Stages[kind];
+        }
+        // The stack holding the use `guid`, wherever it is now.
+        Stack* StackHolding(Emitter& e, const std::string& guid)
+        {
+            const auto holds = [&](const Stack& v) {
+                return std::any_of(v.begin(), v.end(), [&](const auto& x) { return x.Guid == guid; });
+            };
+            for (auto& [kind, v] : e.Stages)
+                if (kind != Stage::SimulationStage && holds(v))
+                    return &v;
+            for (auto& h : e.Handlers)
+                if (holds(h.Modules))
+                    return &h.Modules;
+            for (auto& s : e.SimulationStages)
+                if (holds(s.Modules))
+                    return &s.Modules;
+            return nullptr;
+        }
+    } // namespace
+    void ApplyOverrides(Emitter& e, const std::vector<Override>& overrides, const ModuleResolver* modules)
     {
         for (const auto& o : overrides)
         {
+            if (o.Action == Override::Kind::MoveRenderer)
+            {
+                auto& v  = e.Renderers;
+                auto  at = std::find_if(v.begin(), v.end(), [&](const auto& x) { return x.Guid == o.Target; });
+                Check(at != v.end(), "Missing VFX renderer override target: " + o.Target);
+                auto item = *at;
+                v.erase(at);
+                auto before = std::find_if(v.begin(), v.end(), [&](const auto& x) { return x.Guid == o.Before; });
+                Check(o.Before.empty() || before != v.end(), "Missing VFX renderer reorder target: " + o.Before);
+                v.insert(before, item);
+                continue;
+            }
             if (o.Action >= Override::Kind::AddSimulationStage)
             {
                 auto& v  = e.SimulationStages;
@@ -1262,26 +1335,46 @@ namespace Kans::Vfx
             }
             Check(o.StageKind >= Stage::EmitterSpawn, "VFX emitter override cannot target a system stage");
 
-            Stack* stack = &e.Stages[o.StageKind];
-            if (o.StageKind == Stage::EventHandler)
+            Stack* stack = EmitterStack(e,
+                                        o.StageKind,
+                                        o.StageKind == Stage::EventHandler ? o.HandlerGuid : o.SimulationStageGuid);
+            auto   at = std::find_if(stack->begin(), stack->end(), [&](const auto& x) { return x.Guid == o.Target; });
+            if (o.Action != Override::Kind::AddModule && at == stack->end())
             {
-                auto h = std::find_if(
-                    e.Handlers.begin(), e.Handlers.end(), [&](const auto& h) { return h.Guid == o.HandlerGuid; });
-                Check(h != e.Handlers.end(), "Missing VFX handler override target: " + o.HandlerGuid);
-                stack = &h->Modules;
+                // GUID-keyed: the use may have moved to another stack since the override was written.
+                if (auto* holder = StackHolding(e, o.Target))
+                {
+                    stack = holder;
+                    at    = std::find_if(stack->begin(), stack->end(), [&](const auto& x) { return x.Guid == o.Target; });
+                }
             }
-            if (o.StageKind == Stage::SimulationStage)
+            auto& v = *stack;
+            if (o.Action == Override::Kind::MoveModule && o.ToStage)
             {
-                auto s = std::find_if(e.SimulationStages.begin(), e.SimulationStages.end(), [&](const auto& s) {
-                    return s.Guid == o.SimulationStageGuid;
-                });
-                Check(s != e.SimulationStages.end(),
-                      "Missing simulation stage override target: " + o.SimulationStageGuid);
-                stack = &s->Modules;
-                e.Stages.erase(Stage::SimulationStage);
+                Check(at != v.end(), "Missing VFX module override target: " + o.Target);
+                Check(*o.ToStage >= Stage::EmitterSpawn, "VFX module move cannot target a system stage");
+                if (modules)
+                {
+                    Module m;
+                    try
+                    {
+                        m = (*modules)(at->Script);
+                    }
+                    catch (const std::exception&)
+                    {
+                        m.AllowedStages = ~0u; // An unresolved script is reported by the compiler.
+                    }
+                    Check((m.AllowedStages & (1u << uint32_t(*o.ToStage))) != 0,
+                          MoveAcrossStagesError(o.Target, *o.ToStage));
+                }
+                auto item = *at;
+                v.erase(at);
+                auto& to     = *EmitterStack(e, *o.ToStage, o.ToContainer);
+                auto  before = std::find_if(to.begin(), to.end(), [&](const auto& x) { return x.Guid == o.Before; });
+                Check(o.Before.empty() || before != to.end(), "Missing VFX reorder target: " + o.Before);
+                to.insert(before, item);
+                continue;
             }
-            auto& v  = *stack;
-            auto  at = std::find_if(v.begin(), v.end(), [&](const auto& x) { return x.Guid == o.Target; });
             if (o.Action == Override::Kind::AddModule)
             {
                 for (const auto& [s, st] : e.Stages)
@@ -1319,7 +1412,7 @@ namespace Kans::Vfx
             }
         }
     }
-    Emitter MergeEmitter(const Emitter& child, const EmitterResolver& resolve)
+    Emitter MergeEmitter(const Emitter& child, const EmitterResolver& resolve, const ModuleResolver* modules)
     {
         std::set<AssetID>                      chain;
         std::function<Emitter(const Emitter&)> merge = [&](const Emitter& c) {
@@ -1357,7 +1450,7 @@ namespace Kans::Vfx
                         r.DistancePolicy = c.DistancePolicy;
                 }
             }
-            ApplyOverrides(r, c.Overrides);
+            ApplyOverrides(r, c.Overrides, modules);
             r.Parent = {};
             r.Overrides.clear();
             r.SettingOverrides.clear();

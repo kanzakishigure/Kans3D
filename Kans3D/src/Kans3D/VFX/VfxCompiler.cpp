@@ -1684,8 +1684,8 @@ namespace Kans::Vfx
                 ce.Handle = h.Guid;
                 try
                 {
-                    ce.Settings = MergeEmitter(h.Inline ? *h.Inline : emitters(h.Reference), emitters);
-                    ApplyOverrides(ce.Settings, h.Overrides);
+                    ce.Settings = MergeEmitter(h.Inline ? *h.Inline : emitters(h.Reference), emitters, &modules);
+                    ApplyOverrides(ce.Settings, h.Overrides, &modules);
                     ce.Settings.Name = h.Name;
                 }
                 catch (const std::exception& e)

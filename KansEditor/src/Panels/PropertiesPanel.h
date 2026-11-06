@@ -28,6 +28,7 @@ namespace Kans
         // Project-relative map the editor lights scenes without environment settings with.
         void SetDefaultEnvironment(std::filesystem::path map) { m_DefaultEnvironment = std::move(map); }
         void SetAssetChoices(std::vector<EditorAssetChoice> choices) { m_AssetChoices = std::move(choices); }
+        const std::vector<EditorAssetChoice>& AssetChoices() const { return m_AssetChoices; }
         // Used to show model parts and material names; may be null.
         void SetAssetManager(AssetManager* assets) { m_Assets = assets; }
         // Material previews (as the Content Browser shows them) and its selected files; set by the editor.

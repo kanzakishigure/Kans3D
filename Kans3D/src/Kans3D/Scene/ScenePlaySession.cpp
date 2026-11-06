@@ -1,7 +1,9 @@
 #include "kspch.h"
 #include "ScenePlaySession.h"
 #include "Kans3D/Physics/PhysicsSettings.h"
+#include "Kans3D/Script/ScriptInput.h"
 #include "Scene.h"
+#include "SceneSerializer.h"
 
 namespace Kans
 {
@@ -29,6 +31,11 @@ namespace Kans
         m_StepRequested = false;
         m_State = State::Playing;
         m_Simulating    = simulate;
+        m_LoadedScene.clear();
+        m_LoadError.clear();
+        m_SceneLoads = 0;
+        m_LastPointer.reset();
+        ScriptInput::Reset();
         scene.UI().Reset();
         SceneRuntimeOptions options;
         options.RunScripts = !simulate;
@@ -75,14 +82,53 @@ namespace Kans
         const TimeStep step = m_State == State::Paused ? TimeStep(float(scene.GetPhysicsSettings().FixedTimeStep)) : ts;
         m_StepRequested = false;
         scene.UpdateUI(m_UIInput, m_UIViewport, step.GetSeconds());
+        FeedScriptMouse();
         m_UIInput.NextFrame();
         if (m_State == State::Paused)
             scene.OnRuntimeSingleStep();
         else
             scene.OnUpdate(step);
+        // The frame has ended: a scene a script asked for replaces the running one now.
+        LoadRequestedScene(scene);
         m_PlayTime += step.GetSeconds();
         ++m_FrameCount;
         return true;
+    }
+
+    void ScenePlaySession::FeedScriptMouse()
+    {
+        ScriptMouseFrame mouse;
+        mouse.Position = m_UIViewport.Map(m_UIInput.Pointer);
+        mouse.Delta    = m_LastPointer ? mouse.Position - *m_LastPointer : glm::vec2(0);
+        mouse.Scroll   = m_UIInput.Scroll;
+        mouse.Buttons  = m_UIInput.Buttons;
+        m_LastPointer  = mouse.Position;
+        ScriptInput::SetMouse(mouse);
+    }
+
+    void ScenePlaySession::LoadRequestedScene(Scene& scene)
+    {
+        auto request = ScriptInput::TakeSceneLoad();
+        if (!request || m_Simulating)
+            return;
+        const auto file      = (m_ProjectRoot / std::filesystem::u8path(*request)).lexically_normal();
+        auto       candidate = SceneSerializer::DeserializeChecked(file);
+        if (const auto* error = std::get_if<AssetError>(&candidate))
+        {
+            m_LoadError = "SceneManager.Load(" + *request + "): " + error->Message;
+            CORE_ERROR("{}", m_LoadError);
+            return;
+        }
+        const auto loaded = std::get<Ref<Scene>>(candidate)->Capture();
+        scene.OnRuntimeStop();
+        scene.Restore(loaded);
+        scene.UI().Reset();
+        SceneRuntimeOptions options;
+        options.RunScripts = true;
+        scene.OnRuntimeStart(options);
+        m_LoadedScene = *request;
+        m_LoadError.clear();
+        ++m_SceneLoads;
     }
 
     void ScenePlaySession::Reset()
@@ -90,6 +136,11 @@ namespace Kans
         if (m_Scene)
             m_Scene->UI().Reset();
         m_UIInput = {};
+        m_LoadedScene.clear();
+        m_LoadError.clear();
+        m_SceneLoads = 0;
+        m_LastPointer.reset();
+        ScriptInput::Reset();
         m_State = State::Edit;
         m_Scene = nullptr;
         m_Snapshot.reset();

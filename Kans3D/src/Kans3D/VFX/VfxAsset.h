@@ -377,7 +377,9 @@ namespace Kans::Vfx
             AddSimulationStage,
             RemoveSimulationStage,
             MoveSimulationStage,
-            ReplaceSimulationStage
+            ReplaceSimulationStage,
+            // Reorders an inherited renderer by GUID: Target goes before Before (empty: last).
+            MoveRenderer
         };
         Kind            Action    = Kind::SetInput;
         Stage           StageKind = Stage::ParticleUpdate;
@@ -389,6 +391,10 @@ namespace Kans::Vfx
         EventHandler    Handler;
         std::string     HandlerGuid, SimulationStageGuid;
         SimulationStage Simulation;
+        // MoveModule into another stack: its stage, and the handler or simulation stage GUID for those
+        // stages. Unset: the move stays in the use's own stack (files written before cross-stage moves).
+        std::optional<Stage> ToStage;
+        std::string          ToContainer;
     };
     struct Emitter
     {
@@ -449,8 +455,12 @@ namespace Kans::Vfx
     using ModuleResolver  = std::function<Module(AssetID)>;
     // Why a simulation stage record is invalid (the decoder's own check), or nothing.
     std::optional<std::string>       SimulationStageError(const SimulationStage&);
-    Emitter                          MergeEmitter(const Emitter&, const EmitterResolver&);
-    void                             ApplyOverrides(Emitter&, const std::vector<Override>&);
+    // Module-level overrides find their use by GUID in any stack (its recorded stack first), so they
+    // stay valid when a use moves to another stage. With `modules`, a MoveModule into another stage is
+    // checked against the module's AllowedStages (MoveAcrossStagesError gives the message).
+    Emitter     MergeEmitter(const Emitter&, const EmitterResolver&, const ModuleResolver* modules = nullptr);
+    void        ApplyOverrides(Emitter&, const std::vector<Override>&, const ModuleResolver* modules = nullptr);
+    std::string MoveAcrossStagesError(const std::string& use, Stage to);
     std::map<std::string, Parameter> BuiltinParameters();
     uint32_t                         Hash(uint32_t);
     uint32_t                         StableHash(const std::string&);

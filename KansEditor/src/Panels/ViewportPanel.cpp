@@ -413,45 +413,59 @@ namespace Kans
         m_Navigation = Navigation::None;
     }
 
+    DragCapture ViewportPanel::Capture() const
+    {
+        DragCapture capture;
+        capture.Modal    = m_Modal.IsActive();
+        capture.Dragging = !capture.Modal && IsGizmoDragging();
+        // A VFX point handle under the cursor: X, Y or Z held as the drag starts picks its axis.
+        if (m_VfxHandles && m_Handles.Hot() != 0)
+            for (const auto& d : m_VfxHandles->GetGizmos().Handles())
+                if (d.Id == m_Handles.Hot() && d.Interactive && d.What == VfxGizmos::Kind::Point)
+                    capture.AxisHandleHot = true;
+        return capture;
+    }
+
     void ViewportPanel::HandleShortcuts()
     {
         const ImGuiIO& io = ImGui::GetIO();
         // A modal transform takes the keys (axis letters, digits, Tab, Backspace) this frame.
         if ((!m_Hovered && !m_Focused) || io.WantTextInput || m_Navigation != Navigation::None || m_ModalThisFrame)
             return;
+        // Keys a drag holds (DragCapture) reach no shortcut here.
+        const DragCapture capture = Capture();
+        const auto pressed = [&](ImGuiKey key) { return ImGui::IsKeyPressed(key, false) && !capture.Captures(key, io.KeyCtrl); };
+        if (capture.Active())
+            return;
         m_MeshTool.HandleShortcuts(m_Hierarchy.GetSelected());
         if (!m_MeshTool.IsEditing(m_Hierarchy.GetSelected()))
         {
             // Entity actions on the selection, as in the Hierarchy.
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false))
+            if (io.KeyCtrl && pressed(ImGuiKey_D))
                 m_Hierarchy.DuplicateSelection();
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false))
+            if (io.KeyCtrl && pressed(ImGuiKey_C))
                 m_Hierarchy.CopySelection();
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_X, false))
+            if (io.KeyCtrl && pressed(ImGuiKey_X))
                 m_Hierarchy.CutSelection();
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false))
+            if (io.KeyCtrl && pressed(ImGuiKey_V))
                 m_Hierarchy.Paste();
-            if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+            if (!io.KeyCtrl && pressed(ImGuiKey_Delete))
                 m_Hierarchy.DeleteSelection();
         }
         if (io.KeyCtrl)
             return;
-        // The tool stays while a drag is in progress.
-        if (!IsGizmoDragging())
-        {
-            if (ImGui::IsKeyPressed(ImGuiKey_Q, false))
-                m_Tool = Tool::Select;
-            if (ImGui::IsKeyPressed(ImGuiKey_W, false))
-                m_Tool = Tool::Move;
-            if (ImGui::IsKeyPressed(ImGuiKey_E, false))
-                m_Tool = Tool::Rotate;
-            // Over the view R rotates modally (Blender); elsewhere, or by preference, it picks the scale tool.
-            if (ImGui::IsKeyPressed(ImGuiKey_R, false) && (m_RPicksScaleTool || !m_ImageHovered))
-                m_Tool = Tool::Scale;
-            if (ImGui::IsKeyPressed(ImGuiKey_Y, false))
-                m_Tool = Tool::Transform;
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_F, false))
+        if (pressed(ImGuiKey_Q))
+            m_Tool = Tool::Select;
+        if (pressed(ImGuiKey_W))
+            m_Tool = Tool::Move;
+        if (pressed(ImGuiKey_E))
+            m_Tool = Tool::Rotate;
+        // Over the view R rotates modally (Blender); elsewhere, or by preference, it picks the scale tool.
+        if (pressed(ImGuiKey_R) && (m_RPicksScaleTool || !m_ImageHovered))
+            m_Tool = Tool::Scale;
+        if (pressed(ImGuiKey_Y))
+            m_Tool = Tool::Transform;
+        if (pressed(ImGuiKey_F))
             FocusSelection();
     }
 

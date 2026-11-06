@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <deque>
+#include <optional>
 #include <string>
 #include <vector>
 #include "Kans3D/Scene/Scene.h"
@@ -29,6 +30,10 @@ namespace Kans
         std::vector<std::string> UndoLabels() const;
         std::vector<std::string> RedoLabels() const;
 
+        // When the step Undo (Redo) would apply was recorded (NextEditStamp); nothing without one.
+        std::optional<uint64_t> UndoStamp() const;
+        std::optional<uint64_t> RedoStamp() const;
+
         void MarkSaved() { m_SavedVersion = m_Version; }
         bool IsModified() const { return m_Version != m_SavedVersion; }
 
@@ -37,6 +42,7 @@ namespace Kans
         {
             SceneSnapshot Before, After;
             uint64_t      BeforeVersion = 0, AfterVersion = 0;
+            uint64_t      Stamp = 0;
             std::string   Label;
         };
         std::deque<Step>  m_Undo; // Oldest first.

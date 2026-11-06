@@ -1,5 +1,6 @@
 #include "SceneHistory.h"
 #include <algorithm>
+#include "EditStamp.h"
 
 namespace Kans
 {
@@ -19,6 +20,7 @@ namespace Kans
             return false;
         Step step;
         step.Label         = DescribeChange(m_Current, state);
+        step.Stamp         = NextEditStamp();
         step.BeforeVersion = m_Version;
         step.AfterVersion  = m_NextVersion++;
         step.Before        = std::move(m_Current);
@@ -56,6 +58,16 @@ namespace Kans
         m_Version = step.AfterVersion;
         m_Undo.push_back(std::move(step));
         return true;
+    }
+
+    std::optional<uint64_t> SceneHistory::UndoStamp() const
+    {
+        return m_Undo.empty() ? std::nullopt : std::optional<uint64_t>(m_Undo.back().Stamp);
+    }
+
+    std::optional<uint64_t> SceneHistory::RedoStamp() const
+    {
+        return m_Redo.empty() ? std::nullopt : std::optional<uint64_t>(m_Redo.back().Stamp);
     }
 
     std::vector<std::string> SceneHistory::UndoLabels() const

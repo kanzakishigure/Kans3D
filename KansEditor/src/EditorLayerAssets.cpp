@@ -1002,6 +1002,8 @@ namespace Kans
         });
         // The preview's handles snap with the scene viewport's toolbar settings.
         panel->SetSnapSettings([this] { return m_ViewportPanel.ToolbarSettings(); });
+        // The stack's asset pickers offer what Properties offers.
+        panel->SetAssetChoices([this]() -> const std::vector<EditorAssetChoice>& { return m_PropertiesPanel.AssetChoices(); });
         if (panel->Open(file))
             m_VfxSystemEditors.push_back(std::move(panel));
         else

@@ -98,6 +98,9 @@ namespace Kans::VfxSystemEditing
         bool        Redo();
         bool        CanUndo() const { return !m_Undo.empty(); }
         bool        CanRedo() const { return !m_Redo.empty(); }
+        // When the step Undo (Redo) would apply was committed (NextEditStamp); nothing without one.
+        std::optional<uint64_t> UndoStamp() const;
+        std::optional<uint64_t> RedoStamp() const;
         size_t      Revision() const { return m_Revision; }
         bool        IsDirty() const;
         std::optional<std::string> Save();
@@ -111,6 +114,7 @@ namespace Kans::VfxSystemEditing
         bool                     m_ReadOnly = false;
         std::string              m_Committed, m_Saved;
         std::vector<std::string> m_Undo, m_Redo;
+        std::vector<uint64_t>    m_UndoStamps, m_RedoStamps; // Parallel to m_Undo and m_Redo.
         size_t                   m_Revision = 0;
     };
     // An emitter as a one-emitter system (emitter mode), and back.
@@ -280,6 +284,21 @@ namespace Kans::VfxSystemEditing
     Result SetRenderer(System&, const Context&, const std::string& handle, const Vfx::Renderer& renderer);
     Result RemoveRenderer(System&, const Context&, const std::string& handle, const std::string& guid);
     Result MoveRenderer(System&, const Context&, const std::string& handle, const std::string& guid, int direction);
+
+    // ---- Asset references (the stack's asset pickers) ----
+    // The asset type a binding kind references: VectorField; StaticMesh for Mesh, StaticMesh and
+    // SkeletalMesh; Texture for Texture2D; VfxModule (a curve module with a sample table) for Curve
+    // and Gradient; None for bindings without an asset.
+    AssetType   BindingAssetType(const std::string& kind);
+    std::string AssetTypeLabel(AssetType);
+    // Why an asset of type `got` cannot go where `expected` is needed ("Expected a Vector Field asset,
+    // not a Texture"), or nothing.
+    std::optional<std::string> AssetTypeMismatch(AssetType expected, AssetType got);
+    // Points the asset-backed data-interface input at `path` at `asset` (of type `type`), keeping the
+    // binding's other settings. Refused for inputs without an asset and for the wrong asset type;
+    // layered emitters get a SetInput override, as for any input edit.
+    Result PickInputAsset(System&, const Context&, const std::string& handle, const std::string& use, const InputPath&,
+                          AssetID asset, AssetType type);
 
     // ---- Emitter properties ----
     struct EmitterSettings

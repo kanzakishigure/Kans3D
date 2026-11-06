@@ -16,6 +16,7 @@
 #include "MeshEditTool.h"
 #include "Panels/VfxGizmos.h"
 #include "Physics/VehicleFieldEditing.h"
+#include "UI/DragCapture.h"
 #include "ViewportClient.h"
 
 namespace Kans
@@ -93,6 +94,10 @@ namespace Kans
             return m_Gizmo.IsDragging() || m_MeshTool.GetGizmo().IsDragging() || m_Modal.IsActive() || m_Handles.IsDragging() ||
                    (m_VfxHandles && m_VfxHandles->IsDragging());
         }
+        // The "input captured by drag" gate (UI/DragCapture.h): this viewport's shortcuts and the
+        // editor's both ask it before acting on a key.
+        DragCapture Capture() const;
+        bool        CapturesKey(ImGuiKey key, bool ctrl) const { return Capture().Captures(key, ctrl); }
         bool                         IsModal() const { return m_Modal.IsActive(); }
         const Gizmo::ModalTransform& GetModal() const { return m_Modal; }
         const Gizmo::HandleContext&  GetHandles() const { return m_Handles; }

@@ -6,6 +6,7 @@
 #include "Kans3D/Scene/Scene.h"
 #include "ScriptAnimation.h"
 #include "ScriptEngine.h"
+#include "ScriptInput.h"
 #include "ScriptPhysics.h"
 #include "ScriptTimeline.h"
 #include "ScriptUI.h"
@@ -254,6 +255,7 @@ namespace Kans
         ScriptTimeline::Install(api);
         ScriptPhysics::Install(api);
         ScriptVfx::Install(api);
+        ScriptInput::Install(api);
         return api;
     }
 } // namespace Kans

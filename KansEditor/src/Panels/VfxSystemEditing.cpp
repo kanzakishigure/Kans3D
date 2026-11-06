@@ -5,6 +5,7 @@
 #include <functional>
 #include <sstream>
 #include <type_traits>
+#include "EditStamp.h"
 #include "Panels/VfxModuleEditing.h"
 
 namespace Kans::VfxSystemEditing
@@ -434,6 +435,8 @@ namespace Kans::VfxSystemEditing
         m_Committed = m_Saved = Canonical();
         m_Undo.clear();
         m_Redo.clear();
+        m_UndoStamps.clear();
+        m_RedoStamps.clear();
         ++m_Revision;
     }
 
@@ -462,9 +465,14 @@ namespace Kans::VfxSystemEditing
         if (text == m_Committed)
             return false;
         m_Undo.push_back(std::move(m_Committed));
+        m_UndoStamps.push_back(NextEditStamp());
         if (m_Undo.size() > 200)
+        {
             m_Undo.erase(m_Undo.begin());
+            m_UndoStamps.erase(m_UndoStamps.begin());
+        }
         m_Redo.clear();
+        m_RedoStamps.clear();
         m_Committed = std::move(text);
         ++m_Revision;
         return true;
@@ -476,8 +484,10 @@ namespace Kans::VfxSystemEditing
         if (m_Undo.empty())
             return false;
         m_Redo.push_back(std::move(m_Committed));
+        m_RedoStamps.push_back(m_UndoStamps.back());
         m_Committed = std::move(m_Undo.back());
         m_Undo.pop_back();
+        m_UndoStamps.pop_back();
         Load(m_Committed);
         ++m_Revision;
         return true;
@@ -488,11 +498,23 @@ namespace Kans::VfxSystemEditing
         if (m_Redo.empty())
             return false;
         m_Undo.push_back(std::move(m_Committed));
+        m_UndoStamps.push_back(m_RedoStamps.back());
         m_Committed = std::move(m_Redo.back());
         m_Redo.pop_back();
+        m_RedoStamps.pop_back();
         Load(m_Committed);
         ++m_Revision;
         return true;
+    }
+
+    std::optional<uint64_t> SystemDocument::UndoStamp() const
+    {
+        return m_UndoStamps.empty() ? std::nullopt : std::optional<uint64_t>(m_UndoStamps.back());
+    }
+
+    std::optional<uint64_t> SystemDocument::RedoStamp() const
+    {
+        return m_RedoStamps.empty() ? std::nullopt : std::optional<uint64_t>(m_RedoStamps.back());
     }
 
     bool SystemDocument::IsDirty() const { return m_Committed != m_Saved; }
@@ -834,16 +856,19 @@ namespace Kans::VfxSystemEditing
                 return Result::Done();
             }
             const bool added = source || FindAdded(h, use);
-            if (!added && to != *from)
-                return Result::Refused("Inherited modules move only within their own stack; remove it and add it to " +
-                                       std::string(StageLabel(to.Kind)) + " instead");
             if (!added)
             {
+                // An inherited use: a GUID-keyed move, into another stack when `to` differs.
                 Override o;
                 o.Action = Override::Kind::MoveModule;
                 Place(o, *from);
                 o.Target = use;
                 o.Before = before;
+                if (to != *from)
+                {
+                    o.ToStage     = to.Kind;
+                    o.ToContainer = to.Container;
+                }
                 LayerOverrides(h).push_back(std::move(o));
                 return Result::Done();
             }
@@ -1704,9 +1729,27 @@ namespace Kans::VfxSystemEditing
             bool added = false;
             for (const auto& o : LayerOverrides(h))
                 added = added || (o.Action == Override::Kind::AddRenderer && o.Render.Guid == guid);
+            if (added)
+            {
+                // Moves placed before the renderer that goes away keep their place before its successor.
+                std::vector<std::string> after;
+                bool                     found = false;
+                for (const auto& x : Effective(h, ctx).Renderers)
+                {
+                    if (found)
+                        after.push_back(x.Guid);
+                    found = found || x.Guid == guid;
+                }
+                for (auto& o : LayerOverrides(h))
+                    if (o.Action == Override::Kind::MoveRenderer && o.Before == guid)
+                    {
+                        auto next = std::find_if(after.begin(), after.end(), [&](const auto& g) { return g != o.Target; });
+                        o.Before  = next != after.end() ? *next : std::string();
+                    }
+            }
             EraseOverrides(h, [&](const Override& o) {
                 return (o.Action == Override::Kind::AddRenderer || o.Action == Override::Kind::ReplaceRenderer ||
-                        o.Action == Override::Kind::RemoveRenderer) &&
+                        o.Action == Override::Kind::RemoveRenderer || (added && o.Action == Override::Kind::MoveRenderer)) &&
                        (o.Render.Guid == guid || o.Target == guid);
             });
             if (!added)
@@ -1723,18 +1766,152 @@ namespace Kans::VfxSystemEditing
     Result MoveRenderer(System& s, const Context& ctx, const std::string& handle, const std::string& guid, int direction)
     {
         return Guarded(s, ctx, handle, [&](EmitterHandle& h) -> Result {
-            if (LayerOf(h) != Layer::Own)
-                return Result::Refused("Renderer order is inherited from the parent emitter");
-            auto& v  = h.Inline->Renderers;
-            auto  at = std::find_if(v.begin(), v.end(), [&](const auto& x) { return x.Guid == guid; });
+            if (LayerOf(h) == Layer::Own)
+            {
+                auto& v  = h.Inline->Renderers;
+                auto  at = std::find_if(v.begin(), v.end(), [&](const auto& x) { return x.Guid == guid; });
+                if (at == v.end())
+                    return Result::Refused("No renderer " + guid);
+                const long index = long(at - v.begin()) + direction;
+                if (index < 0 || index >= long(v.size()))
+                    return Result::Refused("Already at the end");
+                std::swap(*at, v[size_t(index)]);
+                return Result::Done();
+            }
+            // A child: one MoveRenderer override keyed by GUID, placing it before its new successor.
+            const auto effective = Effective(h, ctx);
+            const auto& v        = effective.Renderers;
+            auto at = std::find_if(v.begin(), v.end(), [&](const auto& x) { return x.Guid == guid; });
             if (at == v.end())
                 return Result::Refused("No renderer " + guid);
             const long index = long(at - v.begin()) + direction;
             if (index < 0 || index >= long(v.size()))
                 return Result::Refused("Already at the end");
-            std::swap(*at, v[size_t(index)]);
+            std::vector<std::string> order;
+            for (const auto& x : v)
+                if (x.Guid != guid)
+                    order.push_back(x.Guid);
+            Override o;
+            o.Action = Override::Kind::MoveRenderer;
+            o.Target = guid;
+            o.Before = size_t(index) < order.size() ? order[size_t(index)] : std::string();
+            LayerOverrides(h).push_back(std::move(o));
             return Result::Done();
         });
+    }
+
+    // ---------------------------------------------------------------------- asset references
+
+    AssetType BindingAssetType(const std::string& kind)
+    {
+        if (kind == "VectorField")
+            return AssetType::VectorField;
+        if (kind == "Mesh" || kind == "StaticMesh" || kind == "SkeletalMesh")
+            return AssetType::StaticMesh;
+        if (kind == "Texture2D")
+            return AssetType::Texture;
+        if (kind == "Curve" || kind == "Gradient")
+            return AssetType::VfxModule;
+        return AssetType::None;
+    }
+
+    std::string AssetTypeLabel(AssetType type)
+    {
+        switch (type)
+        {
+            case AssetType::VectorField:
+                return "Vector Field";
+            case AssetType::StaticMesh:
+                return "Static Mesh";
+            case AssetType::Mesh:
+                return "Mesh";
+            case AssetType::Texture:
+                return "Texture";
+            case AssetType::Material:
+                return "Material";
+            case AssetType::VfxModule:
+                return "VFX Module";
+            case AssetType::VfxEmitter:
+                return "VFX Emitter";
+            case AssetType::VfxSystem:
+                return "VFX System";
+            case AssetType::None:
+                return "None";
+            default:
+                return "asset type " + std::to_string(int(type));
+        }
+    }
+
+    std::optional<std::string> AssetTypeMismatch(AssetType expected, AssetType got)
+    {
+        if (expected == got)
+            return std::nullopt;
+        return "Expected a " + AssetTypeLabel(expected) + " asset, not a " + AssetTypeLabel(got);
+    }
+
+    Result PickInputAsset(System& s, const Context& ctx, const std::string& handle, const std::string& use,
+                          const InputPath& path, AssetID asset, AssetType type)
+    {
+        const auto* h = FindHandle(s, handle);
+        if (!h)
+            return Result::Refused("No emitter " + handle);
+        if (path.empty() || !ctx.Modules)
+            return Result::Refused("No input");
+        Emitter effective;
+        try
+        {
+            effective = Effective(*h, ctx);
+        }
+        catch (const std::exception& e)
+        {
+            return Result::Refused(e.what());
+        }
+        const auto* current = FindUse(effective, use);
+        if (!current)
+            return Result::Refused("No module " + use);
+        // The input's kind: the use's script for the top level, the dynamic input's below it.
+        const ModuleInfo* module = ctx.Modules->Find(current->Script);
+        std::string       kind;
+        for (size_t i = 0; i < path.size(); ++i)
+        {
+            if (!module)
+                return Result::Refused("Missing module script");
+            const auto inputs = ModuleInputs(module->Data);
+            auto at = std::find_if(inputs.begin(), inputs.end(), [&](const auto& x) { return x.Spec.Name == path[i]; });
+            if (at == inputs.end())
+                return Result::Refused("No input " + path[i]);
+            if (i + 1 == path.size())
+            {
+                kind = at->Interface;
+                break;
+            }
+            const auto nested = GetInput(*current, InputPath(path.begin(), path.begin() + long(i) + 1));
+            if (!nested || nested->Kind != InputKind::DynamicInput)
+                return Result::Refused("No input " + path[i + 1]);
+            module = ctx.Modules->Find(nested->Script);
+        }
+        const auto expected = BindingAssetType(kind);
+        if (expected == AssetType::None)
+            return Result::Refused(path.back() + " takes no asset");
+        if (asset.IsValid())
+            if (auto mismatch = AssetTypeMismatch(expected, type))
+                return Result::Refused(*mismatch);
+        const auto existing = GetInput(*current, path);
+        Input      input;
+        input.Kind = InputKind::DataInterface;
+        if (existing && existing->Kind == InputKind::DataInterface)
+            input.Interface = existing->Interface;
+        else
+        {
+            const auto inputs = ModuleInputs(module->Data);
+            auto at = std::find_if(inputs.begin(), inputs.end(), [&](const auto& x) { return x.Spec.Name == path.back(); });
+            input.Interface      = at->DefaultBinding;
+            input.Interface.Kind = kind == "Mesh" ? "StaticMesh" : kind;
+        }
+        input.Interface.Asset = asset;
+        if (kind == "Mesh")
+            input.Interface.Source = "Asset";
+        return SetInput(s, ctx, handle, use, path, std::move(input));
     }
 
     // ---------------------------------------------------------------------- emitter properties
