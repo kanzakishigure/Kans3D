@@ -1,5 +1,5 @@
 #include "kspch.h"
-#include "Kans3D/Renderer/Resource/Camera.h"
+#include "Kans3D/Renderer/Camera/Camera.h"
 
 namespace Kans
 {

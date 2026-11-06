@@ -1,7 +1,7 @@
 #pragma once
 #include <utility>
 #include <glm/glm.hpp>
-#include "Kans3D/Renderer/Resource/Camera.h"
+#include "Kans3D/Renderer/Camera/Camera.h"
 
 namespace Kans
 {

@@ -1,7 +1,7 @@
 #include "kspch.h"
-#include "MaterialPass.h"
+#include "Kans3D/Renderer/Shading/MaterialPass.h"
 #include "Kans3D/RHI/PipelineKey.h"
-#include "ShadowMaps.h"
+#include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 
 namespace Kans
 {

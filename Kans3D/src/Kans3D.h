@@ -20,12 +20,12 @@
 #include "Kans3D/ImGui/KansUI.h"
 //------Renderer---------------
 
+#include "Kans3D/Renderer/2D/SpriteBatch.h"
 #include "Kans3D/Renderer/Renderer.h"
-#include "Kans3D/Renderer/SpriteBatch.h"
 
 //-------Render Resource-----
-#include "Kans3D/Renderer/Resource/OrthographicCamera.h"
-#include "Kans3D/Renderer/Resource/OrthographicCameraController.h"
+#include "Kans3D/Renderer/Camera/OrthographicCamera.h"
+#include "Kans3D/Renderer/Camera/OrthographicCameraController.h"
 #include "Kans3D/Renderer/Resource/Texture.h"
 
 //-----script---------------

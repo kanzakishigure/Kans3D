@@ -1,5 +1,5 @@
 #pragma once
-#include "Kans3D/Renderer/Resource/ShadowSettings.h"
+#include "Kans3D/Renderer/Lighting/ShadowSettings.h"
 
 namespace Kans
 {

@@ -3,7 +3,7 @@
 #include <map>
 #include <optional>
 #include <glm/glm.hpp>
-#include "Kans3D/Renderer/Resource/AntiAliasingPass.h"
+#include "Kans3D/Renderer/Passes/AntiAliasingPass.h"
 #include "RenderGraph.h"
 
 namespace Kans

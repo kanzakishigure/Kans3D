@@ -2,7 +2,7 @@
 #include <cstring>
 #include <limits>
 #include <type_traits>
-#include "Kans3D/Renderer/Resource/InternalShader.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 
 namespace Kans::ComputeUtils
 {

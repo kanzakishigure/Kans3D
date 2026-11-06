@@ -1,7 +1,7 @@
 #include "kspch.h"
 #include "EditorGridPass.h"
 #include "Kans3D/Renderer/Renderer.h"
-#include "InternalShader.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 
 namespace Kans
 {

@@ -1,6 +1,6 @@
 #pragma once
 #include "Kans3D/Renderer/Resource/MeshKey.h"
-#include "Kans3D/Renderer/Resource/Skinning.h"
+#include "Kans3D/Renderer/Shading/Skinning.h"
 #include "ClothAsset.h"
 #include "ClothComponent.h"
 #include "ForceFields.h"

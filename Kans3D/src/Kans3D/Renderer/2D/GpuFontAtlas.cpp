@@ -1,5 +1,5 @@
 #include "kspch.h"
-#include "GpuFontAtlas.h"
+#include "Kans3D/Renderer/2D/GpuFontAtlas.h"
 #include <cstring>
 namespace Kans
 {

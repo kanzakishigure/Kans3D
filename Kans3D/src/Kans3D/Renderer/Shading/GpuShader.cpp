@@ -1,8 +1,8 @@
 #include "kspch.h"
-#include "GpuShader.h"
+#include "Kans3D/Renderer/Shading/GpuShader.h"
 #include "Kans3D/RHI/Backend.h"
-#include "ParticleSprite.h"
-#include "Skinning.h"
+#include "Kans3D/Renderer/Particles/ParticleSprite.h"
+#include "Kans3D/Renderer/Shading/Skinning.h"
 namespace Kans
 {
     GpuUniformBuffer::GpuUniformBuffer(size_t bytes, const void* data, std::shared_ptr<RenderHardware::Device> device)

@@ -11,7 +11,7 @@
 #include "Kans3D/Core/TimeStep.h"
 #include "Kans3D/Core/UUID.h"
 #include "Kans3D/Physics/PhysicsWorld.h"
-#include "Kans3D/Renderer/Resource/PostProcessSettings.h"
+#include "Kans3D/Renderer/Passes/PostProcessSettings.h"
 #include "Kans3D/UI/UIContext.h"
 #include "EnvironmentSettings.h"
 

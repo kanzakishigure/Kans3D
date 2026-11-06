@@ -5,7 +5,7 @@
 #include <misc/cpp/imgui_stdlib.h>
 #include "Kans3D/Animation/AnimatorComponent.h"
 #include "Kans3D/Animation/DeformationComponents.h"
-#include "Kans3D/Renderer/Resource/Skinning.h"
+#include "Kans3D/Renderer/Shading/Skinning.h"
 #include "Kans3D/Scene/Scene.h"
 #include "ComponentEditors.h"
 #include "UI/EditorIcons.h"

@@ -1,5 +1,5 @@
 #include "kspch.h"
-#include "ParticleSprite.h"
+#include "Kans3D/Renderer/Particles/ParticleSprite.h"
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
 #include "Kans3D/Asset/Runtime/StandardShader.h"

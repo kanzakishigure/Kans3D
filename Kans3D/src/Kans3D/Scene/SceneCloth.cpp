@@ -3,7 +3,7 @@
 #include "Kans3D/Physics/ClothSolver.h"
 #include "Kans3D/Physics/PhysicsSettings.h"
 #include "Kans3D/Renderer/RenderWorld.h"
-#include "Kans3D/Renderer/Resource/InternalShader.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Entity.h"
 #include "MotionUpdateCache.h"
 #include "Scene.h"

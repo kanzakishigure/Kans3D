@@ -967,7 +967,7 @@ namespace Kans
     }
 } // namespace Kans
 
-#include "ShadowMaps.h"
+#include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 namespace Kans
 {
     std::shared_ptr<ShadowResources> RenderAssetCache::GetShadowFallback()

@@ -1,6 +1,6 @@
 #include "kspch.h"
-#include "AntiAliasingPass.h"
-#include "InternalShader.h"
+#include "Kans3D/Renderer/Passes/AntiAliasingPass.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 namespace Kans
 {
     void ReconstructionFilter::Record(RenderHardware::Device&                                device,

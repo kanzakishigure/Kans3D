@@ -1,8 +1,8 @@
 #pragma once
 #include <glm/glm.hpp>
+#include "Kans3D/Renderer/Passes/AntiAliasingPass.h"
 #include "Graph/RenderGraph.h"
 #include "RenderFeature.h"
-#include "Resource/AntiAliasingPass.h"
 namespace Kans
 {
     // Per-viewport allocations. Resources and pool release before the device lease.

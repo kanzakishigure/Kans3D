@@ -6,16 +6,16 @@
 #include <glm/gtc/packing.hpp>
 #include "Kans3D/Asset/Importer/TextureSource.h"
 #include "Kans3D/RHI/PipelineKey.h"
+#include "Kans3D/Renderer/2D/SpriteBatch.h"
+#include "Kans3D/Renderer/2D/TextRenderer.h"
+#include "Kans3D/Renderer/2D/UIRenderer.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
+#include "Kans3D/Renderer/Shading/SceneShaders.h"
 #include "Features/ParticleRenderFeature.h"
 #include "RenderFeature.h"
 #include "RenderFrame.h"
 #include "RenderPipeline.h"
-#include "Resource/InternalShader.h"
 #include "Resource/MeshFactory.h"
-#include "Resource/SceneShaders.h"
-#include "SpriteBatch.h"
-#include "TextRenderer.h"
-#include "UIRenderer.h"
 namespace Kans
 {
     namespace

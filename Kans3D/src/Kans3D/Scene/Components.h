@@ -20,12 +20,12 @@
 
 #include "Kans3D/Core/UUID.h"
 #include "Kans3D/Geometry/Shapes.h"
-#include "Kans3D/Renderer/Resource/ShadowSettings.h"
+#include "Kans3D/Renderer/Lighting/ShadowSettings.h"
 #include "Kans3D/Text/TextComponent.h"
 #include "Kans3D/UI/UIComponents.h"
 #include "ProductModelComponent.h"
 
-#include "Kans3D/Renderer/Resource/SceneCamera.h"
+#include "Kans3D/Renderer/Camera/SceneCamera.h"
 #include "Kans3D/Renderer/Resource/Texture.h"
 
 #define GLM_ENABLE_EXPERIMENTAL

@@ -2,14 +2,14 @@
 #include "RenderPipeline.h"
 #include <map>
 #include <stdexcept>
+#include "Kans3D/Renderer/2D/SpriteBatch.h"
+#include "Kans3D/Renderer/2D/TextRenderer.h"
+#include "Kans3D/Renderer/2D/UIRenderer.h"
 #include "Kans3D/Renderer/Features/DebugDrawFeature.h"
+#include "Kans3D/Renderer/Lighting/ShadowMaps.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Features/ParticleRenderFeature.h"
 #include "RenderFrame.h"
-#include "Resource/InternalShader.h"
-#include "Resource/ShadowMaps.h"
-#include "SpriteBatch.h"
-#include "TextRenderer.h"
-#include "UIRenderer.h"
 
 namespace Kans
 {

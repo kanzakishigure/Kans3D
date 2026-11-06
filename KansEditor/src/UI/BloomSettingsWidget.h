@@ -1,9 +1,9 @@
 #pragma once
 #include <functional>
 #include "Kans3D/Asset/Asset.h"
-#include "Kans3D/Renderer/Resource/AntiAliasing.h"
-#include "Kans3D/Renderer/Resource/BloomSettings.h"
-#include "Kans3D/Renderer/Resource/PostProcessSettings.h"
+#include "Kans3D/Renderer/Passes/AntiAliasing.h"
+#include "Kans3D/Renderer/Passes/BloomSettings.h"
+#include "Kans3D/Renderer/Passes/PostProcessSettings.h"
 
 namespace Kans
 {

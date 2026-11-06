@@ -3,7 +3,7 @@
 #include <cmath>
 #include <vector>
 #include "Kans3D/Asset/Asset.h"
-#include "Kans3D/Renderer/Resource/BloomSettings.h"
+#include "Kans3D/Renderer/Passes/BloomSettings.h"
 namespace Kans
 {
     enum class ToneMappingMode : uint32_t

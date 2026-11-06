@@ -2,15 +2,15 @@
 #include <functional>
 #include <optional>
 #include <glm/glm.hpp>
+#include "Kans3D/Renderer/Camera/Camera.h"
 #include "Kans3D/Renderer/Resource/RenderAssetCache.h"
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/EnvironmentSettings.h"
 #include "Kans3D/UI/UIInstance.h"
-#include "Graph/GraphCapture.h"
 #include "GizmoDraw.h"
+#include "Graph/GraphCapture.h"
 #include "ImmediatePassState.h"
 #include "RenderSettings.h"
-#include "Resource/Camera.h"
 
 namespace Kans
 {

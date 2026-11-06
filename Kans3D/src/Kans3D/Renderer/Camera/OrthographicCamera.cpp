@@ -1,5 +1,5 @@
 #include "kspch.h"
-#include "OrthographicCamera.h"
+#include "Kans3D/Renderer/Camera/OrthographicCamera.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 namespace Kans

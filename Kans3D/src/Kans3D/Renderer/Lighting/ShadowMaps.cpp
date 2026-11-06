@@ -1,12 +1,12 @@
 #include "kspch.h"
-#include "ShadowMaps.h"
+#include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include "Kans3D/Asset/Runtime/StandardShader.h"
+#include "Kans3D/Renderer/2D/TextRenderer.h"
 #include "Kans3D/Renderer/Features/ParticleRenderFeature.h"
 #include "Kans3D/Renderer/RenderFrame.h"
-#include "Kans3D/Renderer/TextRenderer.h"
-#include "InternalShader.h"
-#include "MaterialPass.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
+#include "Kans3D/Renderer/Shading/MaterialPass.h"
 
 namespace Kans
 {

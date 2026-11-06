@@ -2,7 +2,7 @@
 #include <glm/gtx/quaternion.hpp>
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Renderer/RenderWorld.h"
-#include "Kans3D/Renderer/Resource/Skinning.h"
+#include "Kans3D/Renderer/Shading/Skinning.h"
 #include "Kans3D/Script/ScriptAnimation.h"
 #include "Kans3D/Script/ScriptEngine.h"
 #include "Entity.h"

@@ -1,7 +1,7 @@
 #include "kspch.h"
 #include "BloomFeature.h"
 #include "Kans3D/Renderer/RenderFrame.h"
-#include "Kans3D/Renderer/Resource/InternalShader.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 namespace Kans
 {
     std::vector<glm::uvec2> BloomFeature::Levels(glm::uvec2 viewport)

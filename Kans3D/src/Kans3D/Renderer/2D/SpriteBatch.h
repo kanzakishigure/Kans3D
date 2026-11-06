@@ -1,13 +1,13 @@
 #pragma once
 #include <functional>
-#include "ImmediatePassState.h"
-#include "RenderView.h"
+#include "Kans3D/Renderer/ImmediatePassState.h"
+#include "Kans3D/Renderer/RenderView.h"
 
 #include "Kans3D/RHI/RHI.h"
-#include "Resource/Camera.h"
-#include "Resource/OrthographicCamera.h"
-#include "Resource/SubTexture2D.h"
-#include "Resource/Texture.h"
+#include "Kans3D/Renderer/Camera/Camera.h"
+#include "Kans3D/Renderer/Camera/OrthographicCamera.h"
+#include "Kans3D/Renderer/Resource/SubTexture2D.h"
+#include "Kans3D/Renderer/Resource/Texture.h"
 
 namespace Kans
 {

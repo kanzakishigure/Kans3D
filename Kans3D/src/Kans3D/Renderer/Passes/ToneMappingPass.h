@@ -2,7 +2,7 @@
 #include <map>
 #include <glm/glm.hpp>
 #include "Kans3D/RHI/RHI.h"
-#include "Kans3D/Renderer/Resource/PostProcessSettings.h"
+#include "Kans3D/Renderer/Passes/PostProcessSettings.h"
 namespace Kans
 {
     // ACES fitted (Narkowicz) + IEC sRGB. Inverse is used only at ordered

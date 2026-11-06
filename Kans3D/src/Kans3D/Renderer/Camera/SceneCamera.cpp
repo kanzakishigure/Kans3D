@@ -1,5 +1,5 @@
 #include "kspch.h"
-#include "Kans3D/Renderer/Resource/SceneCamera.h"
+#include "Kans3D/Renderer/Camera/SceneCamera.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/matrix.hpp>

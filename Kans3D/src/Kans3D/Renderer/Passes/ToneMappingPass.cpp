@@ -1,6 +1,6 @@
 #include "kspch.h"
-#include "ToneMappingPass.h"
-#include "InternalShader.h"
+#include "Kans3D/Renderer/Passes/ToneMappingPass.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 namespace Kans
 {
     float ToneMappingPass::EffectiveExposure(float exposure)

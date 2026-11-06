@@ -1,7 +1,7 @@
 #include "kspch.h"
-#include "TextRenderer.h"
-#include "Renderer.h"
-#include "Resource/InternalShader.h"
+#include "Kans3D/Renderer/2D/TextRenderer.h"
+#include "Kans3D/Renderer/Renderer.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 namespace Kans
 {
     namespace RH = RenderHardware;

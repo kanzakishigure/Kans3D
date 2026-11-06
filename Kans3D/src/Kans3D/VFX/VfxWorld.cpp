@@ -3,7 +3,7 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Core/Log/Log.h"
-#include "Kans3D/Renderer/Resource/Skinning.h"
+#include "Kans3D/Renderer/Shading/Skinning.h"
 #include "Kans3D/Scene/Entity.h"
 #include "VfxGpu.h"
 namespace Kans::Vfx

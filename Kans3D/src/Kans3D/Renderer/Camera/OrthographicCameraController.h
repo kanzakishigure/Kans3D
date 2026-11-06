@@ -4,7 +4,7 @@
 #include "Kans3D/Core/Events/Event.h"
 #include "Kans3D/Core/Events/MouseEvent.h"
 #include "Kans3D/Core/TimeStep.h"
-#include "Kans3D/Renderer/Resource/OrthographicCamera.h"
+#include "Kans3D/Renderer/Camera/OrthographicCamera.h"
 
 namespace Kans
 {

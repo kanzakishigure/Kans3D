@@ -1,12 +1,12 @@
 #include "kspch.h"
 #include "Kans3D/Asset/Runtime/StandardShader.h"
+#include "Kans3D/Renderer/2D/TextRenderer.h"
+#include "Kans3D/Renderer/2D/UIRenderer.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
+#include "Kans3D/Renderer/Shading/MaterialPass.h"
+#include "Kans3D/Renderer/Shading/SceneShaders.h"
 #include "RenderFrame.h"
 #include "RenderPipeline.h"
-#include "Resource/InternalShader.h"
-#include "Resource/MaterialPass.h"
-#include "Resource/SceneShaders.h"
-#include "TextRenderer.h"
-#include "UIRenderer.h"
 namespace Kans
 {
     namespace

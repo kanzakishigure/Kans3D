@@ -1,7 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include "Kans3D/Core/UUID.h"
-#include "Resource/ShadowSettings.h"
+#include "Kans3D/Renderer/Lighting/ShadowSettings.h"
 namespace Kans
 {
     struct DirLight

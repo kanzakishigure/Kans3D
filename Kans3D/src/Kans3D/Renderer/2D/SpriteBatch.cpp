@@ -1,10 +1,10 @@
 #include "kspch.h"
-#include "SpriteBatch.h"
+#include "Kans3D/Renderer/2D/SpriteBatch.h"
 #include <iostream>
 #include "Kans3D/RHI/Backend.h"
 #include "Kans3D/RHI/PipelineKey.h"
-#include "RenderStatistics.h"
-#include "Resource/InternalShader.h"
+#include "Kans3D/Renderer/RenderStatistics.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 
 namespace Kans
 {

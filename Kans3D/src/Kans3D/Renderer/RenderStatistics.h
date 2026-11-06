@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 #include "Kans3D/RHI/RHI.h"
-#include "Resource/AntiAliasing.h"
+#include "Kans3D/Renderer/Passes/AntiAliasing.h"
 
 namespace Kans
 {

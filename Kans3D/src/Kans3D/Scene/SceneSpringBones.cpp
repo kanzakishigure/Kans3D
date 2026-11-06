@@ -3,7 +3,7 @@
 #include "Kans3D/Physics/ClothSolver.h"
 #include "Kans3D/Physics/ForceFields.h"
 #include "Kans3D/Renderer/RenderWorld.h"
-#include "Kans3D/Renderer/Resource/Skinning.h"
+#include "Kans3D/Renderer/Shading/Skinning.h"
 #include "Entity.h"
 #include "MotionUpdateCache.h"
 #include "Scene.h"

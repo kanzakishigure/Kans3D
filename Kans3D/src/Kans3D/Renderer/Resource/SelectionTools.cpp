@@ -2,7 +2,7 @@
 #include "SelectionTools.h"
 #include <cstring>
 #include <iostream>
-#include "InternalShader.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 
 namespace Kans
 {

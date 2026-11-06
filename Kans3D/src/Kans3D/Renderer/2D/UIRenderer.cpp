@@ -1,8 +1,8 @@
 #include "kspch.h"
-#include "UIRenderer.h"
+#include "Kans3D/Renderer/2D/UIRenderer.h"
 #include <glm/gtc/matrix_transform.hpp>
+#include "Kans3D/Renderer/Renderer.h"
 #include "Kans3D/UI/UICaret.h"
-#include "Renderer.h"
 namespace Kans
 {
     namespace RH = RenderHardware;

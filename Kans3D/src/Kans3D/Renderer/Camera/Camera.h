@@ -1,8 +1,8 @@
 #pragma once
 #include <optional>
 #include <glm/glm.hpp>
-#include "Kans3D/Renderer/Resource/PostProcessSettings.h"
-#include "AntiAliasing.h"
+#include "Kans3D/Renderer/Passes/AntiAliasing.h"
+#include "Kans3D/Renderer/Passes/PostProcessSettings.h"
 
 namespace Kans
 {

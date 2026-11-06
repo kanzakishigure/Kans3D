@@ -1,5 +1,5 @@
 #include "kspch.h"
-#include "Kans3D/Renderer/Resource/OrthographicCameraController.h"
+#include "Kans3D/Renderer/Camera/OrthographicCameraController.h"
 #include "Kans3D/Core/Input/Input.h"
 #include "Kans3D/Core/Input/KeyCodes.h"
 namespace Kans

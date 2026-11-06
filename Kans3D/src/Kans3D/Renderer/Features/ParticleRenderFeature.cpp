@@ -1,10 +1,10 @@
 #include "kspch.h"
 #include "ParticleRenderFeature.h"
+#include "Kans3D/Renderer/Lighting/ShadowMaps.h"
+#include "Kans3D/Renderer/Particles/ParticleSprite.h"
 #include "Kans3D/Renderer/RenderFrame.h"
-#include "Kans3D/Renderer/Resource/InternalShader.h"
-#include "Kans3D/Renderer/Resource/MaterialPass.h"
-#include "Kans3D/Renderer/Resource/ParticleSprite.h"
-#include "Kans3D/Renderer/Resource/ShadowMaps.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
+#include "Kans3D/Renderer/Shading/MaterialPass.h"
 #include "Kans3D/VFX/VfxGpu.h"
 namespace Kans
 {

@@ -4,12 +4,12 @@
 #include <tuple>
 #include "Kans3D/Core/Window.h"
 #include "Kans3D/RHI/Backend.h"
+#include "Kans3D/Renderer/Lighting/Environment.h"
+#include "Kans3D/Renderer/Passes/AntiAliasingPass.h"
+#include "Kans3D/Renderer/Passes/ToneMappingPass.h"
 #include "Graph/RenderGraph.h"
 #include "RenderView.h"
-#include "Resource/AntiAliasingPass.h"
-#include "Resource/Environment.h"
 #include "Resource/SelectionTools.h"
-#include "Resource/ToneMappingPass.h"
 
 namespace Kans
 {

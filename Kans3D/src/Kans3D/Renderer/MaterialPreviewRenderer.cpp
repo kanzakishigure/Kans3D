@@ -4,9 +4,9 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include "Kans3D/Asset/Runtime/StandardShader.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
+#include "Kans3D/Renderer/Shading/MaterialPass.h"
 #include "RenderFrame.h"
-#include "Resource/InternalShader.h"
-#include "Resource/MaterialPass.h"
 #include "Renderer.h"
 
 namespace Kans

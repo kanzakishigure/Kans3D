@@ -1,7 +1,7 @@
 #include "kspch.h"
 #include "DebugDrawFeature.h"
 #include "Kans3D/Renderer/RenderFrame.h"
-#include "Kans3D/Renderer/Resource/InternalShader.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 namespace Kans
 {
     namespace

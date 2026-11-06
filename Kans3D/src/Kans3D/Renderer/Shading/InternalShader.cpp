@@ -1,10 +1,10 @@
 #include "kspch.h"
-#include "InternalShader.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 #include <mutex>
 #include <tuple>
 #include "Kans3D/Asset/Importer/ShaderImporter.h"
-#include "ComputeShaders.h"
-#include "Skinning.h"
+#include "Kans3D/Renderer/Shading/ComputeShaders.h"
+#include "Kans3D/Renderer/Shading/Skinning.h"
 
 namespace Kans
 {

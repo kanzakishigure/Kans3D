@@ -1,5 +1,5 @@
 #include "kspch.h"
-#include "Skinning.h"
+#include "Kans3D/Renderer/Shading/Skinning.h"
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
 namespace Kans

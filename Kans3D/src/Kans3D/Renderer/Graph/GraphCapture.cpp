@@ -2,7 +2,7 @@
 #include "GraphCapture.h"
 #include <cstring>
 #include <glm/gtc/packing.hpp>
-#include "Kans3D/Renderer/Resource/InternalShader.h"
+#include "Kans3D/Renderer/Shading/InternalShader.h"
 namespace Kans
 {
     namespace

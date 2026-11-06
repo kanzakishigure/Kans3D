@@ -8,10 +8,10 @@
 #include "Kans3D/Asset/Runtime/ModelData.h"
 #include "Kans3D/Asset/Runtime/TextureData.h"
 #include "Kans3D/Core/Math/Bounds.h"
-#include "Kans3D/Renderer/Resource/GpuShader.h"
 #include "Kans3D/Renderer/Resource/Texture.h"
+#include "Kans3D/Renderer/Shading/GpuShader.h"
+#include "Kans3D/Renderer/Shading/Skinning.h"
 #include "MeshKey.h"
-#include "Skinning.h"
 
 namespace Kans
 {

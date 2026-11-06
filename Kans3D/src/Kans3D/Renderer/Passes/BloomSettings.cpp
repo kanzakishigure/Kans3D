@@ -1,5 +1,5 @@
 #include "kspch.h"
-#include "BloomSettings.h"
+#include "Kans3D/Renderer/Passes/BloomSettings.h"
 namespace Kans
 {
     BloomSettings BloomSettings::Validated() const

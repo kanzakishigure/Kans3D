@@ -1,7 +1,7 @@
 #pragma once
-#include "RenderView.h"
-#include "Resource/GpuFontAtlas.h"
-#include "Resource/SelectionTools.h"
+#include "Kans3D/Renderer/2D/GpuFontAtlas.h"
+#include "Kans3D/Renderer/RenderView.h"
+#include "Kans3D/Renderer/Resource/SelectionTools.h"
 namespace Kans
 {
     class Renderer;

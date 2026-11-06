@@ -1,7 +1,7 @@
 #pragma once
 #include <array>
+#include "Kans3D/Renderer/Passes/BloomSettings.h"
 #include "Kans3D/Renderer/RenderFeature.h"
-#include "Kans3D/Renderer/Resource/BloomSettings.h"
 namespace Kans
 {
     class BloomFeature final : public RenderFeature
