@@ -5,7 +5,7 @@
 #include <string>
 #include "Kans3D/Animation/AnimatorComponent.h"
 #include "Kans3D/Asset/Manager/AssetManager.h"
-#include "Kans3D/FileSystem/FileSystem.h"
+#include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/Physics/PhysicsWorld.h"
 #include "Kans3D/Physics/RagdollComponent.h"
 #include "Kans3D/Physics/VehicleComponent.h"

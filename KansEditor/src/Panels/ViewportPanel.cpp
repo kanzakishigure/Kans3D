@@ -7,7 +7,7 @@
 #include "Kans3D/Core/Math/Math.h"
 #include "Kans3D/Editor/DropPlacement.h"
 #include "Kans3D/ImGui/EditorTheme.h"
-#include "Kans3D/Input/Input.h"
+#include "Kans3D/Core/Input/Input.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Scene/Components.h"
 #include "Gizmo/ViewCube.h"

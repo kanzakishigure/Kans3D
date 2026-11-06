@@ -1,8 +1,8 @@
 #include "kspch.h"
 #include "Kans3D/Platform/Windows/WindowsWindow.h"
 
-#include "Kans3D/FileSystem/FileSystem.h"
-#include "Kans3D/Input/Input.h"
+#include "Kans3D/Core/FileSystem/FileSystem.h"
+#include "Kans3D/Core/Input/Input.h"
 #include "Kans3D/RHI/Backend.h"
 
 #include <imgui.h>

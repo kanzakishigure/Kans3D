@@ -8,7 +8,7 @@
 #include <set>
 #include <sstream>
 #include <yaml-cpp/yaml.h>
-#include "Kans3D/FileSystem/FileSystem.h"
+#include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/Physics/PhysicsSerialization.h"
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Scene/Scene.h"

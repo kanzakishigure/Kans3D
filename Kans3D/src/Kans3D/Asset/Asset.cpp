@@ -6,7 +6,7 @@
 #include <string>
 #include "Kans3D/Core/Hash.h"
 #include "Kans3D/Core/UUID.h"
-#include "Kans3D/Utilities/StringUtils.h"
+#include "Kans3D/Core/Utilities/StringUtils.h"
 
 namespace Kans
 {

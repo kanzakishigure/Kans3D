@@ -8,9 +8,9 @@
 
 #include "Kans3D/ImGui/ImGuiLayer.h"
 //------Input---------------
-#include "Kans3D/Input/KeyCodes.h"
+#include "Kans3D/Core/Input/KeyCodes.h"
 
-#include "Kans3D/Input/Input.h"
+#include "Kans3D/Core/Input/Input.h"
 //------Entity/Scene---------------
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Entity.h"
@@ -34,7 +34,7 @@
 //------渲染效果---------------
 #include "Kans3D/VFX/VfxWorld.h"
 //------辅助工具---------------
-#include "Kans3D/Debug/Instrumentor.h"
+#include "Kans3D/Core/Debug/Instrumentor.h"
 //------程序入口点--------------
 
 // #include"Kans3D/Core/EntryPoint.h"

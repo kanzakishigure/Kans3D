@@ -1,6 +1,6 @@
 #include <Kans3D.h>
 #include <Kans3D/Core/EntryPoint.h>
-#include <Kans3D/FileSystem/FileSystem.h>
+#include <Kans3D/Core/FileSystem/FileSystem.h>
 
 #include <cstdlib>
 #include <Kans3D/Project/ProjectFile.h>

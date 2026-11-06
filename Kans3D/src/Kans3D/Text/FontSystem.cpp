@@ -2,7 +2,7 @@
 #include "FontSystem.h"
 #include <set>
 #include "Kans3D/Asset/Storage/ProductFiles.h"
-#include "Kans3D/FileSystem/FileSystem.h"
+#include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "GlyphAtlas.h"
 namespace Kans
 {

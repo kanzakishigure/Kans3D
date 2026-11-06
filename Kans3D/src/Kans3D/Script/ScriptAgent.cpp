@@ -1,6 +1,6 @@
 #include "kspch.h"
 #include "ScriptAgent.h"
-#include "Kans3D/Input/Input.h"
+#include "Kans3D/Core/Input/Input.h"
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Scene/Scene.h"

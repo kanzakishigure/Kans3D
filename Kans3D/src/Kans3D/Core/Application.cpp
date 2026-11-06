@@ -4,9 +4,9 @@
 #include "Kans3D/Audio/AudioSystem.h"
 #include "Kans3D/Core/Application.h"
 #include "Kans3D/Core/Log/Log.h"
-#include "Kans3D/FileSystem/FileSystem.h"
-#include "Kans3D/Input/Input.h"
-#include "Kans3D/Input/KeyCodes.h"
+#include "Kans3D/Core/FileSystem/FileSystem.h"
+#include "Kans3D/Core/Input/Input.h"
+#include "Kans3D/Core/Input/KeyCodes.h"
 #include "Kans3D/Renderer/Renderer.h"
 #include "Kans3D/Script/ScriptEngine.h"
 

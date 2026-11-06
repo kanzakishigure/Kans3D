@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
-#include "Kans3D/Input/KeyCodes.h"
+#include "Kans3D/Core/Input/KeyCodes.h"
 namespace Kans
 {
     class Event;

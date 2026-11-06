@@ -1,6 +1,6 @@
 #include "EditorProcess.h"
 #include <cstring>
-#include "Kans3D/FileSystem/FileSystem.h"
+#include "Kans3D/Core/FileSystem/FileSystem.h"
 #if defined(_WIN32)
 #include <windows.h>
 #include <shellapi.h>

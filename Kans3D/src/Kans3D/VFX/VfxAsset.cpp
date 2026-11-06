@@ -4,7 +4,7 @@
 #include <fstream>
 #include <mutex>
 #include <glm/gtc/type_ptr.hpp>
-#include "Kans3D/FileSystem/FileSystem.h"
+#include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "VfxCompiler.h"
 namespace Kans::Vfx
 {

@@ -1,5 +1,5 @@
 #include "Kans3D/Asset/SourceAssetMetaSerializer.h"
-#include "Kans3D/Utilities/StringUtils.h"
+#include "Kans3D/Core/Utilities/StringUtils.h"
 #include "SourceImportConfigurationYaml.h"
 #include "Storage/ProductFiles.h"
 
