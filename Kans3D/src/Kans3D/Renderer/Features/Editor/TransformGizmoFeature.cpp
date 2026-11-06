@@ -182,7 +182,8 @@ void main() { Color = HandleColor; }
     void TransformGizmoFeature::Build(RenderHardware::Device& device)
     {
         using namespace RenderHardware;
-        constexpr float pi = glm::pi<float>(), tau = glm::two_pi<float>();
+        // static: capture-less lambdas below use these (MSVC requires captures for automatic constexpr locals).
+        static constexpr float pi = glm::pi<float>(), tau = glm::two_pi<float>();
         MeshBuilder     m;
         const auto      begin = [&](GizmoShape shape) { m_Shapes[size_t(shape)].First = uint32_t(m.Indices.size()); };
         const auto      end   = [&](GizmoShape shape) {
@@ -241,7 +242,7 @@ void main() { Color = HandleColor; }
 
         begin(GizmoShape::Torus);
         // Thin enough for a ring of about 100 px to be about 4 px thick.
-        constexpr float minor = 0.02f;
+        static constexpr float minor = 0.02f;
         m.Grid(96, 8, true, [](float u, float v) {
             const float     a = tau * u, b = tau * v;
             const glm::vec3 normal(std::cos(b) * std::cos(a), std::cos(b) * std::sin(a), std::sin(b));
