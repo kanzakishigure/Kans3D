@@ -1,6 +1,5 @@
 #pragma once
 #include "Kans3D/Core/Window.h"
-#include "Kans3D/Platform/Vulkan/VulkanSwapChain.h"
 
 #include "Kans3D/Core/Events/ApplicationEvent.h"
 #include "Kans3D/Core/Events/KeyEvent.h"

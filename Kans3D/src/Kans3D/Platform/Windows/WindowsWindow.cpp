@@ -104,7 +104,6 @@ namespace Kans
     void WindowsWindow::SwapBuffers()
     {
         RenderHardware::PresentWindow(*this);
-        // m_SwapChain.Present();
     }
 
     void WindowsWindow::SetVSync(bool enable)
