@@ -23,6 +23,11 @@ namespace Kans
         std::vector<uint8_t>   Pixels;
         std::vector<GlyphRect> Dirty;
     };
+    struct GlyphAtlasUploadRegion
+    {
+        uint32_t  Page;
+        GlyphRect Rect;
+    };
     // CPU atlas mutations and layout requests run on the font-system owner thread.
     // BeginFrame must precede all layouts/draws; cached layouts must Touch their glyphs each frame.
     class GlyphAtlas
@@ -41,13 +46,29 @@ namespace Kans
         const std::vector<GlyphAtlasPage>&              Pages() const { return m_Pages; }
         const std::unordered_map<uint32_t, AtlasGlyph>& Entries() const { return m_Entries; }
         void                                            ClearDirty(uint32_t page) { m_Pages.at(page).Dirty.clear(); }
+        // GPU consumers acknowledge independently. New consumers receive a snapshot;
+        // subsequent updates remain available until every live consumer catches up.
+        uint64_t                            RegisterUploadOwner();
+        void                                UnregisterUploadOwner(uint64_t owner);
+        std::vector<GlyphAtlasUploadRegion> PendingUploads(uint64_t owner) const;
+        void                                AcknowledgeUploads(uint64_t owner);
 
     private:
-        bool                        Insert(const GlyphBitmap&);
-        bool                        Allocate(uint32_t w, uint32_t h, uint32_t& page, GlyphRect&);
-        const FontAsset&            m_Font;
-        GlyphAtlasOptions           m_Options;
-        uint64_t                    m_Frame = 0, m_Generation = 1;
+        bool                                   Insert(const GlyphBitmap&);
+        bool                                   Allocate(uint32_t w, uint32_t h, uint32_t& page, GlyphRect&);
+        void                                   MarkDirty(uint32_t page, GlyphRect rect);
+        void                                   PruneUploads();
+        const FontAsset&                       m_Font;
+        GlyphAtlasOptions                      m_Options;
+        uint64_t                               m_Frame = 0, m_Generation = 1;
+        uint64_t                               m_NextUploadOwner = 0;
+        std::unordered_map<uint64_t, uint64_t> m_UploadOwners;
+        struct UploadChange
+        {
+            uint64_t               Generation;
+            GlyphAtlasUploadRegion Region;
+        };
+        std::deque<UploadChange>    m_UploadChanges;
         bool                        m_LoggedFull = false;
         std::vector<GlyphAtlasPage> m_Pages;
         struct FreeRect

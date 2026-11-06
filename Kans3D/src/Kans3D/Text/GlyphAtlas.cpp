@@ -12,7 +12,58 @@ namespace Kans
         if (!Find(0))
             Request(0);
     }
-    void GlyphAtlas::BeginFrame(uint64_t frame) { m_Frame = std::max(m_Frame, frame); }
+    void     GlyphAtlas::BeginFrame(uint64_t frame) { m_Frame = std::max(m_Frame, frame); }
+    uint64_t GlyphAtlas::RegisterUploadOwner()
+    {
+        const auto owner = ++m_NextUploadOwner;
+        m_UploadOwners.emplace(owner, 0);
+        return owner;
+    }
+    void GlyphAtlas::UnregisterUploadOwner(uint64_t owner)
+    {
+        m_UploadOwners.erase(owner);
+        PruneUploads();
+    }
+    std::vector<GlyphAtlasUploadRegion> GlyphAtlas::PendingUploads(uint64_t owner) const
+    {
+        std::vector<GlyphAtlasUploadRegion> regions;
+        const auto                          generation = m_UploadOwners.at(owner);
+        if (generation == m_Generation)
+            return regions;
+        if (!generation)
+        {
+            for (const auto& [glyph, entry] : m_Entries)
+                if (entry.Rect.Width && entry.Rect.Height)
+                    regions.push_back({entry.Page, entry.Rect});
+        }
+        else
+            for (const auto& change : m_UploadChanges)
+                if (change.Generation > generation)
+                    regions.push_back(change.Region);
+        return regions;
+    }
+    void GlyphAtlas::AcknowledgeUploads(uint64_t owner)
+    {
+        m_UploadOwners.at(owner) = m_Generation;
+        PruneUploads();
+    }
+    void GlyphAtlas::PruneUploads()
+    {
+        auto generation = m_Generation;
+        for (const auto& [owner, acknowledged] : m_UploadOwners)
+            generation = std::min(generation, acknowledged);
+        while (!m_UploadChanges.empty() && m_UploadChanges.front().Generation <= generation)
+            m_UploadChanges.pop_front();
+    }
+    void GlyphAtlas::MarkDirty(uint32_t page, GlyphRect rect)
+    {
+        m_Pages[page].Dirty.push_back(rect);
+        // Bug: SharedGlyphAtlasDropsGlyphs. UI and world text share CPU pixels,
+        // but consuming the legacy dirty list must not consume another GPU owner's updates.
+        // Journal insertions AND eviction clears; reclaim them after the slowest live owner.
+        if (!m_UploadOwners.empty())
+            m_UploadChanges.push_back({m_Generation, {page, rect}});
+    }
     void GlyphAtlas::Touch(uint32_t g)
     {
         auto i = m_Entries.find(g);
@@ -87,7 +138,7 @@ namespace Kans
                     std::memset(p.Pixels.data() + ((size_t(old.Rect.Y + y) * PageSize + old.Rect.X) * 4),
                                 0,
                                 old.Rect.Width * 4);
-                p.Dirty.push_back(old.Rect);
+                MarkDirty(old.Page, old.Rect);
                 m_Free.push_back({old.Page, old.Rect});
                 // Merge adjacent holes so larger requests can reuse space freed by several glyphs.
                 bool merged = true;
@@ -139,7 +190,7 @@ namespace Kans
                 std::memcpy(p.Pixels.data() + ((size_t(rect.Y + y) * PageSize + rect.X) * 4),
                             b.Pixels.data() + size_t(y) * b.Width * 4,
                             b.Width * 4);
-            p.Dirty.push_back(rect);
+            MarkDirty(page, rect);
         }
         return true;
     }

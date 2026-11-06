@@ -13,7 +13,9 @@ namespace Kans
         s.U = s.V = s.W = RH::AddressMode::ClampToEdge;
         s.MaxLod        = 0;
         m_Sampler       = m_Device->CreateSampler(s);
+        m_UploadOwner   = m_Font->Atlas().RegisterUploadOwner();
     }
+    GpuFontAtlas::~GpuFontAtlas() { m_Font->Atlas().UnregisterUploadOwner(m_UploadOwner); }
     FontAtlasUpload GpuFontAtlas::Flush()
     {
         if (std::this_thread::get_id() != m_Owner)
@@ -22,7 +24,6 @@ namespace Kans
         const auto& pages    = atlas.Pages();
         auto        commands = m_Device->CreateCommandList();
         bool        created  = false;
-        const auto  firstNewPage = m_Pages.size();
         while (m_Pages.size() < pages.size())
         {
             RH::TextureDesc d;
@@ -38,40 +39,29 @@ namespace Kans
             created = true;
         }
         FontAtlasUpload stats;
-        for (uint32_t p = 0; p < pages.size(); ++p)
+        for (const auto& region : atlas.PendingUploads(m_UploadOwner))
         {
-            auto regions = pages[p].Dirty;
-            // CPU fonts outlive a device/viewport. A fresh GPU owner must receive
-            // existing glyphs even if another owner already consumed the dirty list.
-            if (p >= firstNewPage || (regions.empty() && m_Generation != atlas.Generation()))
-            {
-                regions.clear();
-                for (const auto& [glyph, entry] : atlas.Entries())
-                    if (entry.Page == p && entry.Rect.Width && entry.Rect.Height)
-                        regions.push_back(entry.Rect);
-            }
-            for (auto rect : regions)
-            {
-                size_t               bytes = size_t(rect.Width) * rect.Height * 4;
-                std::vector<uint8_t> packed(bytes);
-                for (uint32_t y = 0; y < rect.Height; ++y)
-                    std::memcpy(packed.data() + size_t(y) * rect.Width * 4,
-                                pages[p].Pixels.data() + ((size_t(rect.Y + y) * GlyphAtlas::PageSize + rect.X) * 4),
-                                rect.Width * 4);
-                auto upload = m_Device->CreateBuffer({bytes, RH::BufferUsage::CopySource, RH::MemoryUsage::Upload});
-                upload->Write(0, packed.data(), bytes);
-                commands->CopyBufferToTextureRegion(upload, 0, m_Pages[p], rect.X, rect.Y, rect.Width, rect.Height);
-                stats.Bytes += bytes;
-                ++stats.Regions;
-            }
+            const auto           p     = region.Page;
+            const auto           rect  = region.Rect;
+            size_t               bytes = size_t(rect.Width) * rect.Height * 4;
+            std::vector<uint8_t> packed(bytes);
+            for (uint32_t y = 0; y < rect.Height; ++y)
+                std::memcpy(packed.data() + size_t(y) * rect.Width * 4,
+                            pages[p].Pixels.data() + ((size_t(rect.Y + y) * GlyphAtlas::PageSize + rect.X) * 4),
+                            rect.Width * 4);
+            auto upload = m_Device->CreateBuffer({bytes, RH::BufferUsage::CopySource, RH::MemoryUsage::Upload});
+            upload->Write(0, packed.data(), bytes);
+            commands->CopyBufferToTextureRegion(upload, 0, m_Pages[p], rect.X, rect.Y, rect.Width, rect.Height);
+            stats.Bytes += bytes;
+            ++stats.Regions;
         }
-        m_Generation = atlas.Generation();
         if (stats.Regions || created)
         {
             m_Device->Submit(commands);
             for (uint32_t p = 0; p < pages.size(); ++p)
                 atlas.ClearDirty(p);
         }
+        atlas.AcknowledgeUploads(m_UploadOwner);
         return stats;
     }
 } // namespace Kans
