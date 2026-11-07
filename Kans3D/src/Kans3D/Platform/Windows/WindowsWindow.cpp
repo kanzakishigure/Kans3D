@@ -41,11 +41,7 @@ namespace Kans
         }
         if (m_Specification.HideTitlebar)
         {
-#ifdef PLATFORM_WINDOWS
-            glfwWindowHint(GLFW_TITLEBAR, false);
-#else
             glfwWindowHint(GLFW_DECORATED, false);
-#endif
         }
 
         m_Window = static_cast<GLFWwindow*>(

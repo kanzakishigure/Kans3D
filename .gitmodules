@@ -10,13 +10,10 @@
 	url = https://github.com/ocornut/imgui.git
 [submodule "Kans3D/vendor/yaml-cpp"]
 	path = Kans3D/vendor/yaml-cpp
-	url = https://github.com/TheCherno/yaml-cpp.git
+	url = https://github.com/jbeder/yaml-cpp.git
 [submodule "Kans3D/vendor/GLFW"]
 	path = Kans3D/vendor/GLFW
-	url = https://github.com/TheCherno/glfw.git
-[submodule "Kans3D/vendor/ImGuizmo"]
-	path = Kans3D/vendor/ImGuizmo
-	url = https://github.com/CedricGuillemet/ImGuizmo.git
+	url = https://github.com/glfw/glfw.git
 [submodule "test"]
 	path = test
 	url = https://github.com/kanzakishigure/Kans3D-tests.git

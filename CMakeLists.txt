@@ -33,6 +33,21 @@ if(DOTNET)
     if(NOT KANS_NETHOST_DIR)
         message(FATAL_ERROR "dotnet was found but its ${KANS_HOST_RID} nethost SDK pack is missing")
     endif()
+    if(WIN32)
+        # The SDK's static libnethost.lib uses /MT; use the DLL import library with /MD.
+        add_library(kans_nethost SHARED IMPORTED)
+        set_target_properties(kans_nethost PROPERTIES
+            IMPORTED_IMPLIB "${KANS_NETHOST_DIR}/nethost.lib"
+            IMPORTED_LOCATION "${KANS_NETHOST_DIR}/nethost.dll")
+    else()
+        add_library(kans_nethost STATIC IMPORTED)
+        set_target_properties(kans_nethost PROPERTIES
+            IMPORTED_LOCATION "${KANS_NETHOST_DIR}/libnethost.a"
+            INTERFACE_LINK_LIBRARIES "${CMAKE_DL_LIBS}")
+    endif()
+    set_target_properties(kans_nethost PROPERTIES
+        IMPORTED_NO_SYSTEM TRUE
+        INTERFACE_INCLUDE_DIRECTORIES "${KANS_NETHOST_DIR}")
     message(STATUS "Kans scripting: ${DOTNET}, host pack ${KANS_NETHOST_DIR}")
 else()
     message(WARNING "dotnet not found: scripting is disabled")

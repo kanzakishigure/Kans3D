@@ -9,7 +9,7 @@
 #define STBI_NO_STDIO
 #define STBI_NO_SIMD
 #define STBI_MAX_DIMENSIONS 16384
-#include "stb_image/stb_image.h"
+#include <stb_image.h>
 
 namespace Kans
 {

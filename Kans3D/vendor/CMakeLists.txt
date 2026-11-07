@@ -9,25 +9,19 @@
 # ============================================================
 # GLFW — uses its own CMakeLists.txt (part of the GLFW submodule)
 # ============================================================
-# Disable GLFW examples & tests (they need dwmapi.lib, we only need the lib)
-
-
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
-# The pinned GLFW declares CMake 3.1 policies, unsupported by CMake 4.
-# Scope the compatibility override to this dependency, not the whole project.
-function(kans_add_glfw)
-    if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
-        set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-    endif()
-    add_subdirectory(GLFW)
-endfunction()
-kans_add_glfw()
-if(WIN32)
-    target_link_libraries(glfw PRIVATE dwmapi.lib)
+set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
+if(UNIX AND NOT APPLE)
+    # Preserve the previous checkout's default X11-only Linux build.
+    set(GLFW_BUILD_X11     ON CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
 endif()
+add_subdirectory(GLFW)
+target_compile_definitions(glfw INTERFACE GLFW_INCLUDE_NONE)
 set_target_properties(glfw PROPERTIES
     FOLDER "Dependencies"
+    MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"
 )
 # ============================================================
 # ImGui 1.92 — core, demo and C++ string helpers (C++17)
@@ -56,6 +50,18 @@ if(UNIX)
     set_target_properties(ImGui PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
 
+# The Vulkan backend stays in VulkanPresentation.cpp: the engine's custom WSI
+# callbacks use its private viewport render buffers in the same translation unit.
+add_library(ImGuiBackends STATIC imgui/backends/imgui_impl_glfw.cpp)
+target_link_libraries(ImGuiBackends PUBLIC ImGui glfw)
+target_include_directories(ImGuiBackends PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends)
+kans_set_output_dirs(ImGuiBackends)
+set_target_properties(ImGuiBackends PROPERTIES
+    FOLDER "Dependencies"
+    CXX_STANDARD 17
+    MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"
+)
+
 # ============================================================
 # yaml-cpp — StaticLib (C++17)
 # ============================================================
@@ -64,19 +70,21 @@ file(GLOB_RECURSE YAML_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/src/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/include/*.h
 )
-add_library(yaml-cpp STATIC ${YAML_SOURCES})
+# Upstream 0.8.0 still omits <cstdint> in emitterutils.cpp (modern GCC rejects it).
+# Supply that file's missing include explicitly, without forced compiler includes
+# or changes to the pinned checkout.
+list(REMOVE_ITEM YAML_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/src/emitterutils.cpp")
+set(KANS_YAML_EMITTER_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/yaml-emitterutils.cpp")
+file(WRITE "${KANS_YAML_EMITTER_SOURCE}"
+    "#include <cstdint>\n#include \"${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/src/emitterutils.cpp\"\n")
+add_library(yaml-cpp STATIC ${YAML_SOURCES} "${KANS_YAML_EMITTER_SOURCE}")
 target_include_directories(yaml-cpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/include)
-# The pinned emitterutils.cpp uses fixed-width integers without including
-# <cstdint>. Keep the workaround private to yaml-cpp and leave its checkout clean.
-target_compile_options(yaml-cpp PRIVATE
-    "$<$<CXX_COMPILER_ID:MSVC>:/FIcstdint>"
-    "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-include>"
-    "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:cstdint>"
-)
+target_compile_definitions(yaml-cpp PUBLIC YAML_CPP_STATIC_DEFINE)
 kans_set_output_dirs(yaml-cpp)
 set_target_properties(yaml-cpp PROPERTIES
     FOLDER "Dependencies"
     CXX_STANDARD 17
+    MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"
 )
 if(UNIX)
     set_target_properties(yaml-cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -127,21 +135,6 @@ if(UNIX)
     set_target_properties(miniaudio PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_link_libraries(miniaudio PUBLIC ${CMAKE_DL_LIBS} pthread m)
 endif()
-
-# ============================================================
-# ImGuizmo — StaticLib (depends on ImGui)
-# ============================================================
-add_library(ImGuizmo STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/ImGuizmo/src/ImGuizmo.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/ImGuizmo/src/ImGuizmo.cpp
-)
-target_include_directories(ImGuizmo PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ImGuizmo/src)
-target_link_libraries(ImGuizmo PUBLIC ImGui)
-kans_set_output_dirs(ImGuizmo)
-set_target_properties(ImGuizmo PROPERTIES
-    FOLDER "Dependencies"
-    CXX_STANDARD 17
-)
 
 # ============================================================
 # assimp — Pre-built IMPORTED library (Windows) / system (Linux)
@@ -238,8 +231,17 @@ endif()
 # ============================================================
 # spdlog — header-only INTERFACE library 
 # ============================================================
- add_library(spdlog INTERFACE)                                                                                                                                                                                              
-target_include_directories(spdlog INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/spdlog)
+add_library(spdlog INTERFACE)
+# This checkout stores headers directly in spdlog/, rather than include/spdlog/.
+# Stage the normal include layout in the build tree without exposing all vendors.
+file(GLOB_RECURSE KANS_SPDLOG_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/spdlog/*.h")
+set(KANS_SPDLOG_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/spdlog/include")
+foreach(header IN LISTS KANS_SPDLOG_HEADERS)
+    file(RELATIVE_PATH relative_header "${CMAKE_CURRENT_SOURCE_DIR}" "${header}")
+    configure_file("${header}" "${KANS_SPDLOG_INCLUDE_DIR}/${relative_header}" COPYONLY)
+endforeach()
+target_include_directories(spdlog INTERFACE "${KANS_SPDLOG_INCLUDE_DIR}")
 
 # CPU text dependencies. No platform font APIs or optional external backends.
 add_library(harfbuzz STATIC harfbuzz/src/harfbuzz.cc)
@@ -323,3 +325,11 @@ function(kans_add_physx)
     endif()
 endfunction()
 kans_add_physx()
+
+# Match SDK header ABI and Windows static import decoration only in private SDK users.
+# MSVC Debug uses /MD, so PhysX needs NDEBUG here without disabling engine asserts.
+function(kans_use_physx_sdk)
+    set_source_files_properties(${ARGN} PROPERTIES
+        SKIP_PRECOMPILE_HEADERS ON
+        COMPILE_DEFINITIONS "PX_PHYSX_STATIC_LIB;DISABLE_CUDA_PHYSX;PX_SUPPORT_PVD=0;PX_SUPPORT_OMNI_PVD=0;$<$<CONFIG:Debug>:PX_DEBUG=1>;$<$<CONFIG:Debug>:PX_CHECKED=1>;$<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:MSVC>>:NDEBUG>")
+endfunction()
