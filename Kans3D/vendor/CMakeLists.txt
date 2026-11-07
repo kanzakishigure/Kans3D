@@ -12,6 +12,7 @@
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE) # no install rules, no "uninstall" target
 if(UNIX AND NOT APPLE)
     # Preserve the previous checkout's default X11-only Linux build.
     set(GLFW_BUILD_X11     ON CACHE BOOL "" FORCE)
@@ -23,6 +24,8 @@ set_target_properties(glfw PROPERTIES
     FOLDER "Dependencies"
     MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"
 )
+# GLFW's own maintainer target (regenerates its gamepad mappings); keep it with the dependencies.
+set_target_properties(update_mappings PROPERTIES FOLDER "Dependencies")
 # ============================================================
 # ImGui 1.92 — core, demo and C++ string helpers (C++17)
 # ============================================================

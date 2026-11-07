@@ -15,6 +15,7 @@ add_custom_command(OUTPUT ${KANS_MANAGED_FILES}
         "${KANS3D_DIR}/src/Kans3D/Script/ComponentTypes.def"
     VERBATIM)
 add_custom_target(KansScriptCore ALL DEPENDS ${KANS_MANAGED_FILES})
+set_target_properties(KansScriptCore PROPERTIES FOLDER "Core")
 set(KANS_MANAGED_OUTPUT "${KANS_MANAGED_OUTPUT}" PARENT_SCOPE)
 set(KANS_MANAGED_FILES "${KANS_MANAGED_FILES}" PARENT_SCOPE)
 # Compatibility with the editor's existing MSBuild-only copy command. No editor source changes.

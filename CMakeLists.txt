@@ -5,11 +5,21 @@ project(Kans3D LANGUAGES C CXX)
 set_property(GLOBAL APPEND PROPERTY JOB_POOLS kans_link_pool=1)
 set(CMAKE_JOB_POOL_LINK kans_link_pool)
 
+# MSBuild runs projects in parallel but compiles one source file at a time inside a project
+# unless cl gets /MP; Kans3D alone has ~700 sources. Set before the vendor and engine targets
+# so PhysX, assimp and the rest compile in parallel too. Ninja already schedules per file.
+if(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/MP>)
+endif()
+
 if(POLICY CMP0112)
     cmake_policy(SET CMP0112 NEW)
 endif()
 
-include(CTest)
+# Group targets in IDE solutions (Visual Studio); CMake's own ALL_BUILD/ZERO_CHECK/RUN_TESTS
+# go into one predefined folder.
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMakePredefinedTargets")
 
 find_program(DOTNET dotnet)
 option(KANS_SCRIPTS_AOT "Publish a NativeAOT shared script library" OFF)
@@ -190,13 +200,20 @@ add_subdirectory(${KANSEDITOR_DIR})
 # Tests live in the Kans3D-tests submodule; the engine builds without it
 # (submodule not pulled, KANS_BUILD_TESTS=OFF, or GoogleTest not installed).
 option(KANS_BUILD_TESTS "Build the Kans3D-tests submodule when it is present" ON)
-if(BUILD_TESTING AND KANS_BUILD_TESTS)
+if(KANS_BUILD_TESTS)
+    # enable_testing() only: include(CTest) would add unused dashboard targets
+    # (Continuous, Experimental, Nightly, NightlyMemoryCheck) and a BUILD_TESTING option.
+    enable_testing()
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt")
         message(STATUS "Kans3D: test/ submodule not checked out, skipping tests")
     else()
         find_package(GTest QUIET)
         if(GTest_FOUND)
             add_subdirectory(test)
+            get_property(KANS_TEST_TARGETS DIRECTORY test PROPERTY BUILDSYSTEM_TARGETS)
+            foreach(test_target IN LISTS KANS_TEST_TARGETS)
+                set_target_properties(${test_target} PROPERTIES FOLDER "Tests")
+            endforeach()
         else()
             message(WARNING "Kans3D: GoogleTest not found, skipping tests")
         endif()
@@ -217,6 +234,11 @@ if(DOTNET)
                 COMMAND ${CMAKE_COMMAND} -E copy_directory "${KANS_MANAGED_OUTPUT}" "$<TARGET_FILE_DIR:${consumer}>/Resources/Scripts"
                 DEPENDS KansScriptCore VERBATIM)
             add_dependencies(${consumer} ${consumer}Scripts)
+            # Script staging sits next to its consumer in the IDE.
+            get_target_property(KANS_CONSUMER_FOLDER ${consumer} FOLDER)
+            if(KANS_CONSUMER_FOLDER)
+                set_target_properties(${consumer}Scripts PROPERTIES FOLDER "${KANS_CONSUMER_FOLDER}")
+            endif()
             if(KANS_PREVIOUS_SCRIPTS)
                 add_dependencies(${consumer}Scripts ${KANS_PREVIOUS_SCRIPTS})
             endif()
@@ -249,5 +271,6 @@ if(DOTNET)
                 "-p:KansScriptProject=${KANS_SCRIPT_PROJECT}" -m:1 -nr:false
                 -p:UseSharedCompilation=false --output "${CMAKE_BINARY_DIR}/scripts-aot"
             DEPENDS KansScriptCore VERBATIM)
+        set_target_properties(KansScriptsAot PROPERTIES FOLDER "Core")
     endif()
 endif()

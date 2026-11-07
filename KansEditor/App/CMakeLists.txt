@@ -63,4 +63,5 @@ add_custom_target(KansEditorData ALL
     VERBATIM)
 
 add_dependencies(KansEditor KansEditorData)
+set_target_properties(KansEditorData PROPERTIES FOLDER "Editor")
 # ScriptCore is staged into Resources/Scripts by the root CMakeLists (KansEditorScripts).
