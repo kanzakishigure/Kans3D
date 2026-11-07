@@ -2,7 +2,7 @@
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Renderer/RenderView.h"
 #include "Kans3D/Renderer/RenderWorld.h"
-#include "Scene.h"
+#include "Kans3D/Scene/Scene.h"
 namespace Kans
 {
     void Scene::UpdateUI(const UIInputState& input, const UIViewport& viewport, float seconds)

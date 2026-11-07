@@ -1,6 +1,6 @@
 #include "kspch.h"
 #include "Kans3D/Asset/Manager/AssetManager.h"
-#include "Entity.h"
+#include "Kans3D/Scene/Entity.h"
 namespace Kans
 {
     bool Scene::IsEntityActive(Entity e) const

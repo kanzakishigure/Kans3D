@@ -4,9 +4,9 @@
 #include "Kans3D/Physics/PhysicsWorld.h"
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Renderer/RenderWorld.h"
+#include "Kans3D/Scene/Entity.h"
+#include "Kans3D/Scene/Scene.h"
 #include "Kans3D/Script/ScriptEngine.h"
-#include "Entity.h"
-#include "Scene.h"
 namespace Kans
 {
     const PhysicsSettings& Scene::GetPhysicsSettings() const

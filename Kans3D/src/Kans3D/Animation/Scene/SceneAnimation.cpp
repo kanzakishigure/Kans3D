@@ -3,10 +3,10 @@
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Renderer/Shading/Skinning.h"
+#include "Kans3D/Scene/Entity.h"
+#include "Kans3D/Scene/Scene.h"
 #include "Kans3D/Script/ScriptAnimation.h"
 #include "Kans3D/Script/ScriptEngine.h"
-#include "Entity.h"
-#include "Scene.h"
 namespace Kans
 {
     namespace

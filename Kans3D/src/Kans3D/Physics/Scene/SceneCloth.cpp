@@ -4,9 +4,9 @@
 #include "Kans3D/Physics/PhysicsSettings.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
-#include "Entity.h"
-#include "MotionUpdateCache.h"
-#include "Scene.h"
+#include "Kans3D/Scene/Entity.h"
+#include "Kans3D/Scene/MotionUpdateCache.h"
+#include "Kans3D/Scene/Scene.h"
 namespace Kans
 {
     struct ClothUpdateCache

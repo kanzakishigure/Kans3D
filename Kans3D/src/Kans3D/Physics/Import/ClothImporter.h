@@ -1,11 +1,11 @@
 #pragma once
-#include "AssetImporterBase.h"
+#include "Kans3D/Asset/Importer/AssetImporterBase.h"
 namespace Kans
 {
-    class RagdollImporter final : public AssetImporterBase
+    class ClothImporter final : public AssetImporterBase
     {
     public:
-        inline static constexpr const char*       RootObjectKey = "ragdoll:root";
+        inline static constexpr const char*       RootObjectKey = "cloth:root";
         bool                                      RequiresProductBytes() const override { return false; }
         std::variant<ImportInputs, AssetError>    DiscoverInputs(const ImportContext&) const override;
         uint32_t                                  GetVersion() const override { return 1; }

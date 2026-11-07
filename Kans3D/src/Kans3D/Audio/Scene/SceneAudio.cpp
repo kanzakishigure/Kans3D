@@ -1,8 +1,8 @@
 #include "kspch.h"
 #include <cmath>
 #include "Kans3D/Asset/Manager/AssetManager.h"
-#include "Entity.h"
-#include "Scene.h"
+#include "Kans3D/Scene/Entity.h"
+#include "Kans3D/Scene/Scene.h"
 
 namespace Kans
 {
