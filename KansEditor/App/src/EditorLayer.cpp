@@ -174,6 +174,8 @@ namespace Kans
         m_VfxSystemEditors.clear();
         if (m_AssetImports)
         {
+            if (const auto task = m_ImportProgress.Task())
+                m_Progress.Dismiss(*task); // Its cancel action refers to the service.
             auto stopped = m_AssetImports->Shutdown();
             if (const auto* error = std::get_if<AssetError>(&stopped))
                 CORE_ERROR("Project import shutdown: {}", error->Message);
@@ -242,6 +244,8 @@ namespace Kans
                 QueueMissingSceneAssets(); // Includes newly discovered scene sources.
             }
             auto completed = m_AssetImports->Poll();
+            // Before anything starts the next queued import: the reporter sees every terminal state.
+            m_ImportProgress.Poll(m_Progress, *m_AssetImports, m_SceneAssetImports);
             if (const auto* error = std::get_if<AssetError>(&completed))
                 Record(*error);
             else if (std::get<bool>(completed))

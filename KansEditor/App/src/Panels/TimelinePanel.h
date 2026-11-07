@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include "KansEditorCore/EditorAssetChoice.h"
+#include "KansEditorCore/Panels/TimelineFollow.h"
 #include "Kans3D/Timeline/Timeline.h"
 #include "HierarchyPanel.h"
 
@@ -19,6 +20,8 @@ namespace Kans
     // drag along the time axis (snapping to frames). The selected item is edited on the far right.
     // Preview evaluates the timeline in the scene at the playhead and restores the bound entities
     // when it ends; edits are saved to the .timeline file, which is then rebuilt.
+    // During Play or Simulate the window is read-only and follows the player that runs this
+    // timeline: its time, the clips and cuts active now and the events that fired.
     class TimelinePanel
     {
     public:
@@ -38,6 +41,11 @@ namespace Kans
         void StopPreview();
         // Preview also ends when the window was not drawn (closed or hidden) last frame.
         void StopPreviewIfHidden();
+        // Whether the scene is in Play or Simulate, asked once a frame.
+        void SetPlayModeQuery(std::function<bool()> playing) { m_PlayMode = std::move(playing); }
+        // What the window follows during Play (updated by Draw).
+        const TimelineFollow::Model& Follow() const { return m_Follow; }
+        bool                         IsReadOnly() const { return m_Follow.ReadOnly(); }
 
         // For tests: the timeline being edited, and its unsaved state.
         TimelineData&       Data() { return m_Data; }
@@ -94,12 +102,17 @@ namespace Kans
         void                     CreateAsset();
         void                     Changed();
         void                     UpdatePreview();
+        // Drops the preview without restoring the scene (Play owns it now).
+        void                     DiscardPreview();
+        // The time the playhead shows: the followed player's during Play.
+        double                   DisplayTime() const;
         std::vector<Row>         Rows() const;
         double                   Snap(double time) const;
         float                    ToX(double time) const;
         double                   ToTime(float x) const;
 
         void DrawToolbar();
+        void DrawFollowPill();
         void DrawNames(const std::vector<Row>& rows, float rowHeight);
         void DrawCanvas(const std::vector<Row>& rows, float rowHeight);
         void DrawRuler(ImVec2 origin, float width);
@@ -137,6 +150,12 @@ namespace Kans
         std::unique_ptr<TimelinePlayer>    m_Player;
         std::map<UUID, TransformComponent> m_Bases; // Bound transforms when preview started.
         int                                m_LastDrawnFrame   = -1;
+
+        std::function<bool()>  m_PlayMode;
+        bool                   m_WasPlayMode = false;
+        TimelineFollow::Model  m_Follow;
+        TimelineActiveSections m_Active;                  // Sections active at the followed time.
+        double                 m_UserScrolledAt = -1e9;   // ImGui time of the last wheel or middle drag.
         char                               m_PropertyPath[96] = "Light.Intensity";
     };
 } // namespace Kans

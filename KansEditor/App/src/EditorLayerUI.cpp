@@ -7,6 +7,7 @@
 #include "Kans3D/Project/RecentProjects.h"
 #include "EditorLayer.h"
 #include "KansEditorCore/Launcher/EditorProcess.h"
+#include "KansEditorCore/Launcher/ProjectGrid.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
 #include "UI/Widgets.h"
@@ -57,6 +58,8 @@ namespace Kans
         browser.Flags    = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
         browser.Shortcut = "Ctrl+Space";
         m_Panels.Register(browser, [this] { m_ContentBrowserPanel.onImGuiRender(); });
+        m_ContentBrowserPanel.SetProgress(&m_Progress);
+        m_ProgressPopup.SetShowConsole([this] { m_Panels.Open(PanelID::Console); });
         m_Panels.Register(spec(PanelID::AssetImporter, "Asset Importer", ICON_FA_FILE_IMPORT, PanelCategory::Assets,
                                PanelDock::Right, false),
                           [this] { m_ProductImportPanel.Draw(); });
@@ -88,6 +91,7 @@ namespace Kans
             m_Panels.Open(PanelID::Timeline);
         });
         m_TimelinePanel.SetViewThroughCamera([this](bool show) { m_ViewportPanel.SetPreviewSceneCamera(show); });
+        m_TimelinePanel.SetPlayModeQuery([this] { return m_Play.IsActive(); }); // Follows the running player.
         m_Panels.Register(
             spec(
                 PanelID::UIDesigner, "UI Designer", ICON_FA_DESKTOP, PanelCategory::Assets, PanelDock::Floating, false),
@@ -178,6 +182,8 @@ namespace Kans
         DrawClothInfo();
         m_RagdollEditor.Draw();
         DrawVfxModuleEditors();
+        // Over the Content Browser (or the main viewport without it), above every panel.
+        m_ProgressPopup.Draw(m_Progress, m_ContentBrowserPanel.GetProgressHost());
         Application::Get().GetImGuiLayer()->BlockEvents(m_ViewportPanel.IsFocused() || m_ViewportPanel.IsHovered());
         TrackSceneEdits();
     }
@@ -709,26 +715,12 @@ namespace Kans
                           m_Play.GetPlayTime());
             status = custom ? std::string(clock, std::strlen(clock) - 3) : clock + status; // Without the gap.
         }
-        bool importing = false;
-        if (m_AssetImports)
-            if (auto snapshot = m_AssetImports->GetSnapshot();
-                std::holds_alternative<EditorAssetImportSnapshot>(snapshot) &&
-                std::get<EditorAssetImportSnapshot>(snapshot).State == EditorAssetImportState::Building)
-            {
-                const auto source = std::get<EditorAssetImportSnapshot>(snapshot).Source;
-                if (source != m_StatusSource)
-                {
-                    m_StatusSource = source;
-                    m_StatusName   = source.ToString();
-                    if (auto  sources = m_AssetImports->GetSources();
-                        auto* list    = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
-                        for (const auto& metadata : *list)
-                            if (metadata.sourceAssetID == source)
-                                m_StatusName = metadata.Path.GetPath().filename().u8string();
-                }
-                importing = true;
-            }
-        const std::string importText = importing ? ICON_FA_SPINNER "  Importing " + m_StatusName + "..." : "";
+        // The first running task, in short; the progress popup has the details.
+        const std::string progressText = Launcher::EllipsizeMiddle(
+            ProgressUI::StatusText(m_Progress.Tasks()), EditorTheme::Px(420.0f), [](std::string_view text) {
+                return ImGui::CalcTextSize(text.data(), text.data() + text.size()).x;
+            });
+        const std::string importText   = progressText.empty() ? "" : ICON_FA_SPINNER "  " + progressText;
         // While a VFX asset is edited in the viewport, which document Ctrl+Z changes next.
         std::string undoText;
         if (const auto* asset = m_Play.IsActive() ? nullptr : ViewportVfxDocument())

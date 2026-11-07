@@ -7,7 +7,9 @@
 #include "Kans3D/Project/Project.h"
 #include <Kans3D.h>
 #include "KansEditorCore/SceneAssetImportQueue.h"
+#include "KansEditorCore/ImportProgress.h"
 #include "KansEditorCore/ScriptBuildProgress.h"
+#include "UI/ProgressPopup.h"
 
 #include "KansEditorCore/EditorCamera.h"
 #include "KansEditorCore/EditorResources.h"
@@ -305,6 +307,8 @@ namespace Kans
         // The script build runs on a worker thread; loading happens on the main thread.
         EditorProgress                   m_Progress;
         ScriptBuildProgress              m_ScriptBuildProgress;
+        ImportProgressReporter           m_ImportProgress;
+        ProgressPopup                    m_ProgressPopup;
         std::future<ScriptBuild::Result> m_ScriptBuild;
         bool                             m_ScriptsLoaded = false;
         std::string                      m_ScriptStatus;
@@ -312,9 +316,6 @@ namespace Kans
 
         Scope<EditorAssetImportService> m_AssetImports;
         Scope<AssetManager>             m_Assets;
-        // Name of the source being imported, for the toolbar status.
-        SourceAssetID m_StatusSource;
-        std::string   m_StatusName;
 
 
         Ref<Scene>         m_ActiveScene;

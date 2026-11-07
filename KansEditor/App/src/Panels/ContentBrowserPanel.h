@@ -10,6 +10,7 @@
 #include "KansEditorCore/Panels/ContentBrowser/AssetFileOperations.h"
 #include "KansEditorCore/Panels/ContentBrowser/BrowserModel.h"
 #include "KansEditorCore/Panels/ContentBrowser/ThumbnailCache.h"
+#include "UI/ProgressPopup.h"
 
 namespace Kans
 {
@@ -26,6 +27,11 @@ namespace Kans
 
         // Non-owning; the editor unbinds before destroying the service.
         void Bind(EditorAssetImportService* service);
+        // Running tasks, for the status bar's short progress text. Non-owning.
+        void SetProgress(const EditorProgress* progress) { m_Progress = progress; }
+        // Where the progress popup sits: the panel above its status bar, if the panel was drawn
+        // this frame (not closed, collapsed or behind another tab).
+        std::optional<ProgressPopupHost> GetProgressHost() const;
 
         // Double-clicked or opened file.
         void SetOpenFileCallback(PathCallback callback) { m_OpenFile = std::move(callback); }
@@ -151,6 +157,9 @@ namespace Kans
         PathCallback              m_CreateInstance;
         std::function<void(const std::string&)> m_ReportError;
         EditorAssetImportService*                m_Service = nullptr;
+        const EditorProgress*                    m_Progress = nullptr;
+        ProgressPopupHost                        m_ProgressHost;
+        int                                      m_ProgressHostFrame = -1;
         Browser::AssetFileOperations             m_Operations;
         Browser::DirectoryCache                  m_Cache;
         Browser::ThumbnailCache                  m_Thumbnails;

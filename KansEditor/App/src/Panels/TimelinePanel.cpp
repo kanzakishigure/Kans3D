@@ -86,6 +86,16 @@ namespace Kans
         {
             return ImGui::GetColorU32(ImVec4(color.x, color.y, color.z, color.w * alpha));
         }
+
+        constexpr const char* ReadOnlyReason =
+            "Read-only while the scene plays: the timeline shows the running player.\nStop Play to edit, key or preview.";
+
+        // A tooltip on the last item (also when disabled) explaining why it is locked.
+        void LockedTooltip(bool locked)
+        {
+            if (locked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", ReadOnlyReason);
+        }
     } // namespace
 
     TimelinePlayerComponent* TimelinePanel::Component() const
@@ -241,6 +251,22 @@ namespace Kans
         m_ViewingCamera = false;
     }
 
+    void TimelinePanel::DiscardPreview()
+    {
+        m_Playing = false;
+        m_Player.reset();
+        m_Bases.clear();
+        m_Previewing = false;
+        if (m_ViewingCamera && m_ViewThrough)
+            m_ViewThrough(false);
+        m_ViewingCamera = false;
+    }
+
+    double TimelinePanel::DisplayTime() const
+    {
+        return m_Follow.GetMode() == TimelineFollow::Mode::Following ? m_Follow.Time() : m_Time;
+    }
+
     void TimelinePanel::StopPreviewIfHidden()
     {
         if (m_Previewing && m_LastDrawnFrame < ImGui::GetFrameCount() - 1)
@@ -356,6 +382,16 @@ namespace Kans
             m_Owner      = 0;
             m_Scene      = scene;
         }
+        // Play owns the scene: the window's own preview and playback end without restoring
+        // anything over it (the editor stops preview before Play starts), and edits are locked.
+        const bool play = m_PlayMode && m_PlayMode();
+        if (play != m_WasPlayMode)
+        {
+            m_WasPlayMode = play;
+            m_Drag        = DragKind::None;
+            if (play)
+                DiscardPreview();
+        }
         // Follows a selected Timeline Player; selecting the bound actors keeps the timeline open.
         Entity selected = m_Hierarchy.GetSelected();
         if (selected && selected.HasComponent<TimelinePlayerComponent>() && selected.GetUUID() != m_Owner)
@@ -398,7 +434,11 @@ namespace Kans
             return;
         }
 
-        if (m_Playing)
+        m_Follow.Update(scene, m_Asset, play, ImGui::GetTime());
+        const bool readOnly = m_Follow.ReadOnly();
+        m_Active = m_Follow.GetMode() == TimelineFollow::Mode::Following ? TimelineSectionsAt(m_Data, m_Follow.Time()) :
+                                                                          TimelineActiveSections {};
+        if (m_Playing && !readOnly)
         {
             double next = m_Time + ImGui::GetIO().DeltaTime * std::max(0.0, c->Speed);
             if (next >= m_Data.Length)
@@ -428,9 +468,13 @@ namespace Kans
         ImGui::EndChild();
         ImGui::SameLine();
         if (ImGui::BeginChild("##inspector", {0, 0}, ImGuiChildFlags_Borders))
+        {
+            ImGui::BeginDisabled(readOnly);
             DrawInspector();
+            ImGui::EndDisabled();
+        }
         ImGui::EndChild();
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive())
+        if (!readOnly && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive())
         {
             if (ImGui::IsKeyPressed(ImGuiKey_Delete))
                 DeleteSelection();
@@ -441,18 +485,26 @@ namespace Kans
 
     void TimelinePanel::DrawToolbar()
     {
-        auto* c = Component();
-        ImGui::BeginDisabled(!m_Dirty);
+        const bool locked = m_Follow.ReadOnly();
+        if (locked)
+        {
+            DrawFollowPill();
+            ImGui::SameLine();
+        }
+        ImGui::BeginDisabled(!m_Dirty || locked);
         if (ImGui::Button(ICON_FA_FLOPPY_DISK "  Save"))
             Save();
         ImGui::EndDisabled();
+        LockedTooltip(locked);
         ImGui::SameLine();
         ImGui::TextDisabled("%s%s", m_File.filename().u8string().c_str(), m_Dirty ? " *" : "");
         ImGui::SameLine();
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
+        ImGui::BeginDisabled(locked);
         if (ImGui::Button(ICON_FA_BACKWARD_FAST))
             SetPlayhead(0);
+        LockedTooltip(locked);
         ImGui::SameLine();
         if (ImGui::Button(m_Playing ? ICON_FA_PAUSE : ICON_FA_PLAY))
         {
@@ -461,54 +513,112 @@ namespace Kans
                 SetPlayhead(0);
             SetPreview(true); // Playing shows the timeline in the scene.
         }
+        LockedTooltip(locked);
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_FORWARD_FAST))
             SetPlayhead(m_Data.Length);
+        LockedTooltip(locked);
+        ImGui::EndDisabled();
         ImGui::SameLine();
-        const double fps = m_Data.FrameRate > 0 ? m_Data.FrameRate : 30;
-        ImGui::Text("%s  " ICON_FA_FILM " %d", Seconds(m_Time).c_str(), int(std::lround(m_Time * fps)));
+        const double fps  = m_Data.FrameRate > 0 ? m_Data.FrameRate : 30;
+        const double time = DisplayTime();
+        ImGui::Text("%s  " ICON_FA_FILM " %d", Seconds(time).c_str(), int(std::lround(time * fps)));
         ImGui::SameLine();
         ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
         ImGui::SameLine();
+        ImGui::BeginDisabled(locked);
         bool preview = m_Previewing;
         if (ImGui::Checkbox("Preview", &preview))
             SetPreview(preview);
-        if (ImGui::IsItemHovered())
+        if (locked)
+            LockedTooltip(locked);
+        else if (ImGui::IsItemHovered())
             ImGui::SetTooltip(
                 "Shows the timeline in the scene at the playhead; the scene is restored when preview ends.");
+        ImGui::EndDisabled();
         ImGui::SameLine();
-        ImGui::BeginDisabled(!m_Previewing);
+        ImGui::BeginDisabled(!m_Previewing || locked);
         bool camera = m_ViewingCamera;
         if (ImGui::Checkbox(ICON_FA_VIDEO " Cuts", &camera) && m_ViewThrough)
             m_ViewThrough(m_ViewingCamera = camera);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        if (locked)
+            LockedTooltip(locked);
+        else if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("View the preview through the camera the cuts make primary");
         ImGui::EndDisabled();
         ImGui::SameLine();
+        ImGui::BeginDisabled(locked);
         ImGui::Checkbox(ICON_FA_MAGNET, &m_Snap);
-        if (ImGui::IsItemHovered())
+        if (locked)
+            LockedTooltip(locked);
+        else if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Snap to frames");
         ImGui::SameLine();
         float length = float(m_Data.Length), rate = float(m_Data.FrameRate);
         ImGui::SetNextItemWidth(EditorTheme::Px(70.0f));
         if (ImGui::DragFloat("##length", &length, 0.05f, 0.1f, 3600.0f, "%.2f s"))
             m_Data.Length = std::max(0.1f, length), Changed();
-        if (ImGui::IsItemHovered())
+        if (locked)
+            LockedTooltip(locked);
+        else if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Length");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(EditorTheme::Px(60.0f));
         if (ImGui::DragFloat("##fps", &rate, 0.1f, 1.0f, 240.0f, "%.0f fps"))
             m_Data.FrameRate = std::max(1.0f, rate), Changed();
+        LockedTooltip(locked);
+        ImGui::EndDisabled();
         if (!m_Status.empty())
         {
             ImGui::SameLine();
             ImGui::TextDisabled("%s", m_Status.c_str());
         }
-        (void)c;
+    }
+
+    void TimelinePanel::DrawFollowPill()
+    {
+        using EditorTheme::Px;
+        const auto& p         = EditorTheme::Colors();
+        const bool  following = m_Follow.GetMode() == TimelineFollow::Mode::Following;
+        const auto& targets   = m_Follow.Targets();
+        const bool  choose    = following && targets.size() > 1;
+        // The play tone (as in the band) while following; dim while nothing plays the timeline.
+        const ImVec4 tone  = following ? p.TypeModel : p.TextDim;
+        std::string  label = following ? std::string(ICON_FA_EYE "  Following ") + m_Follow.FollowedName() :
+                                         std::string(ICON_FA_LOCK "  Not playing in this scene");
+        if (choose)
+            label += "  " ICON_FA_CARET_DOWN;
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, ImGui::GetFrameHeight() * 0.5f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {Px(EditorTheme::Space3), ImGui::GetStyle().FramePadding.y});
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4 {tone.x, tone.y, tone.z, 0.18f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4 {tone.x, tone.y, tone.z, choose ? 0.30f : 0.18f});
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4 {tone.x, tone.y, tone.z, choose ? 0.40f : 0.18f});
+        ImGui::PushStyleColor(ImGuiCol_Text, following ? p.Text : p.TextDim);
+        if (ImGui::Button((label + "##follow").c_str()) && choose)
+            ImGui::OpenPopup("##FollowTargets");
+        ImGui::PopStyleColor(4);
+        ImGui::PopStyleVar(2);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s%s",
+                              ReadOnlyReason,
+                              choose ? "\nSeveral entities play this timeline: choose which one to follow." : "");
+        if (ImGui::BeginPopup("##FollowTargets"))
+        {
+            for (const auto& target : targets)
+            {
+                ImGui::PushID(int(uint64_t(target.Entity) & 0x7fffffff));
+                if (ImGui::Selectable(target.Name.empty() ? "(unnamed)" : target.Name.c_str(),
+                                      target.Entity == m_Follow.Followed()))
+                    m_Follow.Follow(target.Entity);
+                ImGui::PopID();
+            }
+            ImGui::EndPopup();
+        }
     }
 
     void TimelinePanel::DrawNames(const std::vector<Row>& rows, float rowHeight)
     {
+        const bool  locked = m_Follow.ReadOnly();
         const auto& p    = EditorTheme::Colors();
         auto*       draw = ImGui::GetWindowDrawList();
         // Rows sit at the same fixed pitch as the canvas, so names and tracks line up.
@@ -562,18 +672,33 @@ namespace Kans
                 {min.x + EditorTheme::Px(6.0f), min.y + (rowHeight - ImGui::GetFrameHeight()) * 0.5f});
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(label.c_str());
+            if (row.Kind == RowKind::Cuts && !m_Active.CameraCuts.empty())
+            {
+                // The cut the running player shows now.
+                const auto& cut = m_Data.CameraCuts[m_Active.CameraCuts.front()];
+                for (const auto& b : m_Data.Bindings)
+                    if (b.ID == cut.Binding)
+                    {
+                        ImGui::SameLine();
+                        ImGui::TextColored(p.TypeScene, ICON_FA_VIDEO " %s", b.Name.c_str());
+                    }
+            }
             if (row.Kind == RowKind::Transform)
             {
                 // Keys the bound entity's current transform at the playhead.
                 ImGui::SameLine(w - ImGui::GetFrameHeight());
+                ImGui::BeginDisabled(locked);
                 if (ImGui::SmallButton(ICON_FA_KEY))
                     KeyTransform(BoundEntity(row.Binding));
-                if (ImGui::IsItemHovered())
+                ImGui::EndDisabled();
+                if (locked)
+                    LockedTooltip(locked);
+                else if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Key the entity's transform at the playhead");
             }
             ImGui::SetCursorScreenPos(min);
             ImGui::InvisibleButton("##row", {w, rowHeight}, ImGuiButtonFlags_MouseButtonRight);
-            if (ImGui::BeginPopupContextItem("##rowmenu"))
+            if (!locked && ImGui::BeginPopupContextItem("##rowmenu"))
             {
                 if (row.Kind == RowKind::Binding)
                 {
@@ -639,7 +764,7 @@ namespace Kans
                 {ImGui::GetItemRectMin().x + EditorTheme::Px(6.0f), ImGui::GetItemRectMin().y + EditorTheme::Px(4.0f)},
                 Color(p.TextDim),
                 "Drop entities here to animate them");
-        if (ImGui::BeginDragDropTarget())
+        if (!locked && ImGui::BeginDragDropTarget())
         {
             if (const auto* payload = ImGui::AcceptDragDropPayload("entity_payload");
                 payload && payload->DataSize == sizeof(uint64_t))
@@ -740,9 +865,15 @@ namespace Kans
         const ImVec2   origin = ImGui::GetCursorScreenPos();
         const float width = ImGui::GetContentRegionAvail().x, height = std::max(ImGui::GetContentRegionAvail().y, 1.0f);
         m_CanvasX = origin.x + EditorTheme::Px(8.0f);
+        const bool locked    = m_Follow.ReadOnly();
+        const bool following = m_Follow.GetMode() == TimelineFollow::Mode::Following;
+        if (locked)
+            m_Drag = DragKind::None;
         // Wheel pans, Ctrl+wheel zooms around the mouse.
         if (ImGui::IsWindowHovered())
         {
+            if (io.MouseWheel != 0 || io.MouseWheelH != 0 || ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
+                m_UserScrolledAt = ImGui::GetTime();
             if (io.KeyCtrl && io.MouseWheel != 0)
             {
                 const double at = ToTime(io.MousePos.x);
@@ -755,12 +886,21 @@ namespace Kans
                 m_Scroll -= io.MouseDelta.x / m_Zoom;
             m_Scroll = std::max(-0.5, m_Scroll);
         }
+        // Following: the playhead stays in view, unless the user scrolled a moment ago.
+        if (following && ImGui::GetTime() - m_UserScrolledAt > 1.5)
+            m_Scroll = std::max(-0.5,
+                                TimelineFollow::FollowScroll(m_Scroll,
+                                                             (width - EditorTheme::Px(16.0f)) / m_Zoom,
+                                                             m_Follow.Time()));
         DrawRuler(origin, width);
         const float rulerHeight = EditorTheme::Px(RulerHeight);
-        ImGui::SetCursorScreenPos(origin);
-        ImGui::InvisibleButton("##ruler", {width, rulerHeight});
-        if (ImGui::IsItemActive() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-            m_Drag = DragKind::Playhead;
+        if (!locked)
+        {
+            ImGui::SetCursorScreenPos(origin);
+            ImGui::InvisibleButton("##ruler", {width, rulerHeight});
+            if (ImGui::IsItemActive() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                m_Drag = DragKind::Playhead;
+        }
         for (size_t r = 0; r < rows.size(); ++r)
         {
             const ImVec2 min {origin.x, origin.y + rulerHeight + r * rowHeight},
@@ -853,10 +993,19 @@ namespace Kans
                 Changed();
             }
         }
-        // The playhead over everything.
-        const float x = ToX(m_Time);
-        draw->AddLine({x, origin.y}, {x, origin.y + height}, Color(p.Accent), 2.0f);
-        draw->AddTriangleFilled({x - 6, origin.y}, {x + 6, origin.y}, {x, origin.y + 8}, Color(p.Accent));
+        // The playhead over everything; in the play tone while it follows the running player.
+        const float  x    = ToX(DisplayTime());
+        const ImVec4 head = following ? p.TypeModel : p.Accent;
+        draw->AddLine({x, origin.y}, {x, origin.y + height}, Color(head), 2.0f);
+        draw->AddTriangleFilled({x - 6, origin.y}, {x + 6, origin.y}, {x, origin.y + 8}, Color(head));
+        if (locked)
+        {
+            // One item over the canvas: the tracks cannot be clicked, and it says why.
+            ImGui::SetCursorScreenPos(origin);
+            ImGui::InvisibleButton("##locked", {width, height});
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip("%s", ReadOnlyReason);
+        }
     }
 
     void TimelinePanel::DrawRow(const Row& row, ImVec2 min, ImVec2 max)
@@ -864,8 +1013,15 @@ namespace Kans
         const auto& p    = EditorTheme::Colors();
         auto*       draw = ImGui::GetWindowDrawList();
         const float mid = (min.y + max.y) * 0.5f, half = (max.y - min.y) * 0.3f;
-        const bool  hovered = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(min, max);
-        const auto& io      = ImGui::GetIO();
+        const bool  locked    = m_Follow.ReadOnly();
+        const bool  following = m_Follow.GetMode() == TimelineFollow::Mode::Following;
+        const bool  hovered   = !locked && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(min, max);
+        const auto& io        = ImGui::GetIO();
+        // Whether section `item` of a track list is active at the followed time.
+        const auto active = [&](const std::vector<std::vector<size_t>>& tracks, size_t track, size_t item) {
+            return track < tracks.size() &&
+                   std::find(tracks[track].begin(), tracks[track].end(), item) != tracks[track].end();
+        };
         draw->PushClipRect(min, max, true);
         // Starts dragging `target` when the item under the mouse was pressed.
         const auto press = [&](Selection target, DragKind kind, double anchor) {
@@ -880,10 +1036,15 @@ namespace Kans
                 {x, mid - r}, {x + r, mid}, {x, mid + r}, {x - r, mid}, Color(selected ? p.Accent : p.Text, 0.9f));
             return std::abs(io.MousePos.x - x) <= r + 2 && std::abs(io.MousePos.y - mid) <= r + 2;
         };
-        const auto bar = [&](double start, double end, const ImVec4& color, bool selected, const char* text) {
+        const auto bar = [&](double start, double end, const ImVec4& color, bool selected, const char* text,
+                             bool live = false) {
             const ImVec2 a {ToX(start), mid - half * 1.4f}, b {ToX(end), mid + half * 1.4f};
-            draw->AddRectFilled(a, b, Color(color, selected ? 0.75f : 0.45f), EditorTheme::Px(3.0f));
-            if (selected)
+            // Following: what runs now is bright and outlined, the rest recedes.
+            const float alpha = live ? 0.9f : selected ? 0.75f : following ? 0.25f : 0.45f;
+            draw->AddRectFilled(a, b, Color(color, alpha), EditorTheme::Px(3.0f));
+            if (live)
+                draw->AddRect(a, b, Color(p.Text, 0.95f), EditorTheme::Px(3.0f), 0, EditorTheme::Px(1.5f));
+            else if (selected)
                 draw->AddRect(a, b, Color(p.Text, 0.8f), EditorTheme::Px(3.0f));
             if (text)
             {
@@ -936,7 +1097,7 @@ namespace Kans
                     for (const auto& choice : m_Choices)
                         if (choice.ID == clip.Clip)
                             name = choice.Name;
-                    auto part = bar(clip.Start, clip.End, p.TypeModel, selected, name.c_str());
+                    auto part = bar(clip.Start, clip.End, p.TypeModel, selected, name.c_str(), active(m_Active.Animations, row.Track, i));
                     // Blend handles: triangles at the start and end, dragged inwards.
                     const float in = ToX(clip.Start + clip.BlendIn), out = ToX(clip.End - clip.BlendOut);
                     draw->AddTriangleFilled({ToX(clip.Start), mid + half * 1.4f},
@@ -965,7 +1126,8 @@ namespace Kans
                 {
                     const bool selected =
                         m_Selected.Kind == RowKind::Activation && m_Selected.Track == row.Track && m_Selected.Item == i;
-                    auto part = bar(ranges[i].Start, ranges[i].End, p.Success, selected, "Active");
+                    auto part = bar(ranges[i].Start, ranges[i].End, p.Success, selected, "Active",
+                                    active(m_Active.Activations, row.Track, i));
                     if (part != DragKind::None && clicked)
                         press({RowKind::Activation, row.Track, i, ranges[i].Start},
                               part,
@@ -979,10 +1141,33 @@ namespace Kans
                     const auto& e        = m_Data.Events[i];
                     const bool  selected = m_Selected.Kind == RowKind::Events && m_Selected.Item == i;
                     const float x        = ToX(e.Time);
-                    draw->AddLine({x, min.y + 2}, {x, max.y - 2}, Color(p.Warning), 2.0f);
-                    draw->AddText({x + 4, mid - ImGui::GetFontSize() * 0.5f},
-                                  Color(selected ? p.Text : p.Warning),
-                                  e.Name.c_str());
+                    if (!following)
+                    {
+                        draw->AddLine({x, min.y + 2}, {x, max.y - 2}, Color(p.Warning), 2.0f);
+                        draw->AddText({x + 4, mid - ImGui::GetFontSize() * 0.5f},
+                                      Color(selected ? p.Text : p.Warning),
+                                      e.Name.c_str());
+                    }
+                    else
+                    {
+                        // Fired events are filled (and flash as they fire); pending ones are hollow.
+                        const auto  state = m_Follow.EventState(i);
+                        const float r     = half * 0.75f;
+                        const bool  fired = state != TimelineFollow::Marker::Pending;
+                        draw->AddLine({x, min.y + 2}, {x, max.y - 2}, Color(p.Warning, fired ? 0.9f : 0.35f), 1.0f);
+                        if (state == TimelineFollow::Marker::Flash)
+                            draw->AddCircleFilled({x, mid}, r * 2.4f, Color(p.Warning, 0.35f));
+                        if (fired)
+                            draw->AddCircleFilled({x, mid}, r, Color(p.Warning));
+                        else
+                        {
+                            draw->AddCircleFilled({x, mid}, r, Color(p.Panel));
+                            draw->AddCircle({x, mid}, r, Color(p.Warning, 0.8f), 0, EditorTheme::Px(1.5f));
+                        }
+                        draw->AddText({x + r + 4, mid - ImGui::GetFontSize() * 0.5f},
+                                      Color(fired ? p.Text : p.TextDim),
+                                      e.Name.c_str());
+                    }
                     if (hovered && std::abs(io.MousePos.x - x) < 6 && clicked)
                         press({RowKind::Events, 0, i, e.Time}, DragKind::Move, e.Time);
                 }
@@ -996,7 +1181,9 @@ namespace Kans
                     for (const auto& b : m_Data.Bindings)
                         if (b.ID == cut.Binding)
                             name += b.Name;
-                    auto part = bar(cut.Start, cut.End, p.TypeScene, selected, name.c_str());
+                    auto part = bar(cut.Start, cut.End, p.TypeScene, selected, name.c_str(),
+                                    std::find(m_Active.CameraCuts.begin(), m_Active.CameraCuts.end(), i) !=
+                                        m_Active.CameraCuts.end());
                     if (part != DragKind::None && clicked)
                         press({RowKind::Cuts, 0, i, cut.Start}, part, part == DragKind::End ? cut.End : cut.Start);
                 }
@@ -1010,6 +1197,8 @@ namespace Kans
                 break;
         }
         draw->PopClipRect();
+        if (locked)
+            return; // Nothing to click or add while the scene plays.
         // A click on empty space moves the playhead; a right-click adds at the playhead.
         ImGui::SetCursorScreenPos(min);
         ImGui::InvisibleButton("##rowcanvas", {max.x - min.x, max.y - min.y}, ImGuiButtonFlags_MouseButtonRight);

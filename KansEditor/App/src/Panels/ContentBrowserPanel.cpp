@@ -414,8 +414,18 @@ namespace Kans
 
     // ====================================================================== frame
 
+    std::optional<ProgressPopupHost> ContentBrowserPanel::GetProgressHost() const
+    {
+        if (m_ProgressHostFrame != ImGui::GetFrameCount())
+            return std::nullopt;
+        return m_ProgressHost;
+    }
+
     void ContentBrowserPanel::onImGuiRender()
     {
+        // The whole window until the status bar is drawn, which then trims it.
+        m_ProgressHost      = {ImGui::GetCurrentWindow()->InnerRect, ImGui::GetWindowViewport()->ID};
+        m_ProgressHostFrame = ImGui::GetFrameCount();
         if (m_Root.empty())
         {
             ImGui::TextDisabled("No project is open.");
@@ -613,24 +623,32 @@ namespace Kans
             text += ", " + std::to_string(folders) + (folders == 1 ? " folder" : " folders");
         if (!m_Selection.Empty())
             text += "  |  " + std::to_string(m_Selection.Size()) + " selected";
+        m_ProgressHost.Rect.Max.y = ImGui::GetCursorScreenPos().y; // The popup sits above the status bar.
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", text.c_str());
-        // Import progress, on the right.
-        if (m_Service)
-            if (auto snapshot = m_Service->GetSnapshot(); std::holds_alternative<EditorAssetImportSnapshot>(snapshot))
+        // What runs in the background, on the right; the progress popup has the details.
+        if (m_Progress)
+            if (const auto status = ProgressUI::StatusText(m_Progress->Tasks()); !status.empty())
             {
-                const auto& state = std::get<EditorAssetImportSnapshot>(snapshot);
-                if (state.State == EditorAssetImportState::Building)
-                {
-                    std::string importing = ICON_FA_SPINNER "  Importing";
-                    for (const auto& [path, status] : m_Sources)
-                        if (status.Source.sourceAssetID == state.Source)
-                            importing += " " + fs::u8path(path).filename().u8string();
-                    const float width = ImGui::CalcTextSize(importing.c_str()).x;
-                    ImGui::SameLine(std::max(ImGui::GetCursorPosX(),
-                                             ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - width));
-                    ImGui::TextColored(EditorTheme::Colors().Accent, "%s", importing.c_str());
-                }
+                const std::string running = ICON_FA_SPINNER "  " + status;
+                const float       right   = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+                ImGui::SameLine();
+                const float left = ImGui::GetCursorPosX();
+                // Long details are cut at the panel's edge.
+                const ImVec2 at = ImGui::GetCursorScreenPos();
+                const float  w  = std::min(ImGui::CalcTextSize(running.c_str()).x, right - left);
+                ImGui::SetCursorPosX(std::max(left, right - w));
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().Accent);
+                const ImVec2 min = ImGui::GetCursorScreenPos();
+                ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(),
+                                          {min.x, at.y + ImGui::GetStyle().FramePadding.y},
+                                          {min.x + w, at.y + ImGui::GetFrameHeight()},
+                                          min.x + w,
+                                          running.c_str(),
+                                          nullptr,
+                                          nullptr);
+                ImGui::PopStyleColor();
+                ImGui::Dummy({w, ImGui::GetFrameHeight()});
             }
     }
 
