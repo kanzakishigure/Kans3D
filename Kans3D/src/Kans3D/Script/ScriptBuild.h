@@ -26,7 +26,11 @@ namespace Kans
             std::string             Output;
             std::vector<Diagnostic> Diagnostics;
         };
-        // Executes an argument vector directly, with combined stdout/stderr capture.
-        static Result Build(const std::filesystem::path& csproj, Config config);
+        // Includes the executable; an empty ScriptCore directory preserves the csproj default.
+        static std::vector<std::string>
+        Arguments(const std::filesystem::path& csproj, Config config, const std::filesystem::path& scriptCoreDir = {});
+        // Executes Arguments directly, with combined stdout/stderr capture.
+        static Result
+        Build(const std::filesystem::path& csproj, Config config, const std::filesystem::path& scriptCoreDir = {});
     };
 } // namespace Kans

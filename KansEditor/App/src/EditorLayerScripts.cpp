@@ -100,9 +100,11 @@ namespace Game
         if (m_ScriptBuild.valid() || !ScriptEngine::IsInitialized())
             return;
         m_ScriptStatus = "Building scripts...";
-        m_ScriptBuild  = std::async(std::launch::async, [project = ScriptProjectPath()] {
-            return ScriptBuild::Build(project, ScriptBuild::Config::Debug);
-        });
+        m_ScriptBuild  = std::async(
+            std::launch::async,
+            [project = ScriptProjectPath(), scriptCoreDir = KansFileSystem::GetScriptAssemblyPath().parent_path()] {
+                return ScriptBuild::Build(project, ScriptBuild::Config::Debug, scriptCoreDir);
+            });
     }
 
     void EditorLayer::PollScriptBuild()

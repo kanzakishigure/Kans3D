@@ -91,9 +91,10 @@ namespace Kans
         }
 #endif
     } // namespace
-    ScriptBuild::Result ScriptBuild::Build(const std::filesystem::path& csproj, Config config)
+    std::vector<std::string> ScriptBuild::Arguments(const std::filesystem::path& csproj,
+                                                    Config                       config,
+                                                    const std::filesystem::path& scriptCoreDir)
     {
-        Result                   result;
         std::vector<std::string> args {KANS_DOTNET_EXECUTABLE,
                                        "build",
                                        std::filesystem::absolute(csproj).u8string(),
@@ -103,6 +104,16 @@ namespace Kans
                                        "-nr:false",
                                        "--nologo",
                                        "-p:UseSharedCompilation=false"};
+        if (!scriptCoreDir.empty())
+            args.push_back("-p:KansScriptCoreDir=" + std::filesystem::absolute(scriptCoreDir).generic_u8string());
+        return args;
+    }
+
+    ScriptBuild::Result
+    ScriptBuild::Build(const std::filesystem::path& csproj, Config config, const std::filesystem::path& scriptCoreDir)
+    {
+        Result result;
+        auto   args = Arguments(csproj, config, scriptCoreDir);
 #if defined(_WIN32)
         SECURITY_ATTRIBUTES security {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
         HANDLE              read = nullptr, write = nullptr;
