@@ -52,6 +52,7 @@ namespace Kans
         std::vector<AssetBuildResult>             Order;
         std::vector<SourceAssetID>                Stack;
         std::map<SourceAssetID, AssetError>       Failed;
+        std::set<SourceAssetID>                   Tracked, Completed;
         // Published reverse graph for dependent propagation and batch builds.
         std::map<SourceAssetID, std::vector<SourceAssetID>> Dependents;
         // Descendant -> failed ancestor; never rebuild against its stale Product.
@@ -249,6 +250,7 @@ namespace Kans
     Project::BuildAsset(SourceAssetID id, const AssetBuildOptions& options, const ImporterRegistry& importers)
     {
         BuildSession session {importers, options, {}, {}, {}, {}, {}, {}, {}};
+        session.Tracked.insert(id);
         auto         built = BuildSource(id, session);
         if (auto* error = std::get_if<AssetError>(&built))
             return std::move(*error);
@@ -271,6 +273,7 @@ namespace Kans
                     if (visited.insert(dependent).second)
                         pending.push_back(dependent);
             }
+            session.Tracked.insert(pending.begin(), pending.end());
             for (size_t index = 1; index < pending.size(); ++index)
             {
                 const auto source    = pending[index];
@@ -314,6 +317,7 @@ namespace Kans
         for (const auto& record : GetRuntimeAssetRegistry()->GetAllProducts())
             if (record.Target == options.Target)
                 sources.insert(record.Metadata.assetID.GetSourceID());
+        session.Tracked = sources;
         // Preserve last-good dependent publications when a published dependency
         // fails, just as RebuildDependents does for a single-root session.
         for (auto source : sources)
@@ -362,8 +366,25 @@ namespace Kans
             return done->second;
         if (const auto failed = session.Failed.find(id); failed != session.Failed.end())
             return failed->second;
+        const bool nested = session.Active.count(id) != 0;
+        session.Tracked.insert(id);
+        const auto report = [&](bool finished, std::optional<AssetError> error = {}) {
+            if (!nested && session.Options.SourceProgress)
+                session.Options.SourceProgress({id,
+                                                m_SourceAssetDatabase.FindByID(id).Path.ToString(),
+                                                session.Completed.size(),
+                                                session.Tracked.size(),
+                                                finished,
+                                                std::move(error)});
+        };
         if (session.Blocked.count(id))
-            return AssetError {AssetErrorCode::InvalidData, "Dependency failed during propagation"};
+        {
+            AssetError error {AssetErrorCode::InvalidData, "Dependency failed during propagation"};
+            if (session.Completed.insert(id).second)
+                report(true, error);
+            return error;
+        }
+        report(false);
         auto built = [&]() -> std::variant<AssetBuildResult, AssetError> {
             try
             {
@@ -387,6 +408,13 @@ namespace Kans
                             session.Blocked.emplace(dependent, id);
                             pending.push_back(dependent);
                         }
+        }
+        if (!nested)
+        {
+            const auto error = std::get_if<AssetError>(&built);
+            if (!error || error->Code != AssetErrorCode::Cancelled)
+                session.Completed.insert(id);
+            report(true, error ? std::optional<AssetError>(*error) : std::nullopt);
         }
         return built;
     }
@@ -565,6 +593,9 @@ namespace Kans
         // optional model remaps must not publish a fallback for a blocked branch.
         if (session.Blocked.count(id))
             return AssetError {AssetErrorCode::InvalidData, "Dependency failed during propagation"};
+        if (session.Options.SourceProgress)
+            session.Options.SourceProgress(
+                {id, metadata.Path.ToString(), session.Completed.size(), session.Tracked.size(), false, {}});
         auto built = AssetBuildService::Build(
             inputs, session.Options, *m_ProductStore, m_Digests, m_Config.CacheDirectory / "ImportWork");
         if (auto* error = std::get_if<AssetError>(&built))

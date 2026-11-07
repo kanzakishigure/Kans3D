@@ -109,11 +109,48 @@ namespace Kans
         return args;
     }
 
-    ScriptBuild::Result
-    ScriptBuild::Build(const std::filesystem::path& csproj, Config config, const std::filesystem::path& scriptCoreDir)
+    ScriptBuild::Step ScriptBuild::StepForLine(std::string_view line, Step previous)
+    {
+        if (previous == Step::Done)
+            return previous;
+        if (line.find("Build succeeded.") != line.npos || line.find("Build FAILED.") != line.npos)
+            return Step::Done;
+        if (line.find("Determining projects to restore") != line.npos || line.find("Restored ") != line.npos ||
+            line.find("for restore.") != line.npos || line.find("Restoring packages for ") != line.npos)
+            return Step::Restoring;
+        if (line.find("Copying file from ") != line.npos || line.find(" -> ") != line.npos ||
+            line.find("CopyFilesToOutputDirectory:") != line.npos || line.find("Linking ") != line.npos)
+            return Step::LinkingCopying;
+        if (line.find("CoreCompile:") != line.npos || line.find("csc.dll") != line.npos ||
+            line.find(": warning CS") != line.npos || line.find(": error CS") != line.npos)
+            return Step::Compiling;
+        return previous;
+    }
+
+    ScriptBuild::Result ScriptBuild::Build(const std::filesystem::path& csproj,
+                                           Config                       config,
+                                           const std::filesystem::path& scriptCoreDir,
+                                           LineCallback                 onLine)
     {
         Result result;
         auto   args = Arguments(csproj, config, scriptCoreDir);
+        std::string pending;
+        const auto  capture = [&](const char* data, size_t size) {
+            result.Output.append(data, size);
+            if (!onLine)
+                return;
+            pending.append(data, size);
+            size_t start = 0, end;
+            while ((end = pending.find('\n', start)) != std::string::npos)
+            {
+                size_t length = end - start;
+                if (length && pending[end - 1] == '\r')
+                    --length;
+                onLine(std::string_view(pending).substr(start, length));
+                start = end + 1;
+            }
+            pending.erase(0, start);
+        };
 #if defined(_WIN32)
         SECURITY_ATTRIBUTES security {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
         HANDLE              read = nullptr, write = nullptr;
@@ -156,7 +193,7 @@ namespace Kans
         char  buffer[4096];
         DWORD count;
         while (ReadFile(read, buffer, sizeof(buffer), &count, nullptr) && count)
-            result.Output.append(buffer, count);
+            capture(buffer, count);
         CloseHandle(read);
         WaitForSingleObject(process.hProcess, INFINITE);
         DWORD code;
@@ -198,7 +235,7 @@ namespace Kans
         {
             auto count = read(pipeFD[0], buffer, sizeof(buffer));
             if (count > 0)
-                result.Output.append(buffer, size_t(count));
+                capture(buffer, size_t(count));
             else if (count < 0 && errno == EINTR)
                 continue;
             else
@@ -213,14 +250,28 @@ namespace Kans
         }
         result.ExitCode = WIFEXITED(code) ? WEXITSTATUS(code) : -1;
 #endif
+        if (onLine && !pending.empty())
+        {
+            if (pending.back() == '\r')
+                pending.pop_back();
+            onLine(pending);
+        }
         result.Success = result.ExitCode == 0;
         const std::regex   pattern(R"(^(.+)\((\d+),(\d+)(?:,\d+,\d+)?\): (error|warning) ([A-Z]+\d+): (.*)$)");
         std::istringstream lines(result.Output);
         std::string        line;
-        std::unordered_set<std::string> seen;
+        std::unordered_set<std::string> seen, errors;
+        const std::regex                errorLine(R"(:\s*error [A-Z]+\d+:)");
         while (std::getline(lines, line))
         {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
             std::smatch match;
+            if (std::regex_search(line, errorLine))
+                errors.insert(line.substr(line.find_first_not_of(" \t")));
+            static const std::regex errorSummary(R"(^\s*(\d+) Error\(s\)\s*$)");
+            if (std::regex_match(line, match, errorSummary))
+                result.ErrorCount = unsigned(std::stoul(match[1]));
             if (!std::regex_match(line, match, pattern) || !seen.insert(line).second)
                 continue;
             result.Diagnostics.push_back({std::filesystem::u8path(match[1].str()),
@@ -230,6 +281,7 @@ namespace Kans
                                           match[5],
                                           match[6]});
         }
+        result.ErrorCount = std::max(result.ErrorCount, unsigned(errors.size()));
         return result;
     }
 } // namespace Kans

@@ -1,5 +1,4 @@
 #pragma once
-#include "KansEditorCore/SceneAssetImportQueue.h"
 #include <array>
 #include <deque>
 #include <future>
@@ -7,6 +6,8 @@
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Project/Project.h"
 #include <Kans3D.h>
+#include "KansEditorCore/SceneAssetImportQueue.h"
+#include "KansEditorCore/ScriptBuildProgress.h"
 
 #include "KansEditorCore/EditorCamera.h"
 #include "KansEditorCore/EditorResources.h"
@@ -285,6 +286,8 @@ namespace Kans
         SceneHistory     m_History;
         ScenePlaySession m_Play;
         // The script build runs on a worker thread; loading happens on the main thread.
+        EditorProgress                   m_Progress;
+        ScriptBuildProgress              m_ScriptBuildProgress;
         std::future<ScriptBuild::Result> m_ScriptBuild;
         bool                             m_ScriptsLoaded = false;
         std::string                      m_ScriptStatus;

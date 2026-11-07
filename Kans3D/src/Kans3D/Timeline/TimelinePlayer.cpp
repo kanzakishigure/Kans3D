@@ -497,7 +497,8 @@ namespace Kans
         auto overlapWeight = [&](const TimelineAnimationSection& section) {
             float weight = 1;
             for (const auto& other : track.Clips)
-                if (&other != &section && other.Start != section.Start && t >= other.Start && t < other.End)
+                if (&other != &section && other.Start != section.Start &&
+                    TimelineRange {other.Start, other.End}.Contains(t))
                 {
                     if (other.Start < section.Start)
                     {
@@ -514,11 +515,11 @@ namespace Kans
         };
         float automaticTotal = 0;
         for (const auto& section : track.Clips)
-            if (t >= section.Start && t < section.End)
+            if (TimelineRange {section.Start, section.End}.Contains(t))
                 automaticTotal += overlapWeight(section);
         float total = 0;
         for (const auto& section : track.Clips)
-            if (t >= section.Start && t < section.End)
+            if (TimelineRange {section.Start, section.End}.Contains(t))
             {
                 if (!Clips.count(section.Clip) && e.HasComponent<AnimatorComponent>())
                 {
@@ -894,7 +895,7 @@ namespace Kans
                     return false;
         RestoreCameras();
         for (const auto& cut : data.CameraCuts)
-            if (t >= cut.Start && t < cut.End)
+            if (TimelineRange {cut.Start, cut.End}.Contains(t))
             {
                 auto target = entity(cut.Binding);
                 if (!target || !target.HasComponent<CameraComponent>())

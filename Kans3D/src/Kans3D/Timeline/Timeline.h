@@ -120,6 +120,17 @@ namespace Kans
         std::vector<TimelineEvent>           Events;
         std::vector<TimelineCameraCut>       CameraCuts;
     };
+    struct TimelineActiveSections
+    {
+        double Time = 0;
+        // Outer index is the track; inner indices identify its half-open [Start, End) sections.
+        // Curves on transform/property tracks have no sections and are evaluated at every time.
+        // Particle tails may remain visible after a section stops emitting.
+        std::vector<std::vector<size_t>> Activations, Animations, Particles;
+        std::vector<size_t>              CameraCuts;
+    };
+    // Same clamping as Evaluate; loop=true wraps as Advance does, including exact Length -> 0.
+    TimelineActiveSections TimelineSectionsAt(const TimelineData&, double time, bool loop = false);
     using TimelineAsset = AnimationDataAsset<TimelineData, AssetType::Timeline>;
     AnimationValidation ValidateTimeline(const TimelineData&);
     AnimationValidation ValidateTimelineParticleParameters(const TimelineParticleTrack&, const VfxSystemAsset&);
@@ -165,6 +176,7 @@ namespace Kans
         bool   SetBinding(const std::string& nameOrID, UUID entity);
         double Time() const { return m_Time; }
         bool   IsPlaying() const { return m_Playing; }
+        const std::set<size_t>&          FiredEventIndices() const { return m_Fired; }
         const std::optional<AssetError>& Error() const { return m_Error; }
         using EventSink = std::function<void(const TimelineEvent&)>;
         uint64_t Subscribe(EventSink);

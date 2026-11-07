@@ -70,18 +70,42 @@ namespace Kans
         auto job         = CreateRef<Job>();
         auto observer    = std::move(options.Progress);
         options.Progress = [job, observer = std::move(observer)](PublicationPhase phase) {
-            job->Phase.store(static_cast<int>(phase));
+            {
+                std::lock_guard lock(job->Mutex);
+                job->Phase = phase;
+            }
             const bool observed = !observer || observer(phase);
             return observed && !job->Cancel.load();
+        };
+        auto sourceObserver    = std::move(options.SourceProgress);
+        options.SourceProgress = [job,
+                                  sourceObserver = std::move(sourceObserver)](const AssetSourceProgress& progress) {
+            {
+                std::lock_guard lock(job->Mutex);
+                job->Progress = progress;
+                if (!progress.Finished)
+                    job->Phase.reset();
+                if (progress.Error && progress.Error->Code != AssetErrorCode::Cancelled && !job->FirstError)
+                    job->FirstError = progress.Error;
+            }
+            if (sourceObserver)
+                sourceObserver(progress);
         };
         auto cancelObserver     = std::move(options.CancelRequested);
         options.CancelRequested = [job, cancelObserver = std::move(cancelObserver)] {
             return job->Cancel.load() || (cancelObserver && cancelObserver());
         };
         m_Snapshot        = {};
+        m_Snapshot.Session = m_NextSession++;
         m_Snapshot.State  = EditorAssetImportState::Building;
         m_Snapshot.Source = source;
         m_Snapshot.Target = options.Target;
+        if (source.IsValid())
+        {
+            m_Snapshot.SourcePath = m_Project->GetSourceAssetDatabase().FindByID(source).Path.ToString();
+            m_Snapshot.Total      = 1;
+            job->Progress         = {source, m_Snapshot.SourcePath, 0, 1, false, {}};
+        }
         m_Job             = job;
         m_Future          = std::async(std::launch::async, [project = m_Project.get(), source, options]() {
             try
@@ -152,8 +176,18 @@ namespace Kans
         if (m_Job)
         {
             snapshot.CancelRequested = m_Job->Cancel.load();
-            if (const int phase = m_Job->Phase.load(); phase >= 0)
-                snapshot.Phase = static_cast<PublicationPhase>(phase);
+            std::lock_guard lock(m_Job->Mutex);
+            snapshot.CurrentSource = m_Job->Progress.Source;
+            snapshot.SessionError  = m_Job->FirstError;
+            snapshot.SourcePath    = m_Job->Progress.Path;
+            snapshot.Completed     = m_Job->Progress.Completed;
+            snapshot.Total         = m_Job->Progress.Total;
+            snapshot.Phase         = m_Job->Phase;
+            // Importing/building precedes publication; the four publication
+            // checkpoints occupy the remaining evenly spaced milestones.
+            snapshot.ItemFraction = snapshot.Phase ? (int(*snapshot.Phase) + 1) / 4.0 : 0.0;
+            if (m_Job->Progress.Finished)
+                snapshot.ItemFraction = 0.0;
         }
         return snapshot;
     }

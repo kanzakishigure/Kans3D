@@ -100,18 +100,27 @@ namespace Game
         if (m_ScriptBuild.valid() || !ScriptEngine::IsInitialized())
             return;
         m_ScriptStatus = "Building scripts...";
-        m_ScriptBuild  = std::async(
-            std::launch::async,
-            [project = ScriptProjectPath(), scriptCoreDir = KansFileSystem::GetScriptAssemblyPath().parent_path()] {
-                return ScriptBuild::Build(project, ScriptBuild::Config::Debug, scriptCoreDir);
-            });
+        m_ScriptBuildProgress.Begin(m_Progress);
+        m_ScriptBuild =
+            std::async(std::launch::async,
+                       [this,
+                        project       = ScriptProjectPath(),
+                        scriptCoreDir = KansFileSystem::GetScriptAssemblyPath().parent_path()] {
+                           return ScriptBuild::Build(
+                               project, ScriptBuild::Config::Debug, scriptCoreDir, [this](std::string_view line) {
+                                   m_ScriptBuildProgress.OutputLine(line);
+                               });
+                       });
     }
 
     void EditorLayer::PollScriptBuild()
     {
+        m_Progress.Prune();
+        m_ScriptBuildProgress.Poll(m_Progress);
         if (!m_ScriptBuild.valid() || m_ScriptBuild.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
             return;
         const auto result = m_ScriptBuild.get();
+        m_ScriptBuildProgress.Finish(m_Progress, result);
         for (const auto& d : result.Diagnostics)
         {
             const auto text = fmt::format("{}({},{}): {} {}: {}", d.File.string(), d.Line, d.Column, d.Severity, d.Code, d.Message);

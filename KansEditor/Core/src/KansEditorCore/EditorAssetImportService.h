@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <future>
+#include <mutex>
 #include <optional>
 #include <thread>
 #include "Kans3D/Project/Project.h"
@@ -22,12 +23,18 @@ namespace Kans
     struct EditorAssetImportSnapshot
     {
         EditorAssetImportState               State = EditorAssetImportState::Idle;
+        uint64_t                             Session = 0;
         SourceAssetID                        Source;
+        SourceAssetID         CurrentSource; // Includes batch/dependency builds; Source remains the requested root.
+        std::string           SourcePath;
+        uint64_t              Completed = 0, Total = 0;
+        std::optional<double> ItemFraction;
         std::string                          Target;
         bool                                 CancelRequested = false;
         std::optional<PublicationPhase>      Phase;
         std::optional<AssetBuildGraphResult> Result;
         std::optional<AssetError>            Error;
+        std::optional<AssetError>            SessionError; // First nonfatal per-source failure in a sweep.
     };
 
     // Runs one asset build at a time on a worker thread for the editor. All
@@ -43,7 +50,7 @@ namespace Kans
 
         [[nodiscard]] std::variant<std::monostate, AssetError> Start(SourceAssetID source, AssetBuildOptions options);
         // Check all published sources for a target in one background session.
-        // Source in the snapshot is invalid; Result.Root summarizes the session,
+        // Snapshot names the current source; Result.Root summarizes the session,
         // including its final Registry and per-source failure warnings.
         [[nodiscard]] std::variant<std::monostate, AssetError> StartOutdated(AssetBuildOptions options);
         // True once when a started build finishes (successfully or not).
@@ -96,13 +103,17 @@ namespace Kans
         struct Job
         {
             std::atomic<bool> Cancel {false};
-            std::atomic<int>  Phase {-1};
+            std::mutex                      Mutex;
+            AssetSourceProgress             Progress;
+            std::optional<PublicationPhase> Phase;
+            std::optional<AssetError>       FirstError;
         };
         Scope<Project>                                               m_Project;
         ProjectConfig                                                m_Config;
         std::filesystem::path                                        m_ProductDirectory;
         std::thread::id                                              m_Owner;
         bool                                                         m_Closed = false;
+        uint64_t                                                     m_NextSession = 1;
         Ref<const AssetRegistry>                                     m_RegistryChange;
         Ref<Job>                                                     m_Job;
         std::future<std::variant<AssetBuildGraphResult, AssetError>> m_Future;

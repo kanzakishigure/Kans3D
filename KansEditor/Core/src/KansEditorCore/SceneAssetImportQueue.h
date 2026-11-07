@@ -13,6 +13,7 @@ namespace Kans
     public:
         std::variant<std::monostate, AssetError> Collect(EditorAssetImportService& service, const Scene& scene);
         std::variant<std::monostate, AssetError> StartNext(EditorAssetImportService& service);
+        size_t                                   PendingCount() const { return m_AutoImports.size(); }
         bool                                     Empty() const { return m_AutoImports.empty(); }
 
     private:
