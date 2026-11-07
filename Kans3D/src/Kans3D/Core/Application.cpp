@@ -44,7 +44,7 @@ namespace Kans
         windowSpec.Height       = spec.Height;
         windowSpec.Width        = spec.Width;
         windowSpec.Fullscreen   = spec.Fullscreen;
-        windowSpec.HideTitlebar = spec.HideTitlebar;
+        windowSpec.Titlebar     = spec.Titlebar;
         m_Window                = Scope<Window>(Window::Create(windowSpec));
         m_Window->Init();
         m_Window->SetEventCallback([this](Event& e) { OnEvent(e); });

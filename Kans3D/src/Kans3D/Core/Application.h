@@ -28,7 +28,7 @@ namespace Kans
         uint32_t Width        = 1920;
         uint32_t Height       = 1080;
         bool     Fullscreen   = false;
-        bool     HideTitlebar = true;
+        TitlebarMode Titlebar     = TitlebarMode::Custom;
     };
 
     class Application

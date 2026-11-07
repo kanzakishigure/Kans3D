@@ -77,7 +77,7 @@ Kans::Application* Kans::createApplication(int argc, char** argv)
     spec.Height       = 1080;
     spec.Width        = 1920;
     spec.Fullscreen   = false;
-    spec.HideTitlebar = false;
+    spec.Titlebar     = TitlebarMode::Native;
 
     return new KansEditor(spec, absoluteEditorRoot, project, request);
 }

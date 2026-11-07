@@ -5,10 +5,13 @@
 #include "Kans3D/Core/Events/KeyEvent.h"
 #include "Kans3D/Core/Events/MouseEvent.h"
 
+#include <memory>
+#include <optional>
 #include <GLFW/glfw3.h>
 
 namespace Kans
 {
+    class Win32WindowFrame;
     class WindowsWindow : public Window
     {
     public:
@@ -18,6 +21,26 @@ namespace Kans
         virtual void Init() override;
         virtual void ProcessEvents() override;
         virtual void SwapBuffers() override;
+
+        WindowSize      GetSize() const override;
+        void            SetSize(int width, int height) override;
+        WindowPosition  GetPosition() const override;
+        void            SetPosition(int x, int y) override;
+        void            CenterOnMonitor() override;
+        void            Maximize() override;
+        void            Minimize() override;
+        void            Restore() override;
+        bool            IsMaximized() const override;
+        bool            IsMinimized() const override;
+        void            SetMinimumSize(int width, int height) override;
+        WindowPlacement GetPlacement() const override;
+        void            SetPlacement(const WindowPlacement& placement) override;
+        void            SetTitlebarHitTest(std::function<TitlebarHit(int, int)> callback) override
+        {
+            m_TitlebarHitTest = std::move(callback);
+        }
+        TitlebarButtonState GetTitlebarButtonState() const override;
+        bool                HasCustomTitlebar() const override;
 
         inline unsigned int GetWidth() const override { return m_Specification.Width; }
         inline unsigned int GetHeight() const override { return m_Specification.Height; }
@@ -42,8 +65,10 @@ namespace Kans
             data.m_Specification.Height = height;
             data.m_Specification.Width  = width;
 
+            data.UpdateNormalRectangle();
             WindowResizeEvent event(width, height);
-            data.m_EventCallback(event);
+            if (data.m_EventCallback)
+                data.m_EventCallback(event);
         }
         static void windowCloseCallback(GLFWwindow* window)
         {
@@ -116,12 +141,24 @@ namespace Kans
 
     private:
         virtual void Shutdown();
+        void         UpdateNormalRectangle();
+        void         ApplyPlacement(const WindowPlacement& placement);
 
     private:
         GLFWwindow*         m_Window;
         WindowSpecification m_Specification;
-        EventCallbackFn     m_EventCallback;
+        EventCallbackFn     m_EventCallback = [](Event&) {};
 
+        WindowPlacement                      m_NormalPlacement;
+        WindowSize                           m_MinimumSize {0, 0};
+        bool                                 m_PlacementChanging = false;
+        bool                                 m_WasMaximized      = false;
+        bool                                 m_WaitingForRestore = false;
+        std::optional<WindowPlacement>       m_PendingPlacement;
+        std::function<TitlebarHit(int, int)> m_TitlebarHitTest;
+#ifdef _WIN32
+        std::unique_ptr<Win32WindowFrame> m_CustomFrame;
+#endif
         static int s_GLFWWindowsCount;
     };
 } // namespace Kans

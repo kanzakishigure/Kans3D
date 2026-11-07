@@ -7,6 +7,11 @@ set(KANS3D_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 file(GLOB_RECURSE KANS3D_HEADERS CONFIGURE_DEPENDS ${KANS3D_SRC}/*.h)
 file(GLOB_RECURSE KANS3D_SOURCES CONFIGURE_DEPENDS ${KANS3D_SRC}/*.cpp)
 
+# Native caption handling is isolated from the cross-platform GLFW implementation.
+if(NOT WIN32)
+    list(FILTER KANS3D_SOURCES EXCLUDE REGEX "/Win32WindowFrame\\.cpp$")
+endif()
+
 add_library(Kans3D STATIC
     ${KANS3D_HEADERS}
     ${KANS3D_SOURCES}
@@ -19,6 +24,7 @@ target_precompile_headers(Kans3D PRIVATE
 
 # ---- Compile definitions ----
 if(WIN32)
+    target_link_libraries(Kans3D PRIVATE dwmapi)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         # /bigobj: large template-heavy units (serializers, VFX compiler, big test files) exceed
         # the default COFF section limit (C1128). PUBLIC so the editor and tests inherit it.
