@@ -20,7 +20,9 @@ target_precompile_headers(Kans3D PRIVATE
 # ---- Compile definitions ----
 if(WIN32)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-        target_compile_options(Kans3D PUBLIC /Zc:preprocessor /utf-8)
+        # /bigobj: large template-heavy units (serializers, VFX compiler, big test files) exceed
+        # the default COFF section limit (C1128). PUBLIC so the editor and tests inherit it.
+        target_compile_options(Kans3D PUBLIC /Zc:preprocessor /utf-8 /bigobj)
     endif()
     target_compile_definitions(Kans3D PUBLIC
         PLATFORM_WINDOWS
