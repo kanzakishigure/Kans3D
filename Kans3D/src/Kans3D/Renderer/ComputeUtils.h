@@ -12,7 +12,8 @@ namespace Kans::ComputeUtils
                    std::vector<RenderHardware::Handle<RenderHardware::BindGroupLayout>> layouts)
     {
         auto program = CreateBuiltinComputeShader(device, builtin);
-        return device.CreateComputePipeline({program, std::move(layouts), program->GetPushConstantBytes()});
+        return device.CreateComputePipeline(
+            {program, std::move(layouts), program->GetPushConstantBytes(), program->DebugName});
     }
     // One-dimensional kernels. Reject multi-dimensional local sizes rather than
     // silently processing the wrong linear range in a kernel using GlobalInvocationID.x.

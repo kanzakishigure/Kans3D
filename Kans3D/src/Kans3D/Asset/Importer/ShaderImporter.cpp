@@ -161,6 +161,7 @@ namespace Kans
             };
             std::vector<ModuleSource>                               modules;
             ShaderData                                              shader;
+            shader.DebugName = context.SourceFile.generic_u8string();
             if (extension == ".shaderprog")
             {
                 auto domain = ParseShaderProgramDomain(*primary);
@@ -250,6 +251,12 @@ void main() { vec2 p=vec2((gl_VertexIndex<<1)&2, gl_VertexIndex&2); gl_Position=
                                        "Shader compilation failed: " + compiled.GetErrorMessage().substr(0, 4096)};
                 }
                 code->Modules.push_back({stage, "main", {compiled.cbegin(), compiled.cend()}});
+                if (code == &shader.Code)
+                    shader.DebugSources[stage] = *text;
+                else
+                    for (auto& pass : shader.Passes)
+                        if (code == &pass.Code)
+                            pass.DebugSources[stage] = *text;
             }
             auto valid = ValidateMaterialShaderPasses(shader.Code, shader.Passes);
             if (auto* error = std::get_if<AssetError>(&valid))

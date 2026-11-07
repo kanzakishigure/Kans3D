@@ -2612,6 +2612,9 @@ namespace Kans
             memory += s.MemoryBytes;
             cpu += s.CpuMilliseconds;
         }
+        for (const auto& s : stats)
+            if (!s.Failure.empty())
+                ImGui::TextDisabled("%s: Failed: %s", s.Name.c_str(), s.Failure.c_str());
         char gpu[32];
         if (m_Preview->GpuMilliseconds)
             std::snprintf(gpu, sizeof(gpu), "%.3f ms", *m_Preview->GpuMilliseconds);

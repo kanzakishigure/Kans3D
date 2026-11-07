@@ -1,4 +1,5 @@
 #pragma once
+#include <filesystem>
 #include <memory>
 #include "Kans3D/Core/UUID.h"
 #include "ParticleSystemComponent.h"
@@ -6,6 +7,7 @@
 namespace Kans
 {
     class Scene;
+    class AssetRegistry;
     class Entity;
 } // namespace Kans
 namespace Kans::Vfx
@@ -21,6 +23,9 @@ namespace Kans::Vfx
     {
         explicit EmitterInstance(const CompiledEmitter&);
         void Reset(); // Retains attribute storage and GPU workspaces.
+        void Fail(const std::string& message);
+        // Persists through playback resets; replaced when the asset is rebuilt.
+        std::string Failure {};
         ~EmitterInstance();
         EmitterInstance(EmitterInstance&&) noexcept;
         EmitterInstance&                                 operator=(EmitterInstance&&) noexcept;
@@ -120,6 +125,9 @@ namespace Kans::Vfx
         void                         PrepareMeshTables(ExecutionContext&, float, const glm::mat4&, const glm::mat4&);
         void                         Reset();
         void                         Step(float, const glm::mat4&, glm::vec3);
+        friend class VfxWorld;
+        std::vector<std::filesystem::path> m_ProductFiles {};
+        std::weak_ptr<const AssetRegistry> m_ProductRegistry {};
         Ref<const VfxSystemAsset>    m_Asset;
         std::vector<EmitterInstance> m_Emitters;
         ParameterMap                 m_Parameters;

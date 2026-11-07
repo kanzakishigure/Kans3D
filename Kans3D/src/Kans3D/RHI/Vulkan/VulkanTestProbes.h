@@ -13,6 +13,7 @@ namespace Kans::RenderHardware::VulkanTestProbes
         uint64_t             WaitIdleCalls;
         // Monotonic native buffer allocation count, including buffers already retired.
         uint64_t BufferCreations;
+        uint64_t PipelineAttempts;
     };
     using BarrierObserver =
         std::function<void(const std::vector<VkBufferMemoryBarrier2>&, const std::vector<VkImageMemoryBarrier2>&)>;
@@ -21,5 +22,7 @@ namespace Kans::RenderHardware::VulkanTestProbes
     using BufferWriteObserver = std::function<void(const BufferDesc&, size_t, const void*, size_t)>;
     void        SetBufferWriteObserver(const Device& device, BufferWriteObserver observer);
     Diagnostics Inspect(const Device& device);
+    // Test-only injection at the native pipeline creation boundary; empty disables it.
+    void        SetPipelineFailure(const Device& device, std::string nameSubstring);
     void        EmitValidationError(const Device& device, const char* message);
 } // namespace Kans::RenderHardware::VulkanTestProbes

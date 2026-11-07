@@ -11,6 +11,7 @@ namespace Kans
         std::array<RenderHardware::Handle<RenderHardware::Texture>, 3> Environment;
         RenderHardware::Handle<RenderHardware::Sampler>                EnvironmentSampler;
         std::vector<RenderHardware::Format> ColorFormats {RenderHardware::Format::RGBA8Unorm};
+        std::string                                                    DebugName {};
         bool                                Wireframe = false, WriteStencil = false;
         bool                                                           ParticleMesh   = false;
         size_t                                                         IndirectOffset = 0;

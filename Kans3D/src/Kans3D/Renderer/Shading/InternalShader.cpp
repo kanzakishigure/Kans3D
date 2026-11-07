@@ -29,6 +29,11 @@ namespace Kans
         }
         if (auto* error = std::get_if<AssetError>(&result))
             error->Message = "Internal shader '" + name + "': " + error->Message;
+        if (auto* data = std::get_if<ShaderData>(&result))
+        {
+            data->DebugName    = name;
+            data->DebugSources = {{ShaderProductStage::Vertex, vertex}, {ShaderProductStage::Fragment, fragment}};
+        }
         return cache.emplace(key, std::move(result)).first->second;
     }
 
@@ -84,6 +89,11 @@ namespace Kans
             CompileEmbeddedShaderProgram("KansShaderProgram 1\ncompute=Internal.comp\n", {{"Internal.comp", source}});
         if (auto* error = std::get_if<AssetError>(&product))
             error->Message = "Compute shader '" + name + "': " + error->Message;
+        if (auto* data = std::get_if<ShaderData>(&product))
+        {
+            data->DebugName    = name;
+            data->DebugSources = {{ShaderProductStage::Compute, source}};
+        }
         return cache.emplace(key, std::move(product)).first->second;
     }
     const InternalShaderData& GetBuiltinComputeShaderData(const std::string& name)

@@ -40,6 +40,7 @@ namespace Kans
         void Register(std::string name, std::unique_ptr<RenderFeature> feature, bool enabled = true);
         void SetEnabled(const std::string& name, bool enabled);
         bool IsEnabled(const std::string& name) const;
+        static void ReportPipelineFailure(const std::string& message);
         void Prepare(RenderView& view, RenderFrame& frame);
         void Inject(RenderExtensionPoint point, const RenderFeatureContext& context);
 
@@ -49,6 +50,7 @@ namespace Kans
             std::string                    Name;
             std::unique_ptr<RenderFeature> Feature;
             bool                           Enabled;
+            bool                           FailedFrame = false;
         };
         std::vector<Entry> m_Entries;
     };

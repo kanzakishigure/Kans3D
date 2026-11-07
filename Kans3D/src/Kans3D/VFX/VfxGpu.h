@@ -34,7 +34,7 @@ namespace Kans::Vfx
     class GpuEmitter
     {
     public:
-        GpuEmitter(RenderHardware::Device&, const CompiledEmitter&);
+        GpuEmitter(RenderHardware::Device&, const CompiledEmitter&, std::string debugName = {});
         void AddPasses(RenderGraph&, EmitterInstance&, bool readback = true);
         void Poll(EmitterInstance&);
         void Reset()
@@ -137,13 +137,15 @@ namespace Kans::Vfx
         std::array<uint64_t, 3>                                                  ReadbackSpawnRevisions {};
         uint64_t                                       SubmittedSequence = 0, LatestSequence = 0;
         const CompiledEmitter&                         Compiled;
+        std::string                                                              DebugName;
         bool                                                                     Initialized  = false;
         bool                                                                     ResetPending = false;
         RenderHardware::Handle<RenderHardware::Buffer> EmitterState;
-        Kernel                                         Make(const std::string&,
-                                                            const std::vector<RenderHardware::BindGroupLayoutEntry>&,
-                                                            uint32_t,
-                                                            const std::vector<uint32_t>* spirv = nullptr);
+        Kernel Make(const std::string& name,
+                    const std::string&,
+                    const std::vector<RenderHardware::BindGroupLayoutEntry>&,
+                    uint32_t,
+                    const std::vector<uint32_t>* spirv = nullptr);
     };
     glm::uvec4 Pack(const Value&);
     Value      Unpack(glm::uvec4, Type);

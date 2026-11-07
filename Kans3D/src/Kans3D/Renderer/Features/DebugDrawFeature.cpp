@@ -47,6 +47,7 @@ void main() { Color=LineColor; }
         desc.VertexBindings = {{0, sizeof(LineVertex), false}};
         desc.Attributes     = {{0, 0, uint32_t(offsetof(LineVertex, Position)), VertexFormat::Float3},
                                {1, 0, uint32_t(offsetof(LineVertex, Color)), VertexFormat::Float4}};
+        desc.DebugName      = depth == DebugDepth::Tested ? "DebugDraw/Depth" : "DebugDraw/Overlay";
         desc.ColorFormats.clear();
         desc.Blends.clear();
         for (size_t i = 0; i < target.Colors.size(); ++i)

@@ -10,6 +10,7 @@ namespace Kans
         auto decoded = DecodeShaderProduct(context.Data, context.Size);
         if (auto* error = std::get_if<AssetError>(&decoded))
             return *error;
+        std::get<ShaderData>(decoded).DebugName = "ShaderProduct/" + context.ID.ToString();
         auto asset     = CreateRef<ShaderDataAsset>(std::get<ShaderData>(std::move(decoded)));
         asset->assetID = context.ID;
         return asset;

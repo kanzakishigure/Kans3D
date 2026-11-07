@@ -43,10 +43,34 @@ namespace Kans
     {
         ParticleRenderFeature particles;
         if (particles.RunsAt(point))
-            particles.AddPasses(point, context);
+            particles.AddPasses(point, context); // Contains failures per emitter.
         DebugDrawFeature debug;
         if (debug.RunsAt(point))
-            debug.AddPasses(point, context);
+        {
+            const auto first       = context.Graph.PassCount();
+            bool       failedBuild = false;
+            try
+            {
+                debug.AddPasses(point, context);
+            }
+            catch (const RenderHardware::PipelineCreationError& error)
+            {
+                failedBuild = true;
+                RenderFeatureSet::ReportPipelineFailure(error.what());
+            }
+            if (context.Graph.PassCount() != first)
+            {
+                // DebugDrawFeature is local; keep only its failure flag alive for deferred recording.
+                auto failed = std::make_shared<bool>(failedBuild);
+                context.Graph.GuardPipelineFailures(
+                    first,
+                    [failed](const auto& error) {
+                        *failed = true;
+                        RenderFeatureSet::ReportPipelineFailure(error);
+                    },
+                    [failed] { return *failed; });
+            }
+        }
         if (context.View.Features)
             context.View.Features->Inject(point, context);
     }

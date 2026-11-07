@@ -200,6 +200,9 @@ void main()
             if (auto* error = std::get_if<AssetError>(&compiled))
                 throw std::runtime_error("Standard shader: " + error->Message);
             auto value    = std::get<ShaderData>(std::move(compiled));
+            value.DebugName    = particle ? "Kans3D/Standard/Particle" : "Kans3D/Standard";
+            value.DebugSources = {{ShaderProductStage::Vertex, stages.at("Standard.vert")},
+                                  {ShaderProductStage::Fragment, stages.at("Standard.frag")}};
             auto contract = ValidateMaterialShaderInterface(value.Reflection);
             if (auto* error = std::get_if<AssetError>(&contract))
                 throw std::runtime_error("Standard shader: " + error->Message);
@@ -319,6 +322,9 @@ void main()
             if (auto* error = std::get_if<AssetError>(&compiled))
                 throw std::runtime_error("Kans3D/SixWaySmoke shader: " + error->Message);
             auto value    = std::get<ShaderData>(std::move(compiled));
+            value.DebugName    = particle ? "Kans3D/SixWaySmoke/Particle" : "Kans3D/SixWaySmoke";
+            value.DebugSources = {{ShaderProductStage::Vertex, stages.at("SixWaySmoke.vert")},
+                                  {ShaderProductStage::Fragment, stages.at("SixWaySmoke.frag")}};
             auto contract = ValidateMaterialShaderInterface(value.Reflection);
             if (auto* error = std::get_if<AssetError>(&contract))
                 throw std::runtime_error("Kans3D/SixWaySmoke shader: " + error->Message);

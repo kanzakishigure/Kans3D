@@ -482,19 +482,50 @@ namespace Kans
                 m_Resources[r].Data = slot == uint32_t(-1) ? nullptr : buffers.at(slot);
             }
     }
+    void RenderGraph::GuardPipelineFailures(size_t                                  first,
+                                            std::function<void(const std::string&)> failure,
+                                            std::function<bool()>                   skip)
+    {
+        for (size_t i = first; i < m_Passes.size(); ++i)
+        {
+            // An emitter's more precise boundary takes priority over a feature's outer boundary.
+            if (m_Passes[i].PipelineFailure)
+                continue;
+            m_Passes[i].PipelineFailure = failure;
+            m_Passes[i].Skip            = skip;
+        }
+    }
     void RenderGraph::ExecutePass(RenderHardware::Device& device, GraphPass p)
     {
         auto& pass = m_Passes[p];
         if (pass.Submitted)
             return;
         auto commands = pass.Commands;
-        if (!commands)
+        if (pass.Skip && pass.Skip())
+        {
+            // Eagerly recorded passes belong to the same optional feature boundary too.
+            pass.Commands.reset();
+            commands                   = device.CreateCommandList();
+            pass.CpuRecordMilliseconds = 0;
+        }
+        else if (!commands)
         {
             const auto start = RenderClockMilliseconds();
             commands         = device.CreateCommandList();
             RenderGraphContext context {device, *commands, *this};
-            if (pass.Recorder)
-                pass.Recorder(context);
+            try
+            {
+                if (pass.Recorder)
+                    pass.Recorder(context);
+            }
+            catch (const RenderHardware::PipelineCreationError& error)
+            {
+                if (!pass.PipelineFailure)
+                    throw;
+                pass.PipelineFailure(error.what());
+                // The failed recorder may be inside BeginRendering; never submit its partial work.
+                commands = device.CreateCommandList();
+            }
             pass.CpuRecordMilliseconds = RenderClockMilliseconds() - start;
         }
         pass.Draws                  = commands->GetStatistics();

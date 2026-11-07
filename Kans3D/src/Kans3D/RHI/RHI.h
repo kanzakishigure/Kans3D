@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace Kans
@@ -260,9 +261,15 @@ namespace Kans::RenderHardware
     };
     class Sampler : public Resource
     {};
+    class PipelineCreationError : public std::runtime_error
+    {
+    public:
+        using std::runtime_error::runtime_error;
+    };
     class Shader : public Resource
     {
     public:
+        std::string                     DebugName {};
         virtual uint32_t GetPushConstantBytes() const = 0;
         virtual std::array<uint32_t, 3> GetWorkgroupSize() const { return {0, 0, 0}; }
     };
@@ -364,6 +371,7 @@ namespace Kans::RenderHardware
         Format DepthStencilFormat = Format::Depth32Float;
         uint32_t Samples            = 1;
         bool     AlphaToCoverage    = false;
+        std::string DebugName {};
     };
     class Pipeline : public Resource
     {
@@ -375,6 +383,7 @@ namespace Kans::RenderHardware
         Handle<Shader>                       Program;
         std::vector<Handle<BindGroupLayout>> GroupLayouts;
         uint32_t                             PushConstantBytes = 0;
+        std::string                          DebugName {};
     };
     class ComputePipeline : public Resource
     {

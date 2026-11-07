@@ -1,6 +1,9 @@
 #include "kspch.h"
 #include "RenderFeature.h"
+#include <mutex>
+#include <set>
 #include <stdexcept>
+#include "Kans3D/Core/Log/Log.h"
 
 namespace Kans
 {
@@ -30,19 +33,53 @@ namespace Kans
                 return entry.Enabled;
         throw std::invalid_argument("RenderFeature: unknown feature '" + name + "'");
     }
+    void RenderFeatureSet::ReportPipelineFailure(const std::string& message)
+    {
+        static std::mutex                 mutex;
+        static std::set<std::string>      logged;
+        const std::lock_guard<std::mutex> lock(mutex);
+        if (logged.insert(message).second && Log::GetCoreLogger())
+            CORE_ERROR("Skipping render feature: {}", message);
+    }
     void RenderFeatureSet::Prepare(RenderView& view, RenderFrame& frame)
     {
         for (auto& entry : m_Entries)
+        {
+            entry.FailedFrame = false;
             if (entry.Enabled)
-                entry.Feature->Prepare(view, frame);
+                try
+                {
+                    entry.Feature->Prepare(view, frame);
+                }
+                catch (const RenderHardware::PipelineCreationError& error)
+                {
+                    entry.FailedFrame = true;
+                    ReportPipelineFailure(error.what());
+                }
+        }
     }
     void RenderFeatureSet::Inject(RenderExtensionPoint point, const RenderFeatureContext& context)
     {
         for (auto& entry : m_Entries)
-            if (entry.Enabled && entry.Feature->RunsAt(point))
+            if (entry.Enabled && !entry.FailedFrame && entry.Feature->RunsAt(point))
             {
                 const auto first = context.Graph.PassCount();
-                entry.Feature->AddPasses(point, context);
+                try
+                {
+                    entry.Feature->AddPasses(point, context);
+                }
+                catch (const RenderHardware::PipelineCreationError& error)
+                {
+                    entry.FailedFrame = true;
+                    ReportPipelineFailure(error.what());
+                }
+                context.Graph.GuardPipelineFailures(
+                    first,
+                    [&entry](const auto& error) {
+                        entry.FailedFrame = true;
+                        ReportPipelineFailure(error);
+                    },
+                    [&entry] { return entry.FailedFrame; });
                 // Order without retaining unused feature outputs. No temporary callback/list copies.
                 for (size_t pass = first; pass < context.Graph.PassCount(); ++pass)
                     if (pass)

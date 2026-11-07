@@ -240,6 +240,7 @@ void main() {
         {
             PipelineDesc desc;
             desc.Program         = m_Shader;
+            desc.DebugName       = kind == 0 ? "Bloom/Filter" : kind == 1 ? "Bloom/Add" : "Bloom/Dirt";
             desc.GroupLayouts    = {m_Layout};
             desc.ColorFormats    = {Format::RGBA16Float};
             desc.Rasterizer.Cull = CullMode::None;

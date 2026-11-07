@@ -24,6 +24,7 @@ namespace Kans::VfxPreview
     struct EmitterStats
     {
         std::string Handle, Name;
+        std::string Failure {};
         bool        Gpu = false;
         uint32_t    Count = 0, Capacity = 0;
         uint64_t    SpawnedThisFrame = 0; // Particles spawned by the last frame's steps.

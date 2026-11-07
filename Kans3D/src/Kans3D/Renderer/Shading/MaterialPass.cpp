@@ -68,6 +68,8 @@ namespace Kans
                 desc.Program = smoothFallback ? (extraPass ? extraPass->SkinnedNormalFallbackProgram :
                                                              shader.SkinnedNormalFallbackProgram) :
                                                 (extraPass ? extraPass->SkinnedProgram : shader.SkinnedProgram);
+            desc.DebugName =
+                data.DebugName.empty() ? desc.Program->DebugName : data.DebugName + "/" + desc.Program->DebugName;
             desc.GroupLayouts = {shader.EngineLayout, shader.MaterialLayout};
             if (skinned)
                 desc.GroupLayouts.push_back(shader.SkinLayout);

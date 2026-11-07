@@ -497,6 +497,7 @@ namespace Kans::VfxPreview
             const auto&  e        = instance->Emitters()[i];
             const auto&  settings = e.Compiled->Settings;
             EmitterStats s;
+            s.Failure                 = e.Failure;
             s.Handle           = e.Compiled->Handle;
             s.Name             = settings.Name;
             s.Gpu              = settings.Target == Vfx::SimTarget::GPU;

@@ -4,11 +4,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <fstream>
+#include <mutex>
 #include <set>
 #include <backends/imgui_impl_vulkan.h>
 #include <spirv-tools/libspirv.hpp>
 #include <spirv_cross/spirv_cross.hpp>
 #include "Kans3D/Asset/Runtime/ShaderData.h"
+#include "Kans3D/Core/FileSystem/FileSystem.h"
+#include "Kans3D/Core/Log/Log.h"
 #include "Kans3D/Core/Window.h"
 #include "Kans3D/RHI/PipelineKey.h"
 #include "VulkanInternal.h"
@@ -33,6 +37,8 @@ namespace Kans::RenderHardware
             std::vector<VkDescriptorPool>                         DescriptorPools;
             std::unordered_map<std::string, std::weak_ptr<VKSet>> DescriptorCache;
             uint64_t        PipelineCreations = 0, DescriptorAllocations = 0, GroupCreationNanoseconds = 0;
+            uint64_t        PipelineAttempts = 0;
+            std::string     FailPipeline;
             uint64_t        WaitIdleCalls = 0;
             uint64_t        BufferCreations = 0;
             VulkanTestProbes::BufferWriteObserver BufferWrites;
@@ -2375,6 +2381,12 @@ namespace Kans::RenderHardware::VulkanTestProbes
         owner->CheckThread();
         owner->BufferWrites = std::move(observer);
     }
+    void SetPipelineFailure(const Device& device, std::string nameSubstring)
+    {
+        auto owner = dynamic_cast<const VKDevice&>(device).GetOwner();
+        owner->CheckThread();
+        owner->FailPipeline = std::move(nameSubstring);
+    }
     Diagnostics Inspect(const Device& device)
     {
         const auto& state   = dynamic_cast<const VKDevice&>(device).GetState();
@@ -2388,7 +2400,8 @@ namespace Kans::RenderHardware::VulkanTestProbes
                 state.DescriptorPools.size(),
                 state.GroupCreationNanoseconds,
                 state.WaitIdleCalls,
-                state.BufferCreations};
+                state.BufferCreations,
+                state.PipelineAttempts};
     }
     void EmitValidationError(const Device& device, const char* message)
     {

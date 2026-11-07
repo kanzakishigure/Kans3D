@@ -19,6 +19,9 @@ uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 mes
         try
         {
             auto result = data;
+            if (!result.DebugName.empty())
+                result.DebugName += ribbon ? "/ParticleRibbon" : mesh ? "/ParticleMesh" : "/ParticleSprite";
+            result.DebugSources.clear();
             // Built-in particle lighting is absent from their ordinary mesh SPIR-V.
             // Select the matching source in the shared sprite/mesh/ribbon path.
             const auto matches = [&](const ShaderData& shader) {
@@ -35,7 +38,7 @@ uvec4 offsets0;uvec4 offsets1;vec4 pivotGrid;vec4 facing;vec4 alignment;vec4 mes
                 result.Code = GetStandardShader(true).Code;
             else if (matches(GetSixWaySmokeShader()))
                 result.Code = GetSixWaySmokeShader(true).Code;
-            auto convert = [&](ShaderProgramCode& code) {
+            auto convert = [&](ShaderProgramCode& code, std::map<ShaderProductStage, std::string>& sources) {
                 for (auto& module : code.Modules)
                 {
                     spirv_cross::CompilerGLSL cross(module.Words);
@@ -309,6 +312,7 @@ kans_SpriteOutput.a*=fade;if(sprite.facing.w>0.5)kans_SpriteOutput.rgb*=fade;}
                     shaderc::Compiler       compiler;
                     shaderc::CompileOptions compileOptions;
                     compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
+                    sources[module.Stage] = source;
                     auto compiled = compiler.CompileGlslToSpv(
                         source,
                         module.Stage == ShaderProductStage::Vertex ? shaderc_vertex_shader : shaderc_fragment_shader,
@@ -320,9 +324,9 @@ kans_SpriteOutput.a*=fade;if(sprite.facing.w>0.5)kans_SpriteOutput.rgb*=fade;}
                     module.EntryPoint = "main";
                 }
             };
-            convert(result.Code);
+            convert(result.Code, result.DebugSources);
             for (auto& pass : result.Passes)
-                convert(pass.Code);
+                convert(pass.Code, pass.DebugSources);
             result.Reflection.clear();
             return result;
         }

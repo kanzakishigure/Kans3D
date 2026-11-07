@@ -63,9 +63,12 @@ std::string PushLayout(spirv_cross::Compiler& compiler, uint32_t id)
     }
     return key;
 }
+void NameObject(const State&, VkObjectType, uint64_t, const std::string&);
 struct VKShader final : Shader
 {
     Allocation                         Memory;
+    Kans::ShaderProgramCode                         DebugCode;
+    std::map<Kans::ShaderProductStage, std::string> DebugSources;
     uint32_t                           PushBytes = 0;
     bool                               Compute   = false;
     std::array<uint32_t, 3>            Workgroup {};
@@ -75,6 +78,17 @@ struct VKShader final : Shader
     std::vector<VkShaderStageFlagBits> Stages;
     VKShader(std::shared_ptr<State> owner, const Kans::ShaderData& data) : Memory(std::move(owner))
     {
+        DebugName    = data.DebugName;
+        DebugCode    = data.Code;
+        DebugSources = data.DebugSources;
+        if (DebugName.empty())
+        {
+            uint64_t hash = 14695981039346656037ull;
+            for (const auto& module : data.Code.Modules)
+                for (auto word : module.Words)
+                    hash = (hash ^ word) * 1099511628211ull;
+            DebugName = "Shader-" + std::to_string(hash);
+        }
         Compute = data.Code.Modules.size() == 1 && data.Code.Modules[0].Stage == Kans::ShaderProductStage::Compute;
         Require(Compute || (data.Code.Modules.size() == 2 &&
                             std::none_of(data.Code.Modules.begin(),
@@ -210,6 +224,8 @@ struct VKShader final : Shader
                 VkShaderModule native;
                 Check(vkCreateShaderModule(device, &create, nullptr, &native));
                 Modules.push_back(native);
+                NameObject(
+                    *Memory.Owner, VK_OBJECT_TYPE_SHADER_MODULE, (uint64_t)native, DebugName + "/" + module.EntryPoint);
                 EntryPoints.push_back(module.EntryPoint);
                 Stages.push_back(module.Stage == Kans::ShaderProductStage::Vertex  ? VK_SHADER_STAGE_VERTEX_BIT :
                                  module.Stage == Kans::ShaderProductStage::Compute ? VK_SHADER_STAGE_COMPUTE_BIT :
@@ -520,6 +536,145 @@ void ValidatePipeline(const std::shared_ptr<State>& owner, const PipelineDesc& d
         Range(b->Stride, a.Offset, AttributeBytes(a.Type));
     }
 }
+// Names are diagnostic metadata; they deliberately do not participate in pipeline cache keys.
+void NameObject(const State& state, VkObjectType type, uint64_t object, const std::string& name)
+{
+    if (!state.Native.Options.Validation || name.empty()) // Context enables debug_utils with validation.
+        return;
+    auto setName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+        vkGetDeviceProcAddr(state.Native.Logical, "vkSetDebugUtilsObjectNameEXT"));
+    if (setName)
+    {
+        VkDebugUtilsObjectNameInfoEXT info {VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};
+        info.objectType   = type;
+        info.objectHandle = object;
+        info.pObjectName  = name.c_str();
+        setName(state.Native.Logical, &info);
+    }
+}
+const char* PipelineResultName(VkResult result)
+{
+    switch (result)
+    {
+        case VK_ERROR_OUT_OF_HOST_MEMORY:
+            return "VK_ERROR_OUT_OF_HOST_MEMORY";
+        case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+            return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+        case VK_ERROR_INITIALIZATION_FAILED:
+            return "VK_ERROR_INITIALIZATION_FAILED";
+        case VK_ERROR_DEVICE_LOST:
+            return "VK_ERROR_DEVICE_LOST";
+        case VK_ERROR_MEMORY_MAP_FAILED:
+            return "VK_ERROR_MEMORY_MAP_FAILED";
+        case VK_ERROR_LAYER_NOT_PRESENT:
+            return "VK_ERROR_LAYER_NOT_PRESENT";
+        case VK_ERROR_EXTENSION_NOT_PRESENT:
+            return "VK_ERROR_EXTENSION_NOT_PRESENT";
+        case VK_ERROR_FEATURE_NOT_PRESENT:
+            return "VK_ERROR_FEATURE_NOT_PRESENT";
+        case VK_ERROR_INCOMPATIBLE_DRIVER:
+            return "VK_ERROR_INCOMPATIBLE_DRIVER";
+        case VK_ERROR_TOO_MANY_OBJECTS:
+            return "VK_ERROR_TOO_MANY_OBJECTS";
+        case VK_ERROR_FORMAT_NOT_SUPPORTED:
+            return "VK_ERROR_FORMAT_NOT_SUPPORTED";
+        case VK_ERROR_FRAGMENTED_POOL:
+            return "VK_ERROR_FRAGMENTED_POOL";
+        case VK_ERROR_OUT_OF_POOL_MEMORY:
+            return "VK_ERROR_OUT_OF_POOL_MEMORY";
+        case VK_ERROR_INVALID_EXTERNAL_HANDLE:
+            return "VK_ERROR_INVALID_EXTERNAL_HANDLE";
+        case VK_ERROR_FRAGMENTATION:
+            return "VK_ERROR_FRAGMENTATION";
+        case VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS:
+            return "VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS";
+        case VK_ERROR_VALIDATION_FAILED_EXT:
+            return "VK_ERROR_VALIDATION_FAILED_EXT";
+        case VK_ERROR_NOT_PERMITTED_KHR:
+            return "VK_ERROR_NOT_PERMITTED_KHR";
+        case VK_ERROR_INVALID_SHADER_NV:
+            return "VK_ERROR_INVALID_SHADER_NV";
+        case VK_PIPELINE_COMPILE_REQUIRED:
+            return "VK_PIPELINE_COMPILE_REQUIRED";
+        case VK_ERROR_UNKNOWN:
+            return "VK_ERROR_UNKNOWN";
+        default:
+            return "VK_RESULT_UNRECOGNIZED";
+    }
+}
+void CheckPipeline(VkResult result, const std::string& name, const VKShader& shader)
+{
+    if (result == VK_SUCCESS)
+        return;
+    std::string entries;
+    for (const auto& entry : shader.EntryPoints)
+        entries += (entries.empty() ? "" : ", ") + entry;
+    const auto message = "Vulkan pipeline '" + name + "' (shader '" + shader.DebugName + "', entry point '" + entries +
+                         "') failed: " + PipelineResultName(result) + " (" + std::to_string(result) + ")";
+    static std::mutex                 mutex;
+    static std::set<std::string>      dumped;
+    const std::lock_guard<std::mutex> lock(mutex);
+    if (dumped.insert(name).second)
+    {
+        try
+        {
+            const auto  root      = KansFileSystem::GetProjectRoot();
+            const auto  directory = root.empty() ? std::filesystem::current_path() / "FailedShaders" : root / "Cache/FailedShaders";
+            std::string safe;
+            for (unsigned char c : name)
+                safe += ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
+                         c == '_') ?
+                            char(c) :
+                            '_';
+            if (safe.size() > 160)
+                safe.resize(160);
+            // Preserve identity when punctuation or truncation produces the same basename.
+            uint64_t hash = 14695981039346656037ull;
+            for (unsigned char c : name)
+                hash = (hash ^ c) * 1099511628211ull;
+            safe += "-" + std::to_string(hash);
+            if (!KansFileSystem::Exists(directory) && !KansFileSystem::CreateDirectories(directory))
+                throw std::runtime_error("Cannot create shader dump directory");
+            for (const auto& module : shader.DebugCode.Modules)
+            {
+                const std::string stage = module.Stage == Kans::ShaderProductStage::Compute ? "comp" :
+                                          module.Stage == Kans::ShaderProductStage::Vertex  ? "vert" :
+                                                                                              "frag";
+                const auto        base  = directory / (safe + (shader.Compute ? "" : "." + stage));
+                std::ofstream     binary;
+                binary.exceptions(std::ios::badbit | std::ios::failbit);
+                binary.open(base.string() + ".spv", std::ios::binary);
+                binary.write(reinterpret_cast<const char*>(module.Words.data()),
+                             module.Words.size() * sizeof(uint32_t));
+                binary.close();
+                if (auto source = shader.DebugSources.find(module.Stage); source != shader.DebugSources.end())
+                {
+                    std::ofstream text;
+                    text.exceptions(std::ios::badbit | std::ios::failbit);
+                    text.open((directory / (safe + "." + stage)).string(), std::ios::binary);
+                    text << source->second;
+                    text.close();
+                }
+            }
+            if (Log::GetCoreLogger())
+                CORE_ERROR("{}; shader dump: {}",
+                              message,
+                              (directory / (safe + (shader.Compute ? ".spv" : ".vert.spv"))).string());
+        }
+        catch (const std::exception& error)
+        {
+            if (Log::GetCoreLogger())
+                CORE_ERROR("{}; shader dump failed: {}", message, error.what());
+        }
+    }
+    throw PipelineCreationError(message);
+}
+bool InjectPipelineFailure(State& state, const std::string& name)
+{
+    ++state.PipelineAttempts;
+    return !state.FailPipeline.empty() && name.find(state.FailPipeline) != std::string::npos;
+}
+
 struct VKPipeline final : Pipeline
 {
     Allocation       Memory;
@@ -682,7 +837,14 @@ struct VKPipeline final : Pipeline
             create.pColorBlendState    = &blend;
             create.pDynamicState       = &dynamic;
             create.layout              = Layout;
-            Check(vkCreateGraphicsPipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native));
+            if (Desc.DebugName.empty())
+                Desc.DebugName = shader->DebugName;
+            const auto result =
+                InjectPipelineFailure(*Memory.Owner, Desc.DebugName) ?
+                    VK_ERROR_UNKNOWN :
+                    vkCreateGraphicsPipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native);
+            CheckPipeline(result, Desc.DebugName, *shader);
+            NameObject(*Memory.Owner, VK_OBJECT_TYPE_PIPELINE, (uint64_t)Native, Desc.DebugName);
             ++Memory.Owner->PipelineCreations;
             Memory.Delete = [device, pipeline = Native, nativeLayout = Layout] {
                 vkDestroyPipeline(device, pipeline, nullptr);
@@ -691,6 +853,8 @@ struct VKPipeline final : Pipeline
         }
         catch (...)
         {
+            if (Native)
+                vkDestroyPipeline(device, Native, nullptr);
             vkDestroyPipelineLayout(device, Layout, nullptr);
             throw;
         }
@@ -754,7 +918,14 @@ struct VKComputePipeline final : ComputePipeline
             create.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
             create.stage.module = shader->Modules[0];
             create.stage.pName  = shader->EntryPoints[0].c_str();
-            Check(vkCreateComputePipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native));
+            if (Desc.DebugName.empty())
+                Desc.DebugName = shader->DebugName;
+            const auto result =
+                InjectPipelineFailure(*Memory.Owner, Desc.DebugName) ?
+                    VK_ERROR_UNKNOWN :
+                    vkCreateComputePipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native);
+            CheckPipeline(result, Desc.DebugName, *shader);
+            NameObject(*Memory.Owner, VK_OBJECT_TYPE_PIPELINE, (uint64_t)Native, Desc.DebugName);
             ++Memory.Owner->PipelineCreations;
             Memory.Delete = [device, pipeline = Native, layout = Layout] {
                 vkDestroyPipeline(device, pipeline, nullptr);
@@ -763,6 +934,8 @@ struct VKComputePipeline final : ComputePipeline
         }
         catch (...)
         {
+            if (Native)
+                vkDestroyPipeline(device, Native, nullptr);
             vkDestroyPipelineLayout(device, Layout, nullptr);
             throw;
         }

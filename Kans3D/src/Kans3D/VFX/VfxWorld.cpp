@@ -75,6 +75,21 @@ namespace Kans::Vfx
                 Parameters[name] = *p.Default;
     }
     EmitterInstance::~EmitterInstance() = default;
+    void EmitterInstance::Fail(const std::string& message)
+    {
+        if (!Failure.empty())
+            return;
+        Failure = message;
+        Pending.clear();
+        Alive.clear();
+        for (auto& [name, events] : Events)
+            events.clear();
+        ParticleCount = PendingBurst = 0;
+        TickMilliseconds             = 0;
+        // GPU resources can still be referenced by this frame's graph recorders.
+        if (Log::GetCoreLogger())
+            CORE_ERROR("VFX emitter '{}': {}", Compiled->Settings.Name, Failure);
+    }
     void EmitterInstance::Reset()
     {
         Parameters.clear();
@@ -200,6 +215,10 @@ namespace Kans::Vfx
     }
     bool SystemInstance::IsComplete() const
     {
+        // Retain failed instances for diagnostics and asset-change retries, including AutoDestroy systems.
+        for (const auto& e : m_Emitters)
+            if (!e.Failure.empty())
+                return false;
         if (m_Spawning && m_Parameters.at("System.ExecutionState").Integer < 2)
         {
             for (const auto& e : m_Emitters)
@@ -245,6 +264,8 @@ namespace Kans::Vfx
         for (auto& e : m_Emitters)
             if (e.Compiled->Settings.Name == name)
             {
+                if (!e.Failure.empty())
+                    return;
                 e.PendingBurst = uint32_t(std::min(uint64_t(UINT32_MAX), uint64_t(e.PendingBurst) + count));
                 return;
             }
@@ -436,6 +457,8 @@ namespace Kans::Vfx
         for (auto emitterIndex : m_Asset->GetData().TickOrder)
         {
             auto& e = m_Emitters[emitterIndex];
+            if (!e.Failure.empty())
+                continue;
             // Times this emitter's share of the tick on every exit of the iteration.
             struct Timer
             {
@@ -912,6 +935,8 @@ namespace Kans::Vfx
         colliders->GPU = m_CollisionGPU;
         std::set<UUID>    live;
         std::vector<UUID> destroy;
+        auto              assetManager = m_Scene.GetAssetManager();
+        auto              registry     = assetManager ? assetManager->GetRegistry() : nullptr;
         m_Scene.m_Registry.view<ParticleSystemComponent>().each([&](auto handle, const ParticleSystemComponent& c) {
             Entity entity {handle, &m_Scene};
             auto   id = entity.GetUUID();
@@ -922,7 +947,43 @@ namespace Kans::Vfx
                 m_Configurations.erase(id);
                 return;
             }
+            const auto productFiles = [&]() {
+                std::vector<std::filesystem::path> files;
+                if (registry)
+                {
+                    std::set<AssetID> visited;
+                    const auto        collect = [&](const auto& self, AssetID asset) -> void {
+                        if (!visited.insert(asset).second)
+                            return;
+                        if (auto product = registry->Find(asset, assetManager->GetTarget()))
+                        {
+                            files.push_back(product->Location.RelativeFile.GetPath());
+                            for (auto dependency : product->Metadata.Dependencies)
+                                if (auto record = registry->Find(dependency, assetManager->GetTarget());
+                                    record && record->Metadata.Type == AssetType::VfxEmitter)
+                                    self(self, dependency);
+                        }
+                    };
+                    collect(collect, c.System);
+                }
+                return files;
+            };
             auto old = m_Configurations.find(id);
+            if (auto instance = Find(id); instance && instance->m_ProductRegistry.lock() != registry)
+            {
+                // A forced re-import can publish identical bytes without an AssetManager content-change event.
+                const auto files  = productFiles();
+                const bool failed = std::any_of(instance->Emitters().begin(),
+                                                instance->Emitters().end(),
+                                                [](const auto& emitter) { return !emitter.Failure.empty(); });
+                if (failed && !files.empty() && files != instance->m_ProductFiles)
+                    old = m_Configurations.end();
+                else
+                {
+                    instance->m_ProductFiles    = files;
+                    instance->m_ProductRegistry = registry;
+                }
+            }
             if (old == m_Configurations.end() || old->second != c)
             {
                 Ref<const VfxSystemAsset> source;
@@ -1007,6 +1068,8 @@ namespace Kans::Vfx
                 }
                 auto instance =
                     std::make_unique<SystemInstance>(source, matched, m_Scene.GetWorldTransform(entity), meshSources);
+                instance->m_ProductFiles    = productFiles();
+                instance->m_ProductRegistry = registry;
                 instance->AutoDestroy = m_AutoDestroy.count(id) != 0;
                 m_Instances[id]       = std::move(instance);
                 m_Configurations[id]  = c;

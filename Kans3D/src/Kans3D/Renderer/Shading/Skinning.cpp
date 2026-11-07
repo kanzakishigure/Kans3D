@@ -9,7 +9,11 @@ namespace Kans
         try
         {
             ShaderData result  = data;
-            auto       convert = [smoothNormalFallback](ShaderProgramCode& code) {
+            if (!result.DebugName.empty())
+                result.DebugName += smoothNormalFallback ? "/SkinnedNormalFallback" : "/Skinned";
+            result.DebugSources.erase(ShaderProductStage::Vertex);
+            auto convert = [smoothNormalFallback](ShaderProgramCode&                         code,
+                                                  std::map<ShaderProductStage, std::string>& sources) {
                 for (auto& module : code.Modules)
                     if (module.Stage == ShaderProductStage::Vertex)
                     {
@@ -150,6 +154,7 @@ void main() {
                         shaderc::Compiler       shaderCompiler;
                         shaderc::CompileOptions compileOptions;
                         compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
+                        sources[module.Stage] = source;
                         auto compiled = shaderCompiler.CompileGlslToSpv(
                             source, shaderc_vertex_shader, "KansSkinning.vert", compileOptions);
                         if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
@@ -158,9 +163,9 @@ void main() {
                         module.EntryPoint = "main";
                     }
             };
-            convert(result.Code);
+            convert(result.Code, result.DebugSources);
             for (auto& pass : result.Passes)
-                convert(pass.Code);
+                convert(pass.Code, pass.DebugSources);
             return result;
         }
         catch (const std::exception& e)

@@ -174,6 +174,7 @@ namespace Kans
         ShaderProgramCode                  Code;
         ShaderPassState                    State;
         std::vector<ShaderStageReflection> Reflection;
+        std::map<ShaderProductStage, std::string> DebugSources {};
     };
     enum class ShaderOutputSpace : uint32_t
     {
@@ -203,6 +204,9 @@ namespace Kans
         ShaderOutputSpace                   OutputSpace = ShaderOutputSpace::Display;
         ShaderDomain                        Domain      = ShaderDomain::Surface;
         PostProcessStage                    PostStage   = PostProcessStage::BeforeToneMap;
+        // Runtime diagnostics only; excluded from the serialized product.
+        std::string                               DebugName {};
+        std::map<ShaderProductStage, std::string> DebugSources {};
     };
     std::variant<std::vector<ShaderStageReflection>, AssetError> InspectShaderProgram(const ShaderProgramCode& code);
     class ShaderDataAsset                                        final : public Asset

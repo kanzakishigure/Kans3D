@@ -64,30 +64,35 @@ namespace Kans::Vfx
             std::memcpy(&v.Data, &x, 16);
         return v;
     }
-    GpuEmitter::Kernel GpuEmitter::Make(const std::string&                       source,
+    GpuEmitter::Kernel GpuEmitter::Make(const std::string&                       name,
+                                        const std::string&                       source,
                                         const std::vector<BindGroupLayoutEntry>& bindings,
                                         uint32_t                                 push,
                                         const std::vector<uint32_t>*             spirv)
     {
+        const auto     namePath = DebugName + "/" + name;
         Handle<Shader> shader;
         if (spirv)
         {
             ShaderData data;
             data.Code.Modules.push_back({ShaderProductStage::Compute, "main", *spirv});
+            data.DebugName    = namePath;
+            data.DebugSources = {{ShaderProductStage::Compute, source}};
             shader = Device.CreateShader(data);
         }
         else
         {
-            const auto& data = GetInternalComputeShaderData("VFX", source);
+            const auto& data = GetInternalComputeShaderData(namePath, source);
             if (auto e = std::get_if<AssetError>(&data))
                 throw std::invalid_argument(e->Message);
             shader = Device.CreateShader(std::get<ShaderData>(data));
         }
         auto layout = Device.CreateBindGroupLayout({0, bindings});
-        return {Device.CreateComputePipeline({shader, {layout}, push}), layout};
+        return {Device.CreateComputePipeline({shader, {layout}, push, namePath}), layout};
     }
-    GpuEmitter::GpuEmitter(RenderHardware::Device& device, const CompiledEmitter& compiled) :
-        Device(device), Compiled(compiled)
+    GpuEmitter::GpuEmitter(RenderHardware::Device& device, const CompiledEmitter& compiled, std::string debugName) :
+        Device(device), Compiled(compiled),
+        DebugName(debugName.empty() ? "VFX/" + compiled.Settings.Name : std::move(debugName))
     {
         auto buffer = [&](size_t bytes, BufferUsage extra = BufferUsage(0)) {
             return Device.CreateBuffer(
@@ -121,7 +126,8 @@ namespace Kans::Vfx
             storage.Accumulation = buffer(bytes);
         }
         if (!Grids.empty())
-            GridResolve = Make(R"(#version 450
+            GridResolve = Make("GridResolve",
+                               R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) readonly buffer Previous {vec4 previous[];};
 layout(set=0,binding=1,std430) buffer Next {vec4 nextValues[];};
@@ -133,7 +139,7 @@ void main(){uint i=gl_GlobalInvocationID.x;if(i>=p.words)return;nextValues[i]=pr
                                 {1, BindingType::StorageBuffer},
                                 {2, BindingType::ReadOnlyStorageBuffer}},
                                4);
-        auto makeStage = [&](const Program& program) {
+        auto makeStage = [&](const Program& program, const std::string& name) {
             std::vector<BindGroupLayoutEntry> bindings = {{0, BindingType::StorageBuffer},
                                                           {1, BindingType::ReadOnlyStorageBuffer},
                                                           {2, BindingType::StorageBuffer},
@@ -184,16 +190,16 @@ void main(){uint i=gl_GlobalInvocationID.x;if(i>=p.words)return;nextValues[i]=pr
             auto& data                 = InterfaceData[&program];
             data                       = GpuInterfaceTable(program, {});
             InterfaceBuffers[&program] = buffer(data.size() * 16);
-            return Make(program.GLSL, bindings, 24, &program.SpirV);
+            return Make(name, program.GLSL, bindings, 24, &program.SpirV);
         };
         for (const auto& [stage, program] : compiled.Programs)
             if (program.Target == SimTarget::GPU)
-                StageKernels[stage] = makeStage(program);
+                StageKernels[stage] = makeStage(program, StageName(stage));
         for (const auto& handler : compiled.Handlers)
-            HandlerKernels.push_back(makeStage(handler.Bytecode));
+            HandlerKernels.push_back(makeStage(handler.Bytecode, "Handler/" + handler.Settings.Guid));
         for (const auto& stage : compiled.SimulationStages)
         {
-            SimulationKernels.push_back(makeStage(stage.Bytecode));
+            SimulationKernels.push_back(makeStage(stage.Bytecode, "SimulationStage/" + stage.Settings.Name));
             std::set<std::string> splats;
             for (const auto& instruction : stage.Bytecode.Code)
                 if (instruction.Op == "GridAddFloat")
@@ -202,7 +208,8 @@ void main(){uint i=gl_GlobalInvocationID.x;if(i>=p.words)return;nextValues[i]=pr
         }
         Spawn        = StageKernels.at(Stage::ParticleSpawn);
         Update       = StageKernels.at(Stage::ParticleUpdate);
-        Prepare      = Make(R"(#version 450
+        Prepare      = Make("Prepare",
+                            R"(#version 450
 layout(local_size_x=1) in;
 layout(set=0,binding=0,std430) buffer Counters{uint c[];};
 layout(push_constant) uniform P{uint requested;uint allowRate;}p;
@@ -210,7 +217,9 @@ void main(){uint rate=p.allowRate!=0u?c[15]:0u;uint requested=p.requested>0xffff
 )",
                             {{0, BindingType::StorageBuffer}},
                             8);
+        // NV1: NVIDIA NVVM fails on division-based overflow checks; use exact multiply halves.
         PrepareEvent = Make(
+            "PrepareEvent",
             R"(#version 450
 layout(local_size_x=1) in;
 layout(set=0,binding=0,std430) buffer Counters{uint c[];};
@@ -218,7 +227,7 @@ layout(set=0,binding=1,std430) readonly buffer Events{uvec4 events[];};
 layout(set=0,binding=2,std430) buffer Arguments{uint args[];};
 layout(push_constant) uniform P{uint number;uint limit;uint every;}p;
 void main(){uint count=min(events[0].x,p.limit);uint n=0u;
-if(p.every!=0u)n=c[1];else{uint requested=p.number==0u?0u:(count>0xffffffffu/p.number?0xffffffffu:count*p.number);n=min(requested,c[0]);uint before=atomicAdd(c[0],0u-n);c[2]=n;c[4]=before-n;c[5]=c[3];c[3]+=n;c[6]+=requested-n;c[7]+=n;}
+if(p.every!=0u)n=c[1];else{uint hi,lo;umulExtended(count,p.number,hi,lo);uint requested=hi!=0u?0xffffffffu:lo;n=min(requested,c[0]);uint before=atomicAdd(c[0],0u-n);c[2]=n;c[4]=before-n;c[5]=c[3];c[3]+=n;c[6]+=requested-n;c[7]+=n;}
 args[0]=(n+63u)/64u;args[1]=1u;args[2]=1u;}
 )",
             {{0, BindingType::StorageBuffer}, {1, BindingType::ReadOnlyStorageBuffer}, {2, BindingType::StorageBuffer}},
@@ -230,7 +239,7 @@ args[0]=(n+63u)/64u;args[1]=1u;args[2]=1u;}
                                                       {2, BindingType::StorageBuffer},
                                                       {3, BindingType::StorageBuffer},
                                                       {4, BindingType::StorageBuffer}}});
-        Compact      = {device.CreateComputePipeline({program, {layout}, 4}), layout};
+        Compact      = {device.CreateComputePipeline({program, {layout}, 4, DebugName + "/CompactAlive"}), layout};
         auto source  = std::string(R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) readonly buffer Counters{uint c[];};
@@ -282,13 +291,15 @@ lower[lane]=vec4(lo,radius);upper[lane]=vec4(hi,0);barrier();
 for(uint stride=32;stride>0;stride/=2){if(lane<stride){lower[lane].xyz=min(lower[lane].xyz,lower[lane+stride].xyz);lower[lane].w=max(lower[lane].w,lower[lane+stride].w);upper[lane].xyz=max(upper[lane].xyz,upper[lane+stride].xyz);}barrier();}
 if(lane==0){partials[gl_WorkGroupID.x*2]=lower[0];partials[gl_WorkGroupID.x*2+1]=upper[0];}})";
         BoundsPartials = buffer(size_t((cap + 63) / 64) * 32);
-        BoundsKernel   = Make(source,
+        BoundsKernel   = Make("BoundsKernel",
+                              source,
                               {{0, BindingType::ReadOnlyStorageBuffer},
                                {1, BindingType::ReadOnlyStorageBuffer},
                                {2, BindingType::ReadOnlyStorageBuffer},
                                {3, BindingType::StorageBuffer}},
                               4);
-        BoundsFinish   = Make(R"(#version 450
+        BoundsFinish   = Make("BoundsFinish",
+                              R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) buffer Counters{uint c[];};
 layout(set=0,binding=1,std430) readonly buffer Partials{vec4 partials[];};
@@ -924,8 +935,47 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
         for (size_t i = 0; i < emitters.size(); ++i)
         {
             auto& e = emitters[i];
+            if (!e.Failure.empty())
+                continue;
             if (!e.GPU)
-                e.GPU = std::make_unique<GpuEmitter>(device, *e.Compiled);
+            {
+                try
+                {
+                    e.GPU = std::make_unique<GpuEmitter>(device,
+                                                         *e.Compiled,
+                                                         "VFX/" + instance.Asset()->assetID.ToString() + "/" +
+                                                             e.Compiled->Settings.Name);
+                }
+                catch (const std::exception& error)
+                {
+                    e.Fail(error.what());
+                    continue;
+                }
+            }
+        }
+        for (auto i : instance.Asset()->GetData().TickOrder)
+        {
+            auto& e = emitters[i];
+            if (!e.Failure.empty())
+                continue;
+            const auto checkDependencies = [&](const Program& program) {
+                for (const auto& resource : program.Resources)
+                    if ((resource.Kind == "ParticleReader" || resource.Kind == "EventInput") &&
+                        !emitters.at(resource.Source).Failure.empty())
+                        e.Fail("VFX source emitter failed: " + emitters[resource.Source].Failure);
+            };
+            for (const auto& [stage, program] : e.Compiled->Programs)
+                checkDependencies(program);
+            for (const auto& handler : e.Compiled->Handlers)
+                checkDependencies(handler.Bytecode);
+            for (const auto& stage : e.Compiled->SimulationStages)
+                checkDependencies(stage.Bytecode);
+        }
+        for (size_t i = 0; i < emitters.size(); ++i)
+        {
+            auto& e = emitters[i];
+            if (!e.Failure.empty())
+                continue;
             if (&e.GPU->Device != &device)
                 throw std::logic_error("VFX instance rendered on a different device");
             if (e.Compiled->Settings.Target == SimTarget::CPU)
@@ -1086,7 +1136,8 @@ if(lane==0){for(uint k=0;k<3;++k){c[8+k]=floatBitsToUint(lower[0][k]);c[11+k]=fl
         }
         if (!SortPrepare.Pipeline)
         {
-            SortPrepare = Make(R"(#version 450
+            SortPrepare = Make("SortPrepare",
+                               R"(#version 450
 layout(local_size_x=1) in;
 layout(set=0,binding=0,std430) readonly buffer Count{uint count[];};
 layout(set=0,binding=1,std430) buffer Dispatch{uint args[];};
@@ -1094,7 +1145,8 @@ void main(){uint n=count[1],padded=1;while(padded<n)padded*=2;args[0]=n==0?0:(pa
 )",
                                {{0, BindingType::ReadOnlyStorageBuffer}, {1, BindingType::StorageBuffer}},
                                0);
-            SortKeys    = Make(R"(#version 450
+            SortKeys    = Make("SortKeys",
+                               R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) readonly buffer Attributes{uvec4 a[];};
 layout(set=0,binding=1,std430) readonly buffer Alive{uint alive[];};
@@ -1118,7 +1170,8 @@ pairs[i]=uvec4(floatBitsToUint(key),i,slot,0);}
                                 {3, BindingType::StorageBuffer},
                                 {4, BindingType::UniformBuffer}},
                                0);
-            SortStep    = Make(R"(#version 450
+            SortStep    = Make("SortStep",
+                               R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) buffer Pairs{uvec4 pairs[];};
 layout(set=0,binding=1,std430) readonly buffer Count{uint count[];};
@@ -1132,7 +1185,8 @@ uvec4 a=pairs[i],b=pairs[j];if(before(b,a)==((i&p.width)==0)){pairs[i]=b;pairs[j
 )",
                                {{0, BindingType::StorageBuffer}, {1, BindingType::ReadOnlyStorageBuffer}},
                                12);
-            SortOutput  = Make(R"(#version 450
+            SortOutput  = Make("SortOutput",
+                               R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) readonly buffer Pairs{uvec4 pairs[];};
 layout(set=0,binding=1,std430) readonly buffer Count{uint count[];};
@@ -1266,7 +1320,8 @@ void main(){uint i=gl_GlobalInvocationID.x;if(i<count[1])indices[i]=pairs[i].z;}
     {
         if (!BinCount.Pipeline)
         {
-            BinCount     = Make(R"(#version 450
+            BinCount     = Make("BinCount",
+                                R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) readonly buffer Attributes{uvec4 a[];};
 layout(set=0,binding=1,std430) readonly buffer Alive{uint alive[];};
@@ -1283,7 +1338,8 @@ barrier();for(uint e=lane;e<p.entries;e+=64){uint n=0;for(uint j=0;j<64;++j)n+=u
                                  {2, BindingType::ReadOnlyStorageBuffer},
                                  {3, BindingType::StorageBuffer}},
                                 16);
-            BinScan      = Make(R"(#version 450
+            BinScan      = Make("BinScan",
+                                R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) readonly buffer Input{uint inputCounts[];};
 layout(set=0,binding=1,std430) buffer Output{uint outputCounts[];};
@@ -1292,7 +1348,8 @@ void main(){uint i=gl_GlobalInvocationID.x;if(i>=p.groups*p.entries)return;outpu
 )",
                                 {{0, BindingType::ReadOnlyStorageBuffer}, {1, BindingType::StorageBuffer}},
                                 12);
-            BinScatter   = Make(R"(#version 450
+            BinScatter   = Make("BinScatter",
+                                R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) readonly buffer Attributes{uvec4 a[];};
 layout(set=0,binding=1,std430) readonly buffer Alive{uint alive[];};
@@ -1312,7 +1369,8 @@ uint group=gl_WorkGroupID.x;uint base=group==0?0:counts[e*p.groups+group-1];outp
                                  {3, BindingType::ReadOnlyStorageBuffer},
                                  {4, BindingType::StorageBuffer}},
                                 16);
-            BinArguments = Make(R"(#version 450
+            BinArguments = Make("BinArguments",
+                                R"(#version 450
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std430) readonly buffer Counts{uint counts[];};
 layout(set=0,binding=1,std430) buffer Args{uint args[];};
@@ -1541,7 +1599,8 @@ struct Scan{uint start;uint end;uint segments;float distance;};
                                                     {2, BindingType::ReadOnlyStorageBuffer},
                                                     {3, BindingType::UniformBuffer},
                                                     {4, BindingType::StorageBuffer}};
-            RibbonDetect = Make("#version 450\nlayout(local_size_x=64) in;\n" + common + R"(
+            RibbonDetect = Make("RibbonDetect",
+                                "#version 450\nlayout(local_size_x=64) in;\n" + common + R"(
 layout(set=0,binding=4,std430) buffer Output{Scan outScan[];};
 void main(){uint i=gl_GlobalInvocationID.x;if(i>=p.offsets1.w)return;
 bool segment=i<count[1]&&i>0&&id(i)==id(i-1);
@@ -1551,7 +1610,8 @@ outScan[i]=Scan(i,i,uint(segment),segment?distance(position(i),position(i-1)):0)
                                 0);
             base[4].Type = BindingType::ReadOnlyStorageBuffer;
             base.push_back({5, BindingType::StorageBuffer});
-            RibbonScan = Make("#version 450\nlayout(local_size_x=64) in;\n" + common + R"(
+            RibbonScan = Make("RibbonScan",
+                              "#version 450\nlayout(local_size_x=64) in;\n" + common + R"(
 layout(set=0,binding=4,std430) readonly buffer Input{Scan inputScan[];};
 layout(set=0,binding=5,std430) buffer Output{Scan outScan[];};
 layout(push_constant) uniform Step{uint stride;}step;
@@ -1564,7 +1624,8 @@ outScan[i]=v;}
                               base,
                               4);
             base.push_back({6, BindingType::StorageBuffer});
-            RibbonVertices = Make("#version 450\nlayout(local_size_x=64) in;\n" + common + R"(
+            RibbonVertices = Make("RibbonVertices",
+                                  "#version 450\nlayout(local_size_x=64) in;\n" + common + R"(
 layout(set=0,binding=4,std430) readonly buffer Input{Scan scan[];};
 layout(set=0,binding=5,std430) buffer Vertices{vec4 vertices[];};
 layout(set=0,binding=6,std430) buffer Args{uint args[];};

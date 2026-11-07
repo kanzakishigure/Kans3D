@@ -77,6 +77,8 @@ namespace Kans
             {
                 ShaderData passData;
                 passData.Code = pass.Code;
+                passData.DebugName    = shader.Program->DebugName + "/Pass/" + pass.Name;
+                passData.DebugSources = pass.DebugSources;
                 shader.Passes.push_back({pass.Name, pass.Tag, pass.State, shader.m_Device->CreateShader(passData), {}});
                 auto passReflection = InspectShaderProgram(pass.Code);
                 if (auto* error = std::get_if<AssetError>(&passReflection))
@@ -204,6 +206,8 @@ namespace Kans
         {
             ShaderData pass;
             pass.Code = data.Passes[i].Code;
+            pass.DebugName    = program->DebugName + "/Pass/" + data.Passes[i].Name;
+            pass.DebugSources = data.Passes[i].DebugSources;
             auto& passProgram =
                 smoothNormalFallback ? Passes[i].SkinnedNormalFallbackProgram : Passes[i].SkinnedProgram;
             passProgram = m_Device->CreateShader(pass);

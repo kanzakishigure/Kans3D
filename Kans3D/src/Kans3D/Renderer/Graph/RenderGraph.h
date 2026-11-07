@@ -166,11 +166,18 @@ namespace Kans
         void                                      ReleaseRecorders()
         {
             for (auto& pass : m_Passes)
+            {
                 pass.Recorder = {};
+                pass.PipelineFailure = {};
+                pass.Skip            = {};
+            }
             m_Profiler = nullptr;
             m_Capture  = nullptr;
         }
         std::weak_ptr<const void>                       Lifetime() const { return m_Lifetime; }
+        void                                      GuardPipelineFailures(size_t                                  first,
+                                                                        std::function<void(const std::string&)> failure,
+                                                                        std::function<bool()>                   skip = {});
         size_t                                    PassCount() const { return m_Passes.size(); }
         const std::vector<GraphPass>&             ExecutionOrder() const { return m_Order; }
         const std::vector<CompiledGraphResource>& Resources() const { return m_CompiledResources; }
@@ -204,6 +211,8 @@ namespace Kans
             std::optional<double>                               CpuRecordMilliseconds;
             std::optional<RenderHardware::CommandStatistics>    Draws;
             GraphPassKind                                       Kind = GraphPassKind::Graphics;
+            std::function<void(const std::string&)>             PipelineFailure;
+            std::function<bool()>                               Skip;
         };
         std::vector<Resource>                    m_Resources;
         std::vector<Pass>                        m_Passes;
