@@ -5,10 +5,28 @@
 // Small widgets shared by editor toolbars and overlays.
 namespace Kans::Widgets
 {
-    // Draws an icon glyph centred on its drawn pixels within [min, max].
-    void CenterGlyph(const char* icon, ImVec2 min, ImVec2 max, ImU32 color);
+    // Draws an icon glyph centred on its drawn pixels within [min, max] (on the current
+    // window's draw list unless `draw` is given).
+    void CenterGlyph(const char* icon, ImVec2 min, ImVec2 max, ImU32 color, ImDrawList* draw = nullptr);
     // A section heading inside a menu: dim small text over a line.
     void MenuSection(const char* title);
+
+    // Menus share one look: icons in a fixed-width column a Space2 gap before the labels,
+    // and taller rows. A menu opened with BeginMenu or BeginIconMenu ends with EndMenu;
+    // a menu drawn in a popup wraps its items in PushMenuStyle / PopMenuStyle.
+    bool BeginMenu(const char* label, bool enabled = true);
+    bool BeginIconMenu(const char* icon, const char* label, bool enabled = true);
+    void EndMenu();
+    bool IconMenuItem(const char* icon,
+                      const char* label,
+                      const char* shortcut = nullptr,
+                      bool        selected = false,
+                      bool        enabled  = true);
+    void PushMenuStyle();
+    void PopMenuStyle();
+    // Width of the icon column and the gap from it to the labels.
+    float MenuIconColumn();
+    float MenuIconGap();
     // Icon button with a tooltip; `active` highlights toggles that are on.
     bool ToolButton(const char* icon, const char* tooltip, bool active = false, bool enabled = true);
     // Thin vertical line between toolbar groups (call between items on one line).

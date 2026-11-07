@@ -1,12 +1,13 @@
 #include "Widgets.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include <imgui_internal.h>
+#include <algorithm>
 #include <string>
 #include "EditorIcons.h"
 
 namespace Kans::Widgets
 {
-    void CenterGlyph(const char* icon, ImVec2 min, ImVec2 max, ImU32 color)
+    void CenterGlyph(const char* icon, ImVec2 min, ImVec2 max, ImU32 color, ImDrawList* draw)
     {
         // Centre the glyph's drawn pixels, not the font's line box: icon glyphs sit at
         // different heights within the line, so box-centred icons look misaligned.
@@ -23,7 +24,7 @@ namespace Kans::Widgets
             const ImVec2 size = ImGui::CalcTextSize(icon);
             at                = {center.x - size.x * 0.5f, center.y - size.y * 0.5f};
         }
-        ImGui::GetWindowDrawList()->AddText({IM_ROUND(at.x), IM_ROUND(at.y)}, color, icon);
+        (draw ? draw : ImGui::GetWindowDrawList())->AddText({IM_ROUND(at.x), IM_ROUND(at.y)}, color, icon);
     }
 
     bool ToolButton(const char* icon, const char* tooltip, bool active, bool enabled)
@@ -50,6 +51,80 @@ namespace Kans::Widgets
         ImGui::SeparatorText(title);
         ImGui::PopFont();
         ImGui::PopStyleColor();
+    }
+
+    float MenuIconColumn() { return IM_ROUND(ImGui::GetFontSize() * 1.25f); }
+    float MenuIconGap() { return EditorTheme::Px(EditorTheme::Space2); }
+
+    void PushMenuStyle()
+    {
+        // Taller rows: each item's highlight grows by the vertical item spacing.
+        ImGui::PushStyleVarY(ImGuiStyleVar_ItemSpacing, EditorTheme::Px(10.0f));
+    }
+
+    void PopMenuStyle() { ImGui::PopStyleVar(); }
+
+    namespace
+    {
+        // Reserves the icon column in a vertical menu and returns where the row's text starts.
+        // ImGui puts its column spacing between the icon and the label columns; the reserved
+        // width tops that spacing up to the gap.
+        ImVec2 ReserveMenuIcon()
+        {
+            ImGuiWindow* window  = ImGui::GetCurrentWindow();
+            auto&        columns = window->DC.MenuColumns;
+            const float  extra   = std::max(0.0f, MenuIconGap() - float(columns.Spacing));
+            columns.DeclColumns(MenuIconColumn() + extra, 0, 0, 0);
+            return {window->DC.CursorPos.x + columns.OffsetIcon, window->DC.CursorPos.y + window->DC.CurrLineTextBaseOffset};
+        }
+
+        void DrawMenuIcon(const char* icon, ImVec2 at, bool enabled, ImDrawList* draw)
+        {
+            if (!icon || !icon[0])
+                return;
+            const ImU32 color = ImGui::GetColorU32(enabled ? EditorTheme::Colors().TextDim : EditorTheme::Colors().TextOff);
+            CenterGlyph(icon, at, {at.x + MenuIconColumn(), at.y + ImGui::GetFontSize()}, color, draw);
+        }
+
+        bool Vertical() { return ImGui::GetCurrentWindow()->DC.LayoutType == ImGuiLayoutType_Vertical; }
+    } // namespace
+
+    bool BeginMenu(const char* label, bool enabled)
+    {
+        if (!ImGui::BeginMenu(label, enabled))
+            return false;
+        PushMenuStyle();
+        return true;
+    }
+
+    bool BeginIconMenu(const char* icon, const char* label, bool enabled)
+    {
+        if (!Vertical())
+            return BeginMenu(label, enabled);
+        const ImVec2 at   = ReserveMenuIcon();
+        ImDrawList*  draw = ImGui::GetWindowDrawList(); // The submenu becomes current once open.
+        const bool   open = ImGui::BeginMenuEx(label, nullptr, enabled);
+        DrawMenuIcon(icon, at, enabled, draw);
+        if (open)
+            PushMenuStyle();
+        return open;
+    }
+
+    void EndMenu()
+    {
+        PopMenuStyle();
+        ImGui::EndMenu();
+    }
+
+    bool IconMenuItem(const char* icon, const char* label, const char* shortcut, bool selected, bool enabled)
+    {
+        if (!Vertical())
+            return ImGui::MenuItem(label, shortcut, selected, enabled);
+        const ImVec2 at      = ReserveMenuIcon();
+        const bool   pressed = ImGui::MenuItemEx(label, nullptr, shortcut, selected, enabled);
+        if (ImGui::IsItemVisible())
+            DrawMenuIcon(icon, at, enabled, nullptr);
+        return pressed;
     }
 
     void ToolSeparator()

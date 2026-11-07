@@ -25,7 +25,8 @@ namespace Kans
 
     ViewportClient::~ViewportClient()
     {
-        m_Last = {};
+        m_Last     = {};
+        m_Snapshot = {};
         m_Target.reset();
         m_Renderer->GetDevice()->WaitIdle();
     }
@@ -155,6 +156,43 @@ namespace Kans
         m_Highlights             = {};
         m_Preview.reset();
         m_Last = m_Renderer->Render(m_Scene->GetRenderWorld(), view, *m_Target);
+    }
+
+    bool ViewportClient::RequestSnapshot()
+    {
+        using namespace RenderHardware;
+        const auto& colors = m_Target->GetColors();
+        if (!m_Scene || colors.empty() || !colors[0] || m_Size.x == 0 || m_Size.y == 0 ||
+            colors[0]->GetDesc().PixelFormat != Format::RGBA8Unorm)
+            return false;
+        const auto& device = m_Renderer->GetDevice();
+        const auto  size   = glm::uvec2(colors[0]->GetDesc().Width, colors[0]->GetDesc().Height);
+        m_Snapshot = device->CreateBuffer({size_t(size.x) * size.y * 4, BufferUsage::CopyDestination, MemoryUsage::Readback});
+        auto commands = device->CreateCommandList();
+        commands->CopyTextureToBuffer(colors[0], {}, m_Snapshot);
+        device->Submit(commands);
+        m_SnapshotSize = size;
+        return true;
+    }
+
+    std::optional<ViewportClient::Snapshot> ViewportClient::PollSnapshot()
+    {
+        if (!m_Snapshot || !m_Snapshot->IsReadbackReady())
+            return std::nullopt;
+        Snapshot shot;
+        shot.Width  = m_SnapshotSize.x;
+        shot.Height = m_SnapshotSize.y;
+        shot.Pixels = m_Snapshot->Read(0, size_t(shot.Width) * shot.Height * 4);
+        m_Snapshot  = {};
+        const size_t row = size_t(shot.Width) * 4;
+        if (m_Renderer->GetDevice()->GetCoordinateConventions().Origin == RenderHardware::FramebufferOrigin::LowerLeft)
+            for (size_t y = 0; y < shot.Height / 2; ++y)
+                std::swap_ranges(shot.Pixels.begin() + y * row,
+                                 shot.Pixels.begin() + (y + 1) * row,
+                                 shot.Pixels.begin() + (shot.Height - y - 1) * row);
+        for (size_t i = 3; i < shot.Pixels.size(); i += 4)
+            shot.Pixels[i] = 255;
+        return shot;
     }
 
     ScenePickHit ViewportClient::Pick(const glm::mat4& viewProjection, glm::uvec2 pixel)

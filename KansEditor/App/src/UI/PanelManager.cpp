@@ -1,4 +1,5 @@
 #include "PanelManager.h"
+#include "EditorIcons.h"
 #include "Widgets.h"
 #include <cstring>
 #include <imgui_internal.h>
@@ -140,13 +141,12 @@ namespace Kans
             {
                 if (panel.Spec.Category != category)
                     continue;
-                const std::string label = std::string(panel.Spec.Icon) + "  " + panel.Spec.Title;
-                if (ImGui::MenuItem(label.c_str(), panel.Spec.Shortcut, panel.Open, panel.Spec.Closable))
+                if (Widgets::IconMenuItem(panel.Spec.Icon, panel.Spec.Title.c_str(), panel.Spec.Shortcut, panel.Open, panel.Spec.Closable))
                     Toggle(panel.Spec.ID);
             }
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Reset Layout"))
+        if (Widgets::IconMenuItem(ICON_FA_ROTATE_LEFT, "Reset Layout"))
             ResetLayout();
     }
 

@@ -13,6 +13,8 @@
 #include "KansEditorCore/Launcher/EditorProcess.h"
 #include "Launcher/LauncherLayer.h"
 #include "KansEditorCore/Launcher/LauncherModel.h"
+#include "KansEditorCore/Launcher/WindowPlacementFlow.h"
+#include "Kans3D/ImGui/EditorTheme.h"
 
 class KansEditor : public Kans::Application
 {
@@ -25,11 +27,15 @@ public:
     {
         // The launcher has no layout to keep; the editor layer loads the project's own.
         ImGui::GetIO().IniFilename = nullptr;
+        // The launcher and the editor each reopen where they were last left.
+        auto placements = std::make_shared<Kans::Launcher::WindowPlacementFlow>(
+            Kans::Launcher::WindowPlacementStore::DefaultStorageFile(), Kans::EditorTheme::Scale());
+        Kans::Launcher::ApplyWindowSetup(GetWindow(), placements->Start(!project.empty()));
         if (!project.empty())
-            PushLayer(new Kans::EditorLayer(project));
+            PushLayer(new Kans::EditorLayer(project, placements));
         else
         {
-            auto* launcher = new Kans::LauncherLayer(editorRoot / "Templates");
+            auto* launcher = new Kans::LauncherLayer(editorRoot / "Templates", placements);
             PushLayer(launcher);
             if (!request.empty())
                 launcher->Request(request);
@@ -74,10 +80,12 @@ Kans::Application* Kans::createApplication(int argc, char** argv)
     ApplicationSpecification spec;
     spec.Name         = "Kans3D-Editor";
     spec.ConfigPath   = (absoluteEditorRoot / "KansEditor.ini").string();
-    spec.Height       = 1080;
-    spec.Width        = 1920;
+    // Created near the size it starts at (the saved placement is applied right after).
+    spec.Height       = project.empty() ? 760 : 900;
+    spec.Width        = project.empty() ? 1100 : 1600;
     spec.Fullscreen   = false;
-    spec.Titlebar     = TitlebarMode::Native;
+    // Windows: the editor draws a Kans3D titlebar; elsewhere the native one stays.
+    spec.Titlebar     = TitlebarMode::Custom;
 
     return new KansEditor(spec, absoluteEditorRoot, project, request);
 }

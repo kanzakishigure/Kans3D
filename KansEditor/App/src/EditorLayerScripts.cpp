@@ -4,14 +4,13 @@
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/Script/ScriptEngine.h"
 #include "UI/EditorIcons.h"
+#include "UI/Widgets.h"
 
 namespace Kans
 {
     namespace
     {
         constexpr const char* ScriptAssemblyName = "GameScripts";
-
-        std::string MenuText(const char* icon, const char* text) { return std::string(icon) + "  " + text; }
 
         // References the engine API and its class-registry generator next to this editor build.
         // KansScriptCoreDir can be overridden on the command line (dotnet build -p:KansScriptCoreDir=...).
@@ -163,15 +162,15 @@ namespace Game
 
     void EditorLayer::DrawScriptsMenu()
     {
-        if (!ImGui::BeginMenu("Scripts"))
+        if (!Widgets::BeginMenu("Scripts"))
             return;
         std::error_code ec;
         const bool      available = ScriptEngine::IsInitialized();
         const bool      exists    = std::filesystem::exists(ScriptProjectPath(), ec);
         const bool      building  = m_ScriptBuild.valid();
-        if (ImGui::MenuItem(MenuText(ICON_FA_CODE, "Create Script Project").c_str(), nullptr, false, available && !exists))
+        if (Widgets::IconMenuItem(ICON_FA_CODE, "Create Script Project", nullptr, false, available && !exists))
             CreateScriptProject();
-        if (ImGui::MenuItem(MenuText(ICON_FA_ROTATE_RIGHT, "Build & Reload Scripts").c_str(),
+        if (Widgets::IconMenuItem(ICON_FA_ROTATE_RIGHT, "Build & Reload Scripts",
                             nullptr,
                             false,
                             available && exists && !building && !m_Play.IsActive()))
@@ -183,6 +182,6 @@ namespace Game
             ImGui::TextDisabled("%s", m_ScriptStatus.c_str());
         else
             ImGui::TextDisabled("%s", ScriptProjectPath().string().c_str());
-        ImGui::EndMenu();
+        Widgets::EndMenu();
     }
 } // namespace Kans

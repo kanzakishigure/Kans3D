@@ -35,7 +35,9 @@
 #include "UI/ConsolePanel.h"
 #include "UI/PanelManager.h"
 #include "UI/SceneFileDialog.h"
+#include "KansEditorCore/Launcher/WindowPlacementFlow.h"
 #include "KansEditorCore/UnsavedChanges.h"
+#include "UI/Titlebar.h"
 #include "KansEditorCore/ViewportClient.h"
 namespace Kans
 {
@@ -62,7 +64,9 @@ namespace Kans
     {
 
     public:
-        explicit EditorLayer(std::filesystem::path projectFile);
+        // `placements` (optional) keeps the window's "Editor" placement on exit and project switch.
+        explicit EditorLayer(std::filesystem::path                          projectFile,
+                             std::shared_ptr<Launcher::WindowPlacementFlow> placements = nullptr);
         virtual ~EditorLayer() = default;
 
         virtual void OnAttach() override;
@@ -86,6 +90,13 @@ namespace Kans
         void SwitchProject(const std::filesystem::path& project);
         Scope<ProjectBrowser> m_ProjectBrowser;
         bool                  m_ProjectBrowserRequested = false;
+        std::shared_ptr<Launcher::WindowPlacementFlow> m_Placements;
+        // Project thumbnail: after a scene save the viewport image is read back without
+        // waiting, then written on a worker thread.
+        ProjectConfig                            m_ProjectConfig;
+        bool                                     m_ThumbnailPending = false;
+        std::future<std::optional<AssetError>>   m_ThumbnailWrite;
+        void                                     PollProjectThumbnail();
         std::variant<std::monostate, AssetError> RefreshProductAssets(Ref<const AssetRegistry> snapshot = {});
         std::vector<EditorAssetChoice>           CollectAssetChoices(const AssetRegistry& registry) const;
         // Adds a dropped model to the scene, importing it first if needed.
@@ -237,6 +248,12 @@ namespace Kans
         // ---- UI (EditorLayerUI.cpp) ----
         void RegisterPanels();
         void DrawMenuBar();
+        // The menus (File, Edit, Assets, Scripts, Window), in the menu bar or the titlebar.
+        void DrawMenus();
+        // Windows: the editor draws its own titlebar in the top band (Titlebar).
+        Titlebar m_Titlebar;
+        // Right edge the toolbar's status may reach (before the window buttons).
+        float m_BandRight = 0.0f;
         void DrawToolbar();
         void DrawStats();
         void HandleShortcuts();

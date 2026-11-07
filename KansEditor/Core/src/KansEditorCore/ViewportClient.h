@@ -65,6 +65,18 @@ namespace Kans
         void RenderEditor(const EditorCamera& camera);
         bool RenderGame();
 
+        // A copy of the image the viewport last rendered, read back without waiting: Request
+        // records the copy, Poll returns it once the GPU has finished (then forgets it).
+        struct Snapshot
+        {
+            uint32_t             Width = 0, Height = 0;
+            std::vector<uint8_t> Pixels; // RGBA8, top row first, opaque.
+        };
+        // False when nothing has been rendered yet. Replaces a pending request.
+        bool                    RequestSnapshot();
+        bool                    HasPendingSnapshot() const { return bool(m_Snapshot); }
+        std::optional<Snapshot> PollSnapshot();
+
         ScenePickHit        Pick(const glm::mat4& viewProjection, glm::uvec2 pixel);
         const RenderResult& GetLastResult() const { return m_Last; }
 
@@ -89,6 +101,8 @@ namespace Kans
         std::optional<PrefabPreview>         m_Preview;
         std::vector<GizmoDraw>               m_Gizmo;
         RenderResult                         m_Last;
+        RenderHardware::Handle<RenderHardware::Buffer> m_Snapshot;
+        glm::uvec2                                     m_SnapshotSize {0, 0};
 
         std::chrono::steady_clock::time_point m_StartTime = std::chrono::steady_clock::now();
     };

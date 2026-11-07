@@ -9,6 +9,7 @@
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Project/ProjectFile.h"
+#include "Kans3D/Project/ProjectThumbnail.h"
 #include "Kans3D/Project/RecentProjects.h"
 #include "Kans3D/Scene/SceneSerializer.h"
 #include "Kans3D/Timeline/TimelineProduct.h"
@@ -43,6 +44,7 @@ namespace Kans
         }
         const auto& file = std::get<ProjectFile>(loaded);
         const auto config = MakeProjectConfig(m_ProjectFile.parent_path(), file);
+        m_ProjectConfig   = config;
         m_StartupScene = file.StartupScene;
         std::error_code ec;
         std::filesystem::current_path(config.RootDirectory, ec);
@@ -683,7 +685,31 @@ namespace Kans
             return *error;
         m_ScenePath = std::move(fullPath);
         m_History.MarkSaved();
+        // The launcher shows the project with the view it was saved from.
+        if (m_Viewport && m_Viewport->RequestSnapshot())
+            m_ThumbnailPending = true;
         return std::monostate {};
+    }
+
+    void EditorLayer::PollProjectThumbnail()
+    {
+        if (m_ThumbnailWrite.valid() &&
+            m_ThumbnailWrite.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+            if (auto error = m_ThumbnailWrite.get())
+                CORE_WARN("Project thumbnail: {}", error->Message);
+        if (!m_ThumbnailPending || !m_Viewport || m_ThumbnailWrite.valid())
+            return;
+        auto shot = m_Viewport->PollSnapshot();
+        if (!shot)
+        {
+            m_ThumbnailPending = m_Viewport->HasPendingSnapshot();
+            return;
+        }
+        m_ThumbnailPending = false;
+        // Scaling and PNG encoding stay off the frame.
+        m_ThumbnailWrite = std::async(std::launch::async, [config = m_ProjectConfig, shot = std::move(*shot)] {
+            return WriteProjectThumbnail(config, shot.Pixels.data(), shot.Pixels.size(), shot.Width, shot.Height);
+        });
     }
 
     void EditorLayer::Record(const std::variant<std::monostate, AssetError>& result)

@@ -13,8 +13,8 @@
 
 namespace Kans
 {
-    EditorLayer::EditorLayer(std::filesystem::path projectFile)
-        : Layer("EditorLayer"), m_ProjectFile(std::move(projectFile)) {}
+    EditorLayer::EditorLayer(std::filesystem::path projectFile, std::shared_ptr<Launcher::WindowPlacementFlow> placements)
+        : Layer("EditorLayer"), m_ProjectFile(std::move(projectFile)), m_Placements(std::move(placements)) {}
     void EditorLayer::OnAttach()
     {
         PROFILE_FUCTION();
@@ -121,6 +121,7 @@ namespace Kans
             QueueMissingSceneAssets();
         }
         LoadLayout();
+        m_Titlebar.Attach(Application::Get().GetWindow());
         // Closing the window asks about unsaved changes like File > Exit.
         Application::Get().SetCloseRequestHandler([this] {
             if (!m_History.IsModified())
@@ -148,6 +149,11 @@ namespace Kans
     void EditorLayer::OnDetach()
     {
         Application::Get().SetCloseRequestHandler({});
+        m_Titlebar.Detach();
+        if (m_Placements)
+            m_Placements->Remember(Application::Get().GetWindow().GetPlacement());
+        if (m_ThumbnailWrite.valid())
+            m_ThumbnailWrite.wait();
         m_Panels.UninstallSettingsHandler();
         m_ContentBrowserPanel.UninstallSettingsHandler();
         m_ContentBrowserPanel.Bind(nullptr);

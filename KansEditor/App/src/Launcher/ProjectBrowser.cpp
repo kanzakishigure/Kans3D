@@ -4,9 +4,13 @@
 #include <cctype>
 #include <ctime>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 #include "Kans3D/Project/ProjectFile.h"
+#include "Kans3D/Project/ProjectThumbnail.h"
+#include "KansEditorCore/Launcher/ProjectGrid.h"
 #include "UI/EditorIcons.h"
+#include "UI/Widgets.h"
 
 namespace Kans
 {
@@ -76,6 +80,7 @@ namespace Kans
             m_Error = error->Message;
         m_Templates      = Launcher::ListTemplates(m_TemplatesDir);
         m_SelectedRecent = m_Recent.Entries().empty() ? -1 : 0;
+        RefreshCards();
         m_Result.reset();
         ResetNewProject();
         // Start where there is something to do.
@@ -181,6 +186,25 @@ namespace Kans
         ImGui::PopStyleColor();
     }
 
+    void ProjectBrowser::RefreshCards()
+    {
+        m_Cards.clear();
+        for (const auto& entry : m_Recent.Entries())
+        {
+            Card card;
+            card.Exists = RecentProjects::Exists(entry);
+            if (card.Exists)
+                if (auto loaded = LoadProjectFile(entry.ProjectFile); auto* file = std::get_if<ProjectFile>(&loaded))
+                    if (auto thumbnail = FindProjectThumbnail(MakeProjectConfig(entry.ProjectFile.parent_path(), *file)))
+                    {
+                        std::error_code ec;
+                        card.Thumbnail = *thumbnail;
+                        card.Modified  = fs::last_write_time(*thumbnail, ec);
+                    }
+            m_Cards.push_back(std::move(card));
+        }
+    }
+
     void ProjectBrowser::DrawRecent()
     {
         Heading("Recent Projects");
@@ -188,12 +212,12 @@ namespace Kans
         if (!entries.empty())
         {
             ImGui::SameLine();
-            const float searchWidth = std::min(260.0f, ImGui::GetContentRegionAvail().x * 0.5f);
+            const float searchWidth = std::min(EditorTheme::Px(260.0f), ImGui::GetContentRegionAvail().x * 0.5f);
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - searchWidth);
             ImGui::SetNextItemWidth(searchWidth);
             ImGui::InputTextWithHint("##Search", ICON_FA_MAGNIFYING_GLASS "  Search", &m_Search);
         }
-        ImGui::Dummy({0, 6.0f});
+        ImGui::Dummy({0, EditorTheme::Px(6.0f)});
 
         if (entries.empty())
         {
@@ -207,88 +231,80 @@ namespace Kans
                 BrowseForProject();
             return;
         }
+        if (m_Cards.size() != entries.size())
+            RefreshCards();
+        if (!m_Thumbnails)
+            m_Thumbnails = std::make_unique<Browser::ThumbnailCache>();
+        m_Thumbnails->Update();
 
-        const float footer   = ImGui::GetFrameHeightWithSpacing() * 2.0f + 8.0f;
-        const auto  now      = static_cast<int64_t>(std::time(nullptr));
-        int         remove   = -1;
-        const float line     = ImGui::GetTextLineHeight();
-        const float rowHeight = line * 2.0f + 18.0f;
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, EditorTheme::Colors().Raised);
-        if (ImGui::BeginChild("##RecentList", {0, -footer}, ImGuiChildFlags_None))
+        // The cards the search leaves, in list order; the selection moves among them.
+        std::vector<int> visible;
+        for (int i = 0; i < int(entries.size()); ++i)
+            if (m_Search.empty() || ContainsIgnoreCase(entries[i].Name, m_Search) ||
+                ContainsIgnoreCase(entries[i].ProjectFile.parent_path().u8string(), m_Search))
+                visible.push_back(i);
+        const auto at           = std::find(visible.begin(), visible.end(), m_SelectedRecent);
+        const int  selectedSlot = at == visible.end() ? -1 : int(at - visible.begin());
+
+        const float footer = ImGui::GetFrameHeightWithSpacing() * 2.0f + EditorTheme::Px(8.0f);
+        int         remove = -1;
+        // A little inset keeps the outermost hairlines and the selection outline unclipped.
+        const float inset = EditorTheme::Px(EditorTheme::Space1);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {inset, inset});
+        if (ImGui::BeginChild("##RecentGrid", {0, -footer}, ImGuiChildFlags_AlwaysUseWindowPadding))
         {
-            int shown = 0;
-            for (int i = 0; i < int(entries.size()); ++i)
-            {
-                const auto& entry = entries[i];
-                const auto  path  = entry.ProjectFile.parent_path().u8string();
-                if (!m_Search.empty() && !ContainsIgnoreCase(entry.Name, m_Search) && !ContainsIgnoreCase(path, m_Search))
-                    continue;
-                ++shown;
-                const bool exists = RecentProjects::Exists(entry);
-                ImGui::PushID(i);
-                const auto top = ImGui::GetCursorScreenPos();
-                if (ImGui::Selectable("##Row",
-                                      m_SelectedRecent == i,
-                                      ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_AllowOverlap,
-                                      {0, rowHeight}))
-                {
-                    m_SelectedRecent = i;
-                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                        Request(entry.ProjectFile);
-                }
-                const float right = ImGui::GetItemRectMax().x;
-                auto*       draw  = ImGui::GetWindowDrawList();
-                const auto  text  = ImGui::GetColorU32(exists ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-                const auto  dim   = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-                const float x     = top.x + 14.0f;
-                const float y     = top.y + 9.0f;
-                ImGui::PushFont(nullptr, 22.0f);
-                draw->AddText({x, top.y + (rowHeight - ImGui::GetFontSize()) * 0.5f},
-                              exists ? ImGui::GetColorU32(Accent) : dim,
-                              ICON_FA_CUBE);
-                ImGui::PopFont();
-                const float textX = x + 36.0f;
-                ImGui::PushFont(BoldFont(), 0.0f);
-                draw->AddText({textX, y}, text, entry.Name.c_str());
-                ImGui::PopFont();
-                draw->AddText({textX, y + line + 2.0f}, dim, path.c_str());
+            const float gap  = EditorTheme::Px(EditorTheme::Space3);
+            const auto  grid = Launcher::ComputeProjectGrid(
+                ImGui::GetContentRegionAvail().x, EditorTheme::Px(220.0f), EditorTheme::Px(260.0f), gap);
+            const float thumbnail = IM_ROUND(grid.CardWidth * 9.0f / 16.0f);
+            const float line      = ImGui::GetTextLineHeight();
+            const float strip     = IM_ROUND(line * 3.0f + EditorTheme::Px(EditorTheme::Space1) * 2.0f +
+                                         EditorTheme::Px(EditorTheme::Space2) * 2.0f);
+            const ImVec2 card {grid.CardWidth, thumbnail + strip};
 
-                // Right column: when it was opened (or that it is gone) and a row menu.
-                const float menuWidth = ImGui::GetFrameHeight();
-                const auto  when      = exists ? Launcher::FormatLastOpened(now, entry.LastOpened) : std::string("Missing");
-                const float whenWidth = ImGui::CalcTextSize(when.c_str()).x;
-                draw->AddText({right - menuWidth - 16.0f - whenWidth, top.y + (rowHeight - line) * 0.5f},
-                              exists ? dim : ImGui::GetColorU32(ErrorText),
-                              when.c_str());
-                ImGui::SetCursorScreenPos({right - menuWidth - 6.0f, top.y + (rowHeight - menuWidth) * 0.5f});
-                ImGui::PushStyleColor(ImGuiCol_Button, {0, 0, 0, 0});
-                if (ImGui::Button(ICON_FA_ELLIPSIS_VERTICAL, {menuWidth, menuWidth}))
-                    ImGui::OpenPopup("##RowMenu");
-                ImGui::PopStyleColor();
-                if (ImGui::BeginPopup("##RowMenu"))
+            // Arrow keys move the selection; typing in the search box keeps them.
+            const bool keys = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::IsAnyItemActive() &&
+                              !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
+            const std::pair<ImGuiKey, Launcher::GridMove> moves[] = {{ImGuiKey_LeftArrow, Launcher::GridMove::Left},
+                                                                     {ImGuiKey_RightArrow, Launcher::GridMove::Right},
+                                                                     {ImGuiKey_UpArrow, Launcher::GridMove::Up},
+                                                                     {ImGuiKey_DownArrow, Launcher::GridMove::Down}};
+            for (const auto& [key, move] : moves)
+                if (keys && !visible.empty() && ImGui::IsKeyPressed(key))
                 {
-                    if (ImGui::MenuItem(ICON_FA_FOLDER_OPEN "  Open", nullptr, false, exists))
-                        Request(entry.ProjectFile);
-                    if (ImGui::MenuItem(ICON_FA_XMARK "  Remove from List"))
-                        remove = i;
-                    ImGui::EndPopup();
+                    m_SelectedRecent =
+                        visible[Launcher::MoveGridSelection(selectedSlot, int(visible.size()), grid.Columns, move)];
+                    m_ScrollToSelection = true;
                 }
-                // Continue below the row; the dummy is the item that grows the list.
-                ImGui::SetCursorScreenPos({top.x, top.y + rowHeight});
-                ImGui::Dummy({0, 2.0f});
-                ImGui::PopID();
+
+            const ImVec2 origin = ImGui::GetCursorScreenPos();
+            ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true); // Arrows belong to the grid, not ImGui navigation.
+            for (int slot = 0; slot < int(visible.size()); ++slot)
+            {
+                const int column = slot % grid.Columns, row = slot / grid.Columns;
+                DrawCard(visible[slot],
+                         {IM_ROUND(origin.x + column * (card.x + gap)), IM_ROUND(origin.y + row * (card.y + gap))},
+                         card,
+                         thumbnail,
+                         remove);
             }
-            if (shown == 0)
+            ImGui::PopItemFlag();
+            const int rows = (int(visible.size()) + grid.Columns - 1) / grid.Columns;
+            ImGui::SetCursorScreenPos(origin);
+            ImGui::Dummy({1.0f, rows > 0 ? rows * card.y + (rows - 1) * gap : 0.0f});
+            if (visible.empty())
                 ImGui::TextDisabled("No projects match \"%s\".", m_Search.c_str());
         }
         ImGui::EndChild();
-        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        m_ScrollToSelection = false;
 
         if (remove >= 0)
         {
             m_Recent.Remove(entries[remove].ProjectFile);
             if (auto error = m_Recent.Save())
                 m_Error = error->Message;
+            RefreshCards();
             m_SelectedRecent = std::min(m_SelectedRecent, int(m_Recent.Entries().size()) - 1);
         }
 
@@ -297,15 +313,170 @@ namespace Kans
             ImGui::TextColored(ErrorText, ICON_FA_TRIANGLE_EXCLAMATION "  %s", m_Error.c_str());
         else
             ImGui::NewLine();
-        const auto& current  = m_Recent.Entries();
-        const bool  canOpen  = m_SelectedRecent >= 0 && m_SelectedRecent < int(current.size()) &&
-                             RecentProjects::Exists(current[m_SelectedRecent]);
+        const auto& current = m_Recent.Entries();
+        const bool  shown   = std::find(visible.begin(), visible.end(), m_SelectedRecent) != visible.end();
+        const bool  canOpen = remove < 0 && shown && m_SelectedRecent < int(m_Cards.size()) && m_Cards[m_SelectedRecent].Exists;
         const char* openLabel = ICON_FA_FOLDER_OPEN "  Open";
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ButtonWidth(openLabel));
         if (PrimaryButton(openLabel, canOpen) ||
-            (canOpen && !ImGui::IsAnyItemActive() && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId) &&
-             ImGui::IsKeyPressed(ImGuiKey_Enter, false)))
+            (canOpen && !ImGui::IsAnyItemActive() &&
+             !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId) &&
+             (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))))
             Request(current[m_SelectedRecent].ProjectFile);
+    }
+
+    void ProjectBrowser::DrawCard(int index, ImVec2 min, ImVec2 size, float thumbnailHeight, int& remove)
+    {
+        const auto&  entry    = m_Recent.Entries()[index];
+        const auto&  info     = m_Cards[index];
+        const auto&  theme    = EditorTheme::Colors();
+        const bool   selected = m_SelectedRecent == index;
+        const ImVec2 max {min.x + size.x, min.y + size.y};
+        const float  rounding = EditorTheme::Px(6.0f);
+        auto*        draw     = ImGui::GetWindowDrawList();
+        ImGui::PushID(index);
+
+        ImGui::SetCursorScreenPos(min);
+        ImGui::InvisibleButton("##Card", size, ImGuiButtonFlags_AllowOverlap);
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            m_SelectedRecent = index;
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && info.Exists)
+            Request(entry.ProjectFile);
+        if (selected && m_ScrollToSelection)
+            ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeY);
+        const bool menuOpen = ImGui::IsPopupOpen("##CardMenu");
+        const bool hovered  = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+                             ImGui::IsMouseHoveringRect(min, max);
+
+        // A tone step above the page; lighter under the pointer.
+        const auto mix = [](ImVec4 a, ImVec4 b, float t) {
+            return ImVec4 {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, 1.0f};
+        };
+        const ImVec4 body = hovered ? theme.Hover : theme.Raised;
+        draw->AddRectFilled(min, max, ImGui::GetColorU32(body), rounding);
+
+        // 16:9 thumbnail, or a tinted placeholder with the project icon.
+        const ImVec2   thumbMax {max.x, min.y + thumbnailHeight};
+        const float    dim     = info.Exists ? 1.0f : 0.45f;
+        Ref<Texture2D> texture = info.Thumbnail.empty() || !m_Thumbnails ?
+                                     nullptr :
+                                     m_Thumbnails->Get(info.Thumbnail, info.Modified, 512);
+        if (texture && texture->GetWidth() && texture->GetHeight())
+        {
+            // Fill the frame, cropping the longer side (textures store the bottom row first).
+            const float aspect = float(texture->GetWidth()) / float(texture->GetHeight());
+            const float frame  = size.x / thumbnailHeight;
+            float       u = 0.0f, v = 0.0f;
+            if (aspect > frame)
+                u = (1.0f - frame / aspect) * 0.5f;
+            else
+                v = (1.0f - aspect / frame) * 0.5f;
+            draw->AddImageRounded(static_cast<ImTextureID>(uintptr_t(texture->GetImGuiTextureID())),
+                                  min,
+                                  thumbMax,
+                                  {u, 1.0f - v},
+                                  {1.0f - u, v},
+                                  ImGui::GetColorU32(ImVec4 {1, 1, 1, dim}),
+                                  rounding,
+                                  ImDrawFlags_RoundCornersTop);
+        }
+        else
+        {
+            draw->AddRectFilled(min, thumbMax, ImGui::GetColorU32(mix(body, theme.Accent, 0.10f)), rounding, ImDrawFlags_RoundCornersTop);
+            ImGui::PushFont(nullptr, EditorTheme::Px(40.0f));
+            Widgets::CenterGlyph(ICON_FA_CUBE,
+                                 min,
+                                 thumbMax,
+                                 ImGui::GetColorU32(info.Exists ? ImVec4 {theme.Accent.x, theme.Accent.y, theme.Accent.z, 0.7f} :
+                                                                  theme.TextOff));
+            ImGui::PopFont();
+        }
+
+        // Darker strip with the name, the path and when it was last opened.
+        draw->AddRectFilled({min.x, thumbMax.y}, max, ImGui::GetColorU32(mix(body, theme.App, 0.45f)), rounding, ImDrawFlags_RoundCornersBottom);
+        const float pad   = EditorTheme::Px(EditorTheme::Space3);
+        const float line  = ImGui::GetTextLineHeight();
+        const float textX = min.x + pad;
+        const float textW = size.x - pad * 2.0f;
+        float       y     = thumbMax.y + EditorTheme::Px(EditorTheme::Space2);
+        ImGui::PushFont(BoldFont(), 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, info.Exists ? theme.Text : theme.TextOff);
+        ImGui::RenderTextEllipsis(draw, {textX, y}, {textX + textW, y + line}, textX + textW, entry.Name.c_str(), nullptr, nullptr);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+        y += line + EditorTheme::Px(EditorTheme::Space1);
+        const auto folder = entry.ProjectFile.parent_path().u8string();
+        const auto path   = Launcher::EllipsizeMiddle(folder, textW, [](std::string_view text) {
+            return ImGui::CalcTextSize(text.data(), text.data() + text.size()).x;
+        });
+        draw->AddText({textX, y}, ImGui::GetColorU32(info.Exists ? theme.TextDim : theme.TextOff), path.c_str());
+        if (hovered && ImGui::IsMouseHoveringRect({textX, y}, {textX + textW, y + line}))
+            ImGui::SetTooltip("%s", entry.ProjectFile.u8string().c_str());
+        y += line + EditorTheme::Px(EditorTheme::Space1);
+        const auto when = Launcher::FormatLastOpened(static_cast<int64_t>(std::time(nullptr)), entry.LastOpened);
+        draw->AddText({textX, y}, ImGui::GetColorU32(theme.TextOff), when.c_str());
+
+        // Layering: a hairline on every card, lighter under the pointer; the selection gets
+        // an accent outline with a soft inner glow. (Cards are the exception to "no lines".)
+        if (selected)
+        {
+            const ImVec4 glow {theme.Accent.x, theme.Accent.y, theme.Accent.z, 0.28f};
+            const float  o = EditorTheme::Px(1.0f);
+            draw->AddRect({min.x + o * 2.0f, min.y + o * 2.0f}, {max.x - o * 2.0f, max.y - o * 2.0f},
+                          ImGui::GetColorU32(glow), std::max(0.0f, rounding - o * 2.0f), 0, EditorTheme::Px(2.0f));
+            draw->AddRect(min, max, ImGui::GetColorU32(theme.Accent), rounding, 0, EditorTheme::Px(2.0f));
+        }
+        else
+        {
+            const ImVec4 hairline = hovered ? ImVec4 {1, 1, 1, 0.22f} : ImVec4 {1, 1, 1, 0.08f};
+            draw->AddRect(min, max, ImGui::GetColorU32(hairline), rounding, 0, 1.0f);
+        }
+
+        // A missing project is dimmed and badged; it cannot be opened.
+        if (!info.Exists)
+        {
+            const char*  text  = ICON_FA_TRIANGLE_EXCLAMATION "  Missing";
+            const ImVec2 label = ImGui::CalcTextSize(text);
+            const ImVec2 bmin {min.x + EditorTheme::Px(EditorTheme::Space2), min.y + EditorTheme::Px(EditorTheme::Space2)};
+            const ImVec2 bmax {bmin.x + label.x + EditorTheme::Px(EditorTheme::Space2) * 2.0f,
+                               bmin.y + label.y + EditorTheme::Px(EditorTheme::Space1) * 2.0f};
+            draw->AddRectFilled(bmin, bmax, ImGui::GetColorU32(ImVec4 {theme.Danger.x, theme.Danger.y, theme.Danger.z, 0.9f}),
+                                EditorTheme::Px(4.0f));
+            draw->AddText({bmin.x + EditorTheme::Px(EditorTheme::Space2), bmin.y + EditorTheme::Px(EditorTheme::Space1)},
+                          IM_COL32_WHITE,
+                          text);
+        }
+
+        // The card's actions, top right, while the pointer is over it.
+        if (hovered || menuOpen)
+        {
+            const float  button = EditorTheme::Px(26.0f);
+            const ImVec2 at {max.x - button - EditorTheme::Px(EditorTheme::Space2), min.y + EditorTheme::Px(EditorTheme::Space2)};
+            ImGui::SetCursorScreenPos(at);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4 {0, 0, 0, 0.45f});
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4 {0, 0, 0, 0.65f});
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4 {0, 0, 0, 0.8f});
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, EditorTheme::Px(4.0f));
+            if (ImGui::Button("##CardActions", {button, button}))
+            {
+                m_SelectedRecent = index;
+                ImGui::OpenPopup("##CardMenu");
+            }
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(3);
+            Widgets::CenterGlyph(ICON_FA_ELLIPSIS_VERTICAL, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32_WHITE);
+        }
+        if (ImGui::BeginPopup("##CardMenu"))
+        {
+            Widgets::PushMenuStyle();
+            if (Widgets::IconMenuItem(ICON_FA_FOLDER_OPEN, "Open", nullptr, false, info.Exists))
+                Request(entry.ProjectFile);
+            if (Widgets::IconMenuItem(ICON_FA_XMARK, "Remove from List"))
+                remove = index;
+            Widgets::PopMenuStyle();
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
     }
 
     void ProjectBrowser::DrawNew()

@@ -1,3 +1,4 @@
+#include <cstring>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <glm/gtc/constants.hpp>
@@ -21,7 +22,6 @@ namespace Kans
     {
         const ImVec4 AccentColor = EditorTheme::Colors().Accent;
 
-        std::string MenuLabel(const char* icon, const char* text) { return std::string(icon) + "  " + text; }
         // Frame padding that makes the menu bar a 36 px band (at scale 1) with centred labels.
         ImVec2 BandPadding() { return {EditorTheme::Px(10.0f), (EditorTheme::Px(36.0f) - ImGui::GetFontSize()) * 0.5f}; }
     } // namespace
@@ -133,6 +133,7 @@ namespace Kans
     {
         PROFILE_FUCTION();
         m_ThumbnailBudget = 2; // Material thumbnails rendered per frame.
+        PollProjectThumbnail();
         HandleShortcuts();
 
         // Full-window host for the menu bar, the main toolbar and the dock space.
@@ -419,16 +420,16 @@ namespace Kans
             m_ProjectBrowser->SetPage(page);
             m_ProjectBrowserRequested = true;
         };
-        if (ImGui::MenuItem(MenuLabel(ICON_FA_PLUS, "New Project...").c_str()))
+        if (Widgets::IconMenuItem(ICON_FA_PLUS, "New Project..."))
             openBrowser(ProjectBrowser::Page::New);
-        if (ImGui::MenuItem(MenuLabel(ICON_FA_FOLDER_OPEN, "Open Project...").c_str()))
+        if (Widgets::IconMenuItem(ICON_FA_FOLDER_OPEN, "Open Project..."))
         {
             openBrowser(ProjectBrowser::Page::Recent);
             m_ProjectBrowser->BrowseForProject();
         }
-        if (ImGui::MenuItem(MenuLabel(ICON_FA_GEAR, "Project Settings...").c_str()))
+        if (Widgets::IconMenuItem(ICON_FA_GEAR, "Project Settings..."))
             m_Panels.Open(PanelID::ProjectSettings);
-        if (ImGui::BeginMenu(MenuLabel(ICON_FA_CLOCK_ROTATE_LEFT, "Recent Projects").c_str()))
+        if (Widgets::BeginIconMenu(ICON_FA_CLOCK_ROTATE_LEFT, "Recent Projects"))
         {
             RecentProjects recent(RecentProjects::DefaultStorageFile());
             (void)recent.Load(); // A broken list just shows fewer entries.
@@ -450,7 +451,7 @@ namespace Kans
             ImGui::Separator();
             if (ImGui::MenuItem("Show All..."))
                 openBrowser(ProjectBrowser::Page::Recent);
-            ImGui::EndMenu();
+            Widgets::EndMenu();
         }
     }
 
@@ -490,6 +491,9 @@ namespace Kans
         if (std::filesystem::equivalent(project, m_ProjectFile, ec))
             return;
         ConfirmDiscard("switching projects", [this, project] {
+            // Before the next editor starts, so it opens where this one is.
+            if (m_Placements)
+                m_Placements->Remember(Application::Get().GetWindow().GetPlacement());
             if (auto error = EditorProcess::LaunchWithProject(project))
             {
                 Record(AssetError {AssetErrorCode::IoError, *error});
@@ -507,44 +511,72 @@ namespace Kans
         ImGui::PopStyleVar();
         if (!bar)
             return;
-        if (ImGui::BeginMenu("File"))
+        const ImRect band = ImGui::GetCurrentWindow()->MenuBarRect();
+        m_BandRight       = band.Max.x;
+        // On Windows the band is the window's titlebar: the icon first, the window buttons
+        // last, and everything that is not a control drags the window.
+        const bool custom = m_Titlebar.IsCustom();
+        if (custom)
+        {
+            m_Titlebar.Begin(band.Min, band.Max, ImGui::GetMainViewport()->Pos);
+            ImGui::GetCurrentWindow()->DC.CursorPos.x =
+                m_Titlebar.Icon(band.Min.x + EditorTheme::Px(EditorTheme::Space3)) + EditorTheme::Px(EditorTheme::Space1);
+            m_BandRight = m_Titlebar.ButtonsLeft();
+        }
+        const float menusLeft = ImGui::GetCursorScreenPos().x;
+        DrawMenus();
+        if (custom)
+            m_Titlebar.Client({menusLeft, band.Min.y}, {ImGui::GetCursorScreenPos().x, band.Max.y});
+        DrawToolbar();
+        if (custom)
+        {
+            auto& window = Application::Get().GetWindow();
+            RunTitlebarButton(m_Titlebar.WindowButtons(window.IsMaximized(), window.GetTitlebarButtonState()));
+            m_Titlebar.End();
+        }
+        ImGui::EndMenuBar();
+    }
+
+    void EditorLayer::DrawMenus()
+    {
+        if (Widgets::BeginMenu("File"))
         {
             Widgets::MenuSection("Project");
             DrawProjectMenu();
             Widgets::MenuSection("Scene");
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_FILE, "New Scene").c_str(), "Ctrl+N"))
+            if (Widgets::IconMenuItem(ICON_FA_FILE, "New Scene", "Ctrl+N"))
                 ConfirmDiscard("creating a new scene", [this] { Record(NewScene()); });
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_FOLDER_OPEN, "Open Scene...").c_str(), "Ctrl+O"))
+            if (Widgets::IconMenuItem(ICON_FA_FOLDER_OPEN, "Open Scene...", "Ctrl+O"))
                 ConfirmDiscard("opening another scene", [this] { m_SceneDialog = SceneDialog::Open; });
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_FLOPPY_DISK, "Save Scene").c_str(), "Ctrl+S", false, !m_Play.IsActive()))
+            if (Widgets::IconMenuItem(ICON_FA_FLOPPY_DISK, "Save Scene", "Ctrl+S", false, !m_Play.IsActive()))
                 SaveCurrentScene();
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_FLOPPY_DISK, "Save Scene As...").c_str(), "Ctrl+Shift+S", false, !m_Play.IsActive()))
+            if (Widgets::IconMenuItem(ICON_FA_FLOPPY_DISK, "Save Scene As...", "Ctrl+Shift+S", false, !m_Play.IsActive()))
                 m_SceneDialog = SceneDialog::Save;
             ImGui::Separator();
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_XMARK, "Exit").c_str()))
+            if (Widgets::IconMenuItem(ICON_FA_XMARK, "Exit"))
                 ConfirmDiscard("exiting", [] { Application::Get().Close(); });
-            ImGui::EndMenu();
+            Widgets::EndMenu();
         }
-        if (ImGui::BeginMenu("Edit"))
+        if (Widgets::BeginMenu("Edit"))
         {
             const auto undo     = m_History.UndoLabels();
             const auto redo     = m_History.RedoLabels();
             const auto* asset   = ViewportVfxDocument();
             const auto undoNext = UndoRouting::Describe(m_History, asset, false);
             const auto redoNext = UndoRouting::Describe(m_History, asset, true);
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_UNDO, undoNext.empty() ? "Undo" : ("Undo " + undoNext).c_str()).c_str(),
+            if (Widgets::IconMenuItem(ICON_FA_UNDO, undoNext.empty() ? "Undo" : ("Undo " + undoNext).c_str(),
                                 "Ctrl+Z",
                                 false,
                                 !undoNext.empty() && !m_Play.IsActive()))
                 UndoScene();
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_REDO, redoNext.empty() ? "Redo" : ("Redo " + redoNext).c_str()).c_str(),
+            if (Widgets::IconMenuItem(ICON_FA_REDO, redoNext.empty() ? "Redo" : ("Redo " + redoNext).c_str(),
                                 "Ctrl+Y",
                                 false,
                                 !redoNext.empty() && !m_Play.IsActive()))
                 RedoScene();
             ImGui::Separator();
             // Jump several steps at once.
-            if (ImGui::BeginMenu(MenuLabel(ICON_FA_CLOCK_ROTATE_LEFT, "History").c_str(),
+            if (Widgets::BeginIconMenu(ICON_FA_CLOCK_ROTATE_LEFT, "History",
                                  (!undo.empty() || !redo.empty()) && !m_Play.IsActive()))
             {
                 for (size_t i = redo.size(); i-- > 0;)
@@ -556,7 +588,7 @@ namespace Kans
                     ImGui::PopStyleColor();
                     ImGui::PopID();
                 }
-                ImGui::MenuItem(ICON_FA_CHECK "  Current state", nullptr, true, false);
+                Widgets::IconMenuItem(ICON_FA_CHECK, "Current state", nullptr, true, false);
                 for (size_t i = 0; i < undo.size(); ++i)
                 {
                     ImGui::PushID(int(i));
@@ -564,30 +596,28 @@ namespace Kans
                         UndoScene(int(i + 1), false);
                     ImGui::PopID();
                 }
-                ImGui::EndMenu();
+                Widgets::EndMenu();
             }
-            ImGui::EndMenu();
+            Widgets::EndMenu();
         }
         // Play, pause and step live on the band's play controls (and Ctrl+P / Ctrl+Shift+P).
-        if (ImGui::BeginMenu("Assets"))
+        if (Widgets::BeginMenu("Assets"))
         {
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_FILE_IMPORT, "Asset Importer").c_str()))
+            if (Widgets::IconMenuItem(ICON_FA_FILE_IMPORT, "Asset Importer"))
                 m_Panels.Open(PanelID::AssetImporter);
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_PALETTE, "Create Material").c_str()))
+            if (Widgets::IconMenuItem(ICON_FA_PALETTE, "Create Material"))
                 CreateMaterial(m_ContentBrowserPanel.GetCurrentFolder());
             ImGui::Separator();
-            if (ImGui::MenuItem(MenuLabel(ICON_FA_ROTATE_RIGHT, "Refresh Published Products").c_str()))
+            if (Widgets::IconMenuItem(ICON_FA_ROTATE_RIGHT, "Refresh Published Products"))
                 Record(RefreshProductAssets());
-            ImGui::EndMenu();
+            Widgets::EndMenu();
         }
         DrawScriptsMenu();
-        if (ImGui::BeginMenu("Window"))
+        if (Widgets::BeginMenu("Window"))
         {
             m_Panels.DrawWindowMenu();
-            ImGui::EndMenu();
+            Widgets::EndMenu();
         }
-        DrawToolbar();
-        ImGui::EndMenuBar();
     }
 
     void EditorLayer::DrawToolbar()
@@ -600,17 +630,39 @@ namespace Kans
         const float  gap     = EditorTheme::Px(EditorTheme::Space2);
         float        x       = ImGui::GetCursorScreenPos().x + EditorTheme::Px(EditorTheme::Space3);
 
-        // The project name opens the project commands (new, open, recent).
-        x = Widgets::Pill({x, y}, [&] {
-                if (Widgets::TextButton(ICON_FA_CUBES, m_ProjectName.c_str(), "Projects", false, true))
-                    ImGui::OpenPopup("##ProjectMenu");
-                if (ImGui::BeginPopup("##ProjectMenu"))
-                {
-                    DrawProjectMenu();
-                    ImGui::EndPopup();
-                }
-            }) + gap;
+        const bool        custom    = m_Titlebar.IsCustom();
+        const std::string sceneName = (m_ScenePath.empty() ? std::string("Untitled scene") : m_ScenePath.filename().u8string()) +
+                                      (m_History.IsModified() ? "  " ICON_FA_CIRCLE : "");
+        if (custom)
+        {
+            // The titlebar names the project and the scene; the label drags the window like
+            // the rest of the caption (the project commands are in File).
+            const float textY = bar.Min.y + (bar.GetHeight() - ImGui::GetTextLineHeight()) * 0.5f;
+            auto*       draw  = ImGui::GetWindowDrawList();
+            auto& fonts = ImGui::GetIO().Fonts->Fonts;
+            ImGui::PushFont(fonts.Size > 1 ? fonts[1] : ImGui::GetFont(), 0.0f); // Bold.
+            draw->AddText({x, textY}, ImGui::GetColorU32(EditorTheme::Colors().Text), m_ProjectName.c_str());
+            x += ImGui::CalcTextSize(m_ProjectName.c_str()).x;
+            ImGui::PopFont();
+            const std::string scene = "  \xC2\xB7  " + sceneName;
+            draw->AddText({x, textY}, ImGui::GetColorU32(EditorTheme::Colors().TextDim), scene.c_str());
+            x += ImGui::CalcTextSize(scene.c_str()).x + EditorTheme::Px(EditorTheme::Space4);
+        }
+        else
+            // The project name opens the project commands (new, open, recent).
+            x = Widgets::Pill({x, y}, [&] {
+                    if (Widgets::TextButton(ICON_FA_CUBES, m_ProjectName.c_str(), "Projects", false, true))
+                        ImGui::OpenPopup("##ProjectMenu");
+                    if (ImGui::BeginPopup("##ProjectMenu"))
+                    {
+                        Widgets::PushMenuStyle();
+                        DrawProjectMenu();
+                        Widgets::PopMenuStyle();
+                        ImGui::EndPopup();
+                    }
+                }) + gap;
         // Only the actions used all the time; the rest live in the menus and shortcuts.
+        const float toolsLeft = x;
         x = Widgets::Pill({x, y}, [&] {
                 if (ToolButton(ICON_FA_FLOPPY_DISK, "Save scene (Ctrl+S)", false, !m_Play.IsActive()))
                     SaveCurrentScene();
@@ -627,21 +679,24 @@ namespace Kans
                 if (ToolButton(ICON_FA_REDO, redoTip.c_str(), false, editing && !redo.empty()))
                     RedoScene();
             }) + gap;
+        if (custom)
+            m_Titlebar.Client({toolsLeft, bar.Min.y}, {x - gap, bar.Max.y});
 
         // Play controls in the middle of the band unless the left side reaches past it.
         // Same height and centre as the pills, so the groups' edges line up.
         const float playTop = bar.Min.y + (bar.GetHeight() - Widgets::BandGroupHeight()) * 0.5f;
-        x = DrawPlayControls({std::max(x + gap, (bar.Min.x + bar.Max.x - Widgets::TransportWidth()) * 0.5f), playTop}) + gap;
+        const float playLeft = std::max(x + gap, (bar.Min.x + bar.Max.x - Widgets::TransportWidth()) * 0.5f);
+        x = DrawPlayControls({playLeft, playTop}) + gap;
+        if (custom)
+            m_Titlebar.Client({playLeft, bar.Min.y}, {x - gap, bar.Max.y});
         // Play mode: an accent line under the band (the band itself is tinted by the host).
         if (m_Play.IsActive())
             ImGui::GetWindowDrawList()->AddRectFilled({bar.Min.x, bar.Max.y - EditorTheme::Px(2.0f)}, bar.Max,
                                                       ImGui::GetColorU32(EditorTheme::Colors().TypeModel));
 
-        // Right side: the last error, import progress and the scene name.
-        std::string status = ICON_FA_CUBE "  " + (m_ScenePath.empty() ? std::string("Untitled scene") :
-                                                                         m_ScenePath.filename().u8string());
-        if (m_History.IsModified())
-            status += "  " ICON_FA_CIRCLE;
+        // Right side: the last error, import progress and the scene name (in the titlebar
+        // the scene is named next to the project instead).
+        std::string status = custom ? std::string() : ICON_FA_CUBE "  " + sceneName;
         if (m_Play.IsActive())
         {
             char clock[64];
@@ -652,7 +707,7 @@ namespace Kans
                           m_Play.IsSimulating()                                ? "Simulating" :
                                                                                  "Playing",
                           m_Play.GetPlayTime());
-            status = clock + status;
+            status = custom ? std::string(clock, std::strlen(clock) - 3) : clock + status; // Without the gap.
         }
         bool importing = false;
         if (m_AssetImports)
@@ -690,11 +745,13 @@ namespace Kans
         if (!undoText.empty())
             width += ImGui::CalcTextSize(undoText.c_str()).x + spacing;
         const float textY = bar.Min.y + (bar.GetHeight() - ImGui::GetTextLineHeight()) * 0.5f;
-        ImGui::SetCursorScreenPos({std::max(x, bar.Max.x - width - EditorTheme::Px(EditorTheme::Space3)), textY});
+        ImGui::SetCursorScreenPos({std::max(x, m_BandRight - width - EditorTheme::Px(EditorTheme::Space3)), textY});
         ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset = 0.0f; // textY is already centred.
         if (!errorText.empty())
         {
             ImGui::TextColored(EditorTheme::Colors().Danger, "%s", errorText.c_str());
+            if (custom)
+                m_Titlebar.ClientItem(); // Clicking it opens the console.
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("%s\nClick to open the console and dismiss.", m_SceneFileError.c_str());
             if (ImGui::IsItemClicked())
