@@ -1,7 +1,7 @@
 #include "kspch.h"
 #include "EditorRenderFeatures.h"
 #include "Kans3D/Renderer/RenderFrame.h"
-#include "Kans3D/Renderer/Resource/EditorGridPass.h"
+#include "KansEditorCore/Renderer/EditorGridPass.h"
 #include "TransformGizmoFeature.h"
 
 namespace Kans

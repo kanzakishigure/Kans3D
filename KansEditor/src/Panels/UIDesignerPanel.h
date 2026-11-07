@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include "Kans3D/Editor/EditorAssetChoice.h"
+#include "KansEditorCore/EditorAssetChoice.h"
 #include "Kans3D/UI/UIInstance.h"
 
 namespace Kans

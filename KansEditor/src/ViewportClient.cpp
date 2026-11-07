@@ -1,6 +1,6 @@
 #include "ViewportClient.h"
 #include "Kans3D/Renderer/Features/BloomFeature.h"
-#include "Kans3D/Renderer/Features/Editor/EditorRenderFeatures.h"
+#include "KansEditorCore/Renderer/EditorRenderFeatures.h"
 #include "Kans3D/Renderer/Features/MaterialPassFeature.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 

@@ -6,7 +6,7 @@
 #include <misc/cpp/imgui_stdlib.h>
 #include <yaml-cpp/yaml.h>
 #include "Kans3D/Asset/Manager/AssetManager.h"
-#include "Kans3D/Editor/EditorAssetImportService.h"
+#include "KansEditorCore/EditorAssetImportService.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Scene/Components.h"

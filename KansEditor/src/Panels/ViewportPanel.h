@@ -4,7 +4,7 @@
 #include <functional>
 #include <optional>
 #include <variant>
-#include "Kans3D/Editor/EditorCamera.h"
+#include "KansEditorCore/EditorCamera.h"
 #include "Kans3D/UI/UIInput.h"
 #include "ClothPaintTool.h"
 #include "Gizmo/GizmoTargets.h"

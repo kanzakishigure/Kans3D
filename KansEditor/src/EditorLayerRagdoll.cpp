@@ -1,6 +1,6 @@
 #include <functional>
 #include "Kans3D/Animation/AnimatorComponent.h"
-#include "Kans3D/Editor/EditorAssetImportService.h"
+#include "KansEditorCore/EditorAssetImportService.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "EditorLayer.h"

@@ -4,7 +4,7 @@
 #include <utility>
 #include <vector>
 #include <glm/glm.hpp>
-#include "Kans3D/Editor/EditorCamera.h"
+#include "KansEditorCore/EditorCamera.h"
 
 // The view cube in the viewport corner, with no ImGui: a cube turning with the camera whose
 // faces, edges and corners each look from one of 26 directions. Each face is cut into 3 x 3

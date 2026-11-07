@@ -1,5 +1,5 @@
 #include "SourceBuild.h"
-#include "Kans3D/Editor/EditorAssetImportService.h"
+#include "KansEditorCore/EditorAssetImportService.h"
 
 namespace Kans
 {

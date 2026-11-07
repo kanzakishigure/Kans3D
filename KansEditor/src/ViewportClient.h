@@ -5,7 +5,7 @@
 #include <optional>
 #include <vector>
 #include <glm/glm.hpp>
-#include "Kans3D/Editor/EditorCamera.h"
+#include "KansEditorCore/EditorCamera.h"
 #include "Kans3D/Renderer/RenderFeature.h"
 #include "Kans3D/Renderer/RenderView.h"
 #include "Kans3D/Renderer/Renderer.h"

@@ -7,7 +7,7 @@
 
 // TestInclude
 #include "Kans3D/Core/Log/Log.h"
-#include "Kans3D/Renderer/Features/Editor/EditorRenderFeatures.h"
+#include "KansEditorCore/Renderer/EditorRenderFeatures.h"
 #include <Kans3D/Core/Hash.h>
 #include <Kans3D/Core/UUID.h>
 

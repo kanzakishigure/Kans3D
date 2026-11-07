@@ -3,7 +3,7 @@
 #include <imgui.h>
 #include <vector>
 #include "HierarchyPanel.h"
-#include "Kans3D/Editor/EditorAssetChoice.h"
+#include "KansEditorCore/EditorAssetChoice.h"
 
 namespace Kans
 {

@@ -2,7 +2,7 @@
 #include <imgui_internal.h>
 #include <algorithm>
 #include <cmath>
-#include "Kans3D/Editor/EditorCamera.h"
+#include "KansEditorCore/EditorCamera.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Scene/Scene.h"
 #include "UI/EditorIcons.h"

@@ -5,7 +5,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include "Kans3D/Animation/AnimatorComponent.h"
 #include "Kans3D/Core/Math/Math.h"
-#include "Kans3D/Editor/DropPlacement.h"
+#include "KansEditorCore/DropPlacement.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Core/Input/Input.h"
 #include "Kans3D/Renderer/RenderWorld.h"

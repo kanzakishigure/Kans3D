@@ -7,7 +7,7 @@
 #include <fstream>
 #include <imgui_internal.h>
 #include "Kans3D/Asset/Importer/ImporterRegistry.h"
-#include "Kans3D/Editor/EditorResources.h"
+#include "KansEditorCore/EditorResources.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "UI/EditorIcons.h"
 #include "UI/Widgets.h"

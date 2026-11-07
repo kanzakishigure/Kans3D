@@ -2,7 +2,7 @@
 #include <optional>
 #include <variant>
 #include <vector>
-#include "Kans3D/Editor/EditorAssetImportService.h"
+#include "KansEditorCore/EditorAssetImportService.h"
 
 namespace Kans::Browser
 {

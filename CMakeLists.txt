@@ -161,6 +161,9 @@ add_subdirectory(${VENDOR_DIR})
 # ============================================================
 add_subdirectory(${KANS3D_DIR})
 
+# Editor-only services and renderer features.
+add_subdirectory(KansEditorCore)
+
 # ============================================================
 # Core - KansScriptCore C# shared library
 # ============================================================

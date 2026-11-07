@@ -2,8 +2,8 @@
 #include <functional>
 #include "Kans3D/Asset/Importer/MaterialSource.h"
 #include "Kans3D/Asset/Manager/AssetManager.h"
-#include "Kans3D/Editor/EditorAssetChoice.h"
-#include "Kans3D/Editor/EditorAssetImportService.h"
+#include "KansEditorCore/EditorAssetChoice.h"
+#include "KansEditorCore/EditorAssetImportService.h"
 #include "Kans3D/Renderer/MaterialPreviewRenderer.h"
 #include "Kans3D/Renderer/Resource/Texture.h"
 #include "Components/MaterialAssignment.h"

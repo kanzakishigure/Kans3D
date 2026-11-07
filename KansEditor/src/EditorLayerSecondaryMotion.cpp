@@ -1,5 +1,5 @@
 #include <imgui.h>
-#include "Kans3D/Editor/EditorAssetImportService.h"
+#include "KansEditorCore/EditorAssetImportService.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Components/ComponentEditors.h"
 #include "EditorLayer.h"

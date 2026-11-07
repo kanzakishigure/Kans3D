@@ -6,11 +6,11 @@
 #include <string>
 #include <vector>
 #include <imgui.h>
-#include "Kans3D/Editor/EditorAssetChoice.h"
+#include "KansEditorCore/EditorAssetChoice.h"
 #include "Gizmo/Handles.h"
 #include "Gizmo/ModalTransform.h"
 #include "Gizmo/TransformGizmo.h"
-#include "Kans3D/Editor/EditorCamera.h"
+#include "KansEditorCore/EditorCamera.h"
 #include "Kans3D/Renderer/Renderer.h"
 #include "Physics/RagdollEditing.h"
 

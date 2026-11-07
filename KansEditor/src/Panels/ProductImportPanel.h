@@ -2,7 +2,7 @@
 #include <functional>
 #include <future>
 #include "Kans3D/Animation/AnimationData.h"
-#include "Kans3D/Editor/EditorAssetImportService.h"
+#include "KansEditorCore/EditorAssetImportService.h"
 #include "Import/ImportSettingsDraft.h"
 
 namespace Kans

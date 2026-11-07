@@ -6,7 +6,7 @@
 #include <typeindex>
 #include <vector>
 #include "Kans3D/Asset/Manager/AssetManager.h"
-#include "Kans3D/Editor/EditorAssetChoice.h"
+#include "KansEditorCore/EditorAssetChoice.h"
 #include "Kans3D/Renderer/RenderView.h"
 #include "Kans3D/Scene/Components.h"
 #include "Components/ComponentRegistry.h"

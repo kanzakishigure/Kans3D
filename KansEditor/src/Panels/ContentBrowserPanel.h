@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <vector>
 #include <imgui.h>
-#include "Kans3D/Editor/EditorPanel.h"
+#include "KansEditorCore/EditorPanel.h"
 #include "UI/IniSection.h"
 #include "ContentBrowser/AssetFileOperations.h"
 #include "ContentBrowser/BrowserModel.h"

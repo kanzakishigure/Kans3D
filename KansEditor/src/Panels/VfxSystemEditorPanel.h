@@ -8,8 +8,8 @@
 #include <vector>
 #include <memory>
 #include <imgui.h>
-#include "Kans3D/Editor/EditorAssetChoice.h"
-#include "Kans3D/Editor/EditorCamera.h"
+#include "KansEditorCore/EditorAssetChoice.h"
+#include "KansEditorCore/EditorCamera.h"
 #include "Gizmo/Handles.h"
 #include "Panels/VfxGizmos.h"
 #include "Panels/VfxPreview.h"

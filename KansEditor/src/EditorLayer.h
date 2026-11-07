@@ -7,8 +7,8 @@
 #include "Kans3D/Project/Project.h"
 #include <Kans3D.h>
 
-#include "Kans3D/Editor/EditorCamera.h"
-#include "Kans3D/Editor/EditorResources.h"
+#include "KansEditorCore/EditorCamera.h"
+#include "KansEditorCore/EditorResources.h"
 #include "Kans3D/Renderer/MaterialPreviewRenderer.h"
 #include "Kans3D/Scene/ScenePlaySession.h"
 #include "Kans3D/Script/ScriptBuild.h"

@@ -14,11 +14,11 @@ target_include_directories(KansEditor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# ---- Link Kans3D engine (--start-group handles circular refs inside libKans3D.a) ----
+# ---- Link editor core and engine (--start-group handles static archive references) ----
 if(UNIX AND NOT APPLE)
-    target_link_libraries(KansEditor PRIVATE -Wl,--start-group Kans3D -Wl,--end-group)
+    target_link_libraries(KansEditor PRIVATE -Wl,--start-group KansEditorCore Kans3D -Wl,--end-group)
 else()
-    target_link_libraries(KansEditor PRIVATE Kans3D)
+    target_link_libraries(KansEditor PRIVATE KansEditorCore)
 endif()
 
 # ---- Windows: common dialogs (OpenFileDialog) ----

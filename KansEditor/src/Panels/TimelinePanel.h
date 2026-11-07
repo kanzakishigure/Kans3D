@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include "Kans3D/Editor/EditorAssetChoice.h"
+#include "KansEditorCore/EditorAssetChoice.h"
 #include "Kans3D/Timeline/Timeline.h"
 #include "HierarchyPanel.h"
 
