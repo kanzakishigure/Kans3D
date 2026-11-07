@@ -80,7 +80,7 @@ IncludeCategories:
     Priority: 3
   - Regex: '^<'
     Priority: 4
-  # KansEditor/src is the editor include root.
+  # KansEditor/App/src is the editor application include root.
   - Regex: '^"(Panels|Debug)/'
     Priority: 6
   - Regex: '.*'
