@@ -259,14 +259,14 @@ void FillBuffer(const Handle<Buffer>& handle, size_t offset, size_t bytes, uint3
     Range(b->Desc.Bytes, offset, bytes);
     Mark(b);
     Recorded.push_back([b, offset, bytes, value](Execution& e) {
-        e.Use(*b, {VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT});
+        e.Use(*b, BufferClearWrite);
         e.FlushBarriers();
         vkCmdFillBuffer(e.Native, b->Native, offset, bytes, value);
         if (b->Desc.Memory == MemoryUsage::Readback)
         {
             e.Use(*b, HostRead);
             e.FlushBarriers();
-            b->Last = {VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT};
+            b->Last = BufferClearWrite;
         }
     });
 }
@@ -284,14 +284,14 @@ void UpdateBuffer(const Handle<Buffer>& handle, size_t offset, const void* data,
     std::vector<uint32_t> copy(bytes / 4);
     std::memcpy(copy.data(), data, bytes);
     Recorded.push_back([b, offset, copy = std::move(copy)](Execution& e) {
-        e.Use(*b, {VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT});
+        e.Use(*b, BufferClearWrite);
         e.FlushBarriers();
         vkCmdUpdateBuffer(e.Native, b->Native, offset, copy.size() * 4, copy.data());
         if (b->Desc.Memory == MemoryUsage::Readback)
         {
             e.Use(*b, HostRead);
             e.FlushBarriers();
-            b->Last = {VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT};
+            b->Last = BufferClearWrite;
         }
     });
 }

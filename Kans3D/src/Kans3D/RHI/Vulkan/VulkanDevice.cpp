@@ -645,6 +645,11 @@ namespace Kans::RenderHardware
         constexpr Access TransferWrite {VK_PIPELINE_STAGE_2_COPY_BIT,
                                         VK_ACCESS_2_TRANSFER_WRITE_BIT,
                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL};
+        // NV2: buffer fills/updates execute at CLEAR, but older validation layers
+        // classify them at COPY (Khronos VVL #7406). Cover both in every dependency,
+        // including the producer retained after a read and readback host exports.
+        constexpr Access BufferClearWrite {VK_PIPELINE_STAGE_2_CLEAR_BIT | VK_PIPELINE_STAGE_2_COPY_BIT,
+                                           VK_ACCESS_2_TRANSFER_WRITE_BIT};
         bool             Writes(VkAccessFlags2 access)
         {
             return (access & (VK_ACCESS_2_HOST_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT |
