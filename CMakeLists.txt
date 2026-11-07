@@ -8,8 +8,28 @@ set(CMAKE_JOB_POOL_LINK kans_link_pool)
 # MSBuild runs projects in parallel but compiles one source file at a time inside a project
 # unless cl gets /MP; Kans3D alone has ~700 sources. Set before the vendor and engine targets
 # so PhysX, assimp and the rest compile in parallel too. Ninja already schedules per file.
+#
+# The cap is solution-wide: MSBuild's MultiToolTask with EnforceProcessCountAcrossBuilds shares
+# one pool of cl.exe processes across all projects building in parallel, so the machine keeps
+# free cores. /MP:N is the per-project fallback when MultiToolTask is not in effect.
+set(KANS_MSVC_COMPILE_JOBS 0 CACHE STRING
+    "Visual Studio: max parallel C/C++ compiles for the whole build (0 = three quarters of the logical cores)")
 if(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
-    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/MP>)
+    set(KANS_COMPILE_JOBS ${KANS_MSVC_COMPILE_JOBS})
+    if(NOT KANS_COMPILE_JOBS GREATER 0)
+        cmake_host_system_information(RESULT KANS_LOGICAL_CORES QUERY NUMBER_OF_LOGICAL_CORES)
+        math(EXPR KANS_COMPILE_JOBS "${KANS_LOGICAL_CORES} * 3 / 4")
+        if(KANS_COMPILE_JOBS LESS 1)
+            set(KANS_COMPILE_JOBS 1)
+        endif()
+    endif()
+    message(STATUS "Kans3D: Visual Studio compiles use at most ${KANS_COMPILE_JOBS} parallel jobs")
+    set(CMAKE_VS_GLOBALS
+        "UseMultiToolTask=true"
+        "EnforceProcessCountAcrossBuilds=true"
+        "MultiProcMaxCount=${KANS_COMPILE_JOBS}"
+        "CL_MPCount=${KANS_COMPILE_JOBS}")
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/MP${KANS_COMPILE_JOBS}>)
 endif()
 
 if(POLICY CMP0112)
