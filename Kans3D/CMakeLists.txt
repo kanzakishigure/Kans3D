@@ -129,6 +129,7 @@ target_link_libraries(Kans3D PRIVATE PhysX PhysXCooking PhysXExtensions
 file(GLOB_RECURSE KANS_PHYSX_IMPLEMENTATION CONFIGURE_DEPENDS
     "${KANS3D_SRC}/Kans3D/Physics/PhysX/*.cpp")
 # Match SDK header ABI and Windows static import decoration only in private SDK users.
+# MSVC Debug uses the release CRT (/MD), so neither _DEBUG nor NDEBUG is set; PhysX requires one.
 set_source_files_properties(${KANS_PHYSX_IMPLEMENTATION} PROPERTIES
     SKIP_PRECOMPILE_HEADERS ON
-    COMPILE_DEFINITIONS "PX_PHYSX_STATIC_LIB;DISABLE_CUDA_PHYSX;PX_SUPPORT_PVD=0;PX_SUPPORT_OMNI_PVD=0;$<$<CONFIG:Debug>:PX_DEBUG=1>;$<$<CONFIG:Debug>:PX_CHECKED=1>")
+    COMPILE_DEFINITIONS "PX_PHYSX_STATIC_LIB;DISABLE_CUDA_PHYSX;PX_SUPPORT_PVD=0;PX_SUPPORT_OMNI_PVD=0;$<$<CONFIG:Debug>:PX_DEBUG=1>;$<$<CONFIG:Debug>:PX_CHECKED=1>;$<$<AND:$<CONFIG:Debug>,$<CXX_COMPILER_ID:MSVC>>:NDEBUG>")

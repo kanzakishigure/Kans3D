@@ -299,8 +299,10 @@ function(kans_add_physx)
         set_target_properties(${module} PROPERTIES CXX_STANDARD 17
             POSITION_INDEPENDENT_CODE ON FOLDER "Dependencies/PhysX"
             MSVC_RUNTIME_LIBRARY "${CMAKE_MSVC_RUNTIME_LIBRARY}")
+        # MSVC builds use the release CRT (/MD) in every configuration, so _DEBUG is never
+        # defined there; PxPreprocessor.h requires exactly one of NDEBUG and _DEBUG on Windows.
         target_compile_definitions(${module} PRIVATE ${base_defs}
-            "$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
+            "$<$<OR:$<NOT:$<CONFIG:Debug>>,$<CXX_COMPILER_ID:MSVC>>:NDEBUG>")
         target_include_directories(${module} SYSTEM PUBLIC
             "${CMAKE_CURRENT_BINARY_DIR}/physx/include" "${PHYSX_ROOT_DIR}/include")
         # Prevent upstream PUBLIC include paths from exposing vendor warnings.
