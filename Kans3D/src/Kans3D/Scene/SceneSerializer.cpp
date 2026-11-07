@@ -1354,6 +1354,72 @@ namespace Kans
             return node;
         }
     } // namespace
+    YAML::Node SceneSerializer::SerializeNode(const Scene& scene, bool includeGenerated)
+    {
+        auto& registry = scene.m_Registry;
+        auto  name     = scene.GetName();
+        Require(name.size() <= 4096 && name.find('\0') == std::string::npos, "Invalid Scene name");
+        YAML::Node root;
+        root["Version"]     = 1;
+        root["Scene"]       = name;
+        root["PostProcess"] = EncodePostProcess(scene.GetPostProcessSettings());
+        if (scene.HasEnvironmentSettings())
+        {
+            const auto& settings    = scene.GetEnvironmentSettings();
+            auto        environment = root["Environment"];
+            environment["Map"]      = settings.Map.generic_string(); // Empty explicitly disables IBL.
+            if (settings.DiffuseIntensity != 1)
+                environment["DiffuseIntensity"] = settings.DiffuseIntensity;
+            if (settings.SpecularIntensity != 1)
+                environment["SpecularIntensity"] = settings.SpecularIntensity;
+            if (settings.Rotation != 0)
+                environment["Rotation"] = settings.Rotation;
+            if (settings.SkyboxIntensity != 1)
+                environment["SkyboxIntensity"] = settings.SkyboxIntensity;
+            if (!settings.ShowSkybox)
+                environment["ShowSkybox"] = false;
+            if (settings.BackgroundColor != glm::vec3(0))
+                environment["BackgroundColor"] = Vector(settings.BackgroundColor, 3);
+        }
+        root["Entities"] = YAML::Node(YAML::NodeType::Sequence);
+        std::map<uint64_t, Entity> entities;
+        SceneAllocationBudget      budget;
+        budget.TextBytes = name.size();
+        registry.each([&](auto handle) {
+            Entity entity {handle, const_cast<Scene*>(&scene)};
+            Require(entity.HasComponent<IDComponent, TagComponent, TransformComponent>(), "Incomplete Scene entity");
+            if (!includeGenerated && entity.HasComponent<PrefabOwnedComponent>())
+                return;
+            auto id = uint64_t(entity.GetComponent<IDComponent>().ID);
+            Require(id && entities.emplace(id, entity).second && entities.size() <= 65536,
+                    "Invalid/duplicate Scene identity");
+            auto textBytes = entity.GetComponent<TagComponent>().Tag.size();
+            if (entity.HasComponent<TextComponent>())
+                textBytes += entity.GetComponent<TextComponent>().Text.size() +
+                             entity.GetComponent<TextComponent>().Language.size();
+            if (entity.HasComponent<ScriptComponent>())
+                textBytes += entity.GetComponent<ScriptComponent>().ClassName.size();
+            const auto* prefab = registry.try_get<PrefabInstanceComponent>(handle);
+            budget.Add(textBytes, prefab && prefab->LegacyPending ? &*prefab->LegacyPending : nullptr);
+            if (const auto* editable = registry.try_get<EditableMeshComponent>(handle))
+                budget.AddEditable(*editable);
+        });
+        // Parents before children, siblings in order.
+        size_t                      encoded = 0;
+        std::function<void(Entity)> write   = [&](Entity entity) {
+            if (includeGenerated || !entity.HasComponent<PrefabOwnedComponent>())
+            {
+                root["Entities"].push_back(EncodeEntity(entity));
+                ++encoded;
+            }
+            for (Entity child : scene.GetChildren(entity))
+                write(child);
+        };
+        for (Entity entity : scene.GetRootEntities())
+            write(entity);
+        Require(encoded == entities.size(), "Scene hierarchy does not reach every entity");
+        return root;
+    }
     SceneSerializer::SceneSerializer(const Ref<Scene>& scene) : m_Scene(scene) {}
     std::variant<std::monostate, AssetError> SceneSerializer::SerializeChecked(const std::filesystem::path& path)
     {
@@ -1377,72 +1443,10 @@ namespace Kans
                     entity.GetComponent<PrefabAttachmentComponent>() = {owner.Instance, owner.NodeKey};
                 }
             }
-            auto& registry = m_Scene->m_Registry;
-            if (!registry.view<NativeScriptComponent>().empty())
+            if (!m_Scene->m_Registry.view<NativeScriptComponent>().empty())
                 return AssetError {AssetErrorCode::NotImplemented,
                                    "Scenes with native script components cannot be saved"};
-            auto name = m_Scene->GetName();
-            Require(name.size() <= 4096 && name.find('\0') == std::string::npos, "Invalid Scene name");
-            YAML::Node root;
-            root["Version"]     = 1;
-            root["Scene"]       = name;
-            root["PostProcess"] = EncodePostProcess(m_Scene->GetPostProcessSettings());
-            if (m_Scene->HasEnvironmentSettings())
-            {
-                const auto& settings    = m_Scene->GetEnvironmentSettings();
-                auto        environment = root["Environment"];
-                environment["Map"]      = settings.Map.generic_string(); // Empty explicitly disables IBL.
-                if (settings.DiffuseIntensity != 1)
-                    environment["DiffuseIntensity"] = settings.DiffuseIntensity;
-                if (settings.SpecularIntensity != 1)
-                    environment["SpecularIntensity"] = settings.SpecularIntensity;
-                if (settings.Rotation != 0)
-                    environment["Rotation"] = settings.Rotation;
-                if (settings.SkyboxIntensity != 1)
-                    environment["SkyboxIntensity"] = settings.SkyboxIntensity;
-                if (!settings.ShowSkybox)
-                    environment["ShowSkybox"] = false;
-                if (settings.BackgroundColor != glm::vec3(0))
-                    environment["BackgroundColor"] = Vector(settings.BackgroundColor, 3);
-            }
-            root["Entities"] = YAML::Node(YAML::NodeType::Sequence);
-            std::map<uint64_t, Entity> entities;
-            SceneAllocationBudget      budget;
-            budget.TextBytes = name.size();
-            registry.each([&](auto handle) {
-                Entity entity {handle, m_Scene.get()};
-                Require(entity.HasComponent<IDComponent, TagComponent, TransformComponent>(),
-                        "Incomplete Scene entity");
-                if (entity.HasComponent<PrefabOwnedComponent>())
-                    return;
-                auto id = uint64_t(entity.GetComponent<IDComponent>().ID);
-                Require(id && entities.emplace(id, entity).second && entities.size() <= 65536,
-                        "Invalid/duplicate Scene identity");
-                auto textBytes = entity.GetComponent<TagComponent>().Tag.size();
-                if (entity.HasComponent<TextComponent>())
-                    textBytes += entity.GetComponent<TextComponent>().Text.size() +
-                                 entity.GetComponent<TextComponent>().Language.size();
-                if (entity.HasComponent<ScriptComponent>())
-                    textBytes += entity.GetComponent<ScriptComponent>().ClassName.size();
-                const auto* prefab = registry.try_get<PrefabInstanceComponent>(handle);
-                budget.Add(textBytes, prefab && prefab->LegacyPending ? &*prefab->LegacyPending : nullptr);
-                if (const auto* editable = registry.try_get<EditableMeshComponent>(handle))
-                    budget.AddEditable(*editable);
-            });
-            // Parents before children, siblings in order.
-            size_t                      encoded = 0;
-            std::function<void(Entity)> write   = [&](Entity entity) {
-                if (!entity.HasComponent<PrefabOwnedComponent>())
-                {
-                    root["Entities"].push_back(EncodeEntity(entity));
-                    ++encoded;
-                }
-                for (Entity child : m_Scene->GetChildren(entity))
-                    write(child);
-            };
-            for (Entity entity : m_Scene->GetRootEntities())
-                write(entity);
-            Require(encoded == entities.size(), "Scene hierarchy does not reach every entity");
+            auto          root = SerializeNode(*m_Scene);
             YAML::Emitter output;
             output.SetFloatPrecision(std::numeric_limits<float>::max_digits10);
             output.SetDoublePrecision(std::numeric_limits<double>::max_digits10);

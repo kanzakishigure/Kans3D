@@ -1,4 +1,5 @@
 #pragma once
+#include "KansEditorCore/SceneAssetImportQueue.h"
 #include <array>
 #include <deque>
 #include <future>
@@ -213,13 +214,10 @@ namespace Kans
         // Sources imported without being asked, one build after another: assets the open
         // scene references that were never imported (e.g. the materials of a scene copied
         // into the project) and every shader program, so it can be picked in materials.
-        // Each source is queued once per session, so a failing import is not retried in a loop.
+        // Each source revision is queued once, so a failing import waits for a file change.
         void                                     QueueMissingSceneAssets();
-        void                                     QueueUnimportedShaders();
-        void                                     QueueAutoImport(SourceAssetID source);
         void                                     StartNextAutoImport();
-        std::deque<SourceAssetID>                m_AutoImports;
-        std::set<SourceAssetID>                  m_AutoImported;
+        SceneAssetImportQueue                   m_SceneAssetImports;
         std::variant<std::monostate, AssetError> ActivateScene(Ref<Scene> scene, std::filesystem::path path);
         std::variant<std::monostate, AssetError> NewScene();
         std::variant<std::monostate, AssetError> OpenScene(const std::filesystem::path& path);

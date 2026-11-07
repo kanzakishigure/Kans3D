@@ -12,6 +12,7 @@
 #include "Components.h"
 #include "Entity.h"
 #include "Scene.h"
+#include "SceneAssetReferences.h"
 
 #include "Kans3D/Scene/ScriptableEntity.h"
 #include "Kans3D/Script/ScriptEngine.h"
@@ -242,111 +243,7 @@ namespace Kans
     }
     std::vector<AssetID> Scene::GetReferencedAssets() const
     {
-        std::set<AssetID> ids;
-        auto              add = [&](AssetID id) {
-            if (id.IsValid())
-                ids.insert(id);
-        };
-        for (auto handle : m_Registry.view<PrefabInstanceComponent>())
-            for (const auto& [key, change] : m_Registry.get<PrefabInstanceComponent>(handle).Overrides)
-            {
-                if (change.Cloth)
-                    add(change.Cloth->Asset);
-                if (change.Ragdoll)
-                    add(change.Ragdoll->Asset);
-                if (change.Particles)
-                    add(change.Particles->System);
-                if (change.Vehicle)
-                    for (const auto& w : change.Vehicle->Wheels)
-                        for (const auto& f : w.MaterialFriction)
-                            add(f.Material);
-                if (change.UIScreen)
-                    add(change.UIScreen->UI);
-                if (change.UIWorld)
-                    add(change.UIWorld->UI);
-            }
-        for (auto h : m_Registry.view<ClothComponent>())
-            add(m_Registry.get<ClothComponent>(h).Asset);
-        for (auto h : m_Registry.view<ParticleSystemComponent>())
-            add(m_Registry.get<ParticleSystemComponent>(h).System);
-        for (auto h : m_Registry.view<RagdollComponent>())
-            add(m_Registry.get<RagdollComponent>(h).Asset);
-        for (auto h : m_Registry.view<VehicleComponent>())
-            for (const auto& w : m_Registry.get<VehicleComponent>(h).Wheels)
-                for (const auto& f : w.MaterialFriction)
-                    add(f.Material);
-        for (auto handle : m_Registry.view<UIScreenComponent>())
-            add(m_Registry.get<UIScreenComponent>(handle).UI);
-        for (auto handle : m_Registry.view<UIWorldComponent>())
-            add(m_Registry.get<UIWorldComponent>(handle).UI);
-        for (auto handle : m_Registry.view<SpriteRendererComponent>())
-            add(m_Registry.get<SpriteRendererComponent>(handle).Texture);
-        for (auto handle : m_Registry.view<TextComponent>())
-            add(m_Registry.get<TextComponent>(handle).Font);
-        for (auto handle : m_Registry.view<MeshComponent>())
-        {
-            const auto& c = m_Registry.get<MeshComponent>(handle);
-            add(c.Mesh);
-            for (auto id : c.Materials)
-                add(id);
-        }
-        for (auto handle : m_Registry.view<EditableMeshComponent>())
-            for (auto id : m_Registry.get<EditableMeshComponent>(handle).Materials)
-                add(id);
-        for (auto handle : m_Registry.view<PrefabInstanceComponent>())
-        {
-            const auto& c = m_Registry.get<PrefabInstanceComponent>(handle);
-            add(c.Prefab);
-            for (const auto& [key, o] : c.Overrides)
-                for (const auto& [slot, id] : o.Materials)
-                    add(id);
-        }
-        for (auto handle : m_Registry.view<AudioSourceComponent>())
-            add(m_Registry.get<AudioSourceComponent>(handle).Clip);
-        for (auto handle : m_Registry.view<AnimatorComponent>())
-        {
-            const auto& c = m_Registry.get<AnimatorComponent>(handle);
-            add(c.Skeleton);
-            add(c.Controller);
-        }
-        for (auto handle : m_Registry.view<IKComponent>())
-            add(m_Registry.get<IKComponent>(handle).Skeleton);
-        for (auto handle : m_Registry.view<ShapeKeysComponent>())
-        {
-            const auto& c = m_Registry.get<ShapeKeysComponent>(handle);
-            add(c.Skeleton);
-            add(c.Expression);
-        }
-        auto colliderMaterials = [&](auto tag) {
-            using T = decltype(tag);
-            for (auto h : m_Registry.view<T>())
-                add(m_Registry.get<T>(h).Material.Asset);
-        };
-        colliderMaterials(BoxColliderComponent {});
-        colliderMaterials(SphereColliderComponent {});
-        colliderMaterials(CapsuleColliderComponent {});
-        colliderMaterials(MeshColliderComponent {});
-        for (auto h : m_Registry.view<MeshColliderComponent>())
-            add(m_Registry.get<MeshColliderComponent>(h).Shape.Mesh);
-        for (auto h : m_Registry.view<PrefabInstanceComponent>())
-            for (const auto& [key, value] : m_Registry.get<PrefabInstanceComponent>(h).Overrides)
-            {
-                if (value.BoxCollider)
-                    add(value.BoxCollider->Material.Asset);
-                if (value.SphereCollider)
-                    add(value.SphereCollider->Material.Asset);
-                if (value.CapsuleCollider)
-                    add(value.CapsuleCollider->Material.Asset);
-                if (value.MeshCollider)
-                {
-                    add(value.MeshCollider->Shape.Mesh);
-                    add(value.MeshCollider->Material.Asset);
-                }
-            }
-        for (auto h : m_Registry.view<TimelinePlayerComponent>())
-            add(m_Registry.get<TimelinePlayerComponent>(h).Timeline);
-        for (const auto& entry : GetPostProcessSettings().Materials)
-            add(entry.Material);
+        const auto ids = CollectSceneAssetReferences(*this);
         return {ids.begin(), ids.end()};
     }
     void Scene::TrackPrefabAssets(Entity root)

@@ -659,79 +659,14 @@ namespace Kans
     {
         if (!m_AssetImports || !m_ActiveScene)
             return;
-        std::set<SourceAssetID> referenced;
-        const auto              add = [&](AssetID id) {
-            if (id.IsValid())
-                referenced.insert(id.GetSourceID());
-        };
-        for (Entity entity : m_ActiveScene->GetMeshEntities())
-        {
-            if (entity.HasComponent<EditableMeshComponent>())
-                for (auto material : entity.GetComponent<EditableMeshComponent>().Materials)
-                    add(material);
-            if (entity.HasComponent<MeshComponent>())
-                for (auto material : entity.GetComponent<MeshComponent>().Materials)
-                    add(material);
-        }
-        std::function<void(Entity)> visit = [&](Entity entity) {
-            if (entity.HasComponent<TextComponent>())
-                add(entity.GetComponent<TextComponent>().Font);
-            if (entity.HasComponent<PrefabInstanceComponent>())
-                add(entity.GetComponent<PrefabInstanceComponent>().Prefab);
-            for (Entity child : m_ActiveScene->GetChildren(entity))
-                visit(child);
-        };
-        for (Entity root : m_ActiveScene->GetRootEntities())
-            visit(root);
-        // Sources with published products are rebuilt by the open-time sweep instead.
-        for (const auto& record : m_AssetImports->GetRuntimeAssetRegistry()->GetAllProducts())
-            referenced.erase(record.Metadata.assetID.GetSourceID());
-        auto sources = m_AssetImports->GetSources();
-        if (const auto* list = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
-            for (const auto& source : *list)
-                if (source.Exists && referenced.count(source.sourceAssetID))
-                    QueueAutoImport(source.sourceAssetID);
+        Record(m_SceneAssetImports.Collect(*m_AssetImports, *m_ActiveScene));
         StartNextAutoImport();
-    }
-
-    void EditorLayer::QueueUnimportedShaders()
-    {
-        if (!m_AssetImports)
-            return;
-        std::set<SourceAssetID> published;
-        for (const auto& record : m_AssetImports->GetRuntimeAssetRegistry()->GetAllProducts())
-            published.insert(record.Metadata.assetID.GetSourceID());
-        auto sources = m_AssetImports->GetSources();
-        if (const auto* list = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
-            for (const auto& source : *list)
-                if (source.Exists && source.Path.GetPath().extension() == ".shaderprog" &&
-                    !published.count(source.sourceAssetID) && !m_AutoImported.count(source.sourceAssetID))
-                {
-                    CORE_INFO("Importing shader {}", source.Path.GetPath().generic_u8string());
-                    QueueAutoImport(source.sourceAssetID);
-                }
-        StartNextAutoImport();
-    }
-
-    void EditorLayer::QueueAutoImport(SourceAssetID source)
-    {
-        if (m_AutoImported.insert(source).second)
-            m_AutoImports.push_back(source);
     }
 
     void EditorLayer::StartNextAutoImport()
     {
-        if (m_AutoImports.empty() || m_PendingPlacement)
-            return;
-        auto snapshot = m_AssetImports->GetSnapshot();
-        if (const auto* state = std::get_if<EditorAssetImportSnapshot>(&snapshot);
-            !state || state->State == EditorAssetImportState::Building)
-            return; // Retried when the running build completes.
-        AssetBuildOptions options;
-        options.Target = EditorAssetTarget;
-        const auto source = m_AutoImports.front();
-        m_AutoImports.pop_front();
-        Record(m_AssetImports->Start(source, options));
+        if (m_AssetImports && !m_PendingPlacement)
+            Record(m_SceneAssetImports.StartNext(*m_AssetImports));
     }
 
     std::variant<std::monostate, AssetError> EditorLayer::SaveScene(const std::filesystem::path& path)

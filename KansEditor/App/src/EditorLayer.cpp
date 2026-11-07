@@ -118,7 +118,7 @@ namespace Kans
             Record(configured);
             if (!m_StartupScene.empty() && std::holds_alternative<std::monostate>(configured))
                 Record(OpenScene(KansFileSystem::GetProjectRoot() / m_StartupScene));
-            QueueUnimportedShaders();
+            QueueMissingSceneAssets();
         }
         LoadLayout();
         // Closing the window asks about unsaved changes like File > Exit.
@@ -233,7 +233,7 @@ namespace Kans
                 AssignPendingSlotInstances();
                 AssignPendingCloth();
                 AssignPendingRagdolls();
-                QueueUnimportedShaders(); // Sources were refreshed: new shader files are imported.
+                QueueMissingSceneAssets(); // Includes newly discovered scene sources.
             }
             auto completed = m_AssetImports->Poll();
             if (const auto* error = std::get_if<AssetError>(&completed))
@@ -249,12 +249,14 @@ namespace Kans
                     StartPendingPlacementBuild();
                 else
                     PlacePendingModel();
-                // The first build (the open-time sweep) may have scanned new shader sources.
-                QueueUnimportedShaders();
+                // The open-time sweep may have discovered previously unknown scene sources.
+                QueueMissingSceneAssets();
                 if (!m_Play.IsActive())
                     m_History.Record(*m_ActiveScene);
             }
         }
+
+        StartNextAutoImport();
 
         // The scene only runs in play mode; IK and saved shape keys of models without an
         // Animator still show while editing.
@@ -274,7 +276,10 @@ namespace Kans
         const bool     updated = m_Play.Update(*m_ActiveScene, ts);
         // A script loaded another scene: the selection named entities of the one it replaced.
         if (m_Play.GetSceneLoadCount() != loads)
+        {
             m_HierarchyPanel.SetSelected({});
+            QueueMissingSceneAssets();
+        }
         if (!updated && !m_Play.IsActive())
         {
             m_ActiveScene->UpdateModelPoses();

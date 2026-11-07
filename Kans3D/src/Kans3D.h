@@ -41,3 +41,5 @@
 //------------------------------
 
 #include "Kans3D/Geometry/MeshOperations.h"
+
+#include "Kans3D/Scene/SceneAssetReferences.h"
