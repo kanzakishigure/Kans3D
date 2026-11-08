@@ -86,64 +86,6 @@ namespace Kans
         return max.x;
     }
 
-    float Titlebar::ProjectButton(float x, const char* name, const std::function<void()>& menu)
-    {
-        auto&       fonts   = ImGui::GetIO().Fonts->Fonts;
-        ImFont*     bold    = fonts.Size > 1 ? fonts[1] : ImGui::GetFont();
-        const float chevron = ImGui::GetFontSize() * 0.7f; // A small chevron next to the name.
-        ImGui::PushFont(bold, 0.0f);
-        const float nameWidth = ImGui::CalcTextSize(name).x;
-        ImGui::PopFont();
-        ImGui::PushFont(nullptr, chevron);
-        const float chevronWidth = ImGui::CalcTextSize(ICON_FA_CHEVRON_DOWN).x;
-        ImGui::PopFont();
-        const auto   button = LayoutProjectButton(x,
-                                                  {m_Min.x, m_Min.y, m_Max.x, m_Max.y},
-                                                  EditorTheme::Px(26.0f),
-                                                  nameWidth,
-                                                  chevronWidth,
-                                                  EditorTheme::Px(EditorTheme::Space2),
-                                                  EditorTheme::Px(EditorTheme::Space1));
-        const ImVec2 min {button.Rect.MinX, button.Rect.MinY}, max {button.Rect.MaxX, button.Rect.MaxY};
-        const ImVec2 cursor = ImGui::GetCursorScreenPos();
-        ImGui::SetCursorScreenPos(min);
-        const bool clicked = ImGui::InvisibleButton("##TitlebarProject", {max.x - min.x, max.y - min.y});
-        const bool hovered = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
-        ImGui::SetCursorScreenPos(cursor);
-        Client(min, max);
-        if (clicked)
-            ImGui::OpenPopup("##TitlebarProjectMenu");
-        const bool  open  = ImGui::IsPopupOpen("##TitlebarProjectMenu");
-        const auto& theme = EditorTheme::Colors();
-        auto*       draw  = ImGui::GetWindowDrawList();
-        if (hovered || held || open)
-            draw->AddRectFilled(
-                min, max, ImGui::GetColorU32(held || open ? theme.Pressed : theme.Hover), EditorTheme::Px(6.0f));
-        if (hovered && !open)
-            ImGui::SetTooltip("Project: new, open, settings and recent projects");
-        const float textY = IM_ROUND((min.y + max.y - ImGui::GetTextLineHeight()) * 0.5f);
-        ImGui::PushFont(bold, 0.0f);
-        draw->AddText({button.NameX, textY}, ImGui::GetColorU32(theme.Text), name);
-        ImGui::PopFont();
-        ImGui::PushFont(nullptr, chevron);
-        Widgets::CenterGlyph(ICON_FA_CHEVRON_DOWN,
-                             {button.ChevronX, min.y},
-                             {button.ChevronX + chevronWidth, max.y},
-                             ImGui::GetColorU32(open || hovered ? theme.Text : theme.TextDim));
-        ImGui::PopFont();
-        // The menu opens below the button, left-aligned with it.
-        ImGui::SetNextWindowPos({min.x, max.y + EditorTheme::Px(2.0f)}, ImGuiCond_Appearing);
-        if (ImGui::BeginPopup("##TitlebarProjectMenu"))
-        {
-            Widgets::PushMenuStyle();
-            if (menu)
-                menu();
-            Widgets::PopMenuStyle();
-            ImGui::EndPopup();
-        }
-        return max.x;
-    }
-
     ImVec2 Titlebar::ButtonSize() { return {EditorTheme::Px(46.0f), EditorTheme::Px(32.0f)}; }
     float  Titlebar::ButtonsWidth() { return ButtonSize().x * 3.0f; }
 

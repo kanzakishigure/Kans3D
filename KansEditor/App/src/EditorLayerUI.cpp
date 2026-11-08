@@ -641,13 +641,15 @@ namespace Kans
                                       (m_History.IsModified() ? "  " ICON_FA_CIRCLE : "");
         if (custom)
         {
-            // The titlebar names the project and the scene. The project name is a button opening
-            // the project commands (also in File > Project); the scene label drags the window
-            // like the rest of the caption.
+            // The titlebar names the project and the scene; the label drags the window like
+            // the rest of the caption (the project commands are in File).
             const float textY = bar.Min.y + (bar.GetHeight() - ImGui::GetTextLineHeight()) * 0.5f;
             auto*       draw  = ImGui::GetWindowDrawList();
-            x = m_Titlebar.ProjectButton(x - EditorTheme::Px(EditorTheme::Space2), m_ProjectName.c_str(),
-                                         [this] { DrawProjectMenu(); });
+            auto& fonts = ImGui::GetIO().Fonts->Fonts;
+            ImGui::PushFont(fonts.Size > 1 ? fonts[1] : ImGui::GetFont(), 0.0f); // Bold.
+            draw->AddText({x, textY}, ImGui::GetColorU32(EditorTheme::Colors().Text), m_ProjectName.c_str());
+            x += ImGui::CalcTextSize(m_ProjectName.c_str()).x;
+            ImGui::PopFont();
             const std::string scene = "  \xC2\xB7  " + sceneName;
             draw->AddText({x, textY}, ImGui::GetColorU32(EditorTheme::Colors().TextDim), scene.c_str());
             x += ImGui::CalcTextSize(scene.c_str()).x + EditorTheme::Px(EditorTheme::Space4);

@@ -36,10 +36,6 @@ namespace Kans
         // Marks a part of the band the UI handles (menus, buttons) rather than a drag area.
         void Client(ImVec2 min, ImVec2 max);
         void ClientItem() { Client(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()); }
-        // The project name in bold with a chevron, at `x` and centred in the band. A click opens
-        // a popup below it in which `menu` draws its items (with the menu style). The button is a
-        // control; the band beside it keeps dragging the window. Returns its right edge.
-        float ProjectButton(float x, const char* name, const std::function<void()>& menu);
 
         enum class Button
         {
