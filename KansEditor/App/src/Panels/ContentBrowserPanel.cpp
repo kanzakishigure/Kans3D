@@ -749,8 +749,8 @@ namespace Kans
         // Both leave no type selected, which shows every type.
         const bool any = !m_Filter.ShowsAllTypes();
         ImGui::BeginDisabled(!any);
-        if (ImGui::SmallButton("Show all"))
-            m_Filter.ShowAllTypes();
+        if (ImGui::SmallButton("Select all"))
+            m_Filter.SelectAllTypes();
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear"))
             m_Filter.ShowAllTypes();

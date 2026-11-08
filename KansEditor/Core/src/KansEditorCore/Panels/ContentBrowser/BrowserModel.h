@@ -101,11 +101,15 @@ namespace Kans::Browser
         bool        Kinds[AssetKindCount] =
             {true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true};
 
+        // False: no type filter, every type is shown and nothing is checked. True: only the
+        // checked types are shown (Select all checks every type, so unchecking one excludes it).
+        bool        Narrowed = false;
+
         bool Matches(const Entry& entry) const;
         bool IsActive() const;
-        // Type pills. With every file type shown, clicking one shows only that type;
-        // otherwise a click toggles it, and turning the last one off shows them all
-        // again. Folders are always shown.
+        // Type pills. Without a type filter, clicking one shows only that type; otherwise a
+        // click toggles it, and turning the last one off removes the type filter. Folders are
+        // always shown.
         void TogglePill(AssetKind kind);
         bool ShowsAllTypes() const;
         // The Filters dropdown checks the types the browser is narrowed to; none while every
@@ -113,9 +117,10 @@ namespace Kans::Browser
         bool                   IsTypeSelected(AssetKind kind) const;
         // The chips beside the Filters button, in kind order; empty while every type is shown.
         std::vector<AssetKind> SelectedTypes() const;
-        // The dropdown's "Show all" and "Clear" and the reset button: no type selected, so
-        // every type is shown.
+        // The dropdown's "Clear" and the reset button: no type filter, so every type is shown.
         void ShowAllTypes();
+        // The dropdown's "Select all": every type checked, so unchecking one excludes just it.
+        void SelectAllTypes();
     };
 
     // The chips after the Filters button, in one row of `available` width: every chip when

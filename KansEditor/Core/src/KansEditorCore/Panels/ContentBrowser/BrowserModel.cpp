@@ -212,19 +212,19 @@ namespace Kans::Browser
 
     bool Filter::Matches(const Entry& entry) const
     {
-        if (!Kinds[static_cast<int>(entry.Kind)])
+        if (Narrowed && entry.Kind != AssetKind::Folder && !Kinds[static_cast<int>(entry.Kind)])
             return false;
         return Text.empty() || Lowercase(entry.Name).find(Lowercase(Text)) != std::string::npos;
     }
 
     bool Filter::IsActive() const
     {
-        return !Text.empty() || std::any_of(std::begin(Kinds), std::end(Kinds), [](bool on) { return !on; });
+        return !Text.empty() || Narrowed;
     }
 
     bool Filter::ShowsAllTypes() const
     {
-        return std::all_of(std::begin(Kinds) + 1, std::end(Kinds), [](bool on) { return on; });
+        return !Narrowed;
     }
 
     void Filter::TogglePill(AssetKind kind)
@@ -232,22 +232,23 @@ namespace Kans::Browser
         const int index = int(kind);
         if (index <= 0 || index >= AssetKindCount)
             return;
-        if (ShowsAllTypes())
+        if (!Narrowed)
         {
             std::fill(std::begin(Kinds) + 1, std::end(Kinds), false);
             Kinds[index] = true;
+            Narrowed     = true;
         }
         else
             Kinds[index] = !Kinds[index];
         if (std::none_of(std::begin(Kinds) + 1, std::end(Kinds), [](bool on) { return on; }))
-            std::fill(std::begin(Kinds) + 1, std::end(Kinds), true);
+            ShowAllTypes();
         Kinds[0] = true;
     }
 
     bool Filter::IsTypeSelected(AssetKind kind) const
     {
         const int index = int(kind);
-        return index > 0 && index < AssetKindCount && !ShowsAllTypes() && Kinds[index];
+        return index > 0 && index < AssetKindCount && Narrowed && Kinds[index];
     }
 
     std::vector<AssetKind> Filter::SelectedTypes() const
@@ -259,7 +260,17 @@ namespace Kans::Browser
         return selected;
     }
 
-    void Filter::ShowAllTypes() { std::fill(std::begin(Kinds), std::end(Kinds), true); }
+    void Filter::ShowAllTypes()
+    {
+        std::fill(std::begin(Kinds), std::end(Kinds), true);
+        Narrowed = false;
+    }
+
+    void Filter::SelectAllTypes()
+    {
+        std::fill(std::begin(Kinds), std::end(Kinds), true);
+        Narrowed = true;
+    }
 
     ChipRow LayoutChipRow(const std::vector<float>& widths, float available, float spacing,
                           const std::function<float(int)>& overflowWidth)
