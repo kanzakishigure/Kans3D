@@ -14,14 +14,6 @@ namespace Kans::Launcher
         return Setup(m_Mode);
     }
 
-    WindowSetup WindowPlacementFlow::OpenEditor(const WindowPlacement& launcher)
-    {
-        if (m_Mode == Mode::Launcher)
-            Remember(launcher);
-        m_Mode = Mode::Editor;
-        return Setup(m_Mode);
-    }
-
     bool WindowPlacementFlow::Remember(const WindowPlacement& current)
     {
         // Re-read first: another editor process may have saved the other placement since.
@@ -51,6 +43,30 @@ namespace Kans::Launcher
             setup.MinimumSize = {px(800), px(560)};
         }
         return setup;
+    }
+
+    WindowSize InitialWindowSize(const WindowSetup& setup)
+    {
+        if (setup.Restore && setup.Restore->Width > 0 && setup.Restore->Height > 0)
+            return {setup.Restore->Width, setup.Restore->Height};
+        return setup.DefaultSize;
+    }
+
+    HubLaunch LaunchFromHub(WindowPlacementFlow&         hub,
+                            const std::filesystem::path& project,
+                            const WindowPlacement&       current,
+                            const EditorLauncher&        launch)
+    {
+        if (!launch)
+            return {false, "Cannot start the editor"};
+        std::error_code ec;
+        auto            absolute = std::filesystem::absolute(project, ec);
+        if (ec)
+            absolute = project;
+        if (auto error = launch(absolute.lexically_normal()))
+            return {false, error->empty() ? std::string("Cannot start the editor") : *error};
+        hub.Remember(current); // Under the flow's own name: an editor never writes the Hub's.
+        return {true, {}};
     }
 
     void ApplyWindowSetup(Window& window, const WindowSetup& setup)

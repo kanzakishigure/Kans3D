@@ -207,24 +207,94 @@ namespace Kans
             }
         }
 
-        // A rounded toggle with the type's colour dot; tinted while on.
-        bool KindPill(const char* name, ImVec4 color, bool on)
+        // A selected type beside the Filters button: a rounded chip in the type's colour with
+        // its dot, name and an x that removes it (returns true when the x is clicked).
+        float KindChipWidth(const char* name)
         {
             using EditorTheme::Px;
-            const float  dot  = Px(8.0f);
-            const ImVec2 text = ImGui::CalcTextSize(name);
-            const ImVec2 size {Px(10.0f) + dot + Px(6.0f) + text.x + Px(10.0f), ImGui::GetFrameHeight()};
-            const ImVec2 at   = ImGui::GetCursorScreenPos();
+            return Px(10.0f) + Px(8.0f) + Px(6.0f) + ImGui::CalcTextSize(name).x + Px(6.0f) +
+                   ImGui::CalcTextSize(ICON_FA_XMARK).x + Px(9.0f);
+        }
+
+        bool KindChip(const char* name, ImVec4 color)
+        {
+            using EditorTheme::Px;
+            const float  dot   = Px(8.0f);
+            const ImVec2 text  = ImGui::CalcTextSize(name);
+            const ImVec2 cross = ImGui::CalcTextSize(ICON_FA_XMARK);
+            const ImVec2 size {KindChipWidth(name), ImGui::GetFrameHeight()};
+            const ImVec2 at = ImGui::GetCursorScreenPos();
             const bool   clicked = ImGui::InvisibleButton(name, size);
             const bool   hovered = ImGui::IsItemHovered();
-            auto*        draw    = ImGui::GetWindowDrawList();
-            ImVec4       fill    = on ? ImVec4 {color.x, color.y, color.z, 0.22f} : EditorTheme::Colors().Raised;
             if (hovered)
-                fill = on ? ImVec4 {color.x, color.y, color.z, 0.32f} : EditorTheme::Colors().Hover;
+                ImGui::SetTooltip("Remove the %s filter", name);
+            auto*        draw = ImGui::GetWindowDrawList();
+            const ImVec4 fill {color.x, color.y, color.z, hovered ? 0.32f : 0.22f};
             draw->AddRectFilled(at, {at.x + size.x, at.y + size.y}, ImGui::GetColorU32(fill), size.y * 0.5f);
             draw->AddCircleFilled({at.x + Px(10.0f) + dot * 0.5f, at.y + size.y * 0.5f}, dot * 0.5f, ImGui::GetColorU32(color));
-            draw->AddText({at.x + Px(10.0f) + dot + Px(6.0f), at.y + (size.y - text.y) * 0.5f},
-                          ImGui::GetColorU32(on ? EditorTheme::Colors().Text : EditorTheme::Colors().TextDim), name);
+            const float textX = at.x + Px(10.0f) + dot + Px(6.0f);
+            draw->AddText({textX, at.y + (size.y - text.y) * 0.5f}, ImGui::GetColorU32(EditorTheme::Colors().Text), name);
+            draw->AddText({textX + text.x + Px(6.0f), at.y + (size.y - cross.y) * 0.5f},
+                          ImGui::GetColorU32(hovered ? EditorTheme::Colors().Text : EditorTheme::Colors().TextDim),
+                          ICON_FA_XMARK);
+            return clicked;
+        }
+
+        // "+N": the chips that do not fit; opens the Filters dropdown.
+        std::string OverflowLabel(int hidden) { return "+" + std::to_string(hidden); }
+        float       OverflowChipWidth(int hidden)
+        {
+            return EditorTheme::Px(20.0f) + ImGui::CalcTextSize(OverflowLabel(hidden).c_str()).x;
+        }
+
+        bool OverflowChip(int hidden)
+        {
+            const std::string label = OverflowLabel(hidden);
+            const ImVec2      size {OverflowChipWidth(hidden), ImGui::GetFrameHeight()};
+            const ImVec2      at      = ImGui::GetCursorScreenPos();
+            const bool        clicked = ImGui::InvisibleButton("##MoreTypes", size);
+            const bool        hovered = ImGui::IsItemHovered();
+            if (hovered)
+                ImGui::SetTooltip("%d more selected %s", hidden, hidden == 1 ? "type" : "types");
+            auto*        draw = ImGui::GetWindowDrawList();
+            const ImVec2 text = ImGui::CalcTextSize(label.c_str());
+            draw->AddRectFilled(at, {at.x + size.x, at.y + size.y},
+                                ImGui::GetColorU32(hovered ? EditorTheme::Colors().Hover : EditorTheme::Colors().Raised),
+                                size.y * 0.5f);
+            draw->AddText({at.x + (size.x - text.x) * 0.5f, at.y + (size.y - text.y) * 0.5f},
+                          ImGui::GetColorU32(EditorTheme::Colors().Text), label.c_str());
+            return clicked;
+        }
+
+        // A row of the Filters dropdown: checkbox, type colour dot and name. The whole row
+        // toggles and the dropdown stays open.
+        bool KindCheckRow(const char* name, ImVec4 color, bool checked, float width)
+        {
+            using EditorTheme::Px;
+            const float  height = ImGui::GetFrameHeight();
+            const ImVec2 at     = ImGui::GetCursorScreenPos();
+            const bool   clicked =
+                ImGui::Selectable("##type", false, ImGuiSelectableFlags_NoAutoClosePopups, {width, height});
+            auto*        draw = ImGui::GetWindowDrawList();
+            const float  box  = ImGui::GetFontSize();
+            const ImVec2 boxMin {at.x + Px(4.0f), at.y + (height - box) * 0.5f};
+            const ImVec2 boxMax {boxMin.x + box, boxMin.y + box};
+            draw->AddRectFilled(boxMin, boxMax,
+                                ImGui::GetColorU32(checked ? ImGui::GetStyleColorVec4(ImGuiCol_CheckMark) :
+                                                             ImGui::GetStyleColorVec4(ImGuiCol_FrameBg)),
+                                ImGui::GetStyle().FrameRounding);
+            if (checked)
+            {
+                const float pad = std::max(1.0f, box / 6.0f);
+                ImGui::RenderCheckMark(draw, {boxMin.x + pad, boxMin.y + pad}, ImGui::GetColorU32(EditorTheme::Colors().Panel),
+                                       box - pad * 2.0f);
+            }
+            const float dot = Px(8.0f);
+            draw->AddCircleFilled({boxMax.x + Px(10.0f) + dot * 0.5f, at.y + height * 0.5f}, dot * 0.5f,
+                                  ImGui::GetColorU32(color));
+            const ImVec2 text = ImGui::CalcTextSize(name);
+            draw->AddText({boxMax.x + Px(10.0f) + dot + Px(6.0f), at.y + (height - text.y) * 0.5f},
+                          ImGui::GetColorU32(EditorTheme::Colors().Text), name);
             return clicked;
         }
     } // namespace
@@ -444,6 +514,7 @@ namespace Kans
         UpdateSources(false);
 
         DrawToolbar();
+        m_FilterRow.MenuOpen = false;
         DrawFilterRow();
         const ImGuiTableFlags flags   = ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV;
         // The preview steps aside when the panel is too narrow for three columns.
@@ -592,25 +663,113 @@ namespace Kans
     void ContentBrowserPanel::DrawFilterRow()
     {
         using EditorTheme::Px;
+        const ImVec2 start = ImGui::GetCursorScreenPos();
+        const float  right = start.x + ImGui::GetContentRegionAvail().x;
         ImGui::SetNextItemWidth(std::min(Px(240.0f), ImGui::GetContentRegionAvail().x * 0.4f));
         ImGui::InputTextWithHint("##search", ICON_FA_MAGNIFYING_GLASS "  Search", m_Search.data(), m_Search.size());
-        const bool all = m_Filter.ShowsAllTypes();
+        ImRect row {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+
+        // One Filters button; the selected types follow it as chips.
+        const auto selected = m_Filter.SelectedTypes();
+        ImGui::SameLine(0, Px(10.0f));
+        const bool openMenu = Widgets::TextButton(ICON_FA_FILTER, "Filters", "Filter by asset type", !selected.empty(), true);
+        const ImRect button {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()};
+        row.Add(button);
+        m_FilterRow.ButtonMin = button.Min;
+        m_FilterRow.ButtonMax = button.Max;
+
+        // Chips sit centred on the button's line; the reset button keeps its place at the end.
+        const float spacing = Px(4.0f);
+        const float reset   = selected.empty() ? 0.0f : Px(6.0f) + ImGui::GetFrameHeight();
+        const float chipY   = button.Min.y + (button.GetHeight() - ImGui::GetFrameHeight()) * 0.5f;
+        std::vector<float> widths;
+        for (const auto kind : selected)
+            widths.push_back(KindChipWidth(Browser::KindName(kind)));
+        const auto layout = Browser::LayoutChipRow(widths, std::max(0.0f, right - button.Max.x - reset), spacing,
+                                                   [](int hidden) { return OverflowChipWidth(hidden); });
+        bool                            openFromChip = false;
+        std::optional<Browser::AssetKind> removed;
+        float                           x = button.Max.x;
+        for (int i = 0; i < layout.Visible; ++i)
+        {
+            ImGui::SetCursorScreenPos({x + spacing, chipY});
+            ImGui::PushID(int(selected[i]));
+            if (KindChip(Browser::KindName(selected[i]), KindColor(selected[i])))
+                removed = selected[i];
+            ImGui::PopID();
+            row.Add(ImRect {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()});
+            x = ImGui::GetItemRectMax().x;
+        }
+        if (layout.OverflowChip)
+        {
+            ImGui::SetCursorScreenPos({x + spacing, chipY});
+            openFromChip            = OverflowChip(layout.Overflow);
+            m_FilterRow.OverflowMin = ImGui::GetItemRectMin();
+            m_FilterRow.OverflowMax = ImGui::GetItemRectMax();
+            row.Add(ImRect {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()});
+            x = ImGui::GetItemRectMax().x;
+        }
+        if (!selected.empty())
+        {
+            ImGui::SetCursorScreenPos({x + Px(6.0f), button.Min.y + (button.GetHeight() - ImGui::GetFrameHeight()) * 0.5f});
+            if (IconButton(ICON_FA_XMARK, "Show every type"))
+                m_Filter.ShowAllTypes();
+            row.Add(ImRect {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()});
+        }
+        // The next row starts below the tallest item, whatever the chips did.
+        ImGui::SetCursorScreenPos(start);
+        ImGui::Dummy({0.0f, row.Max.y - start.y});
+        if (removed)
+            m_Filter.TogglePill(*removed);
+        m_FilterRow.RowMin   = row.Min;
+        m_FilterRow.RowMax   = row.Max;
+        m_FilterRow.Chips    = layout.Visible;
+        m_FilterRow.Overflow = layout.OverflowChip ? layout.Overflow : 0;
+        if (!layout.OverflowChip)
+            m_FilterRow.OverflowMin = m_FilterRow.OverflowMax = {};
+
+        if (openMenu || openFromChip)
+        {
+            ImGui::OpenPopup("##TypeFilters");
+            ImGui::SetNextWindowPos({button.Min.x, button.Max.y + Px(2.0f)});
+        }
+        DrawTypeFilterMenu();
+    }
+
+    void ContentBrowserPanel::DrawTypeFilterMenu()
+    {
+        using EditorTheme::Px;
+        m_FilterRow.MenuRows.clear();
+        if (!ImGui::BeginPopup("##TypeFilters"))
+            return;
+        float width = Px(160.0f);
+        for (int i = 1; i < Browser::AssetKindCount; ++i)
+            width = std::max(width, ImGui::GetFontSize() + Px(30.0f) + ImGui::CalcTextSize(Browser::KindName(Browser::AssetKind(i))).x +
+                                        Px(16.0f));
+        // Both leave no type selected, which shows every type.
+        const bool any = !m_Filter.ShowsAllTypes();
+        ImGui::BeginDisabled(!any);
+        if (ImGui::SmallButton("Show all"))
+            m_Filter.ShowAllTypes();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear"))
+            m_Filter.ShowAllTypes();
+        m_FilterRow.ClearCenter = ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()).GetCenter();
+        ImGui::EndDisabled();
+        ImGui::Separator();
         for (int i = 1; i < Browser::AssetKindCount; ++i)
         {
             const auto kind = Browser::AssetKind(i);
-            ImGui::SameLine(0, i == 1 ? Px(10.0f) : Px(4.0f));
             ImGui::PushID(i);
-            // With every type shown no pill is "on": the first click narrows to one type.
-            if (KindPill(Browser::KindName(kind), KindColor(kind), !all && m_Filter.Kinds[i]))
+            if (KindCheckRow(Browser::KindName(kind), KindColor(kind), m_Filter.IsTypeSelected(kind), width))
                 m_Filter.TogglePill(kind);
+            m_FilterRow.MenuRows.push_back(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()).GetCenter());
             ImGui::PopID();
         }
-        if (!all)
-        {
-            ImGui::SameLine(0, Px(6.0f));
-            if (IconButton(ICON_FA_XMARK, "Show every type"))
-                std::fill(std::begin(m_Filter.Kinds), std::end(m_Filter.Kinds), true);
-        }
+        m_FilterRow.MenuOpen = true;
+        m_FilterRow.MenuMin  = ImGui::GetWindowPos();
+        m_FilterRow.MenuMax  = ImGui::GetCurrentWindow()->Rect().Max;
+        ImGui::EndPopup();
     }
 
     void ContentBrowserPanel::DrawStatusBar()

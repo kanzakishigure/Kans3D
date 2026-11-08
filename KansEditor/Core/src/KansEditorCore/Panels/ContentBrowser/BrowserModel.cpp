@@ -244,6 +244,59 @@ namespace Kans::Browser
         Kinds[0] = true;
     }
 
+    bool Filter::IsTypeSelected(AssetKind kind) const
+    {
+        const int index = int(kind);
+        return index > 0 && index < AssetKindCount && !ShowsAllTypes() && Kinds[index];
+    }
+
+    std::vector<AssetKind> Filter::SelectedTypes() const
+    {
+        std::vector<AssetKind> selected;
+        for (int i = 1; i < AssetKindCount; ++i)
+            if (IsTypeSelected(AssetKind(i)))
+                selected.push_back(AssetKind(i));
+        return selected;
+    }
+
+    void Filter::ShowAllTypes() { std::fill(std::begin(Kinds), std::end(Kinds), true); }
+
+    ChipRow LayoutChipRow(const std::vector<float>& widths, float available, float spacing,
+                          const std::function<float(int)>& overflowWidth)
+    {
+        ChipRow row;
+        const int count = int(widths.size());
+        float     all   = 0.0f;
+        for (float width : widths)
+            all += spacing + width;
+        if (all <= available)
+        {
+            row.Visible = count;
+            row.Width   = all;
+            return row;
+        }
+        // The most leading chips that leave room for "+N" with the rest.
+        float used = 0.0f;
+        for (int shown = 0; shown <= count; ++shown)
+        {
+            if (shown > 0)
+                used += spacing + widths[shown - 1];
+            if (used > available)
+                break;
+            const float total = used + spacing + overflowWidth(count - shown);
+            if (total <= available)
+            {
+                row.Visible      = shown;
+                row.Overflow     = count - shown;
+                row.OverflowChip = true;
+                row.Width        = total;
+            }
+        }
+        if (!row.OverflowChip)
+            row.Overflow = count; // Not even "+N" fits: nothing is drawn.
+        return row;
+    }
+
     fs::path UniqueChildPath(const fs::path& directory, const std::string& stem, const std::string& extension)
     {
         std::error_code error;

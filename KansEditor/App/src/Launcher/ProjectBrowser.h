@@ -37,6 +37,8 @@ namespace Kans
         int GetSelectedRecent() const { return m_SelectedRecent; }
         // The message shown under the list (a failed open or save), empty when none.
         const std::string& GetError() const { return m_Error; }
+        // Shows `error` there (the Hub's failed editor launch).
+        void SetError(std::string error) { m_Error = std::move(error); }
 
     private:
         // What a recent entry shows besides its name: the project's thumbnail, if any.

@@ -1,6 +1,8 @@
 #pragma once
 #include <filesystem>
+#include <functional>
 #include <optional>
+#include <string>
 #include "Kans3D/Core/WindowGeometry.h"
 #include "KansEditorCore/Launcher/WindowPlacementStore.h"
 
@@ -21,9 +23,10 @@ namespace Kans::Launcher
         WindowSize MinimumSize {0, 0};
     };
 
-    // The launcher and the editor share one OS window but keep separate placements,
-    // "Launcher" and "Editor". The launcher opens small and centred, the editor where it
-    // was last left (maximized the first time); neither ever writes the other's placement.
+    // The project Hub and the editor run as separate processes with separate placements,
+    // "Launcher" for the Hub and "Editor" for the editor. The Hub opens small and centred,
+    // the editor where it was last left (maximized the first time); each process creates
+    // its window at its own placement and never writes the other's.
     class WindowPlacementFlow
     {
     public:
@@ -39,13 +42,10 @@ namespace Kans::Launcher
         explicit WindowPlacementFlow(std::filesystem::path file  = WindowPlacementStore::DefaultStorageFile(),
                                      float                 scale = 1.0f);
 
-        // Startup: with --project the editor's placement, otherwise the launcher's.
+        // Startup: with --project this process is the editor, otherwise the Hub.
         WindowSetup Start(bool project);
-        // The launcher hands its window to the editor: keeps the launcher's placement,
-        // then answers the editor's.
-        WindowSetup OpenEditor(const WindowPlacement& launcher);
-        // Keeps the current mode's placement (the editor exiting or switching projects,
-        // the launcher closing). False when it could not be written.
+        // Keeps this process's placement (the Hub launching a project or closing, the editor
+        // exiting or switching projects). False when it could not be written.
         bool Remember(const WindowPlacement& current);
         Mode GetMode() const { return m_Mode; }
 
@@ -56,6 +56,25 @@ namespace Kans::Launcher
         float                 m_Scale;
         Mode                  m_Mode = Mode::Launcher;
     };
+
+    // The client size to create the main window at, so a setup never resizes it at start:
+    // the saved placement's (restored) size, otherwise the default.
+    WindowSize InitialWindowSize(const WindowSetup& setup);
+
+    // Starts an editor process for a project; returns an error message on failure.
+    using EditorLauncher = std::function<std::optional<std::string>(const std::filesystem::path& project)>;
+    struct HubLaunch
+    {
+        bool        Close = false; // The editor started: the Hub process closes.
+        std::string Error;         // Otherwise why not, shown in the Hub.
+    };
+    // The Hub opening `project` (made absolute: the new process starts in another folder):
+    // after a successful launch it keeps the Hub's placement and closes; a failed launch
+    // keeps it open with the error and saves nothing.
+    HubLaunch LaunchFromHub(WindowPlacementFlow&         hub,
+                            const std::filesystem::path& project,
+                            const WindowPlacement&       current,
+                            const EditorLauncher&        launch);
 
     // Applies a setup to the main window: the minimum size first (so the previous mode's
     // minimum never bends this placement), then the saved placement or the centred default.

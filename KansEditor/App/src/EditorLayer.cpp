@@ -143,8 +143,7 @@ namespace Kans
         std::filesystem::create_directories(m_LayoutFile.parent_path(), ec);
         auto& io       = ImGui::GetIO();
         io.IniFilename = layout.c_str();
-        // Explicit: when the launcher ran first, ImGui has already done its one automatic load.
-        // Every settings handler is installed and the content browser is bound by now.
+        // Explicit, now that every settings handler is installed and the content browser is bound.
         if (std::filesystem::exists(m_LayoutFile, ec))
             ImGui::LoadIniSettingsFromDisk(layout.c_str());
     }

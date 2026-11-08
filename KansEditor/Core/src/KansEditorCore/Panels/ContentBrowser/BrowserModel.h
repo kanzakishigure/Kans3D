@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -107,7 +108,28 @@ namespace Kans::Browser
         // again. Folders are always shown.
         void TogglePill(AssetKind kind);
         bool ShowsAllTypes() const;
+        // The Filters dropdown checks the types the browser is narrowed to; none while every
+        // type is shown. Its checkboxes and the chips' x toggle through TogglePill.
+        bool                   IsTypeSelected(AssetKind kind) const;
+        // The chips beside the Filters button, in kind order; empty while every type is shown.
+        std::vector<AssetKind> SelectedTypes() const;
+        // The dropdown's "Show all" and "Clear" and the reset button: no type selected, so
+        // every type is shown.
+        void ShowAllTypes();
     };
+
+    // The chips after the Filters button, in one row of `available` width: every chip when
+    // they all fit, otherwise as many as fit followed by a "+N" chip for the rest (its width
+    // from `overflowWidth(N)`). Each chip, the "+N" one too, is preceded by `spacing`.
+    struct ChipRow
+    {
+        int   Visible  = 0; // The first `Visible` chips are drawn.
+        int   Overflow = 0; // Chips behind "+N"; 0 when every chip is drawn.
+        bool  OverflowChip = false; // Whether "+N" is drawn (false only when not even it fits).
+        float Width    = 0.0f; // Width used, spacing included; never more than `available`.
+    };
+    [[nodiscard]] ChipRow LayoutChipRow(const std::vector<float>& widths, float available, float spacing,
+                                        const std::function<float(int)>& overflowWidth);
 
     // A path in `directory` that does not exist yet: "name.ext", "name (1).ext", ...
     [[nodiscard]] fs::path UniqueChildPath(const fs::path& directory, const std::string& stem, const std::string& extension);

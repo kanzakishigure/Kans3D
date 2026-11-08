@@ -1,13 +1,18 @@
 #include "LauncherLayer.h"
 #include <imgui.h>
-#include "EditorLayer.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 
 namespace Kans
 {
-    LauncherLayer::LauncherLayer(std::filesystem::path templatesDir, std::shared_ptr<Launcher::WindowPlacementFlow> placements)
-        : Layer("LauncherLayer"), m_Browser(std::move(templatesDir)), m_Placements(std::move(placements))
-    {}
+    LauncherLayer::LauncherLayer(std::filesystem::path                          templatesDir,
+                                 std::shared_ptr<Launcher::WindowPlacementFlow> placements,
+                                 Launcher::EditorLauncher                       launch)
+        : Layer("LauncherLayer"), m_Browser(std::move(templatesDir)), m_Placements(std::move(placements)),
+          m_Launch(std::move(launch))
+    {
+        if (!m_Placements)
+            m_Placements = std::make_shared<Launcher::WindowPlacementFlow>();
+    }
 
     void LauncherLayer::OnAttach()
     {
@@ -19,8 +24,8 @@ namespace Kans
     void LauncherLayer::OnDetach()
     {
         m_Titlebar.Detach();
-        // Closing the launcher keeps where it was; handing over already did.
-        if (!m_Opening && m_Placements)
+        // Closing the Hub keeps where it was; a launch already did.
+        if (!m_Launched)
             m_Placements->Remember(Application::Get().GetWindow().GetPlacement());
     }
 
@@ -47,19 +52,17 @@ namespace Kans
         auto chosen = m_Browser.Draw();
         ImGui::End();
 
-        if (chosen && !m_Opening)
+        if (chosen && !m_Launched)
         {
-            // Layers cannot change while the application iterates them.
-            m_Opening = true;
-            Application::Get().SubmitPostFrame([this, project = *chosen, placements = m_Placements] {
-                auto&      app    = Application::Get();
-                auto&      window = app.GetWindow();
-                const auto setup  = placements ? placements->OpenEditor(window.GetPlacement()) : Launcher::WindowSetup {};
-                app.PopLayer(this);
-                if (placements)
-                    Launcher::ApplyWindowSetup(window, setup);
-                app.PushLayer(new EditorLayer(project, placements));
-            });
+            auto&      app    = Application::Get();
+            const auto result = Launcher::LaunchFromHub(*m_Placements, *chosen, app.GetWindow().GetPlacement(), m_Launch);
+            if (result.Close)
+            {
+                m_Launched = true;
+                app.Close();
+            }
+            else
+                m_Browser.SetError(result.Error);
         }
     }
 } // namespace Kans

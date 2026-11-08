@@ -81,6 +81,23 @@ namespace Kans
         // Opens the file's folder, selects the file, scrolls to it and focuses the panel.
         void Reveal(const std::filesystem::path& file);
 
+        // The type filter: what the Filters dropdown and its chips edit.
+        Browser::Filter& GetFilter() { return m_Filter; }
+        // Where last frame drew the search, Filters button and type chips (screen space).
+        struct FilterRowLayout
+        {
+            ImVec2 RowMin {}, RowMax {};       // Every item of the row.
+            ImVec2 ButtonMin {}, ButtonMax {}; // The Filters button.
+            int    Chips    = 0;               // Type chips drawn.
+            int    Overflow = 0;               // Types behind the "+N" chip.
+            ImVec2 OverflowMin {}, OverflowMax {}; // The "+N" chip, when drawn.
+            bool   MenuOpen = false;           // The Filters dropdown was drawn.
+            ImVec2 MenuMin {}, MenuMax {};     // The dropdown's window.
+            ImVec2 ClearCenter {};             // Its "Clear" button.
+            std::vector<ImVec2> MenuRows;      // Centres of its type rows, by kind from Model on.
+        };
+        const FilterRowLayout& GetFilterRowLayout() const { return m_FilterRow; }
+
         // View settings and favorites are saved in imgui.ini.
         void InstallSettingsHandler();
         void UninstallSettingsHandler();
@@ -112,6 +129,7 @@ namespace Kans
         void DrawToolbar();
         void DrawBreadcrumbs(float width);
         void DrawFilterRow();
+        void DrawTypeFilterMenu();
         void DrawStatusBar();
         void DrawTree();
         void DrawTreeNode(const std::filesystem::path& directory, const std::string& label);
@@ -178,6 +196,7 @@ namespace Kans
         Browser::SortKey       m_SortKey    = Browser::SortKey::Name;
         bool                   m_Ascending  = true;
         Browser::Filter        m_Filter;
+        FilterRowLayout        m_FilterRow;
         std::array<char, 256>  m_Search {};
         std::vector<Browser::Entry> m_Visible;
         int                    m_Columns = 1;

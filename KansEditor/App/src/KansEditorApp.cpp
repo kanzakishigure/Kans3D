@@ -2,7 +2,9 @@
 #include <Kans3D/Core/EntryPoint.h>
 #include <Kans3D/Core/FileSystem/FileSystem.h>
 
+#include <algorithm>
 #include <cstdlib>
+#include <memory>
 #include <Kans3D/Project/ProjectFile.h>
 
 #include <imgui.h>
@@ -16,29 +18,31 @@
 #include "KansEditorCore/Launcher/WindowPlacementFlow.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 
+// Without a valid --project the process is the project Hub, which starts an editor process
+// for the chosen project and closes; with one it is the editor.
 class KansEditor : public Kans::Application
 {
 public:
-    KansEditor(Kans::ApplicationSpecification  spec,
-               const std::filesystem::path& editorRoot,
-               const std::filesystem::path& project,
-               const std::filesystem::path& request)
+    KansEditor(Kans::ApplicationSpecification                          spec,
+               const std::filesystem::path&                         editorRoot,
+               const std::filesystem::path&                         project,
+               const std::filesystem::path&                         request,
+               std::shared_ptr<Kans::Launcher::WindowPlacementFlow> placements,
+               const Kans::Launcher::WindowSetup&                   setup)
         : Application(spec)
     {
-        // The launcher has no layout to keep; the editor layer loads the project's own.
+        // The Hub has no layout to keep; the editor layer loads the project's own.
         ImGui::GetIO().IniFilename = nullptr;
-        // The launcher and the editor each reopen where they were last left.
-        auto placements = std::make_shared<Kans::Launcher::WindowPlacementFlow>(
-            Kans::Launcher::WindowPlacementStore::DefaultStorageFile(), Kans::EditorTheme::Scale());
-        Kans::Launcher::ApplyWindowSetup(GetWindow(), placements->Start(!project.empty()));
+        // The window was created at this setup's size: this only places (or maximizes) it.
+        Kans::Launcher::ApplyWindowSetup(GetWindow(), setup);
         if (!project.empty())
             PushLayer(new Kans::EditorLayer(project, placements));
         else
         {
-            auto* launcher = new Kans::LauncherLayer(editorRoot / "Templates", placements);
-            PushLayer(launcher);
+            auto* hub = new Kans::LauncherLayer(editorRoot / "Templates", placements, &Kans::EditorProcess::LaunchWithProject);
+            PushLayer(hub);
             if (!request.empty())
-                launcher->Request(request);
+                hub->Request(request);
         }
         PushLayer(new Kans::DebugLayer());
     }
@@ -77,15 +81,21 @@ Kans::Application* Kans::createApplication(int argc, char** argv)
     const auto absoluteEditorRoot = std::filesystem::absolute(*editorRoot);
     std::filesystem::current_path(absoluteEditorRoot);
 
+    // Each process reopens where it was last left: the Hub at the "Launcher" placement, the
+    // editor at the "Editor" one, and creates its window at that size.
+    auto placements = std::make_shared<Launcher::WindowPlacementFlow>(Launcher::WindowPlacementStore::DefaultStorageFile(),
+                                                                      EditorTheme::Scale());
+    const auto setup = placements->Start(!project.empty());
+    const auto size  = Launcher::InitialWindowSize(setup);
+
     ApplicationSpecification spec;
     spec.Name         = "Kans3D-Editor";
     spec.ConfigPath   = (absoluteEditorRoot / "KansEditor.ini").string();
-    // Created near the size it starts at (the saved placement is applied right after).
-    spec.Height       = project.empty() ? 760 : 900;
-    spec.Width        = project.empty() ? 1100 : 1600;
+    spec.Width        = uint32_t(std::max(size.Width, 1));
+    spec.Height       = uint32_t(std::max(size.Height, 1));
     spec.Fullscreen   = false;
-    // Windows: the editor draws a Kans3D titlebar; elsewhere the native one stays.
+    // Windows: the Hub and the editor draw a Kans3D titlebar; elsewhere the native one stays.
     spec.Titlebar     = TitlebarMode::Custom;
 
-    return new KansEditor(spec, absoluteEditorRoot, project, request);
+    return new KansEditor(spec, absoluteEditorRoot, project, request, placements, setup);
 }
