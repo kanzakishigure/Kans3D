@@ -31,6 +31,7 @@ namespace Kans
                                                                    {4, 0, 48, RenderHardware::VertexFormat::Float4}};
         RenderHardware::Handle<RenderHardware::Buffer> MorphDeltas;
         std::vector<ShapeKey>                          MorphTargets;
+        std::vector<glm::mat4>                         BindPaletteData, RestPaletteData;
         uint32_t                                       VertexCount     = 0;
         bool                                           HasSkeletonSkin = false;
         uint32_t         IndexCount = 0;
@@ -131,6 +132,8 @@ namespace Kans
 
         const ModelInstances* GetModel(AssetID id);
         const GpuMesh*        GetMesh(const MeshKey& id);
+        // Exact CPU image of Main's palette, or the rest-pose cancellation palette when Main is unskinned.
+        const std::vector<glm::mat4>& GetSkinningPaletteData(const Ref<const SkinningPose>&, const GpuMesh*);
         RenderHardware::Handle<RenderHardware::Buffer> GetSkinningPalette(const Ref<const SkinningPose>&,
                                                                           const GpuMesh* mesh = nullptr);
         const GpuMaterial*    GetMaterial(AssetID id);

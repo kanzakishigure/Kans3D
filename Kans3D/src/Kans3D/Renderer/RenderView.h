@@ -43,6 +43,7 @@ namespace Kans
         uint32_t DrawCalls = 0;
         uint64_t Triangles = 0;
         uint32_t PrepassDrawCalls   = 0;
+        uint32_t VelocityDrawCalls  = 0;
         uint64_t PrepassTriangles   = 0;
         uint64_t SimulatedParticles = 0, ParticleDraws = 0;
     };
@@ -206,6 +207,11 @@ namespace Kans
     {
         RenderHardware::Handle<RenderHardware::CommandList> Commands;
         RenderHardware::Handle<RenderHardware::Texture>     Texture;
+        // Recorded sprites opt into temporal rendering by retaining their unsubmitted projection upload.
+        // SpriteBatch::SetBatchSubmissionSink supplies this metadata. Opaque legacy command lists cannot be
+        // reprojected.
+        RenderHardware::Handle<RenderHardware::Buffer> ProjectionBuffer;
+        glm::mat4                                      Projection {1};
     };
     enum class ViewImmediateKind
     {
@@ -253,6 +259,13 @@ namespace Kans
         std::optional<float>                              Exposure;
         std::optional<Kans::AntiAliasing>                 AntiAliasing; // nullopt inherits the camera.
         bool                                              DepthPrepass           = true;
+        bool                                              TemporalJitter = false, Velocity = false, CameraCut = false;
+        enum class DebugBuffer
+        {
+            None,
+            Velocity,
+            NormalRoughness
+        } DebugBuffer                                                            = DebugBuffer::None;
         Kans::AntiAliasing                                EffectiveAA            = Kans::AntiAliasing::None;
         float                                             Time         = 0;
         uint32_t                                          MaxShadowedPointLights = 4;

@@ -340,8 +340,7 @@ namespace Kans
         std::vector<Draw> draws;
         bool              needsCollisionDepth = false;
         const auto        camera              = context.View.Scene.sceneCamera;
-        const auto        projection =
-            DeviceProjection(camera.camera.GetProjectionMatrix(), frame->GetDevice()->GetCoordinateConventions());
+        const auto        projection          = frame->SceneProjection();
         Frustum frustum(projection * camera.viewMatrix);
         for (const auto& [id, instance] : world->Instances())
             for (auto& e : instance->Emitters())
@@ -547,6 +546,7 @@ namespace Kans
                                       float(draw.Emitter->Compiled->Settings.SimulationSpace == Vfx::Space::Local)};
                 EngineFrameUniforms ef =
                     context.View.LightingUniforms.value_or(MakeLightingUniforms(context.View.Scene));
+                frame->ApplyTemporalUniforms(ef);
                 ef.View                = camera.viewMatrix;
                 ef.Projection          = projection;
                 ef.ViewProjection      = projection * camera.viewMatrix;

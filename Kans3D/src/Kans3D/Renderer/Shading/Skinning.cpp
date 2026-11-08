@@ -3,8 +3,59 @@
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
 #include "Kans3D/Renderer/Shading/DepthNormals.h"
+#include "Kans3D/Renderer/Shading/SkinningSource.h"
 namespace Kans
 {
+    std::string
+    SkinningEvaluationGLSL(bool normal, bool tangent, bool smoothNormal, bool smoothNormalFallback, bool normalLines)
+    {
+        std::string source;
+        // Palette matrices retain their A1 ABI. A tagged final matrix describes the active
+        // list appended after the joints. Untagged legacy palettes have no morphs.
+        source += R"(
+    mat4 header=kans_Palette[kans_Palette.length()-1];
+    if(header[3][3]==-2718.0) {
+        uint first=uint(header[0][0]), count=uint(header[0][1]);
+ )";
+        source += normalLines ? "uint "
+                                "vertex=kans_Deltas[kans_Deltas[0]+uint(gl_VertexIndex)/2];\n" :
+                                "uint vertex=uint(gl_VertexIndex);\n";
+        source += R"(
+        for(uint i=0; i<count; ++i) {
+            vec4 kans_Active=kans_Palette[first+i][0];
+            uint key=1+uint(kans_Active.y)*5, size=kans_Deltas[key], indices=kans_Deltas[key+1];
+            uint lo=0, hi=size;
+            while(lo<hi) {
+                uint mid=lo+(hi-lo)/2;
+                if(kans_Deltas[indices+mid]<vertex) lo=mid+1;
+                else hi=mid;
+            }
+            if(lo==size || kans_Deltas[indices+lo]!=vertex) continue;
+            uint base=lo*3;
+            p+=kans_Active.x*kans_MorphVector(kans_Deltas[key+2]+base);
+)";
+        // An absent stream aliases the ordinary normal, including its morph deltas.
+        // Authored welded streams deliberately retain their bind-pose direction.
+        if (smoothNormal && smoothNormalFallback)
+            source += "if(kans_Deltas[key+3]!=0) "
+                      "sn+=kans_Active.x*kans_MorphVector(kans_Deltas[key+3]+base);\n";
+        if (normal)
+            source += "if(kans_Deltas[key+3]!=0) "
+                      "n+=kans_Active.x*kans_MorphVector(kans_Deltas[key+3]+base);\n";
+        if (tangent)
+            source += "if(kans_Deltas[key+4]!=0) "
+                      "t+=kans_Active.x*kans_MorphVector(kans_Deltas[key+4]+base);\n";
+        source += R"(
+        }
+    }
+    mat4 skin=mat4(1);
+    if(dot(kans_Weights,vec4(1))>0)
+        skin=kans_Palette[kans_Joints.x]*kans_Weights.x+kans_Palette[kans_Joints.y]*kans_Weights.y+
+             kans_Palette[kans_Joints.z]*kans_Weights.z+kans_Palette[kans_Joints.w]*kans_Weights.w;
+    vec3 kans_DeformedPosition=(skin*vec4(p,1)).xyz;
+)";
+        return source;
+    }
     std::variant<ShaderData, AssetError> MakeSkinnedShader(const ShaderData& data, bool smoothNormalFallback)
     {
         try
@@ -87,10 +138,9 @@ layout(location=5) in uvec4 kans_Joints;
 layout(location=6) in vec4 kans_Weights;
 layout(set=2,binding=0,std430) readonly buffer KansSkinningPalette { mat4 kans_Palette[]; };
 layout(set=2,binding=1,std430) readonly buffer KansMorphDeltas { uint kans_Deltas[]; };
-vec3 kans_MorphVector(uint offset) {
-    return vec3(uintBitsToFloat(kans_Deltas[offset]),uintBitsToFloat(kans_Deltas[offset+1]),
-                uintBitsToFloat(kans_Deltas[offset+2]));
-}
+)";
+                        source += SkinningMorphVectorGLSL;
+                        source += R"(
 void main() {
     vec3 p=kans_RawPosition;
 )";
@@ -100,50 +150,9 @@ void main() {
                             source += "vec3 n=kans_RawNormal;\n";
                         if (tangent)
                             source += "vec3 t=kans_RawTangent.xyz;\n";
-                        // Palette matrices retain their A1 ABI. A tagged final matrix describes the active
-                        // list appended after the joints. Untagged legacy palettes have no morphs.
-                        source += R"(
-    mat4 header=kans_Palette[kans_Palette.length()-1];
-    if(header[3][3]==-2718.0) {
-        uint first=uint(header[0][0]), count=uint(header[0][1]);
- )";
-                        source += normalLines ? "uint "
-                                                "vertex=kans_Deltas[kans_Deltas[0]+uint(gl_VertexIndex)/2];\n" :
-                                                "uint vertex=uint(gl_VertexIndex);\n";
-                        source += R"(
-        for(uint i=0; i<count; ++i) {
-            vec4 kans_Active=kans_Palette[first+i][0];
-            uint key=1+uint(kans_Active.y)*5, size=kans_Deltas[key], indices=kans_Deltas[key+1];
-            uint lo=0, hi=size;
-            while(lo<hi) {
-                uint mid=lo+(hi-lo)/2;
-                if(kans_Deltas[indices+mid]<vertex) lo=mid+1;
-                else hi=mid;
-            }
-            if(lo==size || kans_Deltas[indices+lo]!=vertex) continue;
-            uint base=lo*3;
-            p+=kans_Active.x*kans_MorphVector(kans_Deltas[key+2]+base);
-)";
-                        // An absent stream aliases the ordinary normal, including its morph deltas.
-                        // Authored welded streams deliberately retain their bind-pose direction.
-                        if (smoothNormal && smoothNormalFallback)
-                            source += "if(kans_Deltas[key+3]!=0) "
-                                      "sn+=kans_Active.x*kans_MorphVector(kans_Deltas[key+3]+base);\n";
-                        if (normal)
-                            source += "if(kans_Deltas[key+3]!=0) "
-                                      "n+=kans_Active.x*kans_MorphVector(kans_Deltas[key+3]+base);\n";
-                        if (tangent)
-                            source += "if(kans_Deltas[key+4]!=0) "
-                                      "t+=kans_Active.x*kans_MorphVector(kans_Deltas[key+4]+base);\n";
-                        source += R"(
-        }
-    }
-    mat4 skin=mat4(1);
-    if(dot(kans_Weights,vec4(1))>0)
-        skin=kans_Palette[kans_Joints.x]*kans_Weights.x+kans_Palette[kans_Joints.y]*kans_Weights.y+
-             kans_Palette[kans_Joints.z]*kans_Weights.z+kans_Palette[kans_Joints.w]*kans_Weights.w;
-    kans_Position=(skin*vec4(p,1)).xyz;
-)";
+                        source +=
+                            SkinningEvaluationGLSL(normal, tangent, smoothNormal, smoothNormalFallback, normalLines);
+                        source += "kans_Position=kans_DeformedPosition;\n";
                         if (smoothNormal)
                             source += "kans_SmoothNormal=normalize(transpose(inverse(mat3(skin)))*sn);\n";
                         if (normal)

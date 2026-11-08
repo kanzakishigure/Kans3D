@@ -54,6 +54,9 @@ layout(set = 0, binding = 0, std140) uniform KansFrame
     mat4 Projection; // View to device clip (same correction as ViewProjection).
     mat4 InverseView;
     mat4 InverseProjection;
+    mat4 ViewProjectionNoJitter;
+    mat4 PreviousViewProjectionNoJitter;
+    vec4 Jitter;
 
 } u_Frame;
 int KansPointLightCount() { return clamp(int(u_Frame.LightingInfo.x), 0, KANS_POINT_LIGHT_LIMIT); }
@@ -711,7 +714,10 @@ vec4 KansToneMap(vec3 color)
                   {"View", 1776, 4, 4, 1},
                   {"Projection", 1840, 4, 4, 1},
                   {"InverseView", 1904, 4, 4, 1},
-                  {"InverseProjection", 1968, 4, 4, 1}}},
+                  {"InverseProjection", 1968, 4, 4, 1},
+                  {"ViewProjectionNoJitter", 2032, 4, 4, 1},
+                  {"PreviousViewProjectionNoJitter", 2096, 4, 4, 1},
+                  {"Jitter", 2160, 4, 1, 1}}},
                 {ShaderBindingKind::UniformBuffer,
                  ShaderImageDimension::Texture2D,
                  sizeof(EngineObjectUniforms),

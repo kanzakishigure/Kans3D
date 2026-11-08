@@ -169,6 +169,16 @@ namespace Kans
             record.Ancestors.push_back(parent.GetUUID());
         return record;
     }
+    uint64_t RenderWorld::TemporalIdentity(UUID entity, UUID instanceRoot) const
+    {
+        if (!m_Scene)
+            return 0;
+        const auto     live             = m_Scene->GetEntityByUUID(entity);
+        const auto     root             = instanceRoot != UUID(0) ? m_Scene->GetEntityByUUID(instanceRoot) : Entity {};
+        const uint64_t entityGeneration = live ? uint64_t(uint32_t(live)) + 1 : 0;
+        const uint64_t rootGeneration   = root ? uint64_t(uint32_t(root)) + 1 : 0;
+        return entityGeneration | (rootGeneration << 32);
+    }
     const std::vector<RenderWorld::DrawProxy>& RenderWorld::GetEntityDraws(entt::entity entity) const
     {
         static const std::vector<DrawProxy> empty;

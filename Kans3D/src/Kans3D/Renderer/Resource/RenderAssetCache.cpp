@@ -227,6 +227,8 @@ namespace Kans
             const auto fallback =
                 !data.Skin.empty() && !data.MorphTargets.empty() ? glm::inverse(data.SkinBindTransform) : glm::mat4(1);
             std::vector<glm::mat4> identity(std::max(size_t(1), data.JointBounds.size()), fallback);
+            mesh.RestPaletteData.assign(identity.size(),
+                                        data.Skin.empty() ? glm::mat4(1) : glm::inverse(data.SkinBindTransform));
             if (!data.MorphTargets.empty())
             {
                 const auto joints = identity.size();
@@ -249,11 +251,23 @@ namespace Kans
                                                      RenderHardware::BufferUsage::Storage,
                                                      RenderHardware::MemoryUsage::Upload});
             mesh.BindPalette->Write(0, identity.data(), identity.size() * sizeof(glm::mat4));
+            mesh.BindPaletteData = identity;
         }
         mesh.IndexCount  = static_cast<uint32_t>(data.Indices.size());
         mesh.Material    = data.Material;
         mesh.AuthoredMaterial = data.AuthoredMaterial;
         return mesh;
+    }
+
+    const std::vector<glm::mat4>& RenderAssetCache::GetSkinningPaletteData(const Ref<const SkinningPose>& pose,
+                                                                           const GpuMesh*                 mesh)
+    {
+        auto palette = GetSkinningPalette(pose, mesh);
+        if (!palette)
+            return mesh->RestPaletteData;
+        if (!pose || pose->Palette.empty())
+            return mesh->BindPaletteData;
+        return m_Palettes.at({pose.get(), mesh->MorphTargets.empty() ? nullptr : mesh}).Packed;
     }
 
     RenderHardware::Handle<RenderHardware::Buffer>

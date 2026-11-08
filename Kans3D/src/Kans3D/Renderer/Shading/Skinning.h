@@ -18,6 +18,12 @@ namespace Kans
     // Binding 1 stores sparse integer indices and packed float position/optional normal/tangent streams. A tagged
     // final palette matrix describes the active (weight, target) records; morphs run before skinning.
     // skin stream locations 5/6 are uvec4 joints/vec4 weights. There is no fixed palette length.
+    // Shared morph accumulation and weighted skin matrix, operating on p/n/t/sn and kans_* inputs.
+    std::string                          SkinningEvaluationGLSL(bool normal               = false,
+                                                                bool tangent              = false,
+                                                                bool smoothNormal         = false,
+                                                                bool smoothNormalFallback = false,
+                                                                bool normalLines          = false);
     std::variant<ShaderData, AssetError> MakeSkinnedShader(const ShaderData&, bool smoothNormalFallback = false);
     RenderHardware::Handle<RenderHardware::BindGroupLayout> SkinningLayout(RenderHardware::Device&);
     void   BindSkinning(RenderHardware::Device&,

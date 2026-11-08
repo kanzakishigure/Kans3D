@@ -156,6 +156,8 @@ namespace Kans
         frame.Projection                = View.Scene.sceneCamera.camera.GetProjectionMatrix();
         frame.ViewProjection            = DeviceProjection(frame.Projection * frame.View, coordinates);
         frame.Projection                = DeviceProjection(frame.Projection, coordinates);
+        if (!suppliedView && tag.empty())
+            ApplyTemporalUniforms(frame);
         frame.InverseView               = glm::inverse(frame.View);
         frame.InverseProjection         = glm::inverse(frame.Projection);
         frame.CameraPosition   = glm::vec4(View.Scene.sceneCamera.Position, 1.0f);
@@ -337,6 +339,19 @@ namespace Kans
             // Mask/Dithered coverage cannot change between the two camera draws.
             if (pass.PrepassCovered)
                 pass.MaterialGroup = PrepassDraws.at(item.DrawIndex).Material;
+            // Velocity must use the exact alpha descriptor consumed by Main, including
+            // the prepass snapshot and instance overrides; asynchronous loads may replace caches.
+            if (VelocityActive && tag.empty() && !suppliedView)
+            {
+                const auto* instance = Assets()->GetInstanceMaterialBindings(*bindings, draw.Parameters);
+                bool        complete = true;
+                if (!pass.MaterialGroup)
+                    pass.MaterialGroup = Assets()->GetMaterialGroup(*shader, *instance, &complete);
+                Complete &= complete;
+                VelocitySurfaceDraws[item.DrawIndex] = {pass.MaterialGroup,
+                                                        pass.PrepassCovered ? PrepassDraws.at(item.DrawIndex).Images :
+                                                                              instance->Images};
+            }
             bool recorded     = false;
             if (tag.empty())
                 Complete &=
@@ -349,6 +364,8 @@ namespace Kans
                         ++Stats.DrawCalls;
                         Stats.Triangles += mesh->Sections[draw.Section].IndexCount / 3;
                     }
+            if (VelocityActive && tag.empty() && !recorded)
+                VelocitySurfaceDraws.erase(item.DrawIndex);
             if (tag.empty() && recorded)
             {
                 ++View.Culling.Drawn;
@@ -591,7 +608,7 @@ void main() {
             desc.Blends[1] = desc.Blends[0];
         SceneDrawData data;
         data.DeviceClip     = DeviceProjection(glm::mat4(1), Services.GetDevice()->GetCoordinateConventions());
-        data.ViewProjection = View.Scene.sceneCamera.camera.GetProjectionMatrix();
+        data.ViewProjection  = SceneCamera().GetProjectionMatrix();
         data.Transform      = View.Scene.sceneCamera.viewMatrix;
         const float rotation = glm::radians(View.Environment.Rotation);
         data.Settings        = {

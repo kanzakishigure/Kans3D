@@ -2,6 +2,7 @@
 #include "ViewTarget.h"
 #include "Features/BloomFeature.h"
 #include "Graph/GraphCapture.h"
+#include "Temporal.h"
 namespace Kans
 {
     ViewTarget::ViewTarget(std::shared_ptr<RenderHardware::Device> device, uint32_t outputs, bool sampledDepth) :
@@ -43,6 +44,39 @@ namespace Kans
         }
         m_NormalRoughnessValid = true;
     }
+    TemporalState& ViewTarget::GetTemporalState()
+    {
+        if (!m_Temporal)
+            m_Temporal = std::make_shared<TemporalState>();
+        return *m_Temporal;
+    }
+    void ViewTarget::InvalidateTemporalHistory()
+    {
+        if (m_Temporal)
+        {
+            m_Temporal->Valid = false;
+            for (auto it = m_Temporal->Objects.begin(); it != m_Temporal->Objects.end();)
+                if (m_FrameNumber - it->second.LastSeen >= 4)
+                    it = m_Temporal->Objects.erase(it);
+                else
+                    ++it;
+        }
+    }
+    void ViewTarget::EnsureVelocity()
+    {
+        using namespace RenderHardware;
+        if (!m_SceneVelocity)
+        {
+            TextureDesc desc;
+            desc.Width       = m_Size.x;
+            desc.Height      = m_Size.y;
+            desc.PixelFormat = Format::RG16Float;
+            desc.Usage       = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled |
+                               RenderHardware::TextureUsage::CopySource;
+            m_SceneVelocity  = m_Device->CreateTexture(desc);
+        }
+        m_VelocityValid = true;
+    }
     void ViewTarget::Resize(glm::uvec2 size)
     {
         if (size == m_Size && m_HDR)
@@ -68,6 +102,10 @@ namespace Kans
         m_Depth    = std::move(depth);
         m_Size     = size;
         m_NormalRoughness.reset();
+        m_SceneVelocity.reset();
+        m_VelocityValid = false;
+        m_Jitter        = {};
+        InvalidateTemporalHistory();
         m_NormalRoughnessValid = false;
         m_Pool     = {};
         m_ReconstructionFilter = {};

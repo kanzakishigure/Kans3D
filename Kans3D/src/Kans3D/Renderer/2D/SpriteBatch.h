@@ -24,6 +24,8 @@ namespace Kans
         using SubmissionSink = std::function<void(RenderHardware::Handle<RenderHardware::CommandList>,
                                                   RenderHardware::Handle<RenderHardware::Texture>)>;
         void SetSubmissionSink(SubmissionSink sink);
+        // Retains projection metadata for RenderView's temporally jittered recorded-sprite path.
+        void SetBatchSubmissionSink(std::function<void(ViewSpriteBatch)> sink);
         void SetCommandList(RenderHardware::CommandList* commands);
 
         void BeginScene(const OrthographicCamera& camera, ImmediatePassState state = {});

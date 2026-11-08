@@ -7,6 +7,7 @@ namespace Kans
 {
     // Per-viewport allocations. Resources and pool release before the device lease.
     struct ShadowResources;
+    struct TemporalState;
     class ViewTarget
     {
     public:
@@ -18,6 +19,17 @@ namespace Kans
         void                                                                Resize(glm::uvec2 size);
         void                                                                EnsureSampledDepth();
         void                                                                EnsureNormalRoughness();
+        void                                                                EnsureVelocity();
+        // previousUV - currentUV, unjittered [0,1] UV units, origin top-left; FSR scale (1,1).
+        RenderHardware::Handle<RenderHardware::Texture> GetVelocity() const
+        {
+            return m_VelocityValid ? m_SceneVelocity : nullptr;
+        }
+        glm::vec2      GetJitter() const { return m_Jitter; }
+        void           SetJitter(glm::vec2 jitter) { m_Jitter = jitter; }
+        TemporalState& GetTemporalState();
+        void           InvalidateTemporalHistory();
+        uint64_t       GetFrameNumber() const { return m_FrameNumber; }
         // RG: world normal octahedron in [0,1]; B: perceptual roughness;
         // A: 0 background, 1 valid normal, 2 reconstruct normal from depth.
         // Null for frames without a prepass; the allocation is retained until Resize.
@@ -29,6 +41,8 @@ namespace Kans
         uint64_t NextFrameNumber()
         {
             m_NormalRoughnessValid = false;
+            m_VelocityValid        = false;
+            m_Jitter               = {};
             return ++m_FrameNumber;
         }
         FrameProfiler&                GetFrameProfiler() { return m_Profiler; }
@@ -56,6 +70,10 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Texture>              m_HDR, m_Depth;
         RenderHardware::Handle<RenderHardware::Texture>              m_NormalRoughness;
         bool                                                         m_NormalRoughnessValid = false;
+        RenderHardware::Handle<RenderHardware::Texture>              m_SceneVelocity;
+        bool                                                         m_VelocityValid = false;
+        glm::vec2                                                    m_Jitter {0};
+        std::shared_ptr<TemporalState>                               m_Temporal;
         std::shared_ptr<ShadowResources>                             m_Shadows;
         TransientTexturePool                                         m_Pool;
         uint64_t                                                     m_FrameNumber = 0;

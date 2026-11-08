@@ -48,6 +48,8 @@ namespace Kans
         AssetManager*                 GetAssetManager() const;
         void                          SetAssetManager(AssetManager* assets);
         void                          Synchronize();
+        // Includes the ECS generation, so UUID reuse cannot inherit a destroyed entity's motion.
+        uint64_t                         TemporalIdentity(UUID entity, UUID instanceRoot) const;
         std::shared_ptr<TextLayoutCache> GetTextLayout(Entity entity) const;
         std::vector<ViewTextDraw>        CollectTexts(const std::unordered_set<UUID>& hidden = {}) const;
         std::shared_ptr<UIInstance>      GetUIInstance(Entity entity, bool world = false) const;

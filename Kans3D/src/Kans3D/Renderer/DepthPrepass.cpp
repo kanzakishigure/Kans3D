@@ -40,6 +40,7 @@ namespace Kans
             // Keep the multiplication order identical to DrawShaderMaterials.
             frame.ViewProjection    = DeviceProjection(projection * frame.View, device->GetCoordinateConventions());
             frame.Projection        = DeviceProjection(projection, device->GetCoordinateConventions());
+            ApplyTemporalUniforms(frame);
             frame.InverseView       = glm::inverse(frame.View);
             frame.InverseProjection = glm::inverse(frame.Projection);
             frame.CameraPosition    = glm::vec4(View.Scene.sceneCamera.Position, 1);

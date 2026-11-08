@@ -621,6 +621,7 @@ namespace Kans
             if (view.Features)
                 view.Features->Prepare(view, frame);
             frame.PrepareDrawLists();
+            frame.PrepareTemporal();
             pipeline->Prepare(view);
             if (view.Debug.CaptureGraph)
             {

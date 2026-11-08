@@ -28,8 +28,15 @@ namespace Kans
             RenderHardware::Handle<RenderHardware::BindGroup>            Material;
             std::vector<RenderHardware::Handle<RenderHardware::Texture>> Images;
         };
-        std::unordered_map<size_t, PrepassDraw>         PrepassDraws;
+        std::unordered_map<size_t, PrepassDraw>         PrepassDraws, VelocitySurfaceDraws;
         void                                            BuildDepthPrepass(RenderGraph& graph);
+        bool                                            TemporalActive = false, VelocityActive = false;
+        void                                            PrepareTemporal();
+        void                                            ApplyTemporalUniforms(EngineFrameUniforms& frame) const;
+        glm::mat4                                       SceneProjection() const;
+        Camera                                          SceneCamera() const;
+        void                                            BuildVelocity(RenderGraph& graph);
+        void                                            BuildDebugBuffer(RenderGraph& graph);
         bool                                            HasBackgroundColor() const
         {
             return View.DrawEnvironment && View.Environment.BackgroundColor != glm::vec3(0);

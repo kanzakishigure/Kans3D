@@ -70,9 +70,15 @@ namespace Kans
         glm::mat4 Projection {1.0f};            // View to device clip, matching ViewProjection.
         glm::mat4 InverseView {1.0f};
         glm::mat4 InverseProjection {1.0f};
+        glm::mat4 ViewProjectionNoJitter {1.0f};
+        glm::mat4 PreviousViewProjectionNoJitter {1.0f};
+        glm::vec4 Jitter {0}; // xy: pixels, zw: device clip translation.
     };
+    static_assert(offsetof(EngineFrameUniforms, ViewProjectionNoJitter) == 2032, "Temporal tail");
+    static_assert(offsetof(EngineFrameUniforms, PreviousViewProjectionNoJitter) == 2096, "Temporal history");
+    static_assert(offsetof(EngineFrameUniforms, Jitter) == 2160, "Temporal jitter");
     static_assert(offsetof(EngineFrameUniforms, View) == 1776, "Published environment prefix");
-    static_assert(sizeof(EngineFrameUniforms) == 2032, "KansFrame std140 layout");
+    static_assert(sizeof(EngineFrameUniforms) == 2176, "KansFrame std140 layout");
     static_assert(offsetof(EngineFrameUniforms, EnvironmentInfo) == 1760, "Published shadow prefix");
     static_assert(offsetof(EngineFrameUniforms, CascadeViewProjection) == 1136, "Published lighting prefix");
     static_assert(offsetof(EngineFrameUniforms, DebugView) == 276, "KansFrame debug uses existing tail padding");

@@ -10,6 +10,7 @@
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Features/ParticleRenderFeature.h"
 #include "RenderFrame.h"
+#include "Temporal.h"
 
 namespace Kans
 {
@@ -207,6 +208,8 @@ namespace Kans
             uniforms.Projection        = DeviceProjection(frame.View.Scene.sceneCamera.camera.GetProjectionMatrix(),
                                                           frame.GetDevice()->GetCoordinateConventions());
             uniforms.ViewProjection    = uniforms.Projection * uniforms.View;
+            if (hdr)
+                frame.ApplyTemporalUniforms(uniforms);
             uniforms.InverseView       = glm::inverse(uniforms.View);
             uniforms.InverseProjection = glm::inverse(uniforms.Projection);
             uniforms.CameraPosition    = glm::vec4(frame.View.Scene.sceneCamera.Position, 1);
@@ -295,7 +298,8 @@ namespace Kans
             BuildMSAA(graph, renderer);
             return;
         }
-        if (view.DepthPrepass)
+        if (view.DepthPrepass || renderer.VelocityActive ||
+            view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
             renderer.Output.EnsureSampledDepth();
         if (!graph.PassCount())
             Begin(graph, renderer);
@@ -369,6 +373,15 @@ namespace Kans
             if (immediate.Kind == ViewImmediateKind::RecordedSprites)
             {
                 const auto& batch = view.SpriteBatches.at(immediate.Index);
+                if (renderer.TemporalActive && view.TemporalJitter)
+                {
+                    if (!batch.ProjectionBuffer)
+                        throw std::invalid_argument(
+                            "Temporal recorded sprites require SpriteBatch projection metadata");
+                    const auto projection = JitterProjection(
+                        batch.Projection, 2.f * renderer.Output.GetJitter() / glm::vec2(view.Viewport));
+                    batch.ProjectionBuffer->Write(0, &projection, sizeof(projection));
+                }
                 sampled(uses, batch.Texture, "SpriteTexture");
                 auto pass = graph.AddRecordedPass("Renderer2D batch", std::move(uses), batch.Commands);
                 if (pass)
@@ -393,7 +406,10 @@ namespace Kans
                 });
                 ImmediatePassState spriteState;
                 spriteState.DepthCompare = CompareOp::Always;
-                sprites.BeginScene(view.Scene.sceneCamera.camera, view.Scene.sceneCamera.viewMatrix, spriteState);
+                if (renderer.TemporalActive && view.TemporalJitter)
+                    sprites.BeginScene(renderer.SceneCamera(), view.Scene.sceneCamera.viewMatrix, spriteState);
+                else
+                    sprites.BeginScene(view.Scene.sceneCamera.camera, view.Scene.sceneCamera.viewMatrix, spriteState);
                 const auto end = immediate.Count == SIZE_MAX ? view.Sprites.size() : immediate.Index + immediate.Count;
                 for (size_t i = immediate.Index; i < end; ++i)
                 {
@@ -433,7 +449,7 @@ namespace Kans
         featureContext.Immediate = nullptr;
         // Immediates retain their original cleared-depth behavior. Test camera
         // geometry against their depth before the opaque lighting pass.
-        if (view.DepthPrepass)
+        if (view.DepthPrepass || view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
             renderer.BuildDepthPrepass(graph);
         Inject(RenderExtensionPoint::BeforeOpaque, featureContext);
         if (!view.MaterialOrder.empty())
@@ -470,6 +486,8 @@ namespace Kans
                                                   renderer.FinalPostRecordMilliseconds.value_or(0));
             if (pass)
                 graph.OrderAfter(pass, pass - 1);
+            if (renderer.VelocityActive)
+                renderer.BuildVelocity(graph);
             if (post)
             {
                 auto postUses = target;
@@ -482,6 +500,8 @@ namespace Kans
                 graph.OrderAfter(resolve, resolve - 1);
             }
         }
+        if (renderer.VelocityActive && view.MaterialOrder.empty())
+            renderer.BuildVelocity(graph);
         Inject(RenderExtensionPoint::AfterTransparent, featureContext);
         AddReconstructionFilter(graph, renderer);
         if (!m_PostDraws.empty())
@@ -509,6 +529,7 @@ namespace Kans
         AddPostMaterials(graph, renderer, PostProcessStage::AfterToneMap);
         if (view.EffectiveAA == AntiAliasing::FXAA)
             AddFXAA(graph, renderer);
+        renderer.BuildDebugBuffer(graph);
         AddScreenUI(graph, renderer);
         Inject(RenderExtensionPoint::Overlay, featureContext);
     }

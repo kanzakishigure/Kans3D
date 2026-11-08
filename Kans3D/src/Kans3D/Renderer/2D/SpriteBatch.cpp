@@ -63,6 +63,7 @@ void main() { Color = V_Color * texture(Image,V_UV * V_Tiling); }
         ImmediatePassState                                State;
         std::shared_ptr<Device>                           TargetDevice;
         RenderingDesc                                     Target;
+        std::function<void(ViewSpriteBatch)>              BatchSubmission;
         SubmissionSink                                    Submission;
         CommandList*                                      Recording = nullptr;
         uint32_t                                          Width = 0, Height = 0;
@@ -152,10 +153,20 @@ void main() { Color = V_Color * texture(Image,V_UV * V_Tiling); }
         m_Data->Width             = std::max(1u, desc.Width >> m_Data->Target.Colors[0].Subresource.Mip);
         m_Data->Height            = std::max(1u, desc.Height >> m_Data->Target.Colors[0].Subresource.Mip);
     }
-    void SpriteBatch::SetSubmissionSink(SubmissionSink sink) { m_Data->Submission = std::move(sink); }
+    void SpriteBatch::SetSubmissionSink(SubmissionSink sink)
+    {
+        m_Data->BatchSubmission = {};
+        m_Data->Submission      = std::move(sink);
+    }
+    void SpriteBatch::SetBatchSubmissionSink(std::function<void(ViewSpriteBatch)> sink)
+    {
+        m_Data->Submission      = {};
+        m_Data->BatchSubmission = std::move(sink);
+    }
     void SpriteBatch::SetCommandList(CommandList* commands) { m_Data->Recording = commands; }
     void SpriteBatch::ClearTarget()
     {
+        m_Data->BatchSubmission = {};
         m_Data->Submission = {};
         m_Data->Recording  = nullptr;
         m_Data->Target     = {};
@@ -251,7 +262,9 @@ void main() { Color = V_Color * texture(Image,V_UV * V_Tiling); }
         m_Data->LastRecordMilliseconds = RenderClockMilliseconds() - recordStart;
         if (owned)
         {
-            if (m_Data->Submission)
+            if (m_Data->BatchSubmission)
+                m_Data->BatchSubmission({owned, image, frame, m_Data->ViewProjection});
+            else if (m_Data->Submission)
                 m_Data->Submission(owned, image);
             else
                 device.Submit(owned);
