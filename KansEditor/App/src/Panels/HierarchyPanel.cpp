@@ -8,6 +8,8 @@
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/SceneClipboard.h"
 #include "Components/ComponentRegistry.h"
+#include "KansEditorCore/EditorVisibilityStore.h"
+#include "KansEditorCore/Panels/HierarchyVisibility.h"
 #include "UI/EditorIcons.h"
 #include "UI/Widgets.h"
 
@@ -140,20 +142,28 @@ namespace Kans
         DeleteSelection();
     }
 
+    // The system clipboard is read once per question: on Windows each read opens the clipboard
+    // and converts its data, and non-text data makes GLFW report an error.
     bool HierarchyPanel::CanPaste() const
     {
+        if (!m_Scene)
+            return false;
         const char* text = ImGui::GetClipboardText();
-        return m_Scene && text && SceneClipboard::IsClipboardText(text);
+        return text && SceneClipboard::IsClipboardText(text);
     }
 
     void HierarchyPanel::Paste()
     {
-        if (!CanPaste())
+        if (!m_Scene)
             return;
+        const char* clipboard = ImGui::GetClipboardText();
+        if (!clipboard || !SceneClipboard::IsClipboardText(clipboard))
+            return;
+        const std::string text = clipboard;
         // Next to the primary entity (as its siblings), or at the top level.
         const Entity primary = GetSelected();
         const Entity parent  = primary ? m_Scene->GetParent(primary) : Entity {};
-        auto         pasted  = SceneClipboard::Paste(*m_Scene, ImGui::GetClipboardText(), parent);
+        auto         pasted  = SceneClipboard::Paste(*m_Scene, text, parent);
         if (auto* error = std::get_if<AssetError>(&pasted))
         {
             CORE_ERROR("Paste: {}", error->Message);
@@ -165,10 +175,40 @@ namespace Kans
         m_Reveal = m_Selection.Primary();
     }
 
+    void HierarchyPanel::VisibilityChanged()
+    {
+        if (m_Visibility)
+            (void)m_Visibility->Save(); // A failed write keeps this session's state.
+    }
+
+    void HierarchyPanel::ToggleSelectionVisibility()
+    {
+        if (!m_Scene || !m_Visibility || m_Selection.Empty())
+            return;
+        HierarchyVisibility::ToggleSelection(*m_Visibility, *m_Scene, GetSelection());
+        VisibilityChanged();
+    }
+
+    void HierarchyPanel::ShowAll()
+    {
+        if (!m_Visibility || m_Visibility->Hidden().empty())
+            return;
+        m_Visibility->ShowAll();
+        VisibilityChanged();
+    }
+
+    void HierarchyPanel::ToggleSelectionActive()
+    {
+        if (m_Scene)
+            HierarchyVisibility::ToggleActive(*m_Scene, GetSelection());
+    }
+
     // ---------------------------------------------------------------------- drawing
 
     void HierarchyPanel::Draw()
     {
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+            m_FocusFrame = ImGui::GetFrameCount();
         if (!m_Scene)
         {
             ImGui::TextDisabled("No scene is open.");
@@ -218,7 +258,10 @@ namespace Kans
         HandleKeyboard();
 
         if (m_OpenEntityMenu)
+        {
+            m_MenuCanPaste = CanPaste();
             ImGui::OpenPopup("##EntityMenu");
+        }
         if (m_OpenCreateMenu)
             ImGui::OpenPopup("##CreateMenu");
         m_OpenEntityMenu = m_OpenCreateMenu = false;
@@ -342,18 +385,27 @@ namespace Kans
         // Prefab instances and their parts are tinted, as their structure comes from the prefab.
         const bool owned  = entity.HasComponent<PrefabOwnedComponent>();
         const bool prefab = owned || entity.HasComponent<PrefabInstanceComponent>();
-        if (!direct)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        else if (prefab)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.70f, 1.0f, 1.0f));
+        // Inactive entities (also through a parent) and entities hidden in the editor view are
+        // drawn with less contrast; both together are dimmer still.
+        const bool inactive =
+            HierarchyVisibility::ResolveActive(*m_Scene, entity) != HierarchyVisibility::Activity::Active;
+        const bool hidden = m_Visibility && HierarchyVisibility::IsHidden(*m_Scene, m_Visibility->Hidden(), entity);
+        ImVec4     text   = !direct ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled) :
+                            prefab  ? ImVec4(0.45f, 0.70f, 1.0f, 1.0f) :
+                                      ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        if (inactive)
+            text.w *= 0.45f;
+        if (hidden)
+            text.w *= 0.6f;
+        ImGui::PushStyleColor(ImGuiCol_Text, text);
         const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(uintptr_t(uint64_t(id))),
                                             flags,
                                             "%s  %s",
                                             IconFor(entity),
                                             renaming ? "" : name.c_str());
-        if (!direct || prefab)
-            ImGui::PopStyleColor();
+        ImGui::PopStyleColor();
         ImGui::PopStyleVar();
+        const ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
 
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
         {
@@ -393,7 +445,7 @@ namespace Kans
                 ImGui::SetKeyboardFocusHere();
                 m_RenameFocus = false;
             }
-            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::SetNextItemWidth(m_Visibility ? -(rowMax.y - rowMin.y) : -FLT_MIN); // Clear of the eye.
             const bool submitted = ImGui::InputText("##rename",
                                                     m_RenameBuffer.data(),
                                                     m_RenameBuffer.size(),
@@ -404,6 +456,12 @@ namespace Kans
             else if (submitted || ImGui::IsItemDeactivated())
                 CommitRename();
         }
+        if (m_Visibility)
+            DrawEye(entity,
+                    rowMin,
+                    rowMax,
+                    ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+                        ImGui::IsMouseHoveringRect(rowMin, rowMax));
 
         if (!open)
             return;
@@ -411,6 +469,45 @@ namespace Kans
             if (filtering ? m_Matches[uint64_t(child.GetUUID())] : m_Shown[uint64_t(child.GetUUID())])
                 DrawEntity(child);
         ImGui::TreePop();
+    }
+
+    void HierarchyPanel::DrawEye(Entity entity, ImVec2 rowMin, ImVec2 rowMax, bool hovered)
+    {
+        using HierarchyVisibility::Eye;
+        const Eye    eye  = HierarchyVisibility::Resolve(*m_Scene, m_Visibility->Hidden(), entity);
+        const float  size = rowMax.y - rowMin.y;
+        const ImVec2 min {rowMax.x - size, rowMin.y}, max {rowMax.x, rowMax.y};
+        const ImVec2 cursor = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos(min);
+        ImGui::PushID(reinterpret_cast<void*>(uintptr_t(uint64_t(entity.GetUUID()))));
+        const bool clicked = ImGui::InvisibleButton("##eye", {size, size});
+        ImGui::PopID();
+        const bool buttonHovered = ImGui::IsItemHovered();
+        if (buttonHovered)
+            ImGui::SetTooltip(
+                eye == Eye::Visible ? "Hide in the editor view (H)\nAlt+click: show only this entity" :
+                eye == Eye::Hidden  ? "Show in the editor view (H)\nAlt+click: show only this entity" :
+                                      "Hidden through a parent; click to show it\nAlt+click: show only this entity");
+        ImGui::SetCursorScreenPos(cursor);
+        if (clicked)
+        {
+            if (ImGui::GetIO().KeyAlt)
+                HierarchyVisibility::ToggleIsolate(*m_Visibility, entity);
+            else
+                HierarchyVisibility::Toggle(*m_Visibility, *m_Scene, entity);
+            VisibilityChanged();
+        }
+        // Visible rows show the eye only under the pointer; hidden ones keep the eye-slash.
+        if (eye == Eye::Visible && !hovered && !buttonHovered)
+            return;
+        const auto& colors = EditorTheme::Colors();
+        ImVec4      color  = eye == Eye::Hidden ? colors.Text : colors.TextDim;
+        if (eye == Eye::HiddenByParent)
+            color.w *= 0.45f;
+        if (buttonHovered)
+            color = colors.AccentHover;
+        Widgets::CenterGlyph(
+            eye == Eye::Visible ? ICON_FA_EYE : ICON_FA_EYE_SLASH, min, max, ImGui::GetColorU32(color));
     }
 
     void HierarchyPanel::AcceptDrop(Entity target)
@@ -551,11 +648,29 @@ namespace Kans
             CutSelection();
         if (ImGui::MenuItem(Label(ICON_FA_COPY, "Copy").c_str(), "Ctrl+C"))
             CopySelection();
-        if (ImGui::MenuItem(Label(ICON_FA_PASTE, "Paste").c_str(), "Ctrl+V", false, CanPaste()))
+        if (ImGui::MenuItem(Label(ICON_FA_PASTE, "Paste").c_str(), "Ctrl+V", false, m_MenuCanPaste))
             Paste();
         if (m_Scene->GetParent(entity) && !owned && single &&
             ImGui::MenuItem(Label(ICON_FA_ARROW_UP, "Move to Top Level").c_str()))
             m_Scene->SetParent(entity, {}, {}, true);
+        ImGui::Separator();
+        // Active is scene data (undoable); editor visibility is a view preference.
+        const bool active = HierarchyVisibility::IsSelfActive(entity);
+        if (ImGui::MenuItem(
+                Label(active ? ICON_FA_TOGGLE_OFF : ICON_FA_TOGGLE_ON, active ? "Deactivate" : "Activate").c_str(),
+                "Shift+H"))
+            ToggleSelectionActive();
+        if (m_Visibility)
+        {
+            const bool shown = !HierarchyVisibility::IsHidden(*m_Scene, m_Visibility->Hidden(), entity);
+            if (ImGui::MenuItem(
+                    Label(shown ? ICON_FA_EYE_SLASH : ICON_FA_EYE, shown ? "Hide in Editor" : "Show in Editor").c_str(),
+                    "H"))
+                ToggleSelectionVisibility();
+            if (ImGui::MenuItem(
+                    Label(ICON_FA_EYE, "Show All in Editor").c_str(), "Alt+H", false, !m_Visibility->Hidden().empty()))
+                ShowAll();
+        }
         ImGui::Separator();
         if (ImGui::MenuItem(Label(ICON_FA_COPY, "Copy ID").c_str()))
             ImGui::SetClipboardText(std::to_string(uint64_t(entity.GetUUID())).c_str());
@@ -607,8 +722,18 @@ namespace Kans
         Entity selected = GetSelected();
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false))
             Paste(); // Also works with nothing selected.
+        if (!io.KeyCtrl && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_H, false))
+            ShowAll();
         if (!selected)
             return;
+        if (!io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_H, false))
+        {
+            if (io.KeyShift)
+                ToggleSelectionActive();
+            else
+                ToggleSelectionVisibility();
+            return;
+        }
         if (ImGui::IsKeyPressed(ImGuiKey_F2, false))
             StartRename(selected);
         else if (ImGui::IsKeyPressed(ImGuiKey_Delete, false))

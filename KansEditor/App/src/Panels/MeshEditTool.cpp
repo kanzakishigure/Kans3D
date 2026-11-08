@@ -500,20 +500,27 @@ namespace Kans
     void MeshEditTool::DrawModeButtons(Entity entity)
     {
         const bool editable = entity && entity.HasComponent<EditableMeshComponent>();
-        const std::pair<Mode, std::pair<const char*, const char*>> modes[] = {
-            {Mode::Object, {ICON_FA_CUBE, "Object mode (1)"}},
-            {Mode::Vertex, {ICON_FA_CIRCLE_DOT, "Vertex mode (2)"}},
-            {Mode::Edge, {ICON_FA_MINUS, "Edge mode (3)"}},
-            {Mode::Face, {ICON_FA_SQUARE, "Face mode (4)\nSelect editable mesh faces; Shift+move extrudes"}},
+        const struct
+        {
+            Mode        Value;
+            const char *Id, *Icon, *Tooltip;
+        } modes[] = {
+            {Mode::Object, "##ObjectMode", ICON_FA_CUBE, "Object mode (1)"},
+            {Mode::Vertex, "##VertexMode", ICON_FA_CIRCLE_DOT, "Vertex mode (2)"},
+            {Mode::Edge, "##EdgeMode", ICON_FA_MINUS, "Edge mode (3)"},
+            {Mode::Face,
+             "##FaceMode",
+             ICON_FA_SQUARE,
+             "Face mode (4)\nSelect editable mesh faces; Shift+move extrudes"},
         };
         bool first = true;
-        for (const auto& [mode, info] : modes)
+        for (const auto& [mode, id, icon, tooltip] : modes)
         {
             if (!first)
                 ImGui::SameLine();
             first = false;
             const bool active = editable ? m_Mode == mode : mode == Mode::Object;
-            if (ToolButton(info.first, info.second, active, editable))
+            if (ToolButton(id, icon, tooltip, active, editable))
                 SetMode(mode, entity);
         }
     }

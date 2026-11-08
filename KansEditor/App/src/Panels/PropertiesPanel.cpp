@@ -1,5 +1,6 @@
 #include "PropertiesPanel.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -9,6 +10,7 @@
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Renderer/Renderer.h"
 #include "Components/ComponentEditors.h"
+#include "KansEditorCore/Panels/HierarchyVisibility.h"
 #include "UI/BloomSettingsWidget.h"
 #include "UI/EditorIcons.h"
 #include "UI/MaterialSlotRow.h"
@@ -239,8 +241,27 @@ namespace Kans
     void PropertiesPanel::DrawHeader(Entity entity)
     {
         auto& tag = entity.GetComponent<TagComponent>().Tag;
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(ICON_FA_CUBE);
+        // Active, left of the name (as in Unity): scene data applied at runtime. With several
+        // entities selected it sets all of them, as one undo step; mixed states show a dash.
+        {
+            const auto selection = m_Hierarchy.GetSelection();
+            bool       active    = HierarchyVisibility::IsSelfActive(entity);
+            const bool mixed     = std::any_of(selection.begin(), selection.end(), [&](Entity e) {
+                return HierarchyVisibility::IsSelfActive(e) != active;
+            });
+            ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, mixed);
+            if (ImGui::Checkbox("##Active", &active) && GetScene())
+                HierarchyVisibility::SetActive(*GetScene(), selection, active);
+            ImGui::PopItemFlag();
+            if (ImGui::IsItemHovered())
+            {
+                const bool byParent = GetScene() && HierarchyVisibility::ResolveActive(*GetScene(), entity) ==
+                                                        HierarchyVisibility::Activity::InactiveByParent;
+                ImGui::SetTooltip("Active (Shift+H): inactive entities and their children are not drawn, simulated or "
+                                  "scripted%s",
+                                  byParent ? "\nInactive now through a parent" : "");
+            }
+        }
         ImGui::SameLine();
         char name[256] = {};
         tag.copy(name, sizeof(name) - 1);

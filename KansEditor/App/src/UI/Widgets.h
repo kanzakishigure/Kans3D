@@ -27,8 +27,11 @@ namespace Kans::Widgets
     // Width of the icon column and the gap from it to the labels.
     float MenuIconColumn();
     float MenuIconGap();
-    // Icon button with a tooltip; `active` highlights toggles that are on.
-    bool ToolButton(const char* icon, const char* tooltip, bool active = false, bool enabled = true);
+    // Icon button with a tooltip; `active` highlights toggles that are on. `id` names the button
+    // in the current ID scope: buttons sharing an icon in one window (Local orientation and
+    // Object mode both show a cube) would otherwise conflict, and an ID taken from the icon or
+    // tooltip changes whenever a toggle changes its icon.
+    bool ToolButton(const char* id, const char* icon, const char* tooltip, bool active = false, bool enabled = true);
     // Thin vertical line between toolbar groups (call between items on one line).
     void ToolSeparator();
     // Draws `contents` (items on one line) on a raised pill starting at `position`;

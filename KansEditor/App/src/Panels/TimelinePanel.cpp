@@ -506,7 +506,7 @@ namespace Kans
             SetPlayhead(0);
         LockedTooltip(locked);
         ImGui::SameLine();
-        if (ImGui::Button(m_Playing ? ICON_FA_PAUSE : ICON_FA_PLAY))
+        if (ImGui::Button(m_Playing ? ICON_FA_PAUSE "##PlayPause" : ICON_FA_PLAY "##PlayPause"))
         {
             m_Playing = !m_Playing;
             if (m_Playing && m_Time >= m_Data.Length)

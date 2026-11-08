@@ -302,7 +302,7 @@ namespace Kans::ComponentEditors
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Previous frame (Shift: 10 frames)");
                 ImGui::SameLine();
-                if (ImGui::Button(p.Playing ? ICON_FA_PAUSE : ICON_FA_PLAY))
+                if (ImGui::Button(p.Playing ? ICON_FA_PAUSE "##PlayPause" : ICON_FA_PLAY "##PlayPause"))
                     p.Playing = !p.Playing;
                 ImGui::SameLine();
                 if (ImGui::Button(ICON_FA_FORWARD_STEP))

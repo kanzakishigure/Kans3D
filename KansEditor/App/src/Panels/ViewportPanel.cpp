@@ -444,7 +444,9 @@ namespace Kans
         if (capture.Active())
             return;
         m_MeshTool.HandleShortcuts(m_Hierarchy.GetSelected());
-        if (!m_MeshTool.IsEditing(m_Hierarchy.GetSelected()))
+        // With the Hierarchy focused it takes the entity keys itself.
+        const bool entityKeys = !m_Hierarchy.HasFocus();
+        if (entityKeys && !m_MeshTool.IsEditing(m_Hierarchy.GetSelected()))
         {
             // Entity actions on the selection, as in the Hierarchy.
             if (io.KeyCtrl && pressed(ImGuiKey_D))
@@ -460,6 +462,17 @@ namespace Kans
         }
         if (io.KeyCtrl)
             return;
+        // H hides the selection in this view (or shows it again), Alt+H shows everything,
+        // Shift+H toggles the selection's Active flag.
+        if (entityKeys && pressed(ImGuiKey_H))
+        {
+            if (io.KeyAlt)
+                m_Hierarchy.ShowAll();
+            else if (io.KeyShift)
+                m_Hierarchy.ToggleSelectionActive();
+            else
+                m_Hierarchy.ToggleSelectionVisibility();
+        }
         if (pressed(ImGuiKey_Q))
             m_Tool = Tool::Select;
         if (pressed(ImGuiKey_W))
@@ -1058,24 +1071,40 @@ namespace Kans
         const float gap   = tight ? Px(3.0f) : Px(6.0f);
 
         // Left: transform tools; space and snapping; editable-mesh element modes.
-        float x = OverlayGroup({left, top}, [&] {
-            const std::pair<Tool, std::pair<const char*, const char*>> tools[] = {
-                {Tool::Select, {ICON_FA_POINTER, "Select (Q)"}},
-                {Tool::Move, {ICON_FA_ARROWS_MOVE, "Move (W; G over the view moves from the pointer)"}},
-                {Tool::Rotate, {ICON_FA_ROTATE, "Rotate (E; R over the view rotates from the pointer)"}},
-                {Tool::Scale, {ICON_FA_SCALE, "Scale (R away from the view; S over it scales from the pointer)"}},
-                {Tool::Transform, {ICON_FA_EXPAND, "Move, rotate and scale (Y)"}},
-            };
-            bool first = true;
-            for (const auto& [type, info] : tools)
-            {
-                if (!first)
-                    ImGui::SameLine();
-                first = false;
-                if (ToolButton(info.first, info.second, m_Tool == type, !IsGizmoDragging()))
-                    m_Tool = type;
-            }
-        }) + gap;
+        float x =
+            OverlayGroup({left, top},
+                         [&] {
+                             const struct
+                             {
+                                 Tool        Type;
+                                 const char *Id, *Icon, *Tooltip;
+                             } tools[] = {
+                                 {Tool::Select, "##SelectTool", ICON_FA_POINTER, "Select (Q)"},
+                                 {Tool::Move,
+                                  "##MoveTool",
+                                  ICON_FA_ARROWS_MOVE,
+                                  "Move (W; G over the view moves from the pointer)"},
+                                 {Tool::Rotate,
+                                  "##RotateTool",
+                                  ICON_FA_ROTATE,
+                                  "Rotate (E; R over the view rotates from the pointer)"},
+                                 {Tool::Scale,
+                                  "##ScaleTool",
+                                  ICON_FA_SCALE,
+                                  "Scale (R away from the view; S over it scales from the pointer)"},
+                                 {Tool::Transform, "##TransformTool", ICON_FA_EXPAND, "Move, rotate and scale (Y)"},
+                             };
+                             bool first = true;
+                             for (const auto& [type, id, icon, tooltip] : tools)
+                             {
+                                 if (!first)
+                                     ImGui::SameLine();
+                                 first = false;
+                                 if (ToolButton(id, icon, tooltip, m_Tool == type, !IsGizmoDragging()))
+                                     m_Tool = type;
+                             }
+                         }) +
+            gap;
         x = OverlayGroup({x, top}, [&] {
             // Orientation: local, world, view (each click moves to the next).
             const auto orientation = m_Orientation;
@@ -1088,7 +1117,7 @@ namespace Kans
             const char* tip   = orientation == Gizmo::Orientation::Local ? "Local axes (click for world)" :
                                 orientation == Gizmo::Orientation::World ? "World axes (click for view)" :
                                                                            "View axes (click for local)";
-            const bool clicked = tight ? ToolButton(icon, tip) : Widgets::TextButton(icon, label, tip);
+            const bool clicked = tight ? ToolButton("##Orientation", icon, tip) : Widgets::TextButton(icon, label, tip);
             if (clicked && !IsGizmoDragging())
                 m_Orientation = orientation == Gizmo::Orientation::Local ? Gizmo::Orientation::World :
                                 orientation == Gizmo::Orientation::World ? Gizmo::Orientation::View :
@@ -1096,14 +1125,15 @@ namespace Kans
             ImGui::SameLine();
             // Pivot: the selection's median point or the active entity.
             const bool median = m_PivotMode == Gizmo::PivotMode::Median;
-            if (ToolButton(median ? ICON_FA_CIRCLE_DOT : ICON_FA_THUMBTACK,
+            if (ToolButton("##Pivot",
+                           median ? ICON_FA_CIRCLE_DOT : ICON_FA_THUMBTACK,
                            median ? "Pivot: the selection's median point (click for the active entity)" :
                                     "Pivot: the active entity (click for the median point)",
                            false,
                            !IsGizmoDragging()))
                 m_PivotMode = median ? Gizmo::PivotMode::Active : Gizmo::PivotMode::Median;
             ImGui::SameLine();
-            if (ToolButton(ICON_FA_MAGNET, "Snap (or hold Ctrl while dragging)", m_GizmoSnap))
+            if (ToolButton("##Snap", ICON_FA_MAGNET, "Snap (or hold Ctrl while dragging)", m_GizmoSnap))
                 m_GizmoSnap = !m_GizmoSnap;
             ImGui::SameLine();
             float*      snapStep = m_Tool == Tool::Rotate ? &m_SnapRotate :
@@ -1120,14 +1150,19 @@ namespace Kans
         // Secondary motion: spring bones and cloth run on the edit scene's animated pose.
         const auto motion = [&] {
             const bool previewing = m_Scene->IsSecondaryMotionPreviewEnabled();
-            if (ToolButton(ICON_FA_WIND,
+            if (ToolButton("##MotionPreview",
+                           ICON_FA_WIND,
                            previewing ? "Preview secondary motion (on): springs and cloth follow the animated pose" :
                                         "Preview secondary motion: run springs and cloth on the edit scene",
                            previewing,
                            !m_Playing))
                 SecondaryMotionEditing::SetPreview(*m_Scene, !previewing);
             ImGui::SameLine();
-            if (ToolButton(ICON_FA_ROTATE_LEFT, "Reset the secondary-motion preview", false, previewing && !m_Playing))
+            if (ToolButton("##MotionReset",
+                           ICON_FA_ROTATE_LEFT,
+                           "Reset the secondary-motion preview",
+                           false,
+                           previewing && !m_Playing))
                 m_Scene->ResetSecondaryMotion();
         };
         float leftEnd = x;
@@ -1138,7 +1173,9 @@ namespace Kans
         }
         else
             leftEnd = OverlayGroup({x, top}, [&] {
-                if (ToolButton(ICON_FA_ELLIPSIS_VERTICAL, "More: element modes and the secondary-motion preview"))
+                if (ToolButton("##ToolbarMore",
+                               ICON_FA_ELLIPSIS_VERTICAL,
+                               "More: element modes and the secondary-motion preview"))
                     ImGui::OpenPopup("##ViewportMore");
                 if (ImGui::BeginPopup("##ViewportMore"))
                 {
@@ -1162,7 +1199,20 @@ namespace Kans
         // last frame's width, since the labels change.
         const float right = m_Max.x - Px(10.0f);
         const float start = right - m_RightToolbarWidth;
-        const float end   = OverlayGroup({start, top}, [&] {
+        const float end     = OverlayGroup({start, top}, [&] {
+            // Entities hidden in this view (the Hierarchy's eye column); Play and the game view
+            // show everything, so the button goes away there.
+            const auto* visibility = m_Hierarchy.GetVisibility();
+            if (visibility && !visibility->Hidden().empty() && !m_Client->HiddenInEditor().empty())
+            {
+                const std::string count = std::to_string(visibility->Hidden().size()) + " hidden";
+                if (Widgets::TextButton(ICON_FA_EYE_SLASH,
+                                        count.c_str(),
+                                        "Entities hidden in the editor view; click to show all (Alt+H)",
+                                        true))
+                    m_Hierarchy.ShowAll();
+                ImGui::SameLine();
+            }
             const char* view = m_Camera.IsOrthographic() ? m_ViewName : "Perspective";
             if (Widgets::TextButton(m_Camera.IsOrthographic() ? ICON_FA_VECTOR_SQUARE : ICON_FA_VIDEO, view, "Camera view",
                                     false, true))
@@ -1200,7 +1250,11 @@ namespace Kans
                 ImGui::EndPopup();
             }
             ImGui::SameLine();
-            if (ToolButton(ICON_FA_CROSSHAIRS, "Frame the selection (F)", false, bool(m_Hierarchy.GetSelected())))
+            if (ToolButton("##FrameSelection",
+                           ICON_FA_CROSSHAIRS,
+                           "Frame the selection (F)",
+                           false,
+                           bool(m_Hierarchy.GetSelected())))
                 FocusSelection();
             ImGui::SameLine();
             float speed = m_Camera.GetFlySpeed();

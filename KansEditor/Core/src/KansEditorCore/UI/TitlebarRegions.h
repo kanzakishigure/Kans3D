@@ -11,6 +11,22 @@ namespace Kans
         bool  Contains(float x, float y) const { return x >= MinX && x < MaxX && y >= MinY && y < MaxY; }
     };
 
+    // The project button of the editor's titlebar: the project name and a chevron with
+    // `padding` on both sides and `gap` between them, `height` tall and centred in the band,
+    // starting at `x`. Its rectangle is a control (Client); the band around it still drags.
+    struct TitlebarProjectButton
+    {
+        TitlebarRect Rect;
+        float        NameX = 0, ChevronX = 0;
+    };
+    TitlebarProjectButton LayoutProjectButton(float               x,
+                                              const TitlebarRect& band,
+                                              float               height,
+                                              float               nameWidth,
+                                              float               chevronWidth,
+                                              float               padding,
+                                              float               gap);
+
     // What each part of a custom titlebar is to the window manager. A frame records the
     // band, its interactive items and the maximize button while it draws them, then
     // publishes; the window procedure hit-tests the last published layout, so it never

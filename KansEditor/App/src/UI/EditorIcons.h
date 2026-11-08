@@ -16,6 +16,9 @@
 #define ICON_FA_GRID                   "\xef\x80\x8a" // U+F00A
 #define ICON_FA_VIDEO                  "\xef\x80\xbd" // U+F03D
 #define ICON_FA_EYE                    "\xef\x81\xae" // U+F06E
+#define ICON_FA_EYE_SLASH "\xef\x81\xb0"              // U+F070
+#define ICON_FA_TOGGLE_ON "\xef\x88\x85"              // U+F205
+#define ICON_FA_TOGGLE_OFF "\xef\x88\x84"             // U+F204
 #define ICON_FA_GEAR                   "\xef\x80\x93" // U+F013
 #define ICON_FA_TERMINAL               "\xef\x84\xa0" // U+F120
 #define ICON_FA_CHART_LINE             "\xef\x88\x81" // U+F201

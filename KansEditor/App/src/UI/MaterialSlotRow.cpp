@@ -72,13 +72,15 @@ namespace Kans::Widgets
         if (ImGui::IsItemHovered() && titleSize.x + style.ItemSpacing.x + detailSize.x > text)
             ImGui::SetTooltip("%s  %s", title.c_str(), detail.c_str());
         ImGui::SameLine();
-        if (ToolButton(ICON_FA_EYE, "Highlight these parts in the viewport", highlighted))
+        if (ToolButton("##Highlight", ICON_FA_EYE, "Highlight these parts in the viewport", highlighted))
             ui.ToggleSlotHighlight(parts);
         ImGui::SameLine();
-        if (ToolButton(ICON_FA_CROSSHAIRS, isolated ? "Show the whole scene" : "Show only these parts", isolated))
+        if (ToolButton(
+                "##Isolate", ICON_FA_CROSSHAIRS, isolated ? "Show the whole scene" : "Show only these parts", isolated))
             ui.ToggleSlotIsolate(parts);
         ImGui::SameLine();
-        if (ToolButton(ICON_FA_ARROW_LEFT,
+        if (ToolButton("##UseBrowserMaterial",
+                       ICON_FA_ARROW_LEFT,
                        browser.IsValid() ? ("Use " + ui.MaterialName(browser)).c_str() :
                                            "Use the material selected in the Content Browser",
                        false,
@@ -88,8 +90,11 @@ namespace Kans::Widgets
             picked = true;
         }
         ImGui::SameLine();
-        if (ToolButton(
-                ICON_FA_ROTATE_LEFT, ("Restore " + ui.MaterialName(imported)).c_str(), false, current != imported))
+        if (ToolButton("##RestoreMaterial",
+                       ICON_FA_ROTATE_LEFT,
+                       ("Restore " + ui.MaterialName(imported)).c_str(),
+                       false,
+                       current != imported))
         {
             chosen = {};
             picked = true;

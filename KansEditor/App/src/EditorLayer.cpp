@@ -74,6 +74,8 @@ namespace Kans
             m_Viewport = CreateScope<ViewportClient>(m_ProjectConfig.RootDirectory / m_ProjectConfig.CacheDirectory /
                                                      "Editor/Visibility.yaml");
             m_Viewport->SetScene(m_ActiveScene);
+            // The Hierarchy's eye column edits the visibility the editor view renders with.
+            m_HierarchyPanel.SetVisibility(&m_Viewport->Visibility());
             // Scenes without environment settings show the editor's default map; a scene's own
             // map is relative to the project directory.
             const auto defaultEnvironment = KansFileSystem::GetResoucesFolder() / "Environment/studio_country_hall_2k.hdr";
@@ -210,6 +212,7 @@ namespace Kans
             m_MaterialThumbnails.clear();
             m_MaterialPreview.reset();
             m_ThumbnailRenderer.reset();
+            m_HierarchyPanel.SetVisibility(nullptr);
             m_Viewport.reset();
         }
         m_Assets.reset();

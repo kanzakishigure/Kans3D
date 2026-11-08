@@ -2,6 +2,22 @@
 
 namespace Kans
 {
+    TitlebarProjectButton LayoutProjectButton(float               x,
+                                              const TitlebarRect& band,
+                                              float               height,
+                                              float               nameWidth,
+                                              float               chevronWidth,
+                                              float               padding,
+                                              float               gap)
+    {
+        TitlebarProjectButton button;
+        const float           top = band.MinY + (band.MaxY - band.MinY - height) * 0.5f;
+        button.Rect               = {x, top, x + padding + nameWidth + gap + chevronWidth + padding, top + height};
+        button.NameX              = x + padding;
+        button.ChevronX           = button.NameX + nameWidth + gap;
+        return button;
+    }
+
     void TitlebarRegions::Begin(const TitlebarRect& band)
     {
         m_Recording.HasBand     = true;

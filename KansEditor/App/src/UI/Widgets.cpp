@@ -27,13 +27,13 @@ namespace Kans::Widgets
         (draw ? draw : ImGui::GetWindowDrawList())->AddText({IM_ROUND(at.x), IM_ROUND(at.y)}, color, icon);
     }
 
-    bool ToolButton(const char* icon, const char* tooltip, bool active, bool enabled)
+    bool ToolButton(const char* id, const char* icon, const char* tooltip, bool active, bool enabled)
     {
         ImGui::PushStyleColor(ImGuiCol_Button, active ? EditorTheme::Colors().Selection : ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorTheme::Colors().Hover);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
         ImGui::BeginDisabled(!enabled);
-        ImGui::PushID(icon);
+        ImGui::PushID(id);
         const bool clicked = ImGui::Button("##tool", {EditorTheme::Px(28.0f), EditorTheme::Px(26.0f)});
         ImGui::PopID();
         CenterGlyph(icon, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(ImGuiCol_Text));
