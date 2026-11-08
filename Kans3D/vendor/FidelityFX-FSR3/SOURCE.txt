@@ -1,0 +1,1 @@
+FidelityFX SDK v1.1.4 (c6efa6bf7f2027b3ec94f28578bb5965eabb9e55), MIT: FSR 3.1 upscaler GPU headers and Vulkan GLSL passes; reference/ holds the upstream host code, not compiled.
