@@ -4,6 +4,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 #include <glm/glm.hpp>
@@ -139,7 +140,10 @@ namespace Kans::RagdollEditing
     // before one is evaluated) and, for each body joined to a parent body, the constraint frame and
     // its limit cone. Nothing without the flag, and nothing while the scene runs: the physics world
     // draws its own ragdolls then.
-    SceneRagdollCounts DrawSceneRagdolls(DebugDraw& draw, const Scene& scene, PhysicsDebugFlags flags);
+    SceneRagdollCounts DrawSceneRagdolls(DebugDraw&                      draw,
+                                         const Scene&                    scene,
+                                         PhysicsDebugFlags               flags,
+                                         const std::unordered_set<UUID>& hidden = {});
 
     // ---- Files ----
 

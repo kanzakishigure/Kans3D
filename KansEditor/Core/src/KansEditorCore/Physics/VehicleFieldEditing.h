@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 #include <glm/glm.hpp>
 #include "Kans3D/Physics/ForceFields.h"
@@ -94,7 +95,7 @@ namespace Kans::VehicleFieldEditing
     // ---- Edit-mode field arrows ----
 
     // The fields of the scene's active entities, as the physics world builds them while playing.
-    ForceFieldSet BuildFieldSet(Scene& scene);
+    ForceFieldSet BuildFieldSet(Scene& scene, const std::unordered_set<UUID>& hidden = {});
     // An arrow per grid point (n x n x n, `spacing` apart, centred on `centre`) pointing along the
     // summed wind, force and acceleration a rigid body on layer 0 feels there.
     void DrawFieldArrows(DebugDraw&           draw,

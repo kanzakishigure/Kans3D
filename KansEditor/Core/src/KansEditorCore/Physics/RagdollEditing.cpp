@@ -505,13 +505,18 @@ namespace Kans::RagdollEditing
         }
     }
 
-    SceneRagdollCounts DrawSceneRagdolls(DebugDraw& draw, const Scene& scene, PhysicsDebugFlags flags)
+    SceneRagdollCounts DrawSceneRagdolls(DebugDraw&                      draw,
+                                         const Scene&                    scene,
+                                         PhysicsDebugFlags               flags,
+                                         const std::unordered_set<UUID>& hidden)
     {
         SceneRagdollCounts counts;
         if (!(uint32_t(flags) & uint32_t(PhysicsDebugFlags::Ragdolls)) || scene.GetPhysicsWorld())
             return counts;
         AssetManager*               assets = scene.GetAssetManager();
         std::function<void(Entity)> visit  = [&](Entity e) {
+            if (hidden.count(e.GetUUID()))
+                return;
             for (Entity child : scene.GetChildren(e))
                 visit(child);
             if (!e.HasComponent<RagdollComponent>() || !e.HasComponent<AnimatorComponent>())
@@ -558,7 +563,8 @@ namespace Kans::RagdollEditing
             for (size_t j = 0; j < data.Bodies.size(); ++j)
             {
                 const uint32_t bone = binding.Bones[j];
-                if (bone >= skeleton.Joints.size())
+                if (bone >= skeleton.Joints.size() ||
+                    (bone < a.JointEntities.size() && hidden.count(a.JointEntities[bone])))
                     continue;
                 // The body's frame as the runtime places its actor: position and rotation only.
                 const glm::mat4 frame = PhysicsEditing::JointFrame(world * (animated ? a.PreviewPose.Model[bone] : bind[bone]));

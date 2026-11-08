@@ -71,7 +71,8 @@ namespace Kans
 
         // Viewport rendering
         {
-            m_Viewport = CreateScope<ViewportClient>();
+            m_Viewport = CreateScope<ViewportClient>(m_ProjectConfig.RootDirectory / m_ProjectConfig.CacheDirectory /
+                                                     "Editor/Visibility.yaml");
             m_Viewport->SetScene(m_ActiveScene);
             // Scenes without environment settings show the editor's default map; a scene's own
             // map is relative to the project directory.

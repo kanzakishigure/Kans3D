@@ -78,7 +78,7 @@ namespace Kans
         // them after this frame's asset updates.
         Entity selected = m_Hierarchy.GetSelected();
         // Element editing draws its own selection instead of the entity outline.
-        const bool editing = m_MeshTool.IsEditing(selected) && !UsesSceneCamera();
+        bool           editing = m_MeshTool.IsEditing(selected) && !UsesSceneCamera();
         ViewHighlights highlights;
         if (selected && !UsesSceneCamera() && !editing)
         {
@@ -93,6 +93,11 @@ namespace Kans
             highlights.Highlights.push_back({m_DropSlot->first, m_DropSlot->second, Widgets::SlotHoverColor});
         m_Client->SetHighlights(std::move(highlights));
         Render();
+        if (selected && m_Client->HiddenInEditor().count(selected.GetUUID()))
+        {
+            selected = {};
+            editing  = false;
+        }
 
         const auto output = m_Client->GetOutput();
         if (m_ImageSize.x != size.x || m_ImageSize.y != size.y)
@@ -116,7 +121,8 @@ namespace Kans
         if (!m_Playing && !editing)
             VfxHandles(selected);
         // Cloth painting takes the left button over the cloth (selection and the gizmo wait).
-        if (m_ClothPaint.IsActive() && !UsesSceneCamera() && !m_Playing)
+        if (m_ClothPaint.IsActive() && !m_Client->HiddenInEditor().count(m_ClothPaint.GetEntity()) &&
+            !UsesSceneCamera() && !m_Playing)
         {
             const ClothPaintTool::View view {m_Min, m_Max, &m_Camera, m_Scene.get()};
             m_ClothPaint.DrawOverlay(view);
@@ -508,6 +514,7 @@ namespace Kans
     void ViewportPanel::DrawSceneOverlays()
     {
         m_Icons.clear();
+        const auto& hidden = m_Client->HiddenInEditor();
         if (!m_ShowIcons || UsesSceneCamera())
             return;
         ImDrawList*  draw     = ImGui::GetWindowDrawList();
@@ -520,7 +527,7 @@ namespace Kans
                 draw->AddLine(sa, sb, color, 1.5f);
         };
         // The selected animated model's skeleton: a line from each joint to its parent.
-        if (Entity picked = m_Hierarchy.GetSelected())
+        if (Entity picked = m_Hierarchy.GetSelected(); picked && !hidden.count(picked.GetUUID()))
         {
             Entity root = m_Scene->GetPrefabInstanceRoot(picked);
             root        = root ? root : picked;
@@ -537,7 +544,7 @@ namespace Kans
                             continue;
                         Entity bone = m_Scene->GetEntityByUUID(animator.JointEntities[j]);
                         Entity up   = m_Scene->GetEntityByUUID(animator.JointEntities[parent]);
-                        if (!bone || !up)
+                        if (!bone || !up || hidden.count(bone.GetUUID()) || hidden.count(up.GetUUID()))
                             continue;
                         const glm::vec3 a = glm::vec3(m_Scene->GetWorldTransform(up)[3]);
                         const glm::vec3 b = glm::vec3(m_Scene->GetWorldTransform(bone)[3]);
@@ -553,6 +560,8 @@ namespace Kans
         }
         draw->PushClipRect(m_Min, m_Max, true);
         std::function<void(Entity)> visit = [&](Entity entity) {
+            if (hidden.count(entity.GetUUID()))
+                return;
             for (Entity child : m_Scene->GetChildren(entity))
                 visit(child);
             const char* icon = entity.HasComponent<CameraComponent>()     ? ICON_FA_VIDEO :
@@ -802,6 +811,8 @@ namespace Kans
     bool ViewportPanel::StartModal(Gizmo::Operation op, bool extrude)
     {
         Entity          selected = m_Hierarchy.GetSelected();
+        if (!selected || m_Client->HiddenInEditor().count(selected.GetUUID()))
+            return false;
         const auto      view     = GizmoView();
         const glm::vec2 mouse(ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y);
         Gizmo::Pivot    pivot;
@@ -863,7 +874,8 @@ namespace Kans
         }
         m_ModalThisFrame = true;
         // The selection or the editor view went away: put things back.
-        const bool lost  = !selected || UsesSceneCamera() || (m_ModalTarget == ModalTarget::Mesh && !editing);
+        const bool  lost  = !selected || m_Client->HiddenInEditor().count(selected.GetUUID()) || UsesSceneCamera() ||
+                            (m_ModalTarget == ModalTarget::Mesh && !editing);
         const auto input = Widgets::ModalTransformInput(lost);
         const auto  event = m_Modal.Update(GizmoView(), input);
         const auto& delta = m_Modal.GetDelta();
@@ -919,7 +931,8 @@ namespace Kans
         const bool             modal    = UpdateModal(draws);
         Entity                 selected = m_Hierarchy.GetSelected();
         // While a modal transform runs the gizmo hides, as in Blender.
-        const bool shown = !modal && selected && m_Tool != Tool::Select && !UsesSceneCamera() && !IsPaintingCloth();
+        const bool shown = !modal && selected && !m_Client->HiddenInEditor().count(selected.GetUUID()) &&
+                           m_Tool != Tool::Select && !UsesSceneCamera() && !IsPaintingCloth();
         if (!shown)
         {
             // The selection went away (or the tool changed) mid-drag: put things back.

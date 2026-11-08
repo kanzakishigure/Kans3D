@@ -49,13 +49,17 @@ namespace Kans
         void                          SetAssetManager(AssetManager* assets);
         void                          Synchronize();
         std::shared_ptr<TextLayoutCache> GetTextLayout(Entity entity) const;
-        std::vector<ViewTextDraw>        CollectTexts() const;
+        std::vector<ViewTextDraw>        CollectTexts(const std::unordered_set<UUID>& hidden = {}) const;
         std::shared_ptr<UIInstance>      GetUIInstance(Entity entity, bool world = false) const;
-        std::vector<ViewUI>              CollectUIs(const RenderCamera&) const;
+        std::vector<ViewUI> CollectUIs(const RenderCamera&, const std::unordered_set<UUID>& hidden = {}) const;
         void                          Extract(RenderView& output, const RenderResource& settings) const;
-        void                          CollectLights(SceneInfo& output) const;
+        // Reuses a flattened snapshot from this frame's resource preparation.
+        void Extract(RenderView& output, const RenderResource& settings, const std::unordered_set<UUID>& hidden) const;
+        void CollectLights(SceneInfo& output, const std::unordered_set<UUID>& hidden = {}) const;
         void                             CacheVfxLight(const SceneInfo& info) const;
-        std::vector<DrawProxy>        CollectDraws(UUID subtree = 0) const;
+        std::vector<DrawProxy> CollectDraws(UUID subtree = 0, const std::unordered_set<UUID>& hidden = {}) const;
+        // Expands explicitly hidden roots to descendants in one traversal.
+        std::unordered_set<UUID>      ResolveHiddenEntities(const std::unordered_set<UUID>& hidden) const;
         bool                          MatchesSubtree(UUID entity, UUID instanceRoot, UUID subtree) const;
         // Whether a part using `slot` survives the view's isolate list.
         bool IsIsolated(const ViewHighlights& highlights, UUID entity, UUID instanceRoot, uint32_t slot) const;

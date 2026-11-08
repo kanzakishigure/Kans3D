@@ -53,7 +53,7 @@ namespace Kans
         for (const auto& [id, instance] : world->Instances())
             for (auto& e : instance->Emitters())
             {
-                if (!e.Failure.empty() || !e.GPU || e.HiddenByDistance)
+                if (frame.View.HiddenHierarchy.count(id) || !e.Failure.empty() || !e.GPU || e.HiddenByDistance)
                     continue;
                 const auto first = graph.PassCount();
                 try
@@ -346,7 +346,7 @@ namespace Kans
         for (const auto& [id, instance] : world->Instances())
             for (auto& e : instance->Emitters())
             {
-                if (!e.Failure.empty() || !e.GPU)
+                if (context.View.HiddenHierarchy.count(id) || !e.Failure.empty() || !e.GPU)
                     continue;
                 if (point == RenderExtensionPoint::AfterTransparent &&
                     e.Compiled->Settings.Target == Vfx::SimTarget::GPU)

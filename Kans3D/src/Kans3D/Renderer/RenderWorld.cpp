@@ -196,13 +196,37 @@ namespace Kans
                 return true;
         return false;
     }
-    std::vector<RenderWorld::DrawProxy> RenderWorld::CollectDraws(UUID subtree) const
+    std::unordered_set<UUID> RenderWorld::ResolveHiddenEntities(const std::unordered_set<UUID>& hidden) const
+    {
+        auto result = hidden;
+        if (!m_Scene || hidden.empty())
+            return result;
+        std::vector<Entity> pending;
+        for (UUID id : hidden)
+            if (auto entity = m_Scene->GetEntityByUUID(id))
+                pending.push_back(entity);
+        std::unordered_set<UUID> visited;
+        while (!pending.empty())
+        {
+            auto entity = pending.back();
+            pending.pop_back();
+            if (!visited.insert(entity.GetUUID()).second)
+                continue;
+            result.insert(entity.GetUUID());
+            for (auto child : m_Scene->GetChildren(entity))
+                pending.push_back(child);
+        }
+        return result;
+    }
+    std::vector<RenderWorld::DrawProxy> RenderWorld::CollectDraws(UUID                            subtree,
+                                                                  const std::unordered_set<UUID>& hidden) const
     {
         if (!m_Scene)
         {
             std::vector<DrawProxy> result;
             for (const auto& draw : m_ProceduralDraws)
-                if (!subtree || MatchesSubtree(draw.EntityID, draw.InstanceRoot, subtree))
+                if (!hidden.count(draw.EntityID) && !hidden.count(draw.InstanceRoot) &&
+                    (!subtree || MatchesSubtree(draw.EntityID, draw.InstanceRoot, subtree)))
                     result.push_back(draw);
             return result;
         }
@@ -210,6 +234,8 @@ namespace Kans
         for (const auto& [order, handle] : m_Order)
         {
             const auto& record = m_Records.at(handle);
+            if (hidden.count(order.EntityID))
+                continue;
             if (!subtree || order.EntityID == subtree ||
                 std::find(record.Ancestors.begin(), record.Ancestors.end(), subtree) != record.Ancestors.end())
             {
@@ -272,7 +298,7 @@ namespace Kans
         fonts.SetResolver({});
         return record.Layout;
     }
-    std::vector<ViewTextDraw> RenderWorld::CollectTexts() const
+    std::vector<ViewTextDraw> RenderWorld::CollectTexts(const std::unordered_set<UUID>& hidden) const
     {
         std::vector<ViewTextDraw> result;
         if (!m_Scene)
@@ -280,7 +306,7 @@ namespace Kans
         for (auto handle : m_Scene->m_Registry.view<TextComponent, TransformComponent, IDComponent>())
         {
             Entity entity {handle, m_Scene};
-            if (!m_Scene->IsEntityActive(entity))
+            if (hidden.count(entity.GetUUID()) || !m_Scene->IsEntityActive(entity))
                 continue;
             const auto& c      = entity.GetComponent<TextComponent>();
             auto        layout = GetTextLayout(entity);
@@ -317,7 +343,8 @@ namespace Kans
         auto refreshed = r.Instance->Refresh();
         return r.Instance;
     }
-    std::vector<ViewUI> RenderWorld::CollectUIs(const RenderCamera& camera) const
+    std::vector<ViewUI> RenderWorld::CollectUIs(const RenderCamera&             camera,
+                                                const std::unordered_set<UUID>& hidden) const
     {
         std::vector<ViewUI> result;
         if (!m_Scene)
@@ -333,7 +360,7 @@ namespace Kans
         {
             Entity e {handle, m_Scene};
             auto&  c = e.GetComponent<UIScreenComponent>();
-            if (!c.Visible || !m_Scene->IsEntityActive(e))
+            if (!c.Visible || hidden.count(e.GetUUID()) || !m_Scene->IsEntityActive(e))
                 continue;
             if (auto instance = GetUIInstance(e))
                 result.push_back({instance, glm::mat4(1), true, true, true, c.SortOrder, e.GetUUID(), {}});
@@ -342,7 +369,7 @@ namespace Kans
         {
             Entity e {handle, m_Scene};
             auto&  c = e.GetComponent<UIWorldComponent>();
-            if (!c.Visible || !m_Scene->IsEntityActive(e))
+            if (!c.Visible || hidden.count(e.GetUUID()) || !m_Scene->IsEntityActive(e))
                 continue;
             if (auto instance = GetUIInstance(e, true))
             {
@@ -511,7 +538,7 @@ namespace Kans
         if (m_Validate)
             Validate();
     }
-    void RenderWorld::CollectLights(SceneInfo& info) const
+    void RenderWorld::CollectLights(SceneInfo& info, const std::unordered_set<UUID>& hidden) const
     {
         if (!m_Scene)
         {
@@ -536,6 +563,8 @@ namespace Kans
         for (auto handle : m_Lights)
         {
             const auto& record = m_Records.at(handle);
+            if (hidden.count(record.Sort.EntityID))
+                continue;
             const auto  id     = uint64_t(record.Sort.EntityID);
             if (record.Directional && (!info.HasDirectionalLight || id < directionalID))
             {
@@ -572,10 +601,17 @@ namespace Kans
     }
     void RenderWorld::Extract(RenderView& output, const RenderResource& settings) const
     {
+        Extract(output, settings, ResolveHiddenEntities(output.HiddenEntities));
+    }
+    void RenderWorld::Extract(RenderView&                     output,
+                              const RenderResource&           settings,
+                              const std::unordered_set<UUID>& hidden) const
+    {
         if (m_Scene)
             output.Scene.PostProcess = m_Scene->GetPostProcessSettings();
-        CollectLights(output.Scene);
-        output.Texts = CollectTexts();
+        output.HiddenHierarchy = hidden;
+        CollectLights(output.Scene, hidden);
+        output.Texts = CollectTexts(hidden);
         output.Draws.clear();
         output.Meshes.clear();
         output.Geometry.clear();
@@ -583,28 +619,31 @@ namespace Kans
         output.Grids.clear();
         output.ImmediateOrder.clear();
         for (const auto& proxy : m_ProceduralDraws)
-            output.Draws.push_back({proxy.Mesh,
-                                    proxy.Transform,
-                                    proxy.Material,
-                                    output.DebugMode,
-                                    ModelStencilMode::Disabled,
-                                    proxy.LocalBounds,
-                                    {},
-                                    false,
-                                    proxy.Section,
-                                    proxy.EntityID,
-                                    proxy.InstanceRoot,
-                                    proxy.WorldBounds,
-                                    true,
-                                    proxy.CastShadows,
-                                    proxy.ReceiveShadows,
-                                    proxy.SkinPose,
-                                    proxy.Parameters,
-                                    proxy.RenderCustomDepth,
-                                    proxy.CustomStencil});
+            if (!hidden.count(proxy.EntityID) && !hidden.count(proxy.InstanceRoot))
+                output.Draws.push_back({proxy.Mesh,
+                                        proxy.Transform,
+                                        proxy.Material,
+                                        output.DebugMode,
+                                        ModelStencilMode::Disabled,
+                                        proxy.LocalBounds,
+                                        {},
+                                        false,
+                                        proxy.Section,
+                                        proxy.EntityID,
+                                        proxy.InstanceRoot,
+                                        proxy.WorldBounds,
+                                        true,
+                                        proxy.CastShadows,
+                                        proxy.ReceiveShadows,
+                                        proxy.SkinPose,
+                                        proxy.Parameters,
+                                        proxy.RenderCustomDepth,
+                                        proxy.CustomStencil});
         const auto& state = settings.Piplinestate;
         for (const auto& [order, handle] : m_Order)
         {
+            if (hidden.count(order.EntityID))
+                continue;
             const auto& record     = m_Records.at(handle);
             auto        submission = *record.Mesh;
             submission.Stencil = state.EnableStencil ? ModelStencilMode::WriteReference : ModelStencilMode::Disabled;
@@ -718,7 +757,8 @@ namespace Kans
             return rank(a) < rank(b);
         });
         for (auto sprite = m_SpriteOrder.rbegin(); sprite != m_SpriteOrder.rend(); ++sprite)
-            if (auto found = m_Records.find(sprite->second); found != m_Records.end() && found->second.Sprite)
+            if (auto found = m_Records.find(sprite->second);
+                found != m_Records.end() && found->second.Sprite && !hidden.count(found->second.Sort.EntityID))
                 output.Sprites.push_back(*found->second.Sprite);
         if (!output.Sprites.empty())
             output.ImmediateOrder.push_back({ViewImmediateKind::Sprites, 0});

@@ -364,11 +364,11 @@ namespace Kans::VehicleFieldEditing
 
     // ---------------------------------------------------------------- field arrows
 
-    ForceFieldSet BuildFieldSet(Scene& scene)
+    ForceFieldSet BuildFieldSet(Scene& scene, const std::unordered_set<UUID>& hidden)
     {
         ForceFieldSet set;
         std::function<void(Entity)> visit = [&](Entity e) {
-            if (!scene.IsEntityActive(e))
+            if (hidden.count(e.GetUUID()) || !scene.IsEntityActive(e))
                 return;
             if (e.HasComponent<WindZoneComponent>())
                 set.AddWind(e.GetComponent<WindZoneComponent>(), scene.GetWorldTransform(e));

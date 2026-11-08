@@ -11,6 +11,8 @@
 
 namespace Kans
 {
+    void GLFWErrorCallback(int error, const char* description);
+
     class Win32WindowFrame;
     class WindowsWindow : public Window
     {

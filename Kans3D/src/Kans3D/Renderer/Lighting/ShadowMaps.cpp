@@ -379,7 +379,7 @@ namespace Kans
         uniforms.ShadowInfo        = glm::vec4(0);
         for (auto& indices : uniforms.PointShadowIndices)
             indices = glm::vec4(-1);
-        const auto proxies     = frame.World.CollectDraws();
+        const auto proxies     = frame.World.CollectDraws(0, view.HiddenHierarchy);
         const auto environment = frame.GetMaterialEnvironment();
         auto       record      = [&](std::string                            name,
                                      const Handle<RenderHardware::Texture>& texture,

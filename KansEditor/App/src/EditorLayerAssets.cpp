@@ -608,7 +608,10 @@ namespace Kans
         FinishClothPaint();
         m_PendingCloth.clear();
         m_ActiveScene = std::move(scene);
-        m_Viewport->SetScene(m_ActiveScene);
+        auto visibilityKey = path.empty() ?
+                                 std::string {} :
+                                 path.lexically_relative(KansFileSystem::GetProjectRoot()).generic_u8string();
+        m_Viewport->SetScene(m_ActiveScene, std::move(visibilityKey));
         m_HierarchyPanel.SetScene(m_ActiveScene);
         m_ViewportPanel.SetContext(m_ActiveScene, m_Viewport.get());
         m_CameraEntity       = {};
@@ -684,6 +687,12 @@ namespace Kans
         if (const auto* error = std::get_if<AssetError>(&saved))
             return *error;
         m_ScenePath = std::move(fullPath);
+        if (m_Viewport)
+        {
+            m_Viewport->Visibility().SetSceneKey(
+                m_ScenePath.lexically_relative(KansFileSystem::GetProjectRoot()).generic_u8string());
+            m_Viewport->Visibility().Save();
+        }
         m_History.MarkSaved();
         // The launcher shows the project with the view it was saved from.
         if (m_Viewport && m_Viewport->RequestSnapshot())

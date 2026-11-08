@@ -17,8 +17,11 @@ namespace Kans
 
     int         WindowsWindow::s_GLFWWindowsCount = 0;
 
-    static void GLFWErrorCallback(int error, const char* description)
+    void GLFWErrorCallback(int error, const char* description)
     {
+        // Non-text clipboard data is an expected result of glfwGetClipboardString.
+        if (error == GLFW_FORMAT_UNAVAILABLE)
+            return;
         CORE_ERROR("GLFW Error ({0}):{1}", error, description);
     }
     Window* Window::Create(const WindowSpecification& props) { return new WindowsWindow(props); }

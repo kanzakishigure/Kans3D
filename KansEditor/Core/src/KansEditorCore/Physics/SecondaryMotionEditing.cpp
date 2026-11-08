@@ -460,9 +460,9 @@ namespace Kans::SecondaryMotionEditing
         }
     }
 
-    void DrawSecondaryMotion(DebugDraw& draw, Scene& scene, Entity selected)
+    void DrawSecondaryMotion(DebugDraw& draw, Scene& scene, Entity selected, const std::unordered_set<UUID>& hidden)
     {
-        if (!selected)
+        if (!selected || hidden.count(selected.GetUUID()))
             return;
         std::vector<UUID> groups;
         if (selected.HasComponent<SpringBoneComponent>())
@@ -477,7 +477,7 @@ namespace Kans::SecondaryMotionEditing
             groups.insert(groups.end(), g.begin(), g.end());
         }
         for (Entity collider : GroupColliders(scene, groups))
-            if (collider != selected)
+            if (collider != selected && !hidden.count(collider.GetUUID()))
                 DrawMotionCollider(draw, scene, collider, ColliderColor * glm::vec4(1, 1, 1, 0.7f));
         DrawMotionCollider(draw, scene, selected, ColliderColor);
     }

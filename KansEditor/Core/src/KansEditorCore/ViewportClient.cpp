@@ -12,8 +12,9 @@ namespace Kans
         constexpr const char* EditorOnlyFeatures[] = {"EditorGrid", "EditorSelection", "EditorPreview", "TransformGizmo"};
     } // namespace
 
-    ViewportClient::ViewportClient() :
-        m_Renderer(Renderer::Acquire()), m_Target(std::make_unique<ViewTarget>(m_Renderer->GetDevice()))
+    ViewportClient::ViewportClient(std::filesystem::path visibilityFile) :
+        m_Renderer(Renderer::Acquire()), m_Target(std::make_unique<ViewTarget>(m_Renderer->GetDevice())),
+        m_Visibility(std::move(visibilityFile))
     {
         // Authored material passes first, then the editor features, in their drawing order.
         m_Features.Register("MaterialOutline",
@@ -31,7 +32,7 @@ namespace Kans
         m_Renderer->GetDevice()->WaitIdle();
     }
 
-    void ViewportClient::SetScene(Ref<Scene> scene)
+    void ViewportClient::SetScene(Ref<Scene> scene, std::string visibilityKey)
     {
         if (m_Scene && scene && scene != m_Scene)
         {
@@ -41,6 +42,10 @@ namespace Kans
             world.EnvironmentPath        = previous.EnvironmentPath;
             world.EnvironmentRoot        = previous.EnvironmentRoot;
         }
+        if (scene && (scene != m_Scene || !visibilityKey.empty()))
+            m_Visibility.Load(*scene, std::move(visibilityKey));
+        if (!scene)
+            m_Visibility.Unload();
         m_Scene = std::move(scene);
         if (m_Scene && m_Assets)
         {
@@ -91,6 +96,8 @@ namespace Kans
     void ViewportClient::RenderEditor(const EditorCamera& camera)
     {
         RenderView view;
+        if (m_Scene && !m_Scene->GetPhysicsWorld())
+            view.HiddenEntities = m_Visibility.Hidden();
         view.Scene.sceneCamera.Position   = camera.GetPosition();
         view.Scene.sceneCamera.viewMatrix = camera.GetViewMatrix();
         view.Scene.sceneCamera.camera     = camera;
@@ -132,6 +139,7 @@ namespace Kans
     {
         if (!m_Scene)
             return;
+        m_LastWasEditor = editorFeatures;
         for (const char* name : EditorOnlyFeatures)
             m_Features.SetEnabled(name, editorFeatures);
         RefreshEnvironment();
@@ -195,6 +203,13 @@ namespace Kans
         return shot;
     }
 
+    const std::unordered_set<UUID>& ViewportClient::HiddenInEditor() const
+    {
+        static const std::unordered_set<UUID> empty;
+        // Overlay gathering uses the exact flattened snapshot of the image on screen.
+        return m_Scene && !m_Scene->GetPhysicsWorld() && m_LastWasEditor ? m_Last.View.HiddenHierarchy : empty;
+    }
+
     ScenePickHit ViewportClient::Pick(const glm::mat4& viewProjection, glm::uvec2 pixel)
     {
         if (!m_Scene)
@@ -202,6 +217,8 @@ namespace Kans
         RenderView view;
         view.Assets                       = m_Assets;
         view.Highlights.Isolate           = m_LastEditorHighlights.Isolate;
+        if (m_LastWasEditor && !m_Scene->GetPhysicsWorld())
+            view.HiddenEntities = m_Visibility.Hidden();
         view.Viewport                     = m_Size;
         view.Scene.sceneCamera.camera     = Camera(viewProjection);
         view.Scene.sceneCamera.viewMatrix = glm::mat4(1);

@@ -3,14 +3,16 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 #include <glm/glm.hpp>
-#include "KansEditorCore/EditorCamera.h"
 #include "Kans3D/Renderer/RenderFeature.h"
 #include "Kans3D/Renderer/RenderView.h"
 #include "Kans3D/Renderer/Renderer.h"
 #include "Kans3D/Renderer/ViewTarget.h"
 #include "Kans3D/Scene/Scene.h"
+#include "KansEditorCore/EditorCamera.h"
+#include "KansEditorCore/EditorVisibilityStore.h"
 
 namespace Kans
 {
@@ -23,14 +25,15 @@ namespace Kans
     class ViewportClient
     {
     public:
-        ViewportClient();
+        // Defaults to Cache/Editor/Visibility.yaml; pass the configured project cache path when customized.
+        explicit ViewportClient(std::filesystem::path visibilityFile = {});
         ~ViewportClient();
         ViewportClient(const ViewportClient&)            = delete;
         ViewportClient& operator=(const ViewportClient&) = delete;
 
         // Binds a scene. Its world takes the previous world's render settings and
         // environment, so reloading or playing a scene keeps the viewport's look.
-        void              SetScene(Ref<Scene> scene);
+        void              SetScene(Ref<Scene> scene, std::string visibilityKey = {});
         const Ref<Scene>& GetScene() const { return m_Scene; }
 
         // The manager must outlive its use here; pass nullptr before destroying it.
@@ -77,6 +80,10 @@ namespace Kans
         bool                    HasPendingSnapshot() const { return bool(m_Snapshot); }
         std::optional<Snapshot> PollSnapshot();
 
+        EditorVisibilityStore& Visibility() { return m_Visibility; }
+        // Snapshot shared by app-side overlay gatherers; includes descendants, empty in play/simulate.
+        const std::unordered_set<UUID>& HiddenInEditor() const;
+
         ScenePickHit        Pick(const glm::mat4& viewProjection, glm::uvec2 pixel);
         const RenderResult& GetLastResult() const { return m_Last; }
 
@@ -88,6 +95,8 @@ namespace Kans
         std::unique_ptr<ViewTarget>          m_Target;
         RenderFeatureSet                     m_Features;
         Ref<Scene>                           m_Scene;
+        EditorVisibilityStore                          m_Visibility;
+        bool                                           m_LastWasEditor = true;
         std::shared_ptr<RenderAssetCache>    m_Assets;
         std::shared_ptr<EnvironmentLighting> m_Lighting = std::make_shared<EnvironmentLighting>();
         EnvironmentPrecomputeSizes           m_EnvironmentSizes;

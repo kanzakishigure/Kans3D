@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 #include <glm/glm.hpp>
@@ -103,7 +104,8 @@ namespace Kans::SecondaryMotionEditing
     void DrawSpringChains(DebugDraw& draw, Scene& scene, Entity owner, glm::vec4 color);
     // What the viewport shows for a selected spring-bone or cloth entity: its chains and every
     // collider of its collider groups.
-    void DrawSecondaryMotion(DebugDraw& draw, Scene& scene, Entity selected);
+    void
+    DrawSecondaryMotion(DebugDraw& draw, Scene& scene, Entity selected, const std::unordered_set<UUID>& hidden = {});
     inline constexpr glm::vec4 ColliderColor {1.0f, 0.45f, 0.75f, 1.0f};
     inline constexpr glm::vec4 ChainColor {0.35f, 0.85f, 1.0f, 1.0f};
 

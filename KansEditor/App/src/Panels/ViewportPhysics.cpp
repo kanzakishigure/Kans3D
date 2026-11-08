@@ -88,7 +88,10 @@ namespace Kans
         if (UsesSceneCamera())
             return;
         Scene&     scene    = *m_Scene;
+        const auto hidden   = m_Client->HiddenInEditor();
         Entity     selected = m_Hierarchy.GetSelected();
+        if (selected && hidden.count(selected.GetUUID()))
+            selected = {};
         const bool running  = scene.GetPhysicsWorld() != nullptr;
         DebugDraw  lines;
         if (!running)
@@ -100,7 +103,7 @@ namespace Kans
             const bool fields    = uint32_t(m_PhysicsView) & uint32_t(PhysicsDebugFlags::Fields);
             if (colliders || joints || vehicles || fields)
                 ForEachEntity(scene, [&](Entity e) {
-                    if (e == selected)
+                    if (e == selected || hidden.count(e.GetUUID()))
                         return;
                     if (vehicles)
                         VehicleFieldEditing::DrawVehicle(lines, scene, e, -1);
@@ -109,7 +112,7 @@ namespace Kans
                 });
             if (colliders || joints)
                 ForEachEntity(scene, [&](Entity e) {
-                    if (e == selected)
+                    if (e == selected || hidden.count(e.GetUUID()))
                         return;
                     if (colliders)
                     {
@@ -122,7 +125,7 @@ namespace Kans
                         PhysicsEditing::DrawJoint(lines, scene, e);
                 });
             // Ragdoll bodies and limit cones from the bound asset at the current pose.
-            RagdollEditing::DrawSceneRagdolls(lines, scene, m_PhysicsView);
+            RagdollEditing::DrawSceneRagdolls(lines, scene, m_PhysicsView, hidden);
         }
         if (selected)
         {
@@ -130,7 +133,7 @@ namespace Kans
             PhysicsEditing::DrawController(lines, scene, selected, Controller);
             PhysicsEditing::DrawJoint(lines, scene, selected);
             // Spring chains and every collider their groups use; a motion collider itself.
-            SecondaryMotionEditing::DrawSecondaryMotion(lines, scene, selected);
+            SecondaryMotionEditing::DrawSecondaryMotion(lines, scene, selected, hidden);
             // Wheels (the card's selected row highlighted) and field shapes, outside play too.
             if (!running)
                 VehicleFieldEditing::DrawVehicle(lines, scene, selected, m_SelectedWheel ? m_SelectedWheel(selected) : -1);
@@ -140,7 +143,7 @@ namespace Kans
         // around the selection samples the fields the scene would run with.
         if (!running && (uint32_t(m_PhysicsView) & uint32_t(PhysicsDebugFlags::FieldArrows)))
         {
-            const ForceFieldSet fields = VehicleFieldEditing::BuildFieldSet(scene);
+            const ForceFieldSet fields = VehicleFieldEditing::BuildFieldSet(scene, hidden);
             const glm::vec3     centre = selected ? glm::vec3(scene.GetWorldTransform(selected)[3]) : m_Camera.GetFocus();
             VehicleFieldEditing::DrawFieldArrows(lines, fields, centre, 7, 0.5f, ImGui::GetTime());
         }

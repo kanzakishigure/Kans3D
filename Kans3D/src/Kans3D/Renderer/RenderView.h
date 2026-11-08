@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include <optional>
+#include <unordered_set>
 #include <glm/glm.hpp>
 #include "Kans3D/Renderer/Camera/Camera.h"
 #include "Kans3D/Renderer/Resource/RenderAssetCache.h"
@@ -263,6 +264,10 @@ namespace Kans
         SceneViewMode                      DebugMode = SceneViewMode::Lit;
         std::vector<ViewMeshSubmission>    Meshes;
         ViewHighlights                       Highlights;
+        // Opt-in view intent; never stored in Scene or its persistent render records.
+        std::unordered_set<UUID> HiddenEntities;
+        // Flattened once per extraction, also used by shadows, VFX and selection overlays.
+        std::unordered_set<UUID>             HiddenHierarchy;
         std::vector<ViewShaderDraw>        Draws;
         std::vector<ViewTextDraw>            Texts;
         std::vector<ViewUI>                  UIs;

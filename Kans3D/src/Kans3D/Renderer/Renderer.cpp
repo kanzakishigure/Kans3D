@@ -485,7 +485,9 @@ namespace Kans
         }
         const auto extractStart = RenderClockMilliseconds();
         world.Synchronize();
-        auto texts = world.CollectTexts();
+        const auto hidden    = world.ResolveHiddenEntities(view.HiddenEntities);
+        view.HiddenHierarchy = hidden;
+        auto texts           = world.CollectTexts(hidden);
         if (!texts.empty())
         {
             GetTextRenderer().BeginFrame();
@@ -494,7 +496,7 @@ namespace Kans
             GetTextRenderer().Upload(texts);
             // Rasterization can replace placeholders; only invalidated layouts are rebuilt.
             world.Synchronize();
-            for (const auto& text : world.CollectTexts())
+            for (const auto& text : world.CollectTexts(hidden))
                 for (const auto& glyph : text.Layout->Get().Glyphs)
                     result.Complete &=
                         glyph.Ready || glyph.Position.x == glyph.Position.z || glyph.Position.y == glyph.Position.w;
@@ -503,7 +505,7 @@ namespace Kans
             view.Assets->BeginFrame();
         if (view.ExtractWorld)
         {
-            world.Extract(view, world.Settings);
+            world.Extract(view, world.Settings, hidden);
             const auto spriteOffset = view.Sprites.size();
             for (auto& immediate : view.ImmediateOrder)
                 if (immediate.Kind == ViewImmediateKind::Sprites)
@@ -531,7 +533,7 @@ namespace Kans
         statistics.ProxiesRemoved               = world.GetStats().Removed;
         if (view.ExtractWorld)
         {
-            auto uis = world.CollectUIs(view.Scene.sceneCamera);
+            auto uis = world.CollectUIs(view.Scene.sceneCamera, view.HiddenHierarchy);
             view.UIs.insert(view.UIs.end(), uis.begin(), uis.end());
         }
         std::stable_sort(view.UIs.begin(), view.UIs.end(), [](auto& a, auto& b) { return a.SortOrder < b.SortOrder; });
@@ -700,11 +702,11 @@ namespace Kans
         if (cache)
             world.SetAssetManager(&cache->GetAssetManager());
         world.Synchronize();
-        for (const auto& text : world.CollectTexts())
+        for (const auto& text : world.CollectTexts(view.HiddenHierarchy))
             if (!text.Style.Text.empty() && view.Highlights.Isolate.empty() &&
                 world.MatchesSubtree(text.EntityID, text.InstanceRoot, entity))
                 draws.push_back(GetTextRenderer().BoundsDraw(text, view.Scene.sceneCamera, id));
-        for (const auto& proxy : world.CollectDraws(entity))
+        for (const auto& proxy : world.CollectDraws(entity, view.HiddenHierarchy))
         {
             const auto  resource = view.MeshResources.find(proxy.Mesh);
             const auto* mesh     = resource != view.MeshResources.end() ? resource->second.get() :
@@ -729,7 +731,8 @@ namespace Kans
         if (cache)
             world.SetAssetManager(&cache->GetAssetManager());
         world.Synchronize();
-        const auto            proxies = world.CollectDraws();
+        const auto            hidden  = world.ResolveHiddenEntities(view.HiddenEntities);
+        const auto            proxies = world.CollectDraws(0, hidden);
         std::vector<MeshDraw> draws;
         for (size_t i = 0; i < proxies.size(); ++i)
         {
@@ -749,7 +752,7 @@ namespace Kans
                                  cache ? cache->GetSkinningPalette(proxies[i].SkinPose, mesh) :
                                          RenderHardware::Handle<RenderHardware::Buffer>()});
         }
-        const auto texts = world.CollectTexts();
+        const auto texts = world.CollectTexts(hidden);
         for (size_t i = 0; i < texts.size(); ++i)
             if (!texts[i].Style.Text.empty() && view.Highlights.Isolate.empty())
             {
