@@ -182,8 +182,8 @@ namespace Kans
         DrawClothInfo();
         m_RagdollEditor.Draw();
         DrawVfxModuleEditors();
-        // Over the Content Browser (or the main viewport without it), above every panel.
-        m_ProgressPopup.Draw(m_Progress, m_ContentBrowserPanel.GetProgressHost());
+        // Bottom right of the editor window, above every panel, wherever the panels are docked.
+        m_ProgressPopup.Draw(m_Progress, std::nullopt);
         Application::Get().GetImGuiLayer()->BlockEvents(m_ViewportPanel.IsFocused() || m_ViewportPanel.IsHovered());
         TrackSceneEdits();
     }
