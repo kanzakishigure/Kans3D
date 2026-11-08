@@ -17,7 +17,20 @@ namespace Kans
         ViewTarget&                                                         operator=(const ViewTarget&) = delete;
         void                                                                Resize(glm::uvec2 size);
         void                                                                EnsureSampledDepth();
-        uint64_t                      NextFrameNumber() { return ++m_FrameNumber; }
+        void                                                                EnsureNormalRoughness();
+        // RG: world normal octahedron in [0,1]; B: perceptual roughness;
+        // A: 0 background, 1 valid normal, 2 reconstruct normal from depth.
+        // Null for frames without a prepass; the allocation is retained until Resize.
+        RenderHardware::Handle<RenderHardware::Texture> GetNormalRoughness() const
+        {
+            return m_NormalRoughnessValid ? m_NormalRoughness : nullptr;
+        }
+        bool     IsNormalRoughnessValid() const { return m_NormalRoughnessValid; }
+        uint64_t NextFrameNumber()
+        {
+            m_NormalRoughnessValid = false;
+            return ++m_FrameNumber;
+        }
         FrameProfiler&                GetFrameProfiler() { return m_Profiler; }
         std::shared_ptr<GraphCapture> GetGraphCapture(); // Lazy; only allocated on request.
         const std::shared_ptr<RenderHardware::Device>&                      GetDevice() const { return m_Device; }
@@ -41,6 +54,8 @@ namespace Kans
         glm::uvec2                                                   m_Size {};
         std::vector<RenderHardware::Handle<RenderHardware::Texture>> m_Colors;
         RenderHardware::Handle<RenderHardware::Texture>              m_HDR, m_Depth;
+        RenderHardware::Handle<RenderHardware::Texture>              m_NormalRoughness;
+        bool                                                         m_NormalRoughnessValid = false;
         std::shared_ptr<ShadowResources>                             m_Shadows;
         TransientTexturePool                                         m_Pool;
         uint64_t                                                     m_FrameNumber = 0;

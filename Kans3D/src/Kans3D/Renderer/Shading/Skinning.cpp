@@ -2,6 +2,7 @@
 #include "Kans3D/Renderer/Shading/Skinning.h"
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
+#include "Kans3D/Renderer/Shading/DepthNormals.h"
 namespace Kans
 {
     std::variant<ShaderData, AssetError> MakeSkinnedShader(const ShaderData& data, bool smoothNormalFallback)
@@ -166,6 +167,7 @@ void main() {
             convert(result.Code, result.DebugSources);
             for (auto& pass : result.Passes)
                 convert(pass.Code, pass.DebugSources);
+            MakeSurfacePositionInvariant(result);
             return result;
         }
         catch (const std::exception& e)

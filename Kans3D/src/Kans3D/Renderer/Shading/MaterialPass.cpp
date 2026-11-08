@@ -51,6 +51,9 @@ namespace Kans
         key |= uint32_t(data.ParticleMesh) << 27;
         // Ribbons and sprites both use procedural vertices, but have different storage contracts.
         key |= uint64_t(data.VertexSource && data.VertexSource == shader.RibbonProgram) << 32;
+        key |= uint64_t(data.DepthPrepass) << 33;
+        key |= uint64_t(data.PrepassCovered && !extraPass) << 34;
+        key |= uint64_t(data.InvalidatePrepassNormals) << 35;
         Handle<Pipeline> shadowPipeline;
         auto&            pipeline = (data.ShadowDepth || data.CustomDepth) ? shadowPipeline :
                                     extraPass                              ? extraPass->Pipelines[key] :
@@ -68,6 +71,9 @@ namespace Kans
                 desc.Program = smoothFallback ? (extraPass ? extraPass->SkinnedNormalFallbackProgram :
                                                              shader.SkinnedNormalFallbackProgram) :
                                                 (extraPass ? extraPass->SkinnedProgram : shader.SkinnedProgram);
+            if (data.InvalidatePrepassNormals && !extraPass)
+                desc.Program =
+                    shader.PreparePrepassInvalidation(uint32_t(data.ColorFormats.size() - 1), skinned, smoothFallback);
             desc.DebugName =
                 data.DebugName.empty() ? desc.Program->DebugName : data.DebugName + "/" + desc.Program->DebugName;
             desc.GroupLayouts = {shader.EngineLayout, shader.MaterialLayout};
@@ -156,7 +162,27 @@ namespace Kans
                                        extraPass               ? static_cast<CullMode>(extraPass->State.Cull) :
                                                                  CullMode::Back;
             }
+            if (data.DepthPrepass)
+            {
+                desc.DepthStencil.DepthTest = desc.DepthStencil.DepthWrite = true;
+                desc.DepthStencil.DepthCompare                             = CompareOp::LessEqual;
+                desc.DepthStencil.StencilTest                              = data.WriteStencil;
+                desc.Rasterizer.Cull    = data.Render.DoubleSided ? CullMode::None : CullMode::Back;
+                desc.Rasterizer.Polygon = data.Wireframe ? PolygonMode::Line : PolygonMode::Fill;
+                blend.Enabled           = false;
+                blend.WriteMask         = 15;
+            }
+            if (data.PrepassCovered && !extraPass)
+            {
+                desc.DepthStencil.DepthWrite   = false;
+                desc.DepthStencil.DepthCompare = CompareOp::LessEqual;
+            }
             desc.Blends.resize(data.ColorFormats.size(), blend);
+            if (data.InvalidatePrepassNormals)
+            {
+                desc.Blends.back()           = {};
+                desc.Blends.back().WriteMask = extraPass ? 0 : 15;
+            }
             if (data.ShadowDepth || data.CustomDepth)
             {
                 auto  resources = data.Shadows ? data.Shadows : cache.GetShadowFallback();

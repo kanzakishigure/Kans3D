@@ -20,12 +20,28 @@ namespace Kans
     void ViewTarget::EnsureSampledDepth()
     {
         using namespace RenderHardware;
+        m_SampledDepth = true;
         auto desc = m_Depth->GetDesc();
         if ((uint32_t(desc.Usage) & uint32_t(RenderHardware::TextureUsage::Sampled)) == 0)
         {
-            desc.Usage = desc.Usage | RenderHardware::TextureUsage::Sampled;
+            desc.Usage = desc.Usage | RenderHardware::TextureUsage::Sampled | RenderHardware::TextureUsage::CopySource;
             m_Depth    = m_Device->CreateTexture(desc);
         }
+    }
+    void ViewTarget::EnsureNormalRoughness()
+    {
+        using namespace RenderHardware;
+        if (!m_NormalRoughness)
+        {
+            TextureDesc desc;
+            desc.Width        = m_Size.x;
+            desc.Height       = m_Size.y;
+            desc.PixelFormat  = Format::RGBA16Float;
+            desc.Usage        = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled |
+                                RenderHardware::TextureUsage::CopySource;
+            m_NormalRoughness = m_Device->CreateTexture(desc);
+        }
+        m_NormalRoughnessValid = true;
     }
     void ViewTarget::Resize(glm::uvec2 size)
     {
@@ -51,6 +67,8 @@ namespace Kans
         m_HDR      = std::move(hdr);
         m_Depth    = std::move(depth);
         m_Size     = size;
+        m_NormalRoughness.reset();
+        m_NormalRoughnessValid = false;
         m_Pool     = {};
         m_ReconstructionFilter = {};
     }

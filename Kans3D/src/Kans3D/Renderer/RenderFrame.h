@@ -23,6 +23,13 @@ namespace Kans
         std::vector<GraphTexture>                       MSColors;
         GraphTexture                                    MSHDR = 0, MSDepth = 0;
         bool                                            MSAAResolved = false;
+        struct PrepassDraw
+        {
+            RenderHardware::Handle<RenderHardware::BindGroup>            Material;
+            std::vector<RenderHardware::Handle<RenderHardware::Texture>> Images;
+        };
+        std::unordered_map<size_t, PrepassDraw>         PrepassDraws;
+        void                                            BuildDepthPrepass(RenderGraph& graph);
         bool                                            HasBackgroundColor() const
         {
             return View.DrawEnvironment && View.Environment.BackgroundColor != glm::vec3(0);

@@ -178,6 +178,7 @@ namespace Kans
         auto objects = Services.GetDevice()->CreateBuffer(
             {objectStride * ready.size(), BufferUsage::Uniform, MemoryUsage::Upload});
         bool rendering = false, hdr = (DeferToneMapping || HasBackgroundColor()) && PostProcessHDR;
+        bool invalidatingNormals = false;
         auto resolve = [&](RenderHardware::CommandList& output) {
             Services.GetToneMapping().Record(*Services.GetDevice(),
                                              output,
@@ -187,8 +188,8 @@ namespace Kans
                                              false,
                                              View.GetPostProcessSettings().ToneMapping);
         };
-        auto beginTarget = [&](bool nextHDR) {
-            if (rendering && nextHDR == hdr)
+        auto beginTarget = [&](bool nextHDR, bool invalidate = false) {
+            if (rendering && nextHDR == hdr && invalidatingNormals == invalidate)
                 return;
             if (rendering)
                 commands->EndRendering();
@@ -203,7 +204,11 @@ namespace Kans
                                                  true,
                                                  View.GetPostProcessSettings().ToneMapping);
             hdr = nextHDR;
-            commands->BeginRendering(SceneTarget(LoadOp::Load, hdr));
+            invalidatingNormals = invalidate;
+            auto target         = SceneTarget(LoadOp::Load, hdr);
+            if (invalidate)
+                target.Colors.push_back({Output.GetNormalRoughness(), {}, LoadOp::Load});
+            commands->BeginRendering(target);
             commands->SetViewport({0, 0, float(View.Viewport.x), float(View.Viewport.y), 0, 1});
             commands->SetScissor({0, 0, View.Viewport.x, View.Viewport.y});
             rendering = true;
@@ -304,16 +309,34 @@ namespace Kans
             // Debug views, including wireframe's lit shading, retain display output.
             const bool nextHDR =
                 shader->OutputSpace == ShaderOutputSpace::LinearHDR && draw.ViewMode == SceneViewMode::Lit;
-            beginTarget(nextHDR);
+            // An uncovered custom surface may replace a covered surface's depth.
+            // Invalidate that older normal in the same draw, after its original
+            // fragment/discard logic, without changing its color or depth state.
+            const bool invalidate = Output.GetNormalRoughness() && tag.empty() && !suppliedView &&
+                                    !IsTransparentMaterial(render.AlphaMode) && !PrepassDraws.count(item.DrawIndex);
+            beginTarget(nextHDR, invalidate);
             pass.ColorFormats.clear();
             for (const auto& color : SceneTarget(LoadOp::Load, nextHDR).Colors)
                 pass.ColorFormats.push_back(color.Target->GetDesc().PixelFormat);
+            pass.InvalidatePrepassNormals = invalidate;
+            if (invalidate)
+                pass.ColorFormats.push_back(Output.GetNormalRoughness()->GetDesc().PixelFormat);
             pass.Wireframe    = draw.ViewMode == SceneViewMode::Wireframe;
             pass.WriteStencil = draw.Stencil == ModelStencilMode::WriteReference;
             pass.Render       = render;
             pass.Parameters   = draw.Parameters;
             pass.Samples      = SceneTarget(LoadOp::Load, nextHDR).Colors[0].Target->GetDesc().Samples;
             pass.Section      = draw.Section;
+            // Keep Mask/Dithered clipping in the main fragment program: LessEqual
+            // admits matching depth. Surface position outputs are Invariant, and authored
+            // camera passes must preserve Main's position/clip expressions. Keeping the
+            // clip also preserves Mask/Dithered coverage at LessEqual.
+            pass.PrepassCovered = tag.empty() && !suppliedView && PrepassDraws.count(item.DrawIndex);
+            // Texture requests can finish while shadows are being built. Retain the
+            // prepass's exact material descriptor (including instance overrides) so
+            // Mask/Dithered coverage cannot change between the two camera draws.
+            if (pass.PrepassCovered)
+                pass.MaterialGroup = PrepassDraws.at(item.DrawIndex).Material;
             bool recorded     = false;
             if (tag.empty())
                 Complete &=
@@ -338,7 +361,8 @@ namespace Kans
                     }
             }
             if (sampled)
-                for (const auto& image : bindings->Images)
+                for (const auto& image :
+                     pass.PrepassCovered ? PrepassDraws.at(item.DrawIndex).Images : bindings->Images)
                     sampled(image);
             if (tag.empty())
             {

@@ -149,6 +149,24 @@ float KansOutputAlpha(float alpha)
 }
 #endif
 )"},
+                {"Kans3D/DepthNormals.glsl", R"(#ifndef KANS3D_DEPTH_NORMALS_GLSL
+#define KANS3D_DEPTH_NORMALS_GLSL
+// DepthNormals passes must match Main's vertex positions and alpha coverage.
+// Location 0 is RG octahedral world normal [0,1], B perceptual roughness, A flag 1.
+vec2 KansEncodeNormal(vec3 normal)
+{
+    normal /= abs(normal.x) + abs(normal.y) + abs(normal.z);
+    vec2 oct = normal.xy;
+    if (normal.z < 0.0)
+        oct = (1.0 - abs(oct.yx)) * mix(vec2(-1), vec2(1), greaterThanEqual(oct, vec2(0)));
+    return oct * 0.5 + 0.5;
+}
+vec4 KansNormalRoughness(vec3 worldNormal, float perceptualRoughness)
+{
+    return vec4(KansEncodeNormal(normalize(worldNormal)), clamp(perceptualRoughness, 0.0, 1.0), 1.0);
+}
+#endif
+)"},
                 {"Kans3D/ShadowCaster.glsl", R"(#ifndef KANS3D_SHADOW_CASTER_GLSL
 #define KANS3D_SHADOW_CASTER_GLSL
 #include <Kans3D/Alpha.glsl>
@@ -773,7 +791,8 @@ vec4 KansToneMap(vec3 color)
     static std::variant<std::monostate, AssetError>
     ValidateMaterialInterface(const std::vector<ShaderStageReflection>& reflection,
                               bool                                      depthOnly,
-                              ShaderDomain                              domain = ShaderDomain::Surface)
+                              ShaderDomain                              domain       = ShaderDomain::Surface,
+                              bool                                      depthNormals = false)
     {
         const ShaderStageReflection* vertex   = nullptr;
         const ShaderStageReflection* fragment = nullptr;
@@ -800,7 +819,9 @@ vec4 KansToneMap(vec3 color)
             (fragment->Outputs.size() != 1 || fragment->Outputs[0].Location != 0 ||
              fragment->Outputs[0].Components != 4 || fragment->Outputs[0].Columns != 1 ||
              fragment->Outputs[0].Scalar != ShaderInterfaceScalar::Float))
-            return Contract("the fragment stage must write one vec4 color at location 0");
+            return Contract(depthNormals ?
+                                "DepthNormals fragment stage must write one vec4 normal/roughness at location 0" :
+                                "the fragment stage must write one vec4 color at location 0");
 
         for (const auto& stage : reflection)
             for (const auto& binding : stage.Bindings)
@@ -914,7 +935,10 @@ vec4 KansToneMap(vec3 color)
             if (auto* error = std::get_if<AssetError>(&extra))
                 return fail(error->Message);
             const auto& stages   = std::get<std::vector<ShaderStageReflection>>(extra);
-            auto contract = ValidateMaterialInterface(stages, pass.Tag == "ShadowCaster" || pass.Tag == "DepthOnly");
+            auto        contract = ValidateMaterialInterface(stages,
+                                                             pass.Tag == "ShadowCaster" || pass.Tag == "DepthOnly",
+                                                             ShaderDomain::Surface,
+                                                             pass.Tag == "DepthNormals");
             if (auto* error = std::get_if<AssetError>(&contract))
                 return fail(error->Message);
             std::set<uint32_t> engine;

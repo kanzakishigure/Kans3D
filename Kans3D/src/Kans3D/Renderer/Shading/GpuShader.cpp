@@ -2,6 +2,7 @@
 #include "Kans3D/Renderer/Shading/GpuShader.h"
 #include "Kans3D/RHI/Backend.h"
 #include "Kans3D/Renderer/Particles/ParticleSprite.h"
+#include "Kans3D/Renderer/Shading/DepthNormals.h"
 #include "Kans3D/Renderer/Shading/Skinning.h"
 namespace Kans
 {
@@ -68,12 +69,14 @@ namespace Kans
         shader.OutputSpace       = data.OutputSpace;
         shader.Domain            = data.Domain;
         shader.PostStage         = data.PostStage;
-        shader.m_Source          = std::make_shared<const ShaderData>(data);
+        auto source              = data;
+        MakeSurfacePositionInvariant(source);
+        shader.m_Source          = std::make_shared<const ShaderData>(std::move(source));
         shader.m_Device          = std::move(device);
         try
         {
-            shader.Program = shader.m_Device->CreateShader(data);
-            for (const auto& pass : data.Passes)
+            shader.Program = shader.m_Device->CreateShader(*shader.m_Source);
+            for (const auto& pass : shader.m_Source->Passes)
             {
                 ShaderData passData;
                 passData.Code = pass.Code;
@@ -212,7 +215,53 @@ namespace Kans
                 smoothNormalFallback ? Passes[i].SkinnedNormalFallbackProgram : Passes[i].SkinnedProgram;
             passProgram = m_Device->CreateShader(pass);
         }
+        m_SkinnedSources[smoothNormalFallback ? 1 : 0] = std::make_shared<const ShaderData>(std::move(data));
         return true;
+    }
+    RenderHardware::Handle<RenderHardware::Shader> GpuShader::PrepareStandardDepthNormals(bool skinned) const
+    {
+        auto& program = m_StandardDepthNormalsPrograms[skinned ? 1 : 0];
+        if (program)
+            return program;
+        if (skinned && !PrepareSkinning())
+            return {};
+        const auto& source    = skinned ? m_SkinnedSources[0] : m_Source;
+        auto        converted = MakeStandardDepthNormalsShader(*source);
+        if (const auto* error = std::get_if<AssetError>(&converted))
+            throw std::runtime_error("Standard depth normals: " + error->Message);
+        program = m_Device->CreateShader(std::get<ShaderData>(converted));
+        return program;
+    }
+    RenderHardware::Handle<RenderHardware::Shader>
+    GpuShader::PrepareDepthOnlyPrepass(size_t pass, bool skinned, bool smoothNormalFallback) const
+    {
+        auto& program = Passes.at(pass).DepthOnlyPrepassPrograms[skinned ? (smoothNormalFallback ? 2 : 1) : 0];
+        if (program)
+            return program;
+        auto converted = MakeDepthOnlyPrepassShader(m_Source->Passes.at(pass).Code);
+        if (skinned && std::holds_alternative<ShaderData>(converted))
+            converted = MakeSkinnedShader(std::get<ShaderData>(converted), smoothNormalFallback);
+        if (const auto* error = std::get_if<AssetError>(&converted))
+        {
+            CORE_ERROR("Depth prepass shader: {0}", error->Message);
+            return {};
+        }
+        program = m_Device->CreateShader(std::get<ShaderData>(converted));
+        return program;
+    }
+    RenderHardware::Handle<RenderHardware::Shader>
+    GpuShader::PreparePrepassInvalidation(uint32_t location, bool skinned, bool smoothNormalFallback) const
+    {
+        auto& program = m_PrepassInvalidationPrograms[location][skinned ? (smoothNormalFallback ? 2 : 1) : 0];
+        if (program)
+            return program;
+        auto converted = MakePrepassInvalidationShader(m_Source->Code, location);
+        if (skinned && std::holds_alternative<ShaderData>(converted))
+            converted = MakeSkinnedShader(std::get<ShaderData>(converted), smoothNormalFallback);
+        if (const auto* error = std::get_if<AssetError>(&converted))
+            throw std::runtime_error("Prepass invalidation shader: " + error->Message);
+        program = m_Device->CreateShader(std::get<ShaderData>(converted));
+        return program;
     }
     GpuShader::~GpuShader()                               = default;
     GpuShader::GpuShader(GpuShader&&) noexcept            = default;
@@ -235,6 +284,8 @@ namespace Kans
         copy.SpriteProgram                = SpriteProgram;
         copy.SpriteLayout                 = SpriteLayout;
         copy.m_Source                     = m_Source;
+        copy.m_SkinnedSources               = m_SkinnedSources;
+        copy.m_StandardDepthNormalsPrograms = m_StandardDepthNormalsPrograms;
         copy.SkinnedNormalFallbackProgram = SkinnedNormalFallbackProgram;
         copy.SkinnedProgram               = SkinnedProgram;
         copy.SkinLayout                   = SkinLayout;
@@ -248,6 +299,7 @@ namespace Kans
         copy.Domain                       = Domain;
         copy.PostStage                    = PostStage;
         copy.m_SamplerFallbacks           = m_SamplerFallbacks;
+        copy.m_PrepassInvalidationPrograms  = m_PrepassInvalidationPrograms;
         return copy;
     }
 } // namespace Kans

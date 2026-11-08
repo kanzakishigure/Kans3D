@@ -295,6 +295,8 @@ namespace Kans
             BuildMSAA(graph, renderer);
             return;
         }
+        if (view.DepthPrepass)
+            renderer.Output.EnsureSampledDepth();
         if (!graph.PassCount())
             Begin(graph, renderer);
         if (renderer.HasBackgroundColor())
@@ -429,10 +431,16 @@ namespace Kans
             }
         }
         featureContext.Immediate = nullptr;
+        // Immediates retain their original cleared-depth behavior. Test camera
+        // geometry against their depth before the opaque lighting pass.
+        if (view.DepthPrepass)
+            renderer.BuildDepthPrepass(graph);
         Inject(RenderExtensionPoint::BeforeOpaque, featureContext);
         if (!view.MaterialOrder.empty())
         {
             auto uses = target;
+            if (auto normal = renderer.Output.GetNormalRoughness())
+                uses.push_back({graph.ImportTexture("SceneNormalRoughness", normal), GraphAccess::ColorReadWrite});
             for (const auto& image : renderer.Services.GetUIRenderer().Textures())
                 sampled(uses, image, "UITexture");
             for (const auto& image : renderer.Services.GetTextRenderer().Textures())

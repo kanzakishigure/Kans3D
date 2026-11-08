@@ -42,6 +42,8 @@ namespace Kans
     {
         uint32_t DrawCalls = 0;
         uint64_t Triangles = 0;
+        uint32_t PrepassDrawCalls   = 0;
+        uint64_t PrepassTriangles   = 0;
         uint64_t SimulatedParticles = 0, ParticleDraws = 0;
     };
     struct ShadowStatistics
@@ -250,6 +252,7 @@ namespace Kans
         std::string                                       Pipeline = "Forward";
         std::optional<float>                              Exposure;
         std::optional<Kans::AntiAliasing>                 AntiAliasing; // nullopt inherits the camera.
+        bool                                              DepthPrepass           = true;
         Kans::AntiAliasing                                EffectiveAA            = Kans::AntiAliasing::None;
         float                                             Time         = 0;
         uint32_t                                          MaxShadowedPointLights = 4;
