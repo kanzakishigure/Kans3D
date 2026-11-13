@@ -424,7 +424,7 @@ namespace Kans
                                                                     SceneShaders::StencilFragment;
         if (!vertex)
             return;
-        const bool  reconstruct    = View.GetPostProcessSettings().FilterSize >= 1;
+        const bool  reconstruct    = ReconstructsHDR();
         const bool  hdrGeometry    = (Samples > 1 && !MSAAResolved && PostProcessHDR) || (Samples == 1 && reconstruct);
         std::string fragmentSource = fragment;
         if (hdrGeometry)
@@ -572,7 +572,7 @@ void main() {
         using namespace RenderHardware;
         if (!skybox || !View.Environment.ShowSkybox)
             return;
-        const bool hdrSkybox = (Samples > 1 && !MSAAResolved) || View.GetPostProcessSettings().FilterSize >= 1;
+        const bool hdrSkybox = (Samples > 1 && !MSAAResolved) || ReconstructsHDR();
         if (hdrSkybox && !PostProcessHDR)
         {
             Services.GetToneMapping().Record(*GetDevice(),

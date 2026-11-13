@@ -4,6 +4,7 @@
 #include <functional>
 #include <shaderc/shaderc.hpp>
 #include "Kans3D/Asset/Product/ShaderProduct.h"
+#include "Kans3D/Asset/Runtime/EngineShaderText.h"
 #include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "Kans3D/Asset/Storage/ProductFiles.h"
 #include "ShaderProgramSource.h"
@@ -96,7 +97,7 @@ namespace Kans
                     const std::string name(requested);
                     if (type == shaderc_include_type_standard)
                     {
-                        // Engine headers are part of the importer version, not inputs.
+                        // Engine headers are covered by GetEnvironmentFingerprint(), not project file inputs.
                         const auto* text = FindEngineShaderInclude(name);
                         if (!text)
                             return Failure("Unknown engine include");
@@ -185,9 +186,7 @@ namespace Kans
                 shader.PostStage = std::get<ShaderDomainSource>(domain).Stage;
                 if (shader.Domain == ShaderDomain::PostProcess)
                 {
-                    inputs.Add("__KansPost.vert", R"(#version 450
-void main() { vec2 p=vec2((gl_VertexIndex<<1)&2, gl_VertexIndex&2); gl_Position=vec4(p*2.0-1.0,0,1); }
-)");
+                    inputs.Add("__KansPost.vert", ShaderText::ImporterPostVertex);
                     modules.push_back({ShaderProductStage::Vertex, "__KansPost.vert", &shader.Code});
                 }
                 auto space = ParseShaderOutputSpace(*primary);
@@ -250,7 +249,7 @@ void main() { vec2 p=vec2((gl_VertexIndex<<1)&2, gl_VertexIndex&2); gl_Position=
                 options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
                 options.SetWarningsAsErrors();
                 if (stage == ShaderProductStage::Fragment)
-                    options.AddMacroDefinition("KANS_FRAGMENT_STAGE");
+                    options.AddMacroDefinition(ShaderText::Depth_KANS_FRAGMENT_STAGE);
                 options.SetIncluder(std::make_unique<Includer>(inputs));
                 const auto kind     = stage == ShaderProductStage::Vertex   ? shaderc_vertex_shader :
                                       stage == ShaderProductStage::Fragment ? shaderc_fragment_shader :

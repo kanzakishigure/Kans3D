@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include "Kans3D/Asset/Product/ShaderProduct.h"
+#include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "Loader.h"
 namespace Kans
 {
@@ -9,6 +10,13 @@ namespace Kans
             return AssetError {AssetErrorCode::InvalidArgument, "Invalid Shader Product input"};
         auto decoded = DecodeShaderProduct(context.Data, context.Size);
         if (auto* error = std::get_if<AssetError>(&decoded))
+        {
+            // Post-process/pass contracts are checked while decoding the product itself.
+            if (error->Message.rfind("Material Shader contract:", 0) == 0)
+                return AssetError {AssetErrorCode::StaleShaderContract, error->Message};
+            return *error;
+        }
+        if (auto error = CheckEngineShaderContract(std::get<ShaderData>(decoded)))
             return *error;
         std::get<ShaderData>(decoded).DebugName = "ShaderProduct/" + context.ID.ToString();
         auto asset     = CreateRef<ShaderDataAsset>(std::get<ShaderData>(std::move(decoded)));

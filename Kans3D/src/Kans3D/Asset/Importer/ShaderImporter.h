@@ -1,4 +1,5 @@
 #pragma once
+#include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "Kans3D/Asset/Runtime/ShaderData.h"
 #include "AssetImporterBase.h"
 namespace Kans
@@ -12,8 +13,9 @@ namespace Kans
     class ShaderImporter final : public AssetImporterBase
     {
     public:
-        // Dithered/MSAA alpha modes and per-draw pass dispatch.
-        uint32_t GetVersion() const override { return 17; }
+        std::string GetEnvironmentFingerprint() const override { return GetEngineShaderDigest(); }
+        // Registered shader text and the explicit engine contract version also participate in the fingerprint.
+        uint32_t GetVersion() const override { return 18; }
         [[nodiscard]] std::variant<ImportInputs, AssetError>
         DiscoverInputs(const ImportContext& context) const override;
         [[nodiscard]] std::variant<ImportResult, AssetError> Import(const ImportContext& context) const override;

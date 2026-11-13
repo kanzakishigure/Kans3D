@@ -1,5 +1,7 @@
 #pragma once
+#include <optional>
 #include <glm/glm.hpp>
+#include "EngineShaderEnvironment.h"
 #include "ShaderData.h"
 
 namespace Kans
@@ -99,6 +101,12 @@ namespace Kans
 
     // GLSL text of an engine include (`#include <name>`), or nullptr.
     [[nodiscard]] const std::string* FindEngineShaderInclude(const std::string& name);
+
+    // Complete virtual include namespace, including derived headers such as Frame.glsl.
+    [[nodiscard]] const std::map<std::string, std::string>& GetEngineShaderIncludes();
+
+    // Detects a cached engine ABI mismatch without imposing a material domain on raw RHI programs.
+    [[nodiscard]] std::optional<AssetError> CheckEngineShaderContract(const ShaderData& shader);
 
     // Checks a reflected program against the material contract.
     [[nodiscard]] std::variant<std::monostate, AssetError>

@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include "AssetBuildService.h"
+#include "Kans3D/Asset/Loader/Loader.h"
 #include "Kans3D/Asset/Product/ContentDigest.h"
 #include "ImportFingerprint.h"
 
@@ -87,6 +88,9 @@ namespace Kans
             key.Importer        = inputs.Importer.Name;
             key.ImporterVersion = inputs.Importer.Importer->GetVersion();
             key.Toolchain       = options.Toolchain;
+            const auto environment = inputs.Importer.Importer->GetEnvironmentFingerprint();
+            if (!environment.empty())
+                key.Toolchain += ";engine=" + environment;
             key.Target          = options.Target;
             key.Settings        = inputs.Source.Import.Settings;
             key.LocalIDs        = inputs.PreviousLocalIDs;
@@ -109,6 +113,17 @@ namespace Kans
                 for (const auto& product : previous->Products)
                 {
                     std::error_code error;
+                    if (product.Metadata.Type == AssetType::Shader)
+                    {
+                        auto bytes = ReadRegisteredProduct(store.GetRoot(), product);
+                        if (std::holds_alternative<AssetError>(bytes))
+                            return false;
+                        const auto& data   = std::get<std::vector<std::byte>>(bytes);
+                        auto        loaded = Loader<ShaderDataAsset>().Load(
+                            {product.Metadata.assetID, AssetType::Shader, data.data(), data.size()});
+                        if (std::holds_alternative<AssetError>(loaded))
+                            return false; // Cached contract failure is stale: use the normal import below.
+                    }
                     if (fs::file_size(store.GetRoot() / product.Location.RelativeFile.GetPath(), error) !=
                             product.Location.ByteSize ||
                         error)
@@ -151,6 +166,18 @@ namespace Kans
             if (auto* error = std::get_if<AssetError>(&imported))
                 return std::move(*error);
             auto& output = std::get<ImportResult>(imported);
+            for (const auto& product : output.Products)
+                if (product.Type == AssetType::Shader)
+                {
+                    auto bytes = ReadProductFile(stage.Path / product.StagedFile);
+                    if (auto* error = std::get_if<AssetError>(&bytes))
+                        return *error;
+                    const auto& data   = std::get<std::vector<std::byte>>(bytes);
+                    auto        loaded = Loader<ShaderDataAsset>().Load(
+                        {{source, product.LocalID}, AssetType::Shader, data.data(), data.size()});
+                    if (auto* error = std::get_if<AssetError>(&loaded))
+                        return *error;
+                }
 
             // Publishing Products of a half-edited source would mix versions.
             auto after = DigestSources(inputs, digests);

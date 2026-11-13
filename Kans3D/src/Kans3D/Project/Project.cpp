@@ -620,6 +620,46 @@ namespace Kans
         return result;
     }
 
+    Ref<IAssetProvider> Project::CreateAssetProvider()
+    {
+        class Provider final : public IAssetProvider
+        {
+        public:
+            explicit Provider(Project& project) : Owner(project) {}
+            std::variant<std::vector<std::byte>, AssetError> Read(const ProductRecord& record) const override
+            {
+                std::lock_guard<std::mutex> lock(Mutex);
+                const auto current = Owner.GetRuntimeAssetRegistry()->Find(record.Metadata.assetID, record.Target);
+                if (!current)
+                    return AssetError {AssetErrorCode::NotFound, "Project product is no longer published"};
+                return ReadRegisteredProduct(Owner.GetProductDirectory(), *current);
+            }
+            std::variant<std::vector<std::byte>, AssetError> RebuildStale(const ProductRecord& record) const override
+            {
+                std::lock_guard<std::mutex> lock(Mutex);
+                // Another material may already have repaired this dependency while we decoded it.
+                const auto current = Owner.GetRuntimeAssetRegistry()->Find(record.Metadata.assetID, record.Target);
+                if (current && current->Location.ContentDigest != record.Location.ContentDigest)
+                    return ReadRegisteredProduct(Owner.GetProductDirectory(), *current);
+                AssetBuildOptions options;
+                options.Target = record.Target;
+                options.Force  = true;
+                auto built     = Owner.BuildAsset(record.Metadata.assetID.GetSourceID(), options);
+                if (auto* error = std::get_if<AssetError>(&built))
+                    return *error;
+                const auto fresh = Owner.GetRuntimeAssetRegistry()->Find(record.Metadata.assetID, options.Target);
+                if (!fresh)
+                    return AssetError {AssetErrorCode::NotFound, "Rebuilt source no longer produces requested asset"};
+                return ReadRegisteredProduct(Owner.GetProductDirectory(), *fresh);
+            }
+
+        private:
+            Project&           Owner;
+            mutable std::mutex Mutex;
+        };
+        return CreateRef<Provider>(*this);
+    }
+
     Ref<const AssetRegistry> Project::GetRuntimeAssetRegistry() const { return m_ProductStore->Snapshot(); }
 
     // ---- Source file operations -----------------------------------------------

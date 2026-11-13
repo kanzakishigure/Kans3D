@@ -37,6 +37,10 @@ namespace Kans
         Camera                                          SceneCamera() const;
         void                                            BuildVelocity(RenderGraph& graph);
         void                                            BuildDebugBuffer(RenderGraph& graph);
+        bool                                            ReconstructsHDR() const
+        {
+            return View.GetPostProcessSettings().FilterSize >= 1 || View.EffectiveAA == AntiAliasing::TAA;
+        }
         bool                                            HasBackgroundColor() const
         {
             return View.DrawEnvironment && View.Environment.BackgroundColor != glm::vec3(0);

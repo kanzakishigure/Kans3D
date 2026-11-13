@@ -309,7 +309,7 @@ namespace Kans
         PreparePostMaterials(renderer);
         const auto& view = renderer.View;
         using namespace RenderHardware;
-        const bool reconstruct = view.GetPostProcessSettings().FilterSize >= 1 || view.EffectiveAA == AntiAliasing::TAA;
+        const bool reconstruct = renderer.ReconstructsHDR();
         if (reconstruct)
             renderer.DeferToneMapping = true;
         if (renderer.Samples > 1)

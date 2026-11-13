@@ -195,11 +195,46 @@ namespace Kans
             const auto&      data = std::get<std::vector<std::byte>>(bytes);
             AssetLoadContext context {id, type, data.data(), data.size()};
             auto             decoded = (*decoder)(context);
+            if (const auto* error = std::get_if<AssetError>(&decoded);
+                error && error->Code == AssetErrorCode::StaleShaderContract)
+            {
+                auto rebuilt = m_Provider->RebuildStale(*record);
+                if (auto* fresh = std::get_if<std::vector<std::byte>>(&rebuilt))
+                {
+                    AssetLoadContext retry {id, type, fresh->data(), fresh->size()};
+                    decoded = (*decoder)(retry); // One repair attempt; never recurse on a bad fresh build.
+                    if (auto* failure = std::get_if<AssetError>(&decoded))
+                        decoded = AssetError {AssetErrorCode::StaleShaderContract, failure->Message};
+                }
+                else if (const auto& failure = std::get<AssetError>(rebuilt);
+                         failure.Code != AssetErrorCode::NotImplemented)
+                    decoded = AssetError {AssetErrorCode::StaleShaderContract, failure.Message};
+            }
             if (auto* error = std::get_if<AssetError>(&decoded))
                 return std::move(*error);
             auto asset = std::get<Ref<Asset>>(std::move(decoded));
             if (!asset || asset->assetID != id || asset->GetAssetType() != type)
                 return AssetError {AssetErrorCode::InvalidData, "Loader returned an asset with the wrong identity"};
+            if (type == AssetType::Material)
+            {
+                const auto material = std::static_pointer_cast<const MaterialDataAsset>(asset);
+                const auto shaderID = material->GetData().Shader;
+                if (shaderID.IsValid() && !IsStandardShader(shaderID) && shaderID != SixWaySmokeShaderID())
+                {
+                    uint64_t shaderTicket = 0;
+                    {
+                        std::lock_guard<std::mutex> lock(m_Mutex);
+                        // Own a new dependency load inline: waiting for a queued shader here
+                        // could deadlock a pool occupied by materials. An existing load proceeds.
+                        if (m_Registry == registry && m_Entries.find(shaderID) == m_Entries.end())
+                            shaderTicket = BeginLoad(shaderID, AssetType::Shader);
+                    }
+                    if (shaderTicket)
+                        RunLoad(shaderID, shaderTicket);
+                    // Keep material parameters/render state even if the fresh shader fails.
+                    // Its shared failed entry supplies the renderer's one-time fallback error.
+                }
+            }
             return Ref<const Asset>(std::move(asset));
         }
         catch (const std::exception& error)
@@ -267,7 +302,8 @@ namespace Kans
                     m_Changed.wait(lock);
                     continue;
                 }
-                if (entry.Ticket == attempted && entry.Type == type)
+                if (entry.Type == type && (entry.Ticket == attempted ||
+                                           (entry.Error && entry.Error->Code == AssetErrorCode::StaleShaderContract)))
                     return *entry.Error;
             }
             attempted = BeginLoad(id, type);

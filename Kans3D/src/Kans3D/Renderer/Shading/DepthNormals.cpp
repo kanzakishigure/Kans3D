@@ -2,6 +2,7 @@
 #include "DepthNormals.h"
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
+#include "Kans3D/Asset/Runtime/EngineShaderText.h"
 #include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "Kans3D/Asset/Runtime/StandardShader.h"
 
@@ -99,19 +100,7 @@ namespace Kans
             // Reuse Standard's parameter ABI and exact tangent/derivative normal evaluation.
             auto text = GetStandardShader().DebugSources.at(ShaderProductStage::Fragment);
             text.resize(text.find("void main()"));
-            text += R"(
-#include <Kans3D/DepthNormals.glsl>
-void main()
-{
-    vec2 uv = v_UV * p.UVTiling + p.UVOffset;
-    vec4 baseColor = p.BaseColor * mix(vec4(1), v_Color, p.VertexColorStrength) * texture(BaseColorMap, uv);
-    KansAlphaClip(baseColor.a);
-    vec3 N = StandardNormal(uv);
-    if (u_Object.MaterialRender.z != 0.0 && !gl_FrontFacing)
-        N = -N;
-    o_Color = KansNormalRoughness(N, p.Roughness * texture(MetallicRoughnessMap, uv).g);
-}
-)";
+            text += ShaderText::Depth_include_Kans3D_DepthNormals_void;
             return text;
         }();
         // Compile only the replacement fragment, once. Never recompile the vertex
@@ -122,13 +111,14 @@ void main()
             shaderc::CompileOptions options;
             options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
             options.SetWarningsAsErrors();
-            options.AddMacroDefinition("KANS_FRAGMENT_STAGE");
+            options.AddMacroDefinition(ShaderText::Depth_KANS_FRAGMENT_STAGE);
             options.SetIncluder(std::make_unique<EngineIncludes>());
             const auto product =
                 compiler.CompileGlslToSpv(fragment, shaderc_fragment_shader, "StandardDepthNormals.frag", options);
             if (product.GetCompilationStatus() != shaderc_compilation_status_success)
                 return AssetError {AssetErrorCode::InvalidData, product.GetErrorMessage()};
-            return ShaderModuleCode {ShaderProductStage::Fragment, "main", {product.cbegin(), product.cend()}};
+            return ShaderModuleCode {
+                ShaderProductStage::Fragment, ShaderText::Main, {product.cbegin(), product.cend()}};
         }();
         if (const auto* error = std::get_if<AssetError>(&compiled))
             return *error;
@@ -160,19 +150,20 @@ void main()
                     cross.set_common_options(options);
                     const auto outputs = cross.get_shader_resources().stage_outputs;
                     if (replace && !outputs.empty())
-                        cross.set_name(outputs[0].id, "kans_PrepassFlag");
+                        cross.set_name(outputs[0].id, ShaderText::Depth_kans_PrepassFlag);
                     std::string source = cross.compile();
                     const auto  main   = source.find("void main()");
                     if (main == std::string::npos)
                         throw std::runtime_error("DepthOnly pass has no fragment main");
-                    source.replace(main, 11, "void kans_DepthMain()");
+                    source.replace(main, 11, ShaderText::Depth_void_kans_DepthMain);
                     if (!replace || outputs.empty())
-                        source += "\nlayout(location=" + std::to_string(location) + ") out vec4 kans_PrepassFlag;\n";
+                        source += ShaderText::Depth_nlayout_location + std::to_string(location) +
+                                  ShaderText::Depth_out_vec4_kans_PrepassFlag;
                     // Wrapping rather than replacing Main preserves discard, early returns,
                     // texture-driven alpha and authored fragment depth. No surface function
                     // exists in the material interface from which to derive a shading normal.
-                    source += replace ? "\nvoid main(){ kans_DepthMain(); kans_PrepassFlag=vec4(0,0,0,2); }\n" :
-                                        "\nvoid main(){ kans_DepthMain(); kans_PrepassFlag=vec4(0); }\n";
+                    source += replace ? ShaderText::Depth_nvoid_main_kans_DepthMain :
+                                        ShaderText::Depth_nvoid_main_kans_DepthMain2;
                     shaderc::Compiler       compiler;
                     shaderc::CompileOptions compileOptions;
                     compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
@@ -181,7 +172,7 @@ void main()
                     if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
                         throw std::runtime_error(compiled.GetErrorMessage());
                     module.Words.assign(compiled.cbegin(), compiled.cend());
-                    module.EntryPoint                 = "main";
+                    module.EntryPoint                 = ShaderText::Main;
                     result.DebugSources[module.Stage] = std::move(source);
                 }
             return result;

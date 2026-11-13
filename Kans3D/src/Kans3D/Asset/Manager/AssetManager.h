@@ -50,7 +50,8 @@ namespace Kans
     };
 
     // Runtime CPU asset cache. Resolves AssetIDs through a Registry snapshot, reads
-    // Product bytes from a provider and decodes them; never touches source files.
+    // Product bytes from a provider and decodes them. A source-aware provider may
+    // repair stale products through its normal import path.
     //
     // Loaded assets are immutable and shared: a returned Ref stays valid after the
     // asset is unloaded or replaced. Each AssetID is loaded at most once at a time.
@@ -64,7 +65,8 @@ namespace Kans
         AssetManager(const AssetManager&)            = delete;
         AssetManager& operator=(const AssetManager&) = delete;
 
-        // Blocking load. A previously failed load is retried.
+        // Blocking load retries transient failures. Engine-contract failures remain
+        // cached until Registry invalidation or Unload.
         template<typename T>
         std::variant<Ref<const T>, AssetError> Load(AssetID id)
         {

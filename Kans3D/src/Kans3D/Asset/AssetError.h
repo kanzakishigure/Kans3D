@@ -16,6 +16,7 @@ namespace Kans
         DuplicatePath,
         NotImplemented,
         Cancelled,
+        StaleShaderContract,
     };
 
     struct AssetError

@@ -775,23 +775,61 @@ vec4 KansToneMap(vec3 color)
         }
     } // namespace
 
+    const std::map<std::string, std::string>& GetEngineShaderIncludes()
+    {
+        static const auto includes = [] {
+            auto        result = EngineIncludes();
+            const auto& engine = result.at("Kans3D/Engine.glsl");
+            const auto  begin  = engine.find("#define KANS_LIGHT_COUNT");
+            const auto  end    = engine.find("layout(set = 0, binding = 1, std140)");
+            result.emplace("Kans3D/Frame.glsl",
+                           "#ifndef KANS3D_FRAME_GLSL\n#define KANS3D_FRAME_GLSL\n" +
+                               engine.substr(begin, end - begin) + "#endif\n");
+            return result;
+        }();
+        return includes;
+    }
+
     const std::string* FindEngineShaderInclude(const std::string& name)
     {
-        if (name == "Kans3D/Frame.glsl")
-        {
-            // Keep the published Engine.glsl text inline, and derive the exact same
-            // guarded frame block for fragment-only post shaders without surface bindings.
-            static const std::string frame = [] {
-                const auto& engine = EngineIncludes().at("Kans3D/Engine.glsl");
-                const auto  begin  = engine.find("#define KANS_LIGHT_COUNT");
-                const auto  end    = engine.find("layout(set = 0, binding = 1, std140)");
-                return "#ifndef KANS3D_FRAME_GLSL\n#define KANS3D_FRAME_GLSL\n" + engine.substr(begin, end - begin) +
-                       "#endif\n";
-            }();
-            return &frame;
-        }
-        const auto found = EngineIncludes().find(name);
-        return found == EngineIncludes().end() ? nullptr : &found->second;
+        const auto& includes = GetEngineShaderIncludes();
+        const auto  found    = includes.find(name);
+        return found == includes.end() ? nullptr : &found->second;
+    }
+
+    std::optional<AssetError> CheckEngineShaderContract(const ShaderData& shader)
+    {
+        const auto check = [](const auto& reflection, ShaderDomain domain, bool main) -> std::optional<AssetError> {
+            bool usesEngine = false;
+            for (const auto& stage : reflection)
+                for (const auto& binding : stage.Bindings)
+                    usesEngine |= binding.Set == EngineDescriptorSet &&
+                                  (binding.Name == "KansFrame" || binding.Name == "KansObject");
+            if (!usesEngine)
+                return std::nullopt; // Generic RHI shaders do not promise the engine material ABI.
+            if (main && reflection.size() == 2)
+            {
+                auto contract = ValidateMaterialShaderInterface(reflection, domain);
+                if (auto* error = std::get_if<AssetError>(&contract))
+                    return AssetError {AssetErrorCode::StaleShaderContract, error->Message};
+            }
+            else
+                for (const auto& stage : reflection)
+                    for (const auto& binding : stage.Bindings)
+                        // Standalone stage products have no material domain yet (a post-process
+                        // fragment can also be imported separately). Check their engine buffers only.
+                        if (binding.Set == EngineDescriptorSet &&
+                            (!main || binding.Name == "KansFrame" || binding.Name == "KansObject"))
+                            if (auto error = CheckEngineBinding(binding))
+                                return AssetError {AssetErrorCode::StaleShaderContract, error->Message};
+            return std::nullopt;
+        };
+        if (auto error = check(shader.Reflection, shader.Domain, true))
+            return error;
+        for (const auto& pass : shader.Passes)
+            if (auto error = check(pass.Reflection, ShaderDomain::Surface, false))
+                return error;
+        return std::nullopt;
     }
 
     static std::variant<std::monostate, AssetError>

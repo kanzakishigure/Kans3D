@@ -1,4 +1,5 @@
 #pragma once
+#include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "AssetImporterBase.h"
 
 namespace Kans
@@ -8,6 +9,9 @@ namespace Kans
     class ModelImporter final : public AssetImporterBase
     {
     public:
+        // Model material products use ResolveStandardMaterial and are packed/validated
+        // against Standard shader reflection, so shader text changes must invalidate them.
+        std::string          GetEnvironmentFingerprint() const override { return GetEngineShaderDigest(); }
         ImportSettingsSchema GetSettingsSchema() const override;
         std::variant<std::monostate, AssetError>
         ValidateSettings(const std::map<std::string, std::string>&) const override;

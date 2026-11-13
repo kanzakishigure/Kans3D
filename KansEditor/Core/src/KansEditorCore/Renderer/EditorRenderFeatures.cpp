@@ -34,7 +34,7 @@ namespace Kans
         auto&       renderer = *context.Frame;
         const auto& view     = context.View;
         auto        uses     = context.Target;
-        if (renderer.Samples == 1 && view.GetPostProcessSettings().FilterSize >= 1)
+        if (renderer.Samples == 1 && renderer.ReconstructsHDR())
         {
             const auto hdr = context.Graph.ImportTexture("SceneHDR", renderer.Output.GetHDR());
             if (!renderer.PostProcessHDR)

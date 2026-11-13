@@ -6,6 +6,7 @@
 #include <sstream>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <shaderc/shaderc.hpp>
+#include "Kans3D/Asset/Runtime/EngineShaderText.h"
 #include "Kans3D/Physics/PhysicsWorld.h"
 namespace Kans::Vfx
 {
@@ -1109,8 +1110,9 @@ namespace Kans::Vfx
                                 {
                                     if (!std::regex_match(pin.Name, std::regex("[A-Za-z_][A-Za-z0-9_]*")))
                                         Error(id, guid, pin.Name, "Invalid custom GLSL output name");
-                                    i.CustomDeclarations +=
-                                        GType(pin.Kind) + " " + pin.Name + "=" + GType(pin.Kind) + "(0);\n";
+                                    i.CustomDeclarations += GType(pin.Kind) + ShaderText::Space + pin.Name +
+                                                            ShaderText::Assign + GType(pin.Kind) +
+                                                            ShaderText::Vfx_Punctuation_3;
                                 }
                             // Typed names are substituted in the expression by the GPU backend.
                             for (size_t k = 0; k < n.Inputs.size(); ++k)
@@ -1127,12 +1129,13 @@ namespace Kans::Vfx
                             if (Out.Target == SimTarget::GPU)
                             {
                                 auto        code    = i.Code;
-                                std::string prelude = "#version 450\nlayout(local_size_x=1) in;\nvoid main(){\n";
+                                std::string prelude = ShaderText::Vfx_version_nlayout_local_size;
                                 for (size_t k = n.Inputs.size(); k-- > 0;)
                                 {
-                                    auto variable = "input" + std::to_string(k);
-                                    prelude += GType(n.Inputs[k].Kind) + " " + variable + "=" +
-                                               GType(n.Inputs[k].Kind) + "(0);\n";
+                                    auto variable = ShaderText::Vfx_input + std::to_string(k);
+                                    prelude += GType(n.Inputs[k].Kind) + ShaderText::Space + variable +
+                                               ShaderText::Assign + GType(n.Inputs[k].Kind) +
+                                               ShaderText::Vfx_Punctuation_3;
                                     auto   marker = "$" + std::to_string(k);
                                     size_t at     = 0;
                                     while ((at = code.find(marker, at)) != std::string::npos)
@@ -1142,8 +1145,10 @@ namespace Kans::Vfx
                                     }
                                 }
                                 prelude += i.CustomDeclarations;
-                                prelude += body ? code + "\n" + GType(i.Kind) + " result=" + output + ";\n}" :
-                                                  GType(i.Kind) + " result=" + code + ";\n}";
+                                prelude += body ? code + ShaderText::Newline + GType(i.Kind) + ShaderText::Vfx_result +
+                                                      output + ShaderText::Vfx_Punctuation_5 :
+                                                  GType(i.Kind) + ShaderText::Vfx_result + code +
+                                                      ShaderText::Vfx_Punctuation_5;
                                 shaderc::Compiler compiler;
                                 auto              compiled =
                                     compiler.CompileGlslToSpv(prelude, shaderc_compute_shader, "CustomGLSL");
@@ -1598,33 +1603,33 @@ namespace Kans::Vfx
             o << std::setprecision(9) << x;
             auto s = o.str();
             if (s.find_first_of(".eE") == std::string::npos)
-                s += ".0";
+                s += ShaderText::Vfx_Punctuation_6;
             return s;
         }
         std::string GType(Type t)
         {
             if (t == Type::Color || t == Type::Quat)
-                return "vec4";
+                return ShaderText::Vec4;
             if (t == Type::Position)
-                return "vec3";
+                return ShaderText::Vec3;
             return TypeName(t);
         }
         std::string Literal(Value v)
         {
             if (v.Kind == Type::Int)
-                return v.Integer == INT32_MIN ? "(-2147483647-1)" : std::to_string(v.Integer);
+                return v.Integer == INT32_MIN ? ShaderText::Vfx_Punctuation_7 : std::to_string(v.Integer);
             if (v.Kind == Type::Bool)
-                return v.Integer ? "true" : "false";
+                return v.Integer ? ShaderText::True : ShaderText::False;
             if (v.Kind == Type::Float)
                 return F(v.Data.x);
-            std::string s = GType(v.Kind) + "(";
+            std::string s = GType(v.Kind) + ShaderText::OpenParen;
             for (uint32_t k = 0; k < Components(v.Kind); ++k)
             {
                 if (k)
-                    s += ",";
+                    s += ShaderText::Comma;
                 s += v.Kind == Type::IVec3 ? std::to_string(int32_t(v.Data[k])) : F(v.Data[k]);
             }
-            return s + ")";
+            return s + ShaderText::CloseParen;
         }
     } // namespace
     CompileResult Compile(const System&           system,
@@ -2870,58 +2875,42 @@ namespace Kans::Vfx
         };
         const auto decode = [](Type t, std::string x) {
             if (t == Type::IVec3)
-                return "ivec3(" + x + ".xyz)";
+                return ShaderText::Vfx_ivec3 + x + ShaderText::Vfx_xyz;
             if (t == Type::Int)
-                return "int(" + x + ".x)";
+                return ShaderText::Vfx_int + x + ShaderText::Vfx_x;
             if (t == Type::Bool)
-                return "(" + x + ".x!=0u)";
-            auto v = "uintBitsToFloat(" + x + ")";
-            return v + (Components(t) == 1 ? ".x" : Components(t) == 2 ? ".xy" : Components(t) == 3 ? ".xyz" : "");
+                return ShaderText::OpenParen + x + ShaderText::Vfx_x_u;
+            auto v = ShaderText::Vfx_uintBitsToFloat + x + ShaderText::CloseParen;
+            return v + (Components(t) == 1 ? ShaderText::Vfx_x_2 :
+                        Components(t) == 2 ? ShaderText::Vfx_xy :
+                        Components(t) == 3 ? ShaderText::Vfx_xyz_2 :
+                                             ShaderText::Empty);
         };
         const auto encode = [](Type t, std::string x) {
             if (t == Type::IVec3)
-                return "uvec4(uvec3(" + x + "),0u)";
+                return ShaderText::Vfx_uvec4_uvec3 + x + ShaderText::Vfx_u;
             if (t == Type::Int)
-                return "uvec4(uint(" + x + "),0u,0u,0u)";
+                return ShaderText::Vfx_uvec4_uint + x + ShaderText::Vfx_u_u_u;
             if (t == Type::Bool)
-                return "uvec4(" + x + "?1u:0u,0u,0u,0u)";
-            return "floatBitsToUint(vec4(" + x +
-                   (Components(t) == 2 ? ",0.0,0.0" :
-                    Components(t) == 3 ? ",0.0" :
-                                         "") +
-                   "))";
+                return ShaderText::Vfx_uvec4 + x + ShaderText::Vfx_u_u_u_u;
+            return ShaderText::Vfx_floatBitsToUint_vec4 + x +
+                   (Components(t) == 2 ? ShaderText::Vfx_Punctuation_12 :
+                    Components(t) == 3 ? ShaderText::Vfx_Punctuation_13 :
+                                         ShaderText::Empty) +
+                   ShaderText::Vfx_Punctuation_14;
         };
-        std::string       s = R"glsl(#version 450
-layout(local_size_x=64) in;
-layout(set=0,binding=0,std430) buffer Attributes { uvec4 attributes[]; };
-layout(set=0,binding=1,std430) readonly buffer Parameters { uvec4 parameters[]; };
-layout(set=0,binding=2,std430) buffer Flags { uint flags[]; };
-layout(set=0,binding=3,std430) buffer FreeList { uint freeList[]; };
-layout(set=0,binding=4,std430) buffer Counters { uint counters[]; };
-layout(set=0,binding=5,std430) readonly buffer AliveList { uint aliveList[]; };
-layout(set=0,binding=6,std430) readonly buffer DataInterfaces {vec4 diValues[];};
-layout(push_constant) uniform Push {uint capacity;uint seed;uint emitter;uint requested;uint worldSpace;uint kill;} pc;
-uint eventKey=0u;
-uint hashV(uint x){x^=x>>16;x*=0x7feb352du;x^=x>>15;x*=0x846ca68bu;return x^(x>>16);}
-float randomV(uint id,uint key,uint lane){return float(hashV(pc.seed^hashV(pc.emitter)^hashV(id)^key^hashV(lane)^hashV(eventKey))>>8)*(1.0/16777216.0);}
-float noiseV(vec3 x){ivec3 b=ivec3(floor(x));vec3 f=fract(x);f=f*f*(3.0-2.0*f);float v=0;
-for(int z=0;z<2;++z)for(int y=0;y<2;++y)for(int a=0;a<2;++a){ivec3 p=b+ivec3(a,y,z);float n=float(hashV(uint(p.x)^hashV(uint(p.y))^hashV(uint(p.z)))>>8)*(1.0/16777216.0);v+=n*(a!=0?f.x:1-f.x)*(y!=0?f.y:1-f.y)*(z!=0?f.z:1-f.z);}return v;}
-void main(){uint invocation=gl_GlobalInvocationID.x;uint slot;uint uniqueID;
-)glsl";
+        std::string       s = ShaderText::Vfx_version_layout_local_size;
         const std::string curlHelpers =
 #include "VfxCurlGLSL.inc"
             ;
         s.insert(s.find("void main()"), curlHelpers);
-        s.insert(s.find("void main()"), R"glsl(
-vec3 fieldRotate(vec3 v,vec4 q){float n=dot(q,q);q=n>1e-20?q*inversesqrt(n):vec4(0,0,0,1);return v+2.0*cross(q.xyz,cross(q.xyz,v)+q.w*v);}
-vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d[a]=abs(scale[a])>=1e-6?scale[a]:(scale[a]<0?-1e-6:1e-6);return fieldRotate(p-t,vec4(-q.xyz,q.w))/d;}
-)glsl");
+        s.insert(s.find("void main()"), ShaderText::Vfx_vec3_fieldRotate_vec3_v);
         if (UsesCollision(p))
         {
-            std::string helpers = "layout(set=0,binding=" + std::to_string(CollisionGpuBinding(p)) +
-                                  ",std430) readonly buffer SceneColliders {vec4 collisionWords[];};\n";
-            helpers += "layout(set=0,binding=" + std::to_string(CollisionGpuBinding(p) + 1) +
-                       ") uniform sampler2D collisionDepth;\n";
+            std::string helpers = ShaderText::Vfx_layout_set_binding + std::to_string(CollisionGpuBinding(p)) +
+                                  ShaderText::Vfx_std430_readonly_buffer_SceneColliders;
+            helpers += ShaderText::Vfx_layout_set_binding + std::to_string(CollisionGpuBinding(p) + 1) +
+                       ShaderText::Vfx_uniform_sampler2D_collisionDepth;
             helpers +=
 #include "VfxCollisionGLSL.inc"
                 ;
@@ -2929,8 +2918,8 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
         }
         if (UsesForceFields(p))
         {
-            std::string helpers = "layout(set=0,binding=" + std::to_string(ForceFieldsGpuBinding(p)) +
-                                  ",std430) readonly buffer SceneFields {vec4 fieldWords[];};\n";
+            std::string helpers = ShaderText::Vfx_layout_set_binding + std::to_string(ForceFieldsGpuBinding(p)) +
+                                  ShaderText::Vfx_std430_readonly_buffer_SceneFields;
             helpers +=
 #include "VfxFieldsGLSL.inc"
                 ;
@@ -2940,17 +2929,18 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                 return IsMeshOperation(i.Op) || IsVectorFieldOperation(i.Op);
             }))
         {
-            std::string geometryDeclarations, accessor = "vec4 meshStatic(int g,int o){switch(g){";
+            std::string geometryDeclarations, accessor = ShaderText::Vfx_vec4_meshStatic_int_g;
             auto        meshBindings = MeshGpuBindings(p);
             for (size_t index = 0; index < meshBindings.size(); ++index)
             {
                 auto id = std::to_string(index);
-                geometryDeclarations += "layout(set=0,binding=" + std::to_string(meshBindings[index].second) +
-                                        ",std430) readonly buffer MeshGeometry" + id + "{vec4 meshValues" + id +
-                                        "[];};\n";
-                accessor += "case " + id + ":return meshValues" + id + "[o];";
+                geometryDeclarations += ShaderText::Vfx_layout_set_binding +
+                                        std::to_string(meshBindings[index].second) +
+                                        ShaderText::Vfx_std430_readonly_buffer_MeshGeometry + id +
+                                        ShaderText::Vfx_vec4_meshValues + id + ShaderText::Vfx_Punctuation_15;
+                accessor += ShaderText::Vfx_case + id + ShaderText::Vfx_return_meshValues + id + ShaderText::Vfx_o;
             }
-            accessor += "}return vec4(0); }\n";
+            accessor += ShaderText::Vfx_return_vec4;
             accessor +=
 #include "VfxVectorFieldGLSL.inc"
                 ;
@@ -2968,41 +2958,46 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
             {
                 const auto  suffix = id;
                 const auto& g      = resource.Grid;
-                const auto  res    = "ivec3(" + std::to_string(g.Resolution.x) + "," + std::to_string(g.Resolution.y) +
-                                     "," + std::to_string(g.Resolution.z) + ")";
+                const auto  res = ShaderText::Vfx_ivec3 + std::to_string(g.Resolution.x) + ShaderText::Comma +
+                                  std::to_string(g.Resolution.y) + ShaderText::Comma + std::to_string(g.Resolution.z) +
+                                  ShaderText::CloseParen;
                 const auto  cells  = std::to_string(g.Resolution.x * g.Resolution.y * g.Resolution.z);
-                declarations += "layout(set=0,binding=" + binding + ",std430) readonly buffer GridRead" + id +
-                                "{vec4 gridRead" + id + "[];};\n";
-                declarations += "layout(set=0,binding=" + std::to_string(resource.Binding + 1) +
-                                ",std430) buffer GridWrite" + id + "{vec4 gridWrite" + id + "[];};\n";
-                declarations += "layout(set=0,binding=" + std::to_string(resource.Binding + 2) +
-                                ",std430) buffer GridAtomic" + id + "{int gridAtomic" + id + "[];};\n";
-                declarations += "int gridOffset" + id + "(int a,ivec3 p){p=clamp(p,ivec3(0)," + res + "-1);return a*" +
-                                cells + "+p.x+" + std::to_string(g.Resolution.x) + "*(p.y+" +
-                                std::to_string(g.Resolution.y) + "*p.z); }\n";
-                declarations += "vec4 gridSample" + id +
-                                "(int a,vec3 p){ivec3 lo=ivec3(floor(p));vec3 f=fract(p);vec4 v=vec4(0);for(int "
-                                "z=0;z<2;++z)for(int y=0;y<2;++y)for(int x=0;x<2;++x)v+=gridRead" +
-                                id + "[gridOffset" + id +
-                                "(a,lo+ivec3(x,y,z))]*(x==0?1-f.x:f.x)*(y==0?1-f.y:f.y)*(z==0?1-f.z:f.z);return v;}\n";
+                declarations += ShaderText::Vfx_layout_set_binding + binding +
+                                ShaderText::Vfx_std430_readonly_buffer_GridRead + id + ShaderText::Vfx_vec4_gridRead +
+                                id + ShaderText::Vfx_Punctuation_15;
+                declarations += ShaderText::Vfx_layout_set_binding + std::to_string(resource.Binding + 1) +
+                                ShaderText::Vfx_std430_buffer_GridWrite + id + ShaderText::Vfx_vec4_gridWrite + id +
+                                ShaderText::Vfx_Punctuation_15;
+                declarations += ShaderText::Vfx_layout_set_binding + std::to_string(resource.Binding + 2) +
+                                ShaderText::Vfx_std430_buffer_GridAtomic + id + ShaderText::Vfx_int_gridAtomic + id +
+                                ShaderText::Vfx_Punctuation_15;
+                declarations += ShaderText::Vfx_int_gridOffset + id + ShaderText::Vfx_int_a_ivec3_p + res +
+                                ShaderText::Vfx_return_a + cells + ShaderText::Vfx_p_x +
+                                std::to_string(g.Resolution.x) + ShaderText::Vfx_p_y + std::to_string(g.Resolution.y) +
+                                ShaderText::Vfx_p_z;
+                declarations += ShaderText::Vfx_vec4_gridSample + id + ShaderText::Vfx_int_a_vec3_p + id +
+                                ShaderText::Vfx_gridOffset + id + ShaderText::Vfx_a_lo_ivec3_x;
             }
             else if (resource.Kind == "ParticleReader")
             {
-                declarations += "layout(set=0,binding=" + binding + ",std430) readonly buffer ReaderAttributes" + id +
-                                "{uvec4 readerAttributes" + id + "[];};\n";
-                declarations += "layout(set=0,binding=" + std::to_string(resource.Binding + 1) +
-                                ",std430) readonly buffer ReaderAlive" + id + "{uint readerAlive" + id + "[];};\n";
-                declarations += "layout(set=0,binding=" + std::to_string(resource.Binding + 2) +
-                                ",std430) readonly buffer ReaderCounters" + id + "{uint readerCounters" + id +
-                                "[];};\n";
+                declarations += ShaderText::Vfx_layout_set_binding + binding +
+                                ShaderText::Vfx_std430_readonly_buffer_ReaderAttributes + id +
+                                ShaderText::Vfx_uvec4_readerAttributes + id + ShaderText::Vfx_Punctuation_15;
+                declarations += ShaderText::Vfx_layout_set_binding + std::to_string(resource.Binding + 1) +
+                                ShaderText::Vfx_std430_readonly_buffer_ReaderAlive + id +
+                                ShaderText::Vfx_uint_readerAlive + id + ShaderText::Vfx_Punctuation_15;
+                declarations += ShaderText::Vfx_layout_set_binding + std::to_string(resource.Binding + 2) +
+                                ShaderText::Vfx_std430_readonly_buffer_ReaderCounters + id +
+                                ShaderText::Vfx_uint_readerCounters + id + ShaderText::Vfx_Punctuation_15;
             }
             else if (resource.Kind == "EmitterState")
                 declarations +=
-                    "layout(set=0,binding=" + binding + ",std430) buffer EmitterState{uvec4 emitterState[];};\n";
+                    ShaderText::Vfx_layout_set_binding + binding + ShaderText::Vfx_std430_buffer_EmitterState_uvec4;
             else
-                declarations += "layout(set=0,binding=" + binding + ",std430) " +
-                                (resource.Kind == "EventInput" ? "readonly " : "") + "buffer Events" + id +
-                                "{uvec4 events" + id + "[];};\n";
+                declarations += ShaderText::Vfx_layout_set_binding + binding + ShaderText::Vfx_std430 +
+                                (resource.Kind == "EventInput" ? ShaderText::Vfx_readonly : ShaderText::Empty) +
+                                ShaderText::Vfx_buffer_Events + id + ShaderText::Vfx_uvec4_events + id +
+                                ShaderText::Vfx_Punctuation_15;
         }
         s.insert(s.find("void main()"), declarations);
         const bool gridStage = !p.IterationGrid.empty();
@@ -3010,8 +3005,8 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
         if (gridStage)
         {
             s.replace(s.find("layout(local_size_x=64) in;"),
-                      std::string("layout(local_size_x=64) in;").size(),
-                      "layout(local_size_x=4,local_size_y=4,local_size_z=4) in;");
+                      std::string(ShaderText::Vfx_layout_local_size_x).size(),
+                      ShaderText::Vfx_layout_local_size_x2);
         }
         const bool spawn = p.StageKind == Stage::ParticleSpawn || (p.Handler && p.Mode == EventMode::SpawnedParticles);
         if (gridStage)
@@ -3021,78 +3016,84 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
             });
             const auto& g   = at->Grid;
             auto        id  = std::to_string(at - p.Resources.begin());
-            auto        res = "ivec3(" + std::to_string(g.Resolution.x) + "," + std::to_string(g.Resolution.y) + "," +
-                              std::to_string(g.Resolution.z) + ")";
-            s += "ivec3 gridExecutionIndex=ivec3(gl_GlobalInvocationID);if(any(greaterThanEqual(gridExecutionIndex," +
-                 res + ")))return;slot=0u;uniqueID=0u;\n";
+            auto        res = ShaderText::Vfx_ivec3 + std::to_string(g.Resolution.x) + ShaderText::Comma +
+                              std::to_string(g.Resolution.y) + ShaderText::Comma + std::to_string(g.Resolution.z) +
+                              ShaderText::CloseParen;
+            s += ShaderText::Vfx_ivec3_gridExecutionIndex_ivec3_gl + res + ShaderText::Vfx_return_slot_u_uniqueID;
             for (uint32_t a = 0; a < g.GridAttributes.size(); ++a)
-                s += "gridWrite" + id + "[gridOffset" + id + "(" + std::to_string(a) +
-                     ",gridExecutionIndex)]=gridRead" + id + "[gridOffset" + id + "(" + std::to_string(a) +
-                     ",gridExecutionIndex)];\n";
+                s += ShaderText::Vfx_gridWrite + id + ShaderText::Vfx_gridOffset + id + ShaderText::OpenParen +
+                     std::to_string(a) + ShaderText::Vfx_gridExecutionIndex_gridRead + id + ShaderText::Vfx_gridOffset +
+                     id + ShaderText::OpenParen + std::to_string(a) + ShaderText::Vfx_gridExecutionIndex;
         }
         else if (emitter)
-            s += "if(invocation!=0u)return;slot=0u;uniqueID=0u;\n";
+            s += ShaderText::Vfx_if_invocation_u_return;
         else if (spawn)
-            s += "if(invocation>=counters[2])return;slot=freeList[counters[4]+invocation];uniqueID=counters[5]+"
-                 "invocation;flags[slot]=1u;\n";
+            s += ShaderText::Vfx_if_invocation_counters_return;
         else
-            s += "if(invocation>=counters[1])return;slot=aliveList[invocation];uniqueID=uint(" +
+            s += ShaderText::Vfx_if_invocation_counters_return2 +
                  decode(Type::Int,
-                        "attributes[" + std::to_string(attribute("Particles.UniqueID")->Offset) +
-                            "u*pc.capacity+slot]") +
-                 ");\n";
-        s += "mat4 owner=mat4(";
+                        ShaderText::Vfx_attributes + std::to_string(attribute("Particles.UniqueID")->Offset) +
+                            ShaderText::Vfx_u_pc_capacity_slot) +
+                 ShaderText::Particle_Punctuation_4;
+        s += ShaderText::Vfx_mat4_owner_mat4;
         for (int k = 0; k < 4; ++k)
         {
             if (k)
-                s += ",";
-            s += "uintBitsToFloat(parameters[" + std::to_string(p.Parameters.size() + k) + "])";
+                s += ShaderText::Comma;
+            s += ShaderText::Vfx_uintBitsToFloat_parameters + std::to_string(p.Parameters.size() + k) +
+                 ShaderText::Vfx_Punctuation_17;
         }
-        s += ");\nmat4 inverseOwner=inverse(owner);\n";
+        s += ShaderText::Vfx_nmat4_inverseOwner_inverse_owner;
         for (const auto& a : attributes)
         {
-            s += GType(a.Kind) + " a" + std::to_string(a.Offset) + "=" +
-                 ((spawn || emitter || gridStage) ?
-                      Literal(a.Default) :
-                      decode(a.Kind, "attributes[" + std::to_string(a.Offset) + "u*pc.capacity+slot]")) +
-                 ";\n";
+            s += GType(a.Kind) + ShaderText::Vfx_a + std::to_string(a.Offset) + ShaderText::Assign +
+                 ((spawn || emitter || gridStage) ? Literal(a.Default) :
+                                                    decode(a.Kind,
+                                                           ShaderText::Vfx_attributes + std::to_string(a.Offset) +
+                                                               ShaderText::Vfx_u_pc_capacity_slot)) +
+                 ShaderText::EndStatement;
         }
         if (spawn)
             for (const auto& entry : attributes)
                 if (entry.Kind == Type::Position)
                 {
                     auto a = &entry;
-                    s += "if(pc.worldSpace!=0u)a" + std::to_string(a->Offset) + "=(owner*vec4(a" +
-                         std::to_string(a->Offset) + ",1)).xyz;\n";
+                    s += ShaderText::Vfx_if_pc_worldSpace_u + std::to_string(a->Offset) + ShaderText::Vfx_owner_vec4_a +
+                         std::to_string(a->Offset) + ShaderText::Vfx_xyz_3;
                 }
-        s += "a" + std::to_string(attribute("Particles.UniqueID")->Offset) + "=int(uniqueID);\n";
-        s += "a" + std::to_string(attribute("Particles.Alive")->Offset) + "=true;\n";
+        s += ShaderText::AttributePrefix + std::to_string(attribute("Particles.UniqueID")->Offset) +
+             ShaderText::Vfx_int_uniqueID;
+        s +=
+            ShaderText::AttributePrefix + std::to_string(attribute("Particles.Alive")->Offset) + ShaderText::Vfx_true_2;
         if (p.Handler)
         {
             const auto& event  = p.Resources.at(0);
             auto        stride = std::to_string(event.Layout.Fields.size() + 1);
             if (spawn)
-                s += "uint eventIndex=invocation/" + std::to_string(std::max(1u, p.SpawnNumber)) + "u;\n";
+                s += ShaderText::Vfx_uint_eventIndex_invocation + std::to_string(std::max(1u, p.SpawnNumber)) +
+                     ShaderText::Vfx_u_2;
             else
-                s += "uint eventCount=min(events0[0].x," + std::to_string(p.MaxEventsPerFrame) +
-                     "u);for(uint eventIndex=0u;eventIndex<eventCount;++eventIndex){\n";
-            s += "eventKey=events0[1u+eventIndex*" + stride + "u+" + std::to_string(event.Layout.Fields.size()) +
-                 "u].x;\n";
+                s += ShaderText::Vfx_uint_eventCount_min_events0 + std::to_string(p.MaxEventsPerFrame) +
+                     ShaderText::Vfx_u_for_uint_eventIndex;
+            s += ShaderText::Vfx_eventKey_events0_u_eventIndex + stride + ShaderText::Vfx_u_3 +
+                 std::to_string(event.Layout.Fields.size()) + ShaderText::Vfx_u_x;
         }
         for (uint32_t k = 0; k < p.Parameters.size(); ++k)
         {
             const auto& v = p.Parameters[k];
             auto        a = attribute(v.Name);
             std::string value =
-                a ? "a" + std::to_string(a->Offset) : decode(v.Kind, "parameters[" + std::to_string(k) + "]");
+                a ? ShaderText::AttributePrefix + std::to_string(a->Offset) :
+                    decode(v.Kind, ShaderText::Vfx_parameters + std::to_string(k) + ShaderText::Vfx_Punctuation_19);
             if (v.Name == "Transient.PreviousPosition" && attribute("Particles.Position"))
-                value = "a" + std::to_string(attribute("Particles.Position")->Offset);
+                value = ShaderText::AttributePrefix + std::to_string(attribute("Particles.Position")->Offset);
             if (v.Name == "Particles.HasCollided" && p.StageKind == Stage::ParticleUpdate)
-                value = "false";
+                value = ShaderText::False;
             if (v.Name == "Transient.SpawnIndex")
-                value = "int(invocation)";
+                value = ShaderText::Vfx_int_invocation;
             if (emitter && v.Name.rfind("Emitter.", 0) == 0 && v.Name != "Emitter.SpawnCountThisFrame")
-                value = decode(v.Kind, "emitterState[" + std::to_string(k) + "]");
+                value =
+                    decode(v.Kind, ShaderText::Vfx_emitterState + std::to_string(k) + ShaderText::Vfx_Punctuation_19);
             if (p.Handler && v.Name.rfind("Transient.Event.", 0) == 0)
             {
                 const auto& event = p.Resources.at(0);
@@ -3100,304 +3101,372 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                     if (v.Name == "Transient.Event." + event.Layout.Fields[f].Name)
                     {
                         value = decode(v.Kind,
-                                       "events0[1u+eventIndex*" + std::to_string(event.Layout.Fields.size() + 1) +
-                                           "u+" + std::to_string(f) + "u]");
+                                       ShaderText::Vfx_events0_u_eventIndex +
+                                           std::to_string(event.Layout.Fields.size() + 1) + ShaderText::Vfx_u_3 +
+                                           std::to_string(f) + ShaderText::Vfx_u_4);
                         if (v.Kind == Type::Position)
                             value = event.PositionSpace == Space::World ?
-                                        "(pc.worldSpace==0u?(inverseOwner*vec4(" + value + ",1)).xyz:" + value + ")" :
-                                        "(pc.worldSpace!=0u?(owner*vec4(" + value + ",1)).xyz:" + value + ")";
+                                        ShaderText::Vfx_pc_worldSpace_u_inverseOwner + value + ShaderText::Vfx_xyz_4 +
+                                            value + ShaderText::CloseParen :
+                                        ShaderText::Vfx_pc_worldSpace_u_owner + value + ShaderText::Vfx_xyz_4 + value +
+                                            ShaderText::CloseParen;
                     }
             }
-            s += GType(v.Kind) + " p" + std::to_string(k) + "=" + value + ";\n";
+            s += GType(v.Kind) + ShaderText::Vfx_p + std::to_string(k) + ShaderText::Assign + value +
+                 ShaderText::EndStatement;
         }
         std::map<std::vector<uint32_t>, std::string> collisionResults;
         std::string                                  customHelpers;
         for (uint32_t k = 0; k < p.Code.size(); ++k)
         {
             const auto& i   = p.Code[k];
-            const auto  arg = [&](size_t a) { return a < i.Args.size() ? "r" + std::to_string(i.Args[a]) : "0.0"; };
+            const auto  arg = [&](size_t a) {
+                return a < i.Args.size() ? ShaderText::RegisterPrefix + std::to_string(i.Args[a]) :
+                                           ShaderText::Vfx_Punctuation_20;
+            };
             std::string e;
             auto        a = arg(0), b = arg(1), c = arg(2), op = i.Op;
             if (op == "GridExecutionIndex")
-                e = "gridExecutionIndex";
+                e = ShaderText::Vfx_gridExecutionIndex_2;
             else if (op.rfind("Grid", 0) == 0)
             {
                 const auto& g      = i.Interface;
                 auto        id     = std::to_string(i.Resource);
                 auto        attr   = std::to_string(i.Parameter);
-                const auto  res    = "ivec3(" + std::to_string(g.Resolution.x) + "," + std::to_string(g.Resolution.y) +
-                                     "," + std::to_string(g.Resolution.z) + ")";
+                const auto  res = ShaderText::Vfx_ivec3 + std::to_string(g.Resolution.x) + ShaderText::Comma +
+                                  std::to_string(g.Resolution.y) + ShaderText::Comma + std::to_string(g.Resolution.z) +
+                                  ShaderText::CloseParen;
                 const auto  bounds = Literal(Value::Vector(glm::vec4(g.WorldBounds, 0), Type::Vec3));
                 // Local grids follow the complete owner transform. World grids follow owner translation.
                 auto toLocal = [&](std::string v) {
-                    return "(pc.worldSpace==0u?(inverseOwner*vec4(" + v + ",1)).xyz:(" + v + "-owner[3].xyz))";
+                    return ShaderText::Vfx_pc_worldSpace_u_inverseOwner + v + ShaderText::Vfx_xyz_5 + v +
+                           ShaderText::Vfx_owner_xyz;
                 };
                 auto toWorld = [&](std::string v) {
-                    return "(pc.worldSpace==0u?(owner*vec4(" + v + ",1)).xyz:(" + v + "+owner[3].xyz))";
+                    return ShaderText::Vfx_pc_worldSpace_u_owner2 + v + ShaderText::Vfx_xyz_5 + v +
+                           ShaderText::Vfx_owner_xyz_2;
                 };
                 auto coordinate = [&](std::string v) {
-                    return "((" + toLocal(v) + "/" + bounds + "+0.5)*vec3(" + res + "))";
+                    return ShaderText::Vfx_Punctuation_21 + toLocal(v) + ShaderText::Divide + bounds +
+                           ShaderText::Vfx_vec3_2 + res + ShaderText::Vfx_Punctuation_14;
                 };
-                auto offset  = "gridOffset" + id + "(" + attr + "," + a + ")";
-                auto swizzle = Components(i.Kind) == 1 ? ".x" :
-                               Components(i.Kind) == 2 ? ".xy" :
-                               Components(i.Kind) == 3 ? ".xyz" :
-                                                         "";
+                auto offset = ShaderText::Vfx_gridOffset_2 + id + ShaderText::OpenParen + attr + ShaderText::Comma + a +
+                              ShaderText::CloseParen;
+                auto swizzle = Components(i.Kind) == 1 ? ShaderText::Vfx_x_2 :
+                               Components(i.Kind) == 2 ? ShaderText::Vfx_xy :
+                               Components(i.Kind) == 3 ? ShaderText::Vfx_xyz_2 :
+                                                         ShaderText::Empty;
                 if (op == "GridNumCells")
                     e = res;
                 else if (op == "GridCellSize")
-                    e = bounds + "/vec3(" + res + ")";
+                    e = bounds + ShaderText::Vfx_vec3_3 + res + ShaderText::CloseParen;
                 else if (op == "GridIndexToWorld")
-                    e = toWorld("((vec3(" + a + ")+0.5)/vec3(" + res + ")-0.5)*" + bounds);
+                    e = toWorld(ShaderText::Vfx_vec3_4 + a + ShaderText::Vfx_vec3_5 + res +
+                                ShaderText::Vfx_Punctuation_23 + bounds);
                 else if (op == "GridWorldToCell")
-                    e = coordinate(a) + "-0.5";
+                    e = coordinate(a) + ShaderText::Vfx_Punctuation_24;
                 else if (op == "GridWorldToIndex")
-                    e = "ivec3(floor(" + coordinate(a) + "))";
+                    e = ShaderText::Vfx_ivec3_floor + coordinate(a) + ShaderText::Vfx_Punctuation_14;
                 else if (op == "GridGet")
-                    e = "gridRead" + id + "[" + offset + "]" + swizzle;
+                    e = ShaderText::Vfx_gridRead + id + ShaderText::Vfx_Punctuation_25 + offset +
+                        ShaderText::Vfx_Punctuation_19 + swizzle;
                 else if (op == "GridSample")
-                    e = "gridSample" + id + "(" + attr + "," + coordinate(a) + "-0.5)" + swizzle;
+                    e = ShaderText::Vfx_gridSample + id + ShaderText::OpenParen + attr + ShaderText::Comma +
+                        coordinate(a) + ShaderText::Vfx_Punctuation_26 + swizzle;
                 else if (op == "GridLightMarch")
                 {
                     // March world-space distances even for rotated/scaled local grids.
-                    const auto cell      = "cell" + std::to_string(k);
-                    const auto tau       = "tau" + std::to_string(k);
-                    const auto h         = "step" + std::to_string(k);
-                    const auto localCell = bounds + "/vec3(" + res + ")";
-                    s += "vec3 " + cell + "=" + toWorld("((vec3(" + a + ")+0.5)/vec3(" + res + ")-0.5)*" + bounds) +
-                         ";\n";
-                    s += "vec3 cs" + std::to_string(k) + "=" + localCell + ";\n";
+                    const auto cell      = ShaderText::Vfx_cell + std::to_string(k);
+                    const auto tau       = ShaderText::Vfx_tau + std::to_string(k);
+                    const auto h         = ShaderText::Vfx_step + std::to_string(k);
+                    const auto localCell = bounds + ShaderText::Vfx_vec3_3 + res + ShaderText::CloseParen;
+                    s += ShaderText::Vfx_vec3_6 + cell + ShaderText::Assign +
+                         toWorld(ShaderText::Vfx_vec3_4 + a + ShaderText::Vfx_vec3_5 + res +
+                                 ShaderText::Vfx_Punctuation_23 + bounds) +
+                         ShaderText::EndStatement;
+                    s += ShaderText::Vfx_vec3_cs + std::to_string(k) + ShaderText::Assign + localCell +
+                         ShaderText::EndStatement;
                     for (int axis = 0; axis < 3; ++axis)
-                        s += "if(pc.worldSpace==0u)cs" + std::to_string(k) + "[" + std::to_string(axis) +
-                             "]*=length(owner[" + std::to_string(axis) + "].xyz);\n";
-                    auto cs = "cs" + std::to_string(k);
-                    s += "float " + h + "=" + arg(4) + ">0.0?" + arg(4) + ":min(" + cs + ".x,min(" + cs + ".y," + cs +
-                         ".z));\n";
-                    s += "float " + tau + "=0.0;if(" + b + ".w!=0.0){for(int stepIndex=1;stepIndex<=clamp(" + arg(3) +
-                         ",1,64);++stepIndex){vec3 samplePos=" + cell + "+" + b + ".xyz*(float(stepIndex)*" + h +
-                         ");vec3 q=" + coordinate("samplePos") +
-                         ";if(any(lessThan(q,vec3(0)))||any(greaterThanEqual(q,vec3(" + res + "))))break;" + tau +
-                         "+=gridSample" + id + "(" + attr + ",q-0.5).x*max(0.0," + c + ")*" + h + ";}}\n";
-                    e = "exp(-" + tau + ")";
+                        s += ShaderText::Vfx_if_pc_worldSpace_u2 + std::to_string(k) + ShaderText::Vfx_Punctuation_25 +
+                             std::to_string(axis) + ShaderText::Vfx_length_owner + std::to_string(axis) +
+                             ShaderText::Vfx_xyz_6;
+                    auto cs = ShaderText::Vfx_cs + std::to_string(k);
+                    s += ShaderText::Vfx_float + h + ShaderText::Assign + arg(4) + ShaderText::Vfx_Punctuation_27 +
+                         arg(4) + ShaderText::Vfx_min + cs + ShaderText::Vfx_x_min + cs + ShaderText::Vfx_y + cs +
+                         ShaderText::Vfx_z;
+                    s += ShaderText::Vfx_float + tau + ShaderText::Vfx_if + b + ShaderText::Vfx_w_for_int_stepIndex +
+                         arg(3) + ShaderText::Vfx_stepIndex_vec3_samplePos + cell + ShaderText::Add + b +
+                         ShaderText::Vfx_xyz_float_stepIndex + h + ShaderText::Vfx_vec3_q +
+                         coordinate(ShaderText::Vfx_samplePos) + ShaderText::Vfx_if_any_lessThan_q + res +
+                         ShaderText::Vfx_break + tau + ShaderText::Vfx_gridSample_2 + id + ShaderText::OpenParen +
+                         attr + ShaderText::Vfx_q_x_max + c + ShaderText::Vfx_Punctuation_29 + h +
+                         ShaderText::Vfx_Punctuation_30;
+                    e = ShaderText::Vfx_exp + tau + ShaderText::CloseParen;
                 }
                 else if (op == "GridSet")
                 {
-                    s += "gridWrite" + id + "[" + offset + "]" + swizzle + "=" + b + ";\n";
+                    s += ShaderText::Vfx_gridWrite + id + ShaderText::Vfx_Punctuation_25 + offset +
+                         ShaderText::Vfx_Punctuation_19 + swizzle + ShaderText::Assign + b + ShaderText::EndStatement;
                     e = b;
                 }
                 else if (op == "GridAddFloat")
                 {
                     // Signed fixed point, 16 fractional bits. Each component has an independent int32 channel.
-                    s += "atomicAdd(gridAtomic" + id + "[4*(" + offset + ")+" + b + "],int(round(" + c +
-                         "*65536.0)));\n";
+                    s += ShaderText::Vfx_atomicAdd_gridAtomic + id + ShaderText::Vfx_Punctuation_31 + offset +
+                         ShaderText::Vfx_Punctuation_32 + b + ShaderText::Vfx_int_round + c +
+                         ShaderText::Vfx_Punctuation_33;
                     e = c;
                 }
             }
             else if (op == "SpawnBoundary")
             {
                 if (i.PositionSpace == Space::World)
-                    s += "p" + std::to_string(i.Parameter) + "=mat3(owner)*p" + std::to_string(i.Parameter) + ";\n";
-                e = "0.0";
+                    s += ShaderText::ParameterPrefix + std::to_string(i.Parameter) + ShaderText::Vfx_mat3_owner_p +
+                         std::to_string(i.Parameter) + ShaderText::EndStatement;
+                e = ShaderText::Vfx_Punctuation_20;
             }
             else if (op == "ColliderVelocity")
-                e = "colliderVelocityV(" + a + "," + b + ",parameters[" + std::to_string(p.Parameters.size() + 4) +
-                    "].z)";
+                e = ShaderText::Vfx_colliderVelocityV + a + ShaderText::Comma + b + ShaderText::Vfx_parameters_2 +
+                    std::to_string(p.Parameters.size() + 4) + ShaderText::Vfx_z_2;
             else if (op == "Collision")
             {
                 auto at = collisionResults.find(i.Args);
                 if (at == collisionResults.end())
                 {
-                    auto name = "collision" + std::to_string(k);
+                    auto name = ShaderText::Vfx_collision + std::to_string(k);
                     at        = collisionResults.emplace(i.Args, name).first;
                     std::string args;
                     for (size_t n = 0; n < i.Args.size(); ++n)
-                        args += (n ? "," : "") + arg(n);
+                        args += (n ? ShaderText::Comma : ShaderText::Empty) + arg(n);
                     auto offset = uint32_t(p.Parameters.size()) + 6;
                     auto matrix = [&](uint32_t first) {
-                        std::string m = "mat4(";
+                        std::string m = ShaderText::Vfx_mat4;
                         for (uint32_t col = 0; col < 4; ++col)
-                            m += (col ? "," : "") + std::string("uintBitsToFloat(parameters[") +
-                                 std::to_string(first + col) + "])";
-                        return m + ")";
+                            m += (col ? ShaderText::Comma : ShaderText::Empty) +
+                                 std::string(ShaderText::Vfx_uintBitsToFloat_parameters) + std::to_string(first + col) +
+                                 ShaderText::Vfx_Punctuation_17;
+                        return m + ShaderText::CloseParen;
                     };
-                    s += "CollisionResultV " + name + "=collideParticleV(" + args + ",owner," +
-                         (i.PositionSpace == Space::Local ? "true" : "false") + ",parameters[" +
-                         std::to_string(p.Parameters.size() + 4) + "].z," + matrix(offset) + "," + matrix(offset + 4) +
-                         ",parameters[" + std::to_string(offset + 8) + "].x!=0u);\n";
+                    s += ShaderText::Vfx_CollisionResultV + name + ShaderText::Vfx_collideParticleV + args +
+                         ShaderText::Vfx_owner +
+                         (i.PositionSpace == Space::Local ? ShaderText::True : ShaderText::False) +
+                         ShaderText::Vfx_parameters_2 + std::to_string(p.Parameters.size() + 4) + ShaderText::Vfx_z_3 +
+                         matrix(offset) + ShaderText::Comma + matrix(offset + 4) + ShaderText::Vfx_parameters_2 +
+                         std::to_string(offset + 8) + ShaderText::Vfx_x_u_2;
                 }
-                e = at->second + "." + i.Output;
+                e = at->second + ShaderText::Dot + i.Output;
             }
             else if (op == "WriteEvent")
             {
                 const auto& resource = p.Resources.at(i.Resource);
-                auto        name     = "events" + std::to_string(i.Resource);
-                auto        capacity = std::to_string(resource.Capacity) + "u";
-                auto        limit    = i.Args.size() == resource.Layout.Fields.size() + 2 ?
-                                           "uint(max(0," + arg(i.Args.size() - 1) + "))" :
-                                           "0xffffffffu";
+                auto        name     = ShaderText::Vfx_events + std::to_string(i.Resource);
+                auto        capacity = std::to_string(resource.Capacity) + ShaderText::UnsignedSuffix;
+                auto limit = i.Args.size() == resource.Layout.Fields.size() + 2 ?
+                                 ShaderText::Vfx_uint_max + arg(i.Args.size() - 1) + ShaderText::Vfx_Punctuation_14 :
+                                 ShaderText::Vfx_xffffffffu;
                 auto        tag      = std::to_string(k);
                 // Reserve the per-frame generation budget independently of storage capacity.
-                s += "uint wanted" + tag + "=uint(max(0," + a + "));uint generated" + tag + "=" + name +
-                     "[0].z;uint allowed" + tag + "=0u;\n";
-                s += "while(generated" + tag + "<" + limit + "){uint candidate=min(wanted" + tag + "," + limit +
-                     "-generated" + tag + ");uint previous=atomicCompSwap(" + name + "[0].z,generated" + tag +
-                     ",generated" + tag + "+candidate);if(previous==generated" + tag + "){allowed" + tag +
-                     "=candidate;break;}generated" + tag + "=previous;}\n";
-                s += "uint attempts" + tag + "=min(allowed" + tag + "," + capacity + ");atomicAdd(" + name +
-                     "[0].y,allowed" + tag + "-attempts" + tag + ");\n";
-                s += "for(uint ordinal=0u;ordinal<attempts" + tag + ";++ordinal){uint at=" + name +
-                     "[0].x;bool reserved=false;while(at<" + capacity + "){uint previous=atomicCompSwap(" + name +
-                     "[0].x,at,at+1u);if(previous==at){reserved=true;break;}at=previous;}if(!reserved){atomicAdd(" +
-                     name + "[0].y,1u);continue;}\n";
+                s += ShaderText::Vfx_uint_wanted + tag + ShaderText::Vfx_uint_max_2 + a +
+                     ShaderText::Vfx_uint_generated + tag + ShaderText::Assign + name + ShaderText::Vfx_z_uint_allowed +
+                     tag + ShaderText::Vfx_u_6;
+                s += ShaderText::Vfx_while_generated + tag + ShaderText::Vfx_Punctuation_35 + limit +
+                     ShaderText::Vfx_uint_candidate_min_wanted + tag + ShaderText::Comma + limit +
+                     ShaderText::Vfx_generated + tag + ShaderText::Vfx_uint_previous_atomicCompSwap + name +
+                     ShaderText::Vfx_z_generated + tag + ShaderText::Vfx_generated_2 + tag +
+                     ShaderText::Vfx_candidate_if_previous_generated + tag + ShaderText::Vfx_allowed + tag +
+                     ShaderText::Vfx_candidate_break_generated + tag + ShaderText::Vfx_previous;
+                s += ShaderText::Vfx_uint_attempts + tag + ShaderText::Vfx_min_allowed + tag + ShaderText::Comma +
+                     capacity + ShaderText::Vfx_atomicAdd + name + ShaderText::Vfx_y_allowed + tag +
+                     ShaderText::Vfx_attempts + tag + ShaderText::Particle_Punctuation_4;
+                s += ShaderText::Vfx_for_uint_ordinal_u + tag + ShaderText::Vfx_ordinal_uint_at + name +
+                     ShaderText::Vfx_x_bool_reserved_false + capacity + ShaderText::Vfx_uint_previous_atomicCompSwap_2 +
+                     name + ShaderText::Vfx_x_at_at_u + name + ShaderText::Vfx_y_u_continue;
                 for (uint32_t f = 0; f < resource.Layout.Fields.size(); ++f)
-                    s += name + "[1u+at*" + std::to_string(resource.Layout.Fields.size() + 1) + "u+" +
-                         std::to_string(f) + "u]=" + encode(resource.Layout.Fields[f].Kind, arg(f + 1)) + ";\n";
-                s += name + "[1u+at*" + std::to_string(resource.Layout.Fields.size() + 1) + "u+" +
-                     std::to_string(resource.Layout.Fields.size()) + "u]=uvec4(hashV(uniqueID^hashV(ordinal^" +
-                     std::to_string(i.RandomKey) + "u)),0,0,0); }\n";
-                e = "0";
+                    s += name + ShaderText::Vfx_u_at + std::to_string(resource.Layout.Fields.size() + 1) +
+                         ShaderText::Vfx_u_3 + std::to_string(f) + ShaderText::Vfx_u_7 +
+                         encode(resource.Layout.Fields[f].Kind, arg(f + 1)) + ShaderText::EndStatement;
+                s += name + ShaderText::Vfx_u_at + std::to_string(resource.Layout.Fields.size() + 1) +
+                     ShaderText::Vfx_u_3 + std::to_string(resource.Layout.Fields.size()) +
+                     ShaderText::Vfx_u_uvec4_hashV_uniqueID + std::to_string(i.RandomKey) + ShaderText::Vfx_u_8;
+                e = ShaderText::Vfx_Punctuation_36;
             }
             else if (op == "ParticleCount" || op == "ReadAttribute" || op == "ReadAttributeByID")
             {
                 const auto& resource = p.Resources.at(i.Resource);
                 auto        id = std::to_string(i.Resource), tag = std::to_string(k);
-                auto        count = "readerCounters" + id + "[1]";
+                auto        count = ShaderText::Vfx_readerCounters + id + ShaderText::Vfx_Punctuation_37;
                 if (op == "ParticleCount")
-                    e = "int(" + count + ")";
+                    e = ShaderText::Vfx_int + count + ShaderText::CloseParen;
                 else
                 {
-                    auto found = "found" + tag, sourceSlot = "sourceSlot" + tag;
-                    s += "bool " + found + "=false;uint " + sourceSlot + "=0u;\n";
+                    auto found = ShaderText::Vfx_found + tag, sourceSlot = ShaderText::Vfx_sourceSlot + tag;
+                    s += ShaderText::Vfx_bool + found + ShaderText::Vfx_false_uint + sourceSlot + ShaderText::Vfx_u_6;
                     if (op == "ReadAttribute")
-                        s += "if(" + a + ">=0&&uint(" + a + ")<" + count + "){" + found + "=true;" + sourceSlot +
-                             "=readerAlive" + id + "[uint(" + a + ")];}\n";
+                        s += ShaderText::Vfx_if_2 + a + ShaderText::Vfx_uint + a + ShaderText::Vfx_Punctuation_38 +
+                             count + ShaderText::Vfx_Punctuation_39 + found + ShaderText::Vfx_true_3 + sourceSlot +
+                             ShaderText::Vfx_readerAlive + id + ShaderText::Vfx_uint_2 + a +
+                             ShaderText::Vfx_Punctuation_40;
                     else
-                        s += "for(uint j=0u;j<" + count + ";++j){uint candidate=readerAlive" + id +
-                             "[j];if(readerAttributes" + id + "[" + std::to_string(resource.IDOffset) + "u*" +
-                             std::to_string(resource.Capacity) + "u+candidate].x==uint(" + a + ")){" + found +
-                             "=true;" + sourceSlot + "=candidate;break;}}\n";
+                        s += ShaderText::Vfx_for_uint_j_u + count + ShaderText::Vfx_j_uint_candidate_readerAlive + id +
+                             ShaderText::Vfx_j_if_readerAttributes + id + ShaderText::Vfx_Punctuation_25 +
+                             std::to_string(resource.IDOffset) + ShaderText::Vfx_u_9 +
+                             std::to_string(resource.Capacity) + ShaderText::Vfx_u_candidate_x_uint + a +
+                             ShaderText::Vfx_Punctuation_41 + found + ShaderText::Vfx_true_3 + sourceSlot +
+                             ShaderText::Vfx_candidate_break;
                     if (i.Output == "Found")
                         e = found;
                     else
                     {
                         auto value = decode(i.Kind,
-                                            "readerAttributes" + id + "[" + std::to_string(i.Parameter) + "u*" +
-                                                std::to_string(resource.Capacity) + "u+" + sourceSlot + "]");
+                                            ShaderText::Vfx_readerAttributes + id + ShaderText::Vfx_Punctuation_25 +
+                                                std::to_string(i.Parameter) + ShaderText::Vfx_u_9 +
+                                                std::to_string(resource.Capacity) + ShaderText::Vfx_u_3 + sourceSlot +
+                                                ShaderText::Vfx_Punctuation_19);
                         if (i.Kind == Type::Position)
                             value = resource.PositionSpace == Space::World ?
-                                        "(pc.worldSpace==0u?(inverseOwner*vec4(" + value + ",1)).xyz:" + value + ")" :
-                                        "(pc.worldSpace!=0u?(owner*vec4(" + value + ",1)).xyz:" + value + ")";
-                        e = "(" + found + "?" + value + ":" + GType(i.Kind) + "(0))";
+                                        ShaderText::Vfx_pc_worldSpace_u_inverseOwner + value + ShaderText::Vfx_xyz_4 +
+                                            value + ShaderText::CloseParen :
+                                        ShaderText::Vfx_pc_worldSpace_u_owner + value + ShaderText::Vfx_xyz_4 + value +
+                                            ShaderText::CloseParen;
+                        e = ShaderText::OpenParen + found + ShaderText::Question + value + ShaderText::Colon +
+                            GType(i.Kind) + ShaderText::Vfx_Punctuation_44;
                     }
                 }
             }
             else if (op == "Mod")
-                e = "(" + b + "==0?0:" + a + "%" + b + ")";
+                e = ShaderText::OpenParen + b + ShaderText::Vfx_Punctuation_45 + a + ShaderText::Vfx_Punctuation_46 +
+                    b + ShaderText::CloseParen;
             else if (op == "OwnerMatrixColumn")
-                e = "owner[" + std::to_string(i.Parameter) + "]";
+                e = ShaderText::Vfx_owner_2 + std::to_string(i.Parameter) + ShaderText::Vfx_Punctuation_19;
             else if (op == "Get")
-                e = "p" + std::to_string(i.Parameter);
+                e = ShaderText::ParameterPrefix + std::to_string(i.Parameter);
             else if (op == "Set")
-                e = "(p" + std::to_string(i.Parameter) + "=" + a + ")";
+                e = ShaderText::Vfx_p_3 + std::to_string(i.Parameter) + ShaderText::Assign + a + ShaderText::CloseParen;
             else if (op == "Constant")
                 e = Literal(i.Literal);
             else if (op == "Add" || op == "Sub" || op == "Mul" || op == "Div")
             {
-                const auto symbol = op == "Add" ? "+" : op == "Sub" ? "-" : op == "Mul" ? "*" : "/";
+                const auto symbol = op == "Add" ? ShaderText::Add :
+                                    op == "Sub" ? ShaderText::Subtract :
+                                    op == "Mul" ? ShaderText::Multiply :
+                                                  ShaderText::Divide;
                 if (op == "Div" && Components(i.Kind) == 1)
-                    e = "(" + b + "==" + (i.Kind == Type::Int ? "0" : "0.0") + "?" +
-                        (i.Kind == Type::Int ? "0" : "0.0") + ":" + a + "/" + b + ")";
+                    e = ShaderText::OpenParen + b + ShaderText::Vfx_Punctuation_49 +
+                        (i.Kind == Type::Int ? ShaderText::Vfx_Punctuation_36 : ShaderText::Vfx_Punctuation_20) +
+                        ShaderText::Question +
+                        (i.Kind == Type::Int ? ShaderText::Vfx_Punctuation_36 : ShaderText::Vfx_Punctuation_20) +
+                        ShaderText::Colon + a + ShaderText::Divide + b + ShaderText::CloseParen;
                 else if (op == "Div" && Components(i.Kind) > 1)
                 {
-                    e = GType(i.Kind) + "(";
+                    e = GType(i.Kind) + ShaderText::OpenParen;
                     for (uint32_t component = 0; component < Components(i.Kind); ++component)
                     {
                         if (component)
-                            e += ",";
-                        std::string lane(1, "xyzw"[component]);
-                        e += "(" + b + "." + lane + "==0.0?0.0:" + a + "." + lane + "/" + b + "." + lane + ")";
+                            e += ShaderText::Comma;
+                        std::string lane(1, ShaderText::Vfx_xyzw[component]);
+                        e += ShaderText::OpenParen + b + ShaderText::Dot + lane + ShaderText::Vfx_Punctuation_50 + a +
+                             ShaderText::Dot + lane + ShaderText::Divide + b + ShaderText::Dot + lane +
+                             ShaderText::CloseParen;
                     }
-                    e += ")";
+                    e += ShaderText::CloseParen;
                 }
                 else
-                    e = "(" + a + symbol + b + ")";
+                    e = ShaderText::OpenParen + a + symbol + b + ShaderText::CloseParen;
             }
             else if (op == "Less" || op == "LessEqual" || op == "Greater" || op == "Equal")
-                e = "(" + a + (op == "Less" ? "<" : op == "LessEqual" ? "<=" : op == "Greater" ? ">" : "==") + b + ")";
+                e = ShaderText::OpenParen + a +
+                    (op == "Less"      ? ShaderText::Vfx_Punctuation_35 :
+                     op == "LessEqual" ? ShaderText::Vfx_Punctuation_51 :
+                     op == "Greater"   ? ShaderText::Vfx_Punctuation_52 :
+                                         ShaderText::Vfx_Punctuation_49) +
+                    b + ShaderText::CloseParen;
             else if (op == "And" || op == "Or")
-                e = "(" + a + (op == "And" ? "&&" : "||") + b + ")";
+                e = ShaderText::OpenParen + a +
+                    (op == "And" ? ShaderText::Vfx_Punctuation_53 : ShaderText::Vfx_Punctuation_54) + b +
+                    ShaderText::CloseParen;
             else if (op == "Not")
-                e = "(!" + a + ")";
+                e = ShaderText::Vfx_Punctuation_55 + a + ShaderText::CloseParen;
             else if (op == "Select")
-                e = "(" + a + "?" + b + ":" + c + ")";
+                e = ShaderText::OpenParen + a + ShaderText::Question + b + ShaderText::Colon + c +
+                    ShaderText::CloseParen;
             else if (op == "ToInt")
-                e = "(isnan(" + a + ")?0:" + a + ">=2147483648.0?2147483647:" + a +
-                    "<=-2147483648.0?(-2147483647-1):int(floor(" + a + ")))";
+                e = ShaderText::Vfx_isnan + a + ShaderText::Vfx_Punctuation_56 + a + ShaderText::Vfx_Punctuation_57 +
+                    a + ShaderText::Vfx_int_floor + a + ShaderText::Vfx_Punctuation_58;
             else if (op == "ToFloat")
-                e = "float(" + a + ")";
+                e = ShaderText::Vfx_float_2 + a + ShaderText::CloseParen;
             else if (op == "Splat")
-                e = GType(i.Kind) + "(" + a + ")";
+                e = GType(i.Kind) + ShaderText::OpenParen + a + ShaderText::CloseParen;
             else if (op == "Make")
             {
-                e = GType(i.Kind) + "(";
+                e = GType(i.Kind) + ShaderText::OpenParen;
                 for (size_t j = 0; j < i.Args.size(); ++j)
                 {
                     if (j)
-                        e += ",";
+                        e += ShaderText::Comma;
                     e += arg(j);
                 }
-                e += ")";
+                e += ShaderText::CloseParen;
             }
             else if (op == "Break")
-                e = a + "." +
-                    (i.Output == "Y" || i.Output == "G" ? "y" :
-                     i.Output == "Z" || i.Output == "B" ? "z" :
-                     i.Output == "W" || i.Output == "A" ? "w" :
-                                                          "x");
+                e = a + ShaderText::Dot +
+                    (i.Output == "Y" || i.Output == "G" ? ShaderText::Vfx_y_2 :
+                     i.Output == "Z" || i.Output == "B" ? ShaderText::Vfx_z_4 :
+                     i.Output == "W" || i.Output == "A" ? ShaderText::Vfx_w :
+                                                          ShaderText::Vfx_x_3);
             else if (op == "Saturate")
-                e = "clamp(" + a + "," + GType(i.Kind) + "(0)," + GType(i.Kind) + "(1))";
+                e = ShaderText::Vfx_clamp + a + ShaderText::Comma + GType(i.Kind) + ShaderText::Vfx_Punctuation_59 +
+                    GType(i.Kind) + ShaderText::Vfx_Punctuation_60;
             else if (op == "Normalize")
-                e = "(dot(" + a + "," + a + ")>1e-20?normalize(" + a + "):" + GType(i.Kind) + "(0))";
+                e = ShaderText::Vfx_dot + a + ShaderText::Comma + a + ShaderText::Vfx_e_normalize + a +
+                    ShaderText::Vfx_Punctuation_61 + GType(i.Kind) + ShaderText::Vfx_Punctuation_44;
             else if (op == "Random" || op == "RandomVector" || op == "RandomRange" || op == "RandomUnitVector")
             {
                 const auto random = [&](uint32_t lane) {
-                    return "randomV(" +
+                    return ShaderText::Vfx_randomV +
                            (p.Handler ? (p.Mode == EventMode::SpawnedParticles ?
-                                             "(invocation%" + std::to_string(std::max(1u, p.SpawnNumber)) + "u)" :
-                                             "uniqueID") :
-                                        "uniqueID") +
-                           "," + std::to_string(i.RandomKey) + "u," + std::to_string(lane) + "u)";
+                                             ShaderText::Vfx_invocation + std::to_string(std::max(1u, p.SpawnNumber)) +
+                                                 ShaderText::Vfx_u_10 :
+                                             ShaderText::Vfx_uniqueID) :
+                                        ShaderText::Vfx_uniqueID) +
+                           ShaderText::Comma + std::to_string(i.RandomKey) + ShaderText::Vfx_u_11 +
+                           std::to_string(lane) + ShaderText::Vfx_u_10;
                 };
                 if (op == "RandomUnitVector")
                 {
-                    auto az = random(0) + "*6.28318530718", zv = "(" + random(1) + "*2.0-1.0)",
-                         rad = "sqrt(max(0.0,1.0-" + zv + "*" + zv + "))";
-                    e        = "vec3(" + rad + "*cos(" + az + ")," + rad + "*sin(" + az + ")," + zv + ")";
+                    auto az = random(0) + ShaderText::Vfx_Punctuation_62,
+                         zv = ShaderText::OpenParen + random(1) + ShaderText::Vfx_Punctuation_63,
+                         rad =
+                             ShaderText::Vfx_sqrt_max + zv + ShaderText::Multiply + zv + ShaderText::Vfx_Punctuation_14;
+                    e = ShaderText::Vfx_vec3_7 + rad + ShaderText::Vfx_cos + az + ShaderText::Vfx_Punctuation_64 + rad +
+                        ShaderText::Vfx_sin + az + ShaderText::Vfx_Punctuation_64 + zv + ShaderText::CloseParen;
                 }
                 else
                 {
-                    e = GType(i.Kind) + "(";
+                    e = GType(i.Kind) + ShaderText::OpenParen;
                     for (uint32_t j = 0; j < Components(i.Kind); ++j)
                     {
                         if (j)
-                            e += ",";
+                            e += ShaderText::Comma;
                         e += random(j);
                     }
-                    e += ")";
+                    e += ShaderText::CloseParen;
                     if (op == "RandomRange")
-                        e = "(" + a + "+(" + b + "-" + a + ")*" + e + ")";
+                        e = ShaderText::OpenParen + a + ShaderText::Vfx_Punctuation_65 + b + ShaderText::Subtract + a +
+                            ShaderText::Vfx_Punctuation_29 + e + ShaderText::CloseParen;
                 }
             }
             else if (op == "ToSimulationVector")
-                e = "(pc.worldSpace!=0u?" + a + ":inverse(mat3(owner))*" + a + ")";
+                e = ShaderText::Vfx_pc_worldSpace_u + a + ShaderText::Vfx_inverse_mat3_owner + a +
+                    ShaderText::CloseParen;
             else if (op == "ToWorldVector")
-                e = "(pc.worldSpace!=0u?" + a + ":mat3(owner)*" + a + ")";
+                e = ShaderText::Vfx_pc_worldSpace_u + a + ShaderText::Vfx_mat3_owner + a + ShaderText::CloseParen;
             else if (op == "EmitterSeedOffset")
-                e = "seedOffsetV()";
+                e = ShaderText::Vfx_seedOffsetV;
             else if (op == "FieldPosition")
-                e = "fieldPosition(" + a + "," + b + "," + c + "," + arg(3) + ")";
+                e = ShaderText::Vfx_fieldPosition + a + ShaderText::Comma + b + ShaderText::Comma + c +
+                    ShaderText::Comma + arg(3) + ShaderText::CloseParen;
             else if (op == "FieldVector")
-                e = "fieldRotate(" + a + "," + b + ")";
+                e = ShaderText::Vfx_fieldRotate + a + ShaderText::Comma + b + ShaderText::CloseParen;
             else if (IsVectorFieldOperation(op))
             {
                 auto   bindings = MeshGpuBindings(p);
@@ -3406,32 +3475,47 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                     ++index;
                 auto g = std::to_string(index);
                 if (op == "SampleVectorField")
-                    e = "sampleVectorField(" + g + "," + a + ",bvec3(" + (i.Interface.Tiling[0] ? "true" : "false") +
-                        "," + (i.Interface.Tiling[1] ? "true" : "false") + "," +
-                        (i.Interface.Tiling[2] ? "true" : "false") + "))*" + F(i.Interface.Intensity);
+                    e = ShaderText::Vfx_sampleVectorField + g + ShaderText::Comma + a + ShaderText::Vfx_bvec3 +
+                        (i.Interface.Tiling[0] ? ShaderText::True : ShaderText::False) + ShaderText::Comma +
+                        (i.Interface.Tiling[1] ? ShaderText::True : ShaderText::False) + ShaderText::Comma +
+                        (i.Interface.Tiling[2] ? ShaderText::True : ShaderText::False) +
+                        ShaderText::Vfx_Punctuation_66 + F(i.Interface.Intensity);
                 else if (op == "VectorFieldBounds")
-                    e = "meshStatic(" + g + "," + (i.Output == "Max" ? "1" : "0") + ").xyz";
+                    e = ShaderText::Vfx_meshStatic + g + ShaderText::Comma +
+                        (i.Output == "Max" ? ShaderText::Vfx_Punctuation_67 : ShaderText::Vfx_Punctuation_36) +
+                        ShaderText::Vfx_xyz_7;
                 else
-                    e = "int(meshStatic(" + g + ",2)." + (i.Output == "X" ? "x" : i.Output == "Y" ? "y" : "z") + ")";
+                    e = ShaderText::Vfx_int_meshStatic + g + ShaderText::Vfx_Punctuation_68 +
+                        (i.Output == "X" ? ShaderText::Vfx_x_3 :
+                         i.Output == "Y" ? ShaderText::Vfx_y_2 :
+                                           ShaderText::Vfx_z_4) +
+                        ShaderText::CloseParen;
             }
             else if (op == "CurlNoise")
-                e = "curlV(" + a + "," + b + "," + c + "," + arg(3) + ")";
+                e = ShaderText::Vfx_curlV + a + ShaderText::Comma + b + ShaderText::Comma + c + ShaderText::Comma +
+                    arg(3) + ShaderText::CloseParen;
             else if (op == "SampleForceFields")
             {
-                auto pos    = i.PositionSpace == Space::Local ? "(owner*vec4(" + a + ",1)).xyz" : a;
-                auto vel    = i.PositionSpace == Space::Local ? "(mat3(owner)*" + b + ")" : b;
+                auto pos = i.PositionSpace == Space::Local ? ShaderText::Vfx_owner_vec4 + a + ShaderText::Vfx_xyz_8 : a;
+                auto vel =
+                    i.PositionSpace == Space::Local ? ShaderText::Vfx_mat3_owner_2 + b + ShaderText::CloseParen : b;
                 int  output = i.Output == "Wind" ? 0 : i.Output == "Force" ? 1 : i.Output == "Acceleration" ? 2 : 3;
-                e           = "sampleFieldsV(" + pos + "," + vel + "," + std::to_string(output) + ",parameters[" +
-                              std::to_string(p.Parameters.size() + 4) + "],parameters[" +
-                              std::to_string(p.Parameters.size() + 5) + "] )";
+                e = ShaderText::Vfx_sampleFieldsV + pos + ShaderText::Comma + vel + ShaderText::Comma +
+                    std::to_string(output) + ShaderText::Vfx_parameters_2 + std::to_string(p.Parameters.size() + 4) +
+                    ShaderText::Vfx_parameters_3 + std::to_string(p.Parameters.size() + 5) +
+                    ShaderText::Vfx_Punctuation_69;
                 if (i.PositionSpace == Space::Local)
-                    e = "(inverse(mat3(owner))*" + e + ")";
+                    e = ShaderText::Vfx_inverse_mat3_owner_2 + e + ShaderText::CloseParen;
             }
             else if (op == "Noise3D")
-                e = "noiseV(" + a + ")";
+                e = ShaderText::Vfx_noiseV + a + ShaderText::CloseParen;
             else if (op.find("Transform") != std::string::npos)
-                e = "(" + std::string(op.rfind("Inverse", 0) == 0 ? "inverseOwner" : "owner") + "*vec4(" + a + "," +
-                    (op.find("Position") != std::string::npos ? "1" : "0") + ")).xyz";
+                e = ShaderText::OpenParen +
+                    std::string(op.rfind("Inverse", 0) == 0 ? ShaderText::Vfx_inverseOwner : ShaderText::Vfx_owner_3) +
+                    ShaderText::Vfx_vec4_2 + a + ShaderText::Comma +
+                    (op.find("Position") != std::string::npos ? ShaderText::Vfx_Punctuation_67 :
+                                                                ShaderText::Vfx_Punctuation_36) +
+                    ShaderText::Vfx_xyz_9;
             else if (op == "CustomGLSL")
             {
                 auto code = i.Code;
@@ -3449,9 +3533,9 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                     e = code;
                 else
                 {
-                    auto name = "custom" + std::to_string(k);
-                    customHelpers += GType(i.Kind) + " " + name + "(";
-                    e = name + "(";
+                    auto name = ShaderText::Vfx_custom + std::to_string(k);
+                    customHelpers += GType(i.Kind) + ShaderText::Space + name + ShaderText::OpenParen;
+                    e = name + ShaderText::OpenParen;
                     std::set<uint32_t> arguments;
                     bool               first = true;
                     for (size_t j = 0; j < i.Args.size(); ++j)
@@ -3459,15 +3543,16 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                         {
                             if (!first)
                             {
-                                customHelpers += ",";
-                                e += ",";
+                                customHelpers += ShaderText::Comma;
+                                e += ShaderText::Comma;
                             }
                             first = false;
-                            customHelpers += GType(p.Code[i.Args[j]].Kind) + " " + arg(j);
+                            customHelpers += GType(p.Code[i.Args[j]].Kind) + ShaderText::Space + arg(j);
                             e += arg(j);
                         }
-                    customHelpers += "){\n" + i.CustomDeclarations + code + "\nreturn " + i.Output + ";\n}\n";
-                    e += ")";
+                    customHelpers += ShaderText::Vfx_Punctuation_70 + i.CustomDeclarations + code +
+                                     ShaderText::Vfx_nreturn + i.Output + ShaderText::Vfx_Punctuation_71;
+                    e += ShaderText::CloseParen;
                 }
             }
             else if (IsMeshOperation(op))
@@ -3477,27 +3562,30 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                 while (MeshBindingKey(*meshBindings.at(geometryIndex).first) != MeshBindingKey(i.Interface))
                     ++geometryIndex;
                 auto geometry = std::to_string(geometryIndex);
-                auto base     = "int(diValues[" + std::to_string(p.Interfaces.at(i.Parameter).ValueOffset) + "].x)";
+                auto base = ShaderText::Vfx_int_diValues + std::to_string(p.Interfaces.at(i.Parameter).ValueOffset) +
+                            ShaderText::Vfx_x_4;
                 if (op == "RandomTriangle" || op == "RandomVertex" || op == "RandomBone")
                 {
                     auto randomID = p.Handler && spawn ?
-                                        "invocation%" + std::to_string(std::max(1u, p.SpawnNumber)) + "u" :
-                                        "uniqueID";
-                    e             = "meshRandom(" + base + "," + geometry + "," +
-                                    (op == "RandomTriangle" ? "0" :
-                                     op == "RandomVertex"   ? "1" :
-                                                              "2") +
-                                    ",randomV(" + randomID + "," + std::to_string(i.RandomKey) + "u^hashV(" +
-                                    (spawn ? "invocation" : "0u") + "+0x9e3779b9u),0u))";
+                                        ShaderText::Vfx_invocation_2 + std::to_string(std::max(1u, p.SpawnNumber)) +
+                                            ShaderText::UnsignedSuffix :
+                                        ShaderText::Vfx_uniqueID;
+                    e = ShaderText::Vfx_meshRandom + base + ShaderText::Comma + geometry + ShaderText::Comma +
+                        (op == "RandomTriangle" ? ShaderText::Vfx_Punctuation_36 :
+                         op == "RandomVertex"   ? ShaderText::Vfx_Punctuation_67 :
+                                                  ShaderText::Vfx_Punctuation_72) +
+                        ShaderText::Vfx_randomV_2 + randomID + ShaderText::Comma + std::to_string(i.RandomKey) +
+                        ShaderText::Vfx_u_hashV + (spawn ? ShaderText::Vfx_invocation_3 : ShaderText::Vfx_u_12) +
+                        ShaderText::Vfx_x9e3779b9u_u;
                 }
                 else if (op == "BoneByName")
                     e = std::to_string(i.Literal.Integer);
                 else if (op == "TriangleCount" || op == "VertexCount" || op == "BoneCount")
-                    e = "(diValues[" + base + "+2].w==0?0:int(diValues[" + base +
-                        (op == "VertexCount" ? "+3].w" :
-                         op == "BoneCount"   ? "].w" :
-                                               "].y") +
-                        "))";
+                    e = ShaderText::Vfx_diValues + base + ShaderText::Vfx_w_int_diValues + base +
+                        (op == "VertexCount" ? ShaderText::Vfx_w_2 :
+                         op == "BoneCount"   ? ShaderText::Vfx_w_3 :
+                                               ShaderText::Vfx_y_3) +
+                        ShaderText::Vfx_Punctuation_14;
                 else
                 {
                     int field = i.Output == "Position" ? 0 :
@@ -3508,18 +3596,18 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                                 i.Output == "Rotation" ? 7 :
                                 i.Output == "Valid"    ? 8 :
                                                          5;
-                    e         = "meshSample(" + base + "," + geometry + "," + a + "," +
-                                (i.Args.size() == 2 ? b : "vec3(1,0,0)") + "," +
-                                (op == "SampleBone"   ? "2" :
-                                 op == "SampleVertex" ? "1" :
-                                                        "0") +
-                                "," + std::to_string(field) + ")";
+                    e = ShaderText::Vfx_meshSample + base + ShaderText::Comma + geometry + ShaderText::Comma + a +
+                        ShaderText::Comma + (i.Args.size() == 2 ? b : ShaderText::Vfx_vec3_8) + ShaderText::Comma +
+                        (op == "SampleBone"   ? ShaderText::Vfx_Punctuation_72 :
+                         op == "SampleVertex" ? ShaderText::Vfx_Punctuation_67 :
+                                                ShaderText::Vfx_Punctuation_36) +
+                        ShaderText::Comma + std::to_string(field) + ShaderText::CloseParen;
                     if (i.Kind == Type::Bool)
-                        e = "(" + e + ".x!=0)";
+                        e = ShaderText::OpenParen + e + ShaderText::Vfx_x_5;
                     else if (Components(i.Kind) == 2)
-                        e += ".xy";
+                        e += ShaderText::Vfx_xy;
                     else if (Components(i.Kind) == 3)
-                        e += ".xyz";
+                        e += ShaderText::Vfx_xyz_2;
                 }
             }
             else if (op == "Sample")
@@ -3527,75 +3615,83 @@ vec3 fieldPosition(vec3 p,vec3 t,vec4 q,vec3 scale){vec3 d;for(int a=0;a<3;++a)d
                 const auto& di    = i.Interface;
                 const auto& table = p.Interfaces.at(i.Parameter);
                 auto        value = [&](std::string index) {
-                    std::string word = "diValues[" + std::to_string(table.ValueOffset) + "+" + index + "]";
-                    return word + (Components(i.Kind) == 1 ? ".x" :
-                                   Components(i.Kind) == 2 ? ".xy" :
-                                   Components(i.Kind) == 3 ? ".xyz" :
-                                                             "");
+                    std::string word = ShaderText::Vfx_diValues_2 + std::to_string(table.ValueOffset) +
+                                       ShaderText::Add + index + ShaderText::Vfx_Punctuation_19;
+                    return word + (Components(i.Kind) == 1 ? ShaderText::Vfx_x_2 :
+                                   Components(i.Kind) == 2 ? ShaderText::Vfx_xy :
+                                   Components(i.Kind) == 3 ? ShaderText::Vfx_xyz_2 :
+                                                             ShaderText::Empty);
                 };
                 if (di.Kind == "Texture2D")
                 {
-                    e = value("min(" + std::to_string(di.Height - 1) + ",int(clamp(" + a + ".y,0.0,1.0)*" +
-                              F(float(di.Height)) + "))*" + std::to_string(di.Width) + "+min(" +
-                              std::to_string(di.Width - 1) + ",int(clamp(" + a + ".x,0.0,1.0)*" + F(float(di.Width)) +
-                              "))");
+                    e = value(ShaderText::Vfx_min_2 + std::to_string(di.Height - 1) + ShaderText::Vfx_int_clamp + a +
+                              ShaderText::Vfx_y_4 + F(float(di.Height)) + ShaderText::Vfx_Punctuation_66 +
+                              std::to_string(di.Width) + ShaderText::Vfx_min_3 + std::to_string(di.Width - 1) +
+                              ShaderText::Vfx_int_clamp + a + ShaderText::Vfx_x_6 + F(float(di.Width)) +
+                              ShaderText::Vfx_Punctuation_14);
                 }
                 else
                 {
                     e = value(std::to_string(di.Values.size() - 1));
                     for (size_t j = di.Values.size() - 1; j > 0; --j)
-                        e = "(" + a + "<" + F(di.Times[j]) + "?mix(" + value(std::to_string(j - 1)) + "," +
-                            value(std::to_string(j)) + ",clamp((" + a + "-" + F(di.Times[j - 1]) + ")/" +
-                            F(di.Times[j] - di.Times[j - 1]) + ",0.0,1.0)):" + e + ")";
+                        e = ShaderText::OpenParen + a + ShaderText::Vfx_Punctuation_35 + F(di.Times[j]) +
+                            ShaderText::Vfx_mix + value(std::to_string(j - 1)) + ShaderText::Comma +
+                            value(std::to_string(j)) + ShaderText::Vfx_clamp_2 + a + ShaderText::Subtract +
+                            F(di.Times[j - 1]) + ShaderText::Vfx_Punctuation_73 + F(di.Times[j] - di.Times[j - 1]) +
+                            ShaderText::Vfx_Punctuation_74 + e + ShaderText::CloseParen;
                 }
             }
             else
             {
-                std::string fn = op == "Lerp" ? "mix" : op == "Frac" ? "fract" : op;
+                std::string fn = op == "Lerp" ? ShaderText::Vfx_mix_2 : op == "Frac" ? ShaderText::Vfx_fract : op;
                 std::transform(fn.begin(), fn.end(), fn.begin(), [](unsigned char x) { return char(std::tolower(x)); });
-                e = fn + "(";
+                e = fn + ShaderText::OpenParen;
                 for (size_t j = 0; j < i.Args.size(); ++j)
                 {
                     if (j)
-                        e += ",";
+                        e += ShaderText::Comma;
                     e += arg(j);
                 }
-                e += ")";
+                e += ShaderText::CloseParen;
             }
-            s += GType(i.Kind) + " r" + std::to_string(k) + "=" + e + ";\n";
+            s += GType(i.Kind) + ShaderText::Vfx_r_2 + std::to_string(k) + ShaderText::Assign + e +
+                 ShaderText::EndStatement;
         }
         for (uint32_t k = 0; k < p.Parameters.size(); ++k)
         {
             const auto& v = p.Parameters[k];
             if (auto a = attribute(v.Name); a && p.Writes.count(v.Name))
-                s += "a" + std::to_string(a->Offset) + "=p" + std::to_string(k) + ";\n";
+                s += ShaderText::AttributePrefix + std::to_string(a->Offset) + ShaderText::Vfx_p_4 + std::to_string(k) +
+                     ShaderText::EndStatement;
         }
         if (p.Handler && p.Mode == EventMode::EveryParticle)
-            s += "if(!a" + std::to_string(attribute("Particles.Alive")->Offset) + ")break;}\n";
+            s += ShaderText::Vfx_if_a + std::to_string(attribute("Particles.Alive")->Offset) + ShaderText::Vfx_break_2;
         if (emitter)
         {
             for (uint32_t k = 0; k < p.Parameters.size(); ++k)
             {
                 const auto& v = p.Parameters[k];
                 if (v.Name.rfind("Emitter.", 0) == 0 && p.Writes.count(v.Name))
-                    s += "emitterState[" + std::to_string(k) + "]=" + encode(v.Kind, "p" + std::to_string(k)) + ";\n";
+                    s += ShaderText::Vfx_emitterState + std::to_string(k) + ShaderText::Vfx_Punctuation_75 +
+                         encode(v.Kind, ShaderText::ParameterPrefix + std::to_string(k)) + ShaderText::EndStatement;
                 if (v.Name == "Emitter.SpawnCountThisFrame")
-                    s += "counters[15]=uint(max(0,p" + std::to_string(k) + "));\n";
+                    s += ShaderText::Vfx_counters_uint_max_p + std::to_string(k) + ShaderText::Vfx_Punctuation_76;
             }
-            s += "return;\n";
+            s += ShaderText::Vfx_return;
         }
         if (spawn && !p.Handler)
             if (auto a = attribute("Particles.Velocity"))
-                s += "if(pc.worldSpace!=0u)a" + std::to_string(a->Offset) + "=mat3(owner)*a" +
-                     std::to_string(a->Offset) + ";\n";
+                s += ShaderText::Vfx_if_pc_worldSpace_u + std::to_string(a->Offset) + ShaderText::Vfx_mat3_owner_a +
+                     std::to_string(a->Offset) + ShaderText::EndStatement;
         if (gridStage)
-            s += "return;\n";
-        s += "if(pc.kill!=0u)a" + std::to_string(attribute("Particles.Alive")->Offset) + "=false;\n";
+            s += ShaderText::Vfx_return;
+        s += ShaderText::Vfx_if_pc_kill_u + std::to_string(attribute("Particles.Alive")->Offset) +
+             ShaderText::Vfx_false_2;
         for (const auto& a : attributes)
-            s += "attributes[" + std::to_string(a.Offset) +
-                 "u*pc.capacity+slot]=" + encode(a.Kind, "a" + std::to_string(a.Offset)) + ";\n";
-        auto alive = "a" + std::to_string(attribute("Particles.Alive")->Offset);
-        s += "if(!" + alive + "){flags[slot]=0u;uint at=atomicAdd(counters[0],1u);freeList[at]=slot;}\n}\n";
+            s += ShaderText::Vfx_attributes + std::to_string(a.Offset) + ShaderText::Vfx_u_pc_capacity_slot2 +
+                 encode(a.Kind, ShaderText::AttributePrefix + std::to_string(a.Offset)) + ShaderText::EndStatement;
+        auto alive = ShaderText::AttributePrefix + std::to_string(attribute("Particles.Alive")->Offset);
+        s += ShaderText::Vfx_if_3 + alive + ShaderText::Vfx_flags_slot_u_uint;
         s.insert(s.find("void main()"), customHelpers);
         p.GLSL = std::move(s);
         shaderc::Compiler       compiler;

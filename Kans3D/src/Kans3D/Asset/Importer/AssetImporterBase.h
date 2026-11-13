@@ -15,6 +15,8 @@ namespace Kans
     public:
         virtual ~AssetImporterBase()        = default;
         virtual uint32_t GetVersion() const = 0;
+        // Engine-owned compiler inputs, independent of source settings and importer version.
+        virtual std::string          GetEnvironmentFingerprint() const { return {}; }
         virtual ImportSettingsSchema GetSettingsSchema() const { return {}; }
         // Uses exactly the same parser as Import, without reading source bytes.
         [[nodiscard]] virtual std::variant<std::monostate, AssetError>

@@ -3,6 +3,7 @@
 #include "Kans3D/Asset/AssetError.h"
 #include "Kans3D/Asset/Importer/AssetBuildService.h"
 #include "Kans3D/Asset/SourceAssetDatabase.h"
+#include "Kans3D/Asset/Storage/AssetProvider.h"
 #include "Kans3D/Physics/PhysicsSettings.h"
 
 #include <filesystem>
@@ -146,6 +147,9 @@ namespace Kans
         BuildPublishedAssets(const AssetBuildOptions& options);
 
         Ref<const AssetRegistry>     GetRuntimeAssetRegistry() const;
+        // Project must outlive the provider. Do not build concurrently through another coordinator.
+        // Runtime cache repair uses the same BuildAsset path as ordinary project imports.
+        [[nodiscard]] Ref<IAssetProvider> CreateAssetProvider();
         std::filesystem::path        GetProductDirectory() const { return m_Config.CacheDirectory / "Products"; }
         const ProductStore&          GetProductStore() const { return *m_ProductStore; }
         const ProjectConfig&         GetConfig() const { return m_Config; } // 目录已解析为绝对路径。
