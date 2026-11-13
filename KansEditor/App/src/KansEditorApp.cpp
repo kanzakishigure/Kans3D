@@ -39,7 +39,18 @@ public:
             PushLayer(new Kans::EditorLayer(project, placements));
         else
         {
-            auto* hub = new Kans::LauncherLayer(editorRoot / "Templates", placements, &Kans::EditorProcess::LaunchWithProject);
+            // Under a debugger the Hub becomes the editor in this process, as `--project` would.
+            auto openInProcess = [this, placements](const std::filesystem::path& chosen) -> std::optional<std::string> {
+                auto selection = Kans::Launcher::ResolveSelection(chosen);
+                auto* file     = std::get_if<std::filesystem::path>(&selection);
+                if (!file)
+                    return "Not a project: " + chosen.u8string();
+                Kans::Launcher::ApplyWindowSetup(GetWindow(), placements->Start(true));
+                PushLayer(new Kans::EditorLayer(*file, placements));
+                return std::nullopt;
+            };
+            auto* hub = new Kans::LauncherLayer(
+                editorRoot / "Templates", placements, &Kans::EditorProcess::LaunchWithProject, std::move(openInProcess));
             PushLayer(hub);
             if (!request.empty())
                 hub->Request(request);

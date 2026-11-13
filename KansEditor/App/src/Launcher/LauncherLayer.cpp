@@ -1,14 +1,16 @@
 #include "LauncherLayer.h"
 #include <imgui.h>
 #include "Kans3D/ImGui/EditorTheme.h"
+#include "KansEditorCore/Launcher/EditorProcess.h"
 
 namespace Kans
 {
     LauncherLayer::LauncherLayer(std::filesystem::path                          templatesDir,
                                  std::shared_ptr<Launcher::WindowPlacementFlow> placements,
-                                 Launcher::EditorLauncher                       launch)
+                                 Launcher::EditorLauncher                       launch,
+                                 InProcessOpener                                openInProcess)
         : Layer("LauncherLayer"), m_Browser(std::move(templatesDir)), m_Placements(std::move(placements)),
-          m_Launch(std::move(launch))
+          m_Launch(std::move(launch)), m_OpenInProcess(std::move(openInProcess))
     {
         if (!m_Placements)
             m_Placements = std::make_shared<Launcher::WindowPlacementFlow>();
@@ -52,7 +54,23 @@ namespace Kans
         auto chosen = m_Browser.Draw();
         ImGui::End();
 
-        if (chosen && !m_Launched)
+        if (chosen && !m_Launched && m_OpenInProcess && EditorProcess::OpensInProcess())
+        {
+            // A debugger would stay on this process: become the editor here instead of spawning one.
+            auto& app = Application::Get();
+            m_Placements->Remember(app.GetWindow().GetPlacement());
+            m_Launched = true;
+            app.SubmitPostFrame([this, project = *chosen] {
+                if (auto error = m_OpenInProcess(project))
+                {
+                    m_Launched = false;
+                    m_Browser.SetError(*error);
+                    return;
+                }
+                Application::Get().PopLayer(this); // Deletes this layer: nothing may follow.
+            });
+        }
+        else if (chosen && !m_Launched)
         {
             auto&      app    = Application::Get();
             const auto result = Launcher::LaunchFromHub(*m_Placements, *chosen, app.GetWindow().GetPlacement(), m_Launch);

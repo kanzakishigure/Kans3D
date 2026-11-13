@@ -1,5 +1,7 @@
 #include "KansEditorCore/Launcher/EditorProcess.h"
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #if defined(_WIN32)
 #include <windows.h>
@@ -26,6 +28,23 @@ namespace Kans::EditorProcess
         }
 #endif
         return {argv, argv + argc};
+    }
+
+    bool OpensInProcess()
+    {
+        if (const char* forced = std::getenv("KANS_EDITOR_IN_PROCESS"); forced && std::strcmp(forced, "1") == 0)
+            return true;
+#if defined(_WIN32)
+        return IsDebuggerPresent() != FALSE;
+#else
+        // A traced process (gdb, lldb) reports its tracer's PID; 0 means none.
+        std::ifstream status("/proc/self/status");
+        std::string   line;
+        while (std::getline(status, line))
+            if (line.rfind("TracerPid:", 0) == 0)
+                return std::strtol(line.c_str() + 10, nullptr, 10) != 0;
+        return false;
+#endif
     }
 
     std::optional<std::string> LaunchWithProject(const std::filesystem::path& requested)
