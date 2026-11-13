@@ -10,6 +10,8 @@ namespace Kans::EditorProcess
     std::vector<std::string> Arguments(int argc, char** argv);
     // Starts another editor process for `project`; returns an error message on failure.
     std::optional<std::string> LaunchWithProject(const std::filesystem::path& project);
+    // Starts another editor process without a project, which is the project Hub.
+    std::optional<std::string> LaunchHub();
     // True when a project chosen in the Hub should open in this process instead of a new one:
     // a debugger is attached (it would not follow a child process), or KANS_EDITOR_IN_PROCESS=1.
     bool OpensInProcess();

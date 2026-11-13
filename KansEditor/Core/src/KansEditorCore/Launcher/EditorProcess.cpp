@@ -47,22 +47,20 @@ namespace Kans::EditorProcess
 #endif
     }
 
-    std::optional<std::string> LaunchWithProject(const std::filesystem::path& requested)
+    namespace
     {
-        // The new process starts in another folder (the executable's on Windows).
-        std::error_code ec;
-        auto            project = std::filesystem::absolute(requested, ec);
-        if (ec)
-            project = requested;
-        std::filesystem::path executable;
-        try
+        // Another editor process, with `--project <project>` when one is given.
+        std::optional<std::string> Spawn(const std::optional<std::filesystem::path>& project)
         {
-            executable = KansFileSystem::GetExecutablePath();
-        }
-        catch (const std::exception& error)
-        {
-            return "Cannot find the editor executable: " + std::string(error.what());
-        }
+            std::filesystem::path executable;
+            try
+            {
+                executable = KansFileSystem::GetExecutablePath();
+            }
+            catch (const std::exception& error)
+            {
+                return "Cannot find the editor executable: " + std::string(error.what());
+            }
 #if defined(_WIN32)
         // Quote per CommandLineToArgvW rules; paths cannot contain '"' on Windows.
         auto quote = [](const std::wstring& text) {
@@ -75,24 +73,39 @@ namespace Kans::EditorProcess
             }
             return quoted + L"\"";
         };
-        std::wstring command = quote(executable.wstring()) + L" --project " + quote(project.wstring());
+        std::wstring command = quote(executable.wstring());
+        if (project)
+            command += L" --project " + quote(project->wstring());
         STARTUPINFOW        startup {sizeof(startup)};
         PROCESS_INFORMATION process {};
         if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr,
                             executable.parent_path().c_str(), &startup, &process))
             return "Cannot start the editor (error " + std::to_string(GetLastError()) + ")";
-        // The Hub closes right after: let the editor's window come to the front.
+        // This process closes right after: let the new window come to the front.
         AllowSetForegroundWindow(process.dwProcessId);
         CloseHandle(process.hThread);
         CloseHandle(process.hProcess);
 #else
         const auto  program = executable.string();
-        const auto  path    = project.string();
-        const char* argv[]  = {program.c_str(), "--project", path.c_str(), nullptr};
+        const auto  path    = project ? project->string() : std::string();
+        const char* argv[]  = {program.c_str(), project ? "--project" : nullptr, path.c_str(), nullptr};
         pid_t       child   = 0;
         if (int status = posix_spawn(&child, program.c_str(), nullptr, nullptr, const_cast<char**>(argv), environ))
             return "Cannot start the editor: " + std::string(std::strerror(status));
 #endif
         return std::nullopt;
+        }
+    } // namespace
+
+    std::optional<std::string> LaunchWithProject(const std::filesystem::path& requested)
+    {
+        // The new process starts in another folder (the executable's on Windows).
+        std::error_code ec;
+        auto            project = std::filesystem::absolute(requested, ec);
+        if (ec)
+            project = requested;
+        return Spawn(project);
     }
+
+    std::optional<std::string> LaunchHub() { return Spawn(std::nullopt); }
 } // namespace Kans::EditorProcess

@@ -38,4 +38,9 @@ namespace Kans
                 return TitlebarHit::Client;
         return TitlebarHit::Caption;
     }
+
+    bool ShowsWindowEdge(bool customTitlebar, bool maximized, float width, float height)
+    {
+        return customTitlebar && !maximized && width > 0.0f && height > 0.0f;
+    }
 } // namespace Kans

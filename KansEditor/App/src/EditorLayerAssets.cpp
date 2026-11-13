@@ -34,13 +34,14 @@ namespace Kans
         }
     } // namespace
 
-    void EditorLayer::OpenProject()
+    std::optional<std::string> EditorLayer::OpenProject()
     {
+        // Failures stop the startup: the splash shows them with a way back to the Hub.
         auto loaded = LoadProjectFile(m_ProjectFile);
         if (const auto* error = std::get_if<AssetError>(&loaded))
         {
             CORE_ERROR("Cannot load project: {}", error->Message);
-            std::exit(EXIT_FAILURE);
+            return "Cannot load the project: " + error->Message;
         }
         const auto& file = std::get<ProjectFile>(loaded);
         const auto config = MakeProjectConfig(m_ProjectFile.parent_path(), file);
@@ -51,7 +52,7 @@ namespace Kans
         if (ec)
         {
             CORE_ERROR("Cannot enter project '{}': {}", config.RootDirectory.string(), ec.message());
-            std::exit(EXIT_FAILURE);
+            return "Cannot enter the project folder " + config.RootDirectory.u8string() + ": " + ec.message();
         }
         KansFileSystem::SetProject(config);
         m_ProjectName = file.Name;
@@ -67,7 +68,7 @@ namespace Kans
         if (const auto* error = std::get_if<AssetError>(&opened))
         {
             CORE_ERROR("Cannot open project: {}", error->Message);
-            std::exit(EXIT_FAILURE);
+            return "Cannot open the project: " + error->Message;
         }
         auto project = std::move(std::get<std::unique_ptr<Project>>(opened));
         for (const auto& warning : project->GetAssetWarnings())
@@ -76,7 +77,7 @@ namespace Kans
         if (const auto* error = std::get_if<AssetError>(&controller))
         {
             CORE_ERROR("Cannot create project import controller: {}", error->Message);
-            return;
+            return std::nullopt;
         }
         m_AssetImports = std::get<Scope<EditorAssetImportService>>(std::move(controller));
         m_ProductImportPanel.Bind(m_AssetImports.get());
@@ -172,6 +173,7 @@ namespace Kans
         AssetBuildOptions options;
         options.Target = EditorAssetTarget;
         Record(m_AssetImports->StartOutdated(options));
+        return std::nullopt;
     }
 
     std::variant<std::monostate, AssetError> EditorLayer::RefreshProductAssets(Ref<const AssetRegistry> snapshot)

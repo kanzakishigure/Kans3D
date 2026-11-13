@@ -48,7 +48,8 @@ namespace Kans
         if (m_Titlebar.IsCustom())
         {
             auto& window = Application::Get().GetWindow();
-            const auto button = DrawLauncherTitlebar(m_Titlebar, window.IsMaximized(), window.GetTitlebarButtonState());
+            const auto button = DrawWindowTitlebar(
+                m_Titlebar, "Kans3D \xE2\x80\x94 Projects", window.IsMaximized(), window.GetTitlebarButtonState());
             RunTitlebarButton(button);
         }
         auto chosen = m_Browser.Draw();

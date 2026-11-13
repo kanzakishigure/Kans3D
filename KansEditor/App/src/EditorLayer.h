@@ -6,8 +6,9 @@
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Project/Project.h"
 #include <Kans3D.h>
-#include "KansEditorCore/SceneAssetImportQueue.h"
+#include "KansEditorCore/EditorStartup.h"
 #include "KansEditorCore/ImportProgress.h"
+#include "KansEditorCore/SceneAssetImportQueue.h"
 #include "KansEditorCore/ScriptBuildProgress.h"
 #include "UI/ProgressPopup.h"
 
@@ -66,9 +67,14 @@ namespace Kans
     {
 
     public:
+        // Replaces `editor` with the project Hub in this process; called after the frame.
+        using InProcessHubOpener = std::function<void(Layer* editor)>;
         // `placements` (optional) keeps the window's "Editor" placement on exit and project switch.
+        // `openHubInProcess` is how a failed startup returns to the Hub while projects open in
+        // this process (EditorProcess::OpensInProcess); otherwise a Hub process is started.
         explicit EditorLayer(std::filesystem::path                          projectFile,
-                             std::shared_ptr<Launcher::WindowPlacementFlow> placements = nullptr);
+                             std::shared_ptr<Launcher::WindowPlacementFlow> placements       = nullptr,
+                             InProcessHubOpener                             openHubInProcess = {});
         virtual ~EditorLayer() = default;
 
         virtual void OnAttach() override;
@@ -79,8 +85,24 @@ namespace Kans
         virtual void OnImGuiRender() override;
 
     private:
+        // ---- Startup (EditorLayer.cpp, the splash in EditorLayerUI.cpp) ----
+        // The startup stages run one per frame, after the frame that shows the splash.
+        void BuildStartup();
+        void CreateDefaultScene();
+        // The editor view, its environment and the material preview renderers.
+        void CreateViewport();
+        void DrawStartupSplash();
+        // The Hub after a failed startup: in this process or a new one; this editor closes.
+        void                                     BackToProjects();
+        EditorStartup                            m_Startup;
+        bool                                     m_StartupStepQueued = false;
+        std::variant<std::monostate, AssetError> m_StartupAssets;
+        InProcessHubOpener                       m_OpenHubInProcess;
+        bool                                     m_LeavingStartup = false;
+        std::string                              m_BackError;
         // ---- Assets and scenes (EditorLayerAssets.cpp) ----
-        void                                     OpenProject();
+        // Loads and opens the project; an error message when it cannot.
+        std::optional<std::string> OpenProject();
         std::filesystem::path m_ProjectFile, m_StartupScene, m_LayoutFile;
         std::string           m_ProjectName;
         // Points ImGui at the project's layout file and loads it.

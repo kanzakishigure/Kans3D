@@ -166,9 +166,25 @@ namespace Kans
         return clicked;
     }
 
-    void Titlebar::End() { m_Regions.Publish(); }
+    void Titlebar::End()
+    {
+        m_Regions.Publish();
+        // Above every window, inside the client rectangle; resize hit-testing is the window
+        // procedure's and is unaffected.
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        if (!ShowsWindowEdge(IsCustom(), m_Window && m_Window->IsMaximized(), viewport->Size.x, viewport->Size.y))
+            return;
+        const ImVec2 max {viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y};
+        ImGui::GetForegroundDrawList(viewport)->AddRect(viewport->Pos,
+                                                        max,
+                                                        ImGui::GetColorU32(EditorTheme::Colors().Line),
+                                                        0.0f,
+                                                        0,
+                                                        std::max(1.0f, IM_ROUND(EditorTheme::Px(1.0f))));
+    }
 
-    Titlebar::Button DrawLauncherTitlebar(Titlebar& titlebar, bool maximized, TitlebarButtonState state)
+    Titlebar::Button
+    DrawWindowTitlebar(Titlebar& titlebar, const char* title, bool maximized, TitlebarButtonState state)
     {
         const ImVec2 min    = ImGui::GetCursorScreenPos();
         const float  height = Titlebar::ButtonSize().y;
@@ -180,7 +196,7 @@ namespace Kans
         // The title is part of the drag area.
         draw->AddText({x, IM_ROUND((min.y + max.y - ImGui::GetTextLineHeight()) * 0.5f)},
                       ImGui::GetColorU32(EditorTheme::Colors().TextDim),
-                      "Kans3D \xE2\x80\x94 Projects");
+                      title);
         const auto clicked = titlebar.WindowButtons(maximized, state);
         titlebar.End();
         ImGui::SetCursorScreenPos({min.x, max.y}); // The caller's content follows directly.

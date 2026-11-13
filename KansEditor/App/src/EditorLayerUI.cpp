@@ -136,6 +136,11 @@ namespace Kans
     void EditorLayer::OnImGuiRender()
     {
         PROFILE_FUCTION();
+        if (!m_Startup.Finished())
+        {
+            DrawStartupSplash();
+            return;
+        }
         m_ThumbnailBudget = 2; // Material thumbnails rendered per frame.
         PollProjectThumbnail();
         HandleShortcuts();
@@ -186,6 +191,138 @@ namespace Kans
         m_ProgressPopup.Draw(m_Progress, std::nullopt);
         Application::Get().GetImGuiLayer()->BlockEvents(m_ViewportPanel.IsFocused() || m_ViewportPanel.IsHovered());
         TrackSceneEdits();
+    }
+
+    void EditorLayer::DrawStartupSplash()
+    {
+        using EditorTheme::Px;
+        const auto&          theme    = EditorTheme::Colors();
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos);
+        ImGui::SetNextWindowSize(viewport->WorkSize);
+        ImGui::SetNextWindowViewport(viewport->ID);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0.0f, 0.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, theme.App);
+        ImGui::Begin("##EditorStartup",
+                     nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking |
+                         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings |
+                         ImGuiWindowFlags_NoNav);
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(3);
+
+        // The project's own name once its file is read, its file name until then.
+        const std::string name = m_ProjectName.empty() ? m_ProjectFile.stem().u8string() : m_ProjectName;
+        if (m_Titlebar.IsCustom())
+        {
+            auto&             window = Application::Get().GetWindow();
+            const std::string title  = name + " \xE2\x80\x94 Kans3D Editor";
+            RunTitlebarButton(
+                DrawWindowTitlebar(m_Titlebar, title.c_str(), window.IsMaximized(), window.GetTitlebarButtonState()));
+        }
+
+        // One column in the middle of the window, a little above the centre.
+        const bool   failed = m_Startup.Failed();
+        const ImVec2 area   = ImGui::GetCursorScreenPos();
+        const ImVec2 avail  = ImGui::GetContentRegionAvail();
+        const float  width  = std::max(1.0f, std::min(Px(440.0f), avail.x - Px(EditorTheme::Space4) * 2.0f));
+        const float  height = failed ? Px(180.0f) : Px(96.0f);
+        const float  left   = IM_ROUND(area.x + (avail.x - width) * 0.5f);
+        ImGui::SetCursorScreenPos({left, IM_ROUND(area.y + std::max(0.0f, (avail.y - height) * 0.42f))});
+        ImGui::BeginGroup();
+        ImGui::PushTextWrapPos(left + width);
+        auto& fonts = ImGui::GetIO().Fonts->Fonts;
+        ImGui::PushFont(fonts.Size > 1 ? fonts[1] : ImGui::GetFont(), 20.0f);
+        ImGui::TextUnformatted(name.c_str());
+        ImGui::PopFont();
+        ImGui::PushStyleColor(ImGuiCol_Text, theme.TextDim);
+        ImGui::TextUnformatted(m_ProjectFile.parent_path().u8string().c_str());
+        ImGui::PopStyleColor();
+        ImGui::Dummy({0.0f, Px(EditorTheme::Space4)});
+
+        if (!failed)
+        {
+            // The progress bar of the progress popup: an inset track with the accent fill.
+            auto*        draw = ImGui::GetWindowDrawList();
+            const float  barH = Px(4.0f);
+            const ImVec2 a    = ImGui::GetCursorScreenPos();
+            const ImVec2 b {a.x + width, a.y + barH};
+            draw->AddRectFilled(a, b, ImGui::GetColorU32(theme.Inset), barH * 0.5f);
+            if (const float done = m_Startup.Progress(); done > 0.0f)
+                draw->AddRectFilled(a, {a.x + width * done, b.y}, ImGui::GetColorU32(theme.Accent), barH * 0.5f);
+            ImGui::Dummy({width, barH});
+            ImGui::Dummy({0.0f, Px(EditorTheme::Space1)});
+            ImGui::PushStyleColor(ImGuiCol_Text, theme.TextDim);
+            const std::string step    = m_Startup.CurrentLabel() + "\xE2\x80\xA6";
+            const std::string percent = std::to_string(int(m_Startup.Progress() * 100.0f + 0.5f)) + "%";
+            const ImVec2      row     = ImGui::GetCursorScreenPos();
+            ImGui::TextUnformatted(step.c_str());
+            ImGui::SameLine();
+            ImGui::SetCursorScreenPos({left + width - ImGui::CalcTextSize(percent.c_str()).x, row.y});
+            ImGui::TextUnformatted(percent.c_str());
+            ImGui::PopStyleColor();
+        }
+        else
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, theme.Danger);
+            ImGui::TextUnformatted(ICON_FA_TRIANGLE_EXCLAMATION "  The project could not be opened");
+            ImGui::PopStyleColor();
+            ImGui::Dummy({0.0f, Px(EditorTheme::Space1)});
+            ImGui::TextUnformatted(m_Startup.Error().c_str());
+            ImGui::Dummy({0.0f, Px(EditorTheme::Space4)});
+            ImGui::BeginDisabled(m_LeavingStartup);
+            ImGui::PushStyleColor(ImGuiCol_Button, theme.Accent);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme.AccentHover);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme.AccentPressed);
+            if (ImGui::Button(ICON_FA_ARROW_LEFT "  Back to projects"))
+                BackToProjects();
+            ImGui::PopStyleColor(3);
+            ImGui::EndDisabled();
+            if (!m_BackError.empty())
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, theme.Danger);
+                ImGui::TextUnformatted(m_BackError.c_str());
+                ImGui::PopStyleColor();
+            }
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        ImGui::End();
+
+        // The next stage runs after this frame is shown, so the label names the work in progress.
+        if (m_Startup.Running() && !m_StartupStepQueued)
+        {
+            m_StartupStepQueued = true;
+            Application::Get().SubmitPostFrame([this] {
+                m_StartupStepQueued = false;
+                m_Startup.RunNext();
+                if (m_Startup.Finished())
+                    CORE_INFO("Editor started: {}", m_ProjectFile.u8string());
+            });
+        }
+    }
+
+    void EditorLayer::BackToProjects()
+    {
+        if (m_LeavingStartup)
+            return;
+        auto& app = Application::Get();
+        if (m_OpenHubInProcess && EditorProcess::OpensInProcess())
+        {
+            // After the frame: replacing this layer deletes it.
+            m_LeavingStartup = true;
+            app.SubmitPostFrame([open = m_OpenHubInProcess, this] { open(this); });
+            return;
+        }
+        if (auto error = EditorProcess::LaunchHub())
+        {
+            m_BackError = *error;
+            return;
+        }
+        m_LeavingStartup = true;
+        app.Close();
     }
 
     void EditorLayer::TrackSceneEdits()

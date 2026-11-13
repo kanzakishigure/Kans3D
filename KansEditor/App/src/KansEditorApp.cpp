@@ -23,41 +23,68 @@
 class KansEditor : public Kans::Application
 {
 public:
-    KansEditor(Kans::ApplicationSpecification                          spec,
+    KansEditor(Kans::ApplicationSpecification                       spec,
                const std::filesystem::path&                         editorRoot,
                const std::filesystem::path&                         project,
                const std::filesystem::path&                         request,
                std::shared_ptr<Kans::Launcher::WindowPlacementFlow> placements,
-               const Kans::Launcher::WindowSetup&                   setup)
-        : Application(spec)
+               const Kans::Launcher::WindowSetup&                   setup) :
+        Application(spec), m_EditorRoot(editorRoot), m_Placements(std::move(placements))
     {
         // The Hub has no layout to keep; the editor layer loads the project's own.
         ImGui::GetIO().IniFilename = nullptr;
         // The window was created at this setup's size: this only places (or maximizes) it.
         Kans::Launcher::ApplyWindowSetup(GetWindow(), setup);
         if (!project.empty())
-            PushLayer(new Kans::EditorLayer(project, placements));
+            PushEditor(project);
         else
-        {
-            // Under a debugger the Hub becomes the editor in this process, as `--project` would.
-            auto openInProcess = [this, placements](const std::filesystem::path& chosen) -> std::optional<std::string> {
-                auto selection = Kans::Launcher::ResolveSelection(chosen);
-                auto* file     = std::get_if<std::filesystem::path>(&selection);
-                if (!file)
-                    return "Not a project: " + chosen.u8string();
-                Kans::Launcher::ApplyWindowSetup(GetWindow(), placements->Start(true));
-                PushLayer(new Kans::EditorLayer(*file, placements));
-                return std::nullopt;
-            };
-            auto* hub = new Kans::LauncherLayer(
-                editorRoot / "Templates", placements, &Kans::EditorProcess::LaunchWithProject, std::move(openInProcess));
-            PushLayer(hub);
-            if (!request.empty())
-                hub->Request(request);
-        }
+            PushHub(request);
         PushLayer(new Kans::DebugLayer());
     }
     ~KansEditor() {}
+
+private:
+    void PushEditor(const std::filesystem::path& project)
+    {
+        PushLayer(new Kans::EditorLayer(project, m_Placements, [this](Kans::Layer* editor) { ReturnToHub(editor); }));
+    }
+
+    void PushHub(const std::filesystem::path& request)
+    {
+        // Under a debugger the Hub becomes the editor in this process, as `--project` would.
+        auto openInProcess = [this](const std::filesystem::path& chosen) -> std::optional<std::string> {
+            auto  selection = Kans::Launcher::ResolveSelection(chosen);
+            auto* file      = std::get_if<std::filesystem::path>(&selection);
+            if (!file)
+                return "Not a project: " + chosen.u8string();
+            Kans::Launcher::ApplyWindowSetup(GetWindow(), m_Placements->Start(true));
+            PushEditor(*file);
+            return std::nullopt;
+        };
+        auto* hub = new Kans::LauncherLayer(m_EditorRoot / "Templates",
+                                            m_Placements,
+                                            &Kans::EditorProcess::LaunchWithProject,
+                                            std::move(openInProcess));
+        PushLayer(hub);
+        if (!request.empty())
+            hub->Request(request);
+    }
+
+    // A project that failed to open in this process: its editor layer makes way for the Hub.
+    // Runs after the frame, as layer changes must.
+    void ReturnToHub(Kans::Layer* editor)
+    {
+        PopLayer(editor);
+        // The editor had entered the project folder.
+        std::error_code ec;
+        std::filesystem::current_path(m_EditorRoot, ec);
+        ImGui::GetIO().IniFilename = nullptr;
+        Kans::Launcher::ApplyWindowSetup(GetWindow(), m_Placements->Start(false));
+        PushHub({});
+    }
+
+    std::filesystem::path                                m_EditorRoot;
+    std::shared_ptr<Kans::Launcher::WindowPlacementFlow> m_Placements;
 };
 Kans::Application* Kans::createApplication(int argc, char** argv)
 {

@@ -47,7 +47,8 @@ namespace Kans
         // Windows owns the maximize button (Snap Layouts), so it is drawn from `state` and
         // its clicks never reach here. Returns the button clicked.
         Button WindowButtons(bool maximized, TitlebarButtonState state);
-        // Publishes the frame's regions to the hit test.
+        // Publishes the frame's regions to the hit test, and outlines the restored window's
+        // edge with a hairline (the borderless window would otherwise end in black).
         void End();
 
         // Left edge of the window buttons in the current band.
@@ -67,9 +68,11 @@ namespace Kans
         bool            m_IconLoaded = false;
     };
 
-    // The launcher's titlebar at the current window's top: icon, "Kans3D — Projects" and
-    // the window buttons on an App-toned band; advances the cursor below it.
-    Titlebar::Button DrawLauncherTitlebar(Titlebar& titlebar, bool maximized, TitlebarButtonState state);
+    // A titlebar at the current window's top for windows without a menu band (the Hub, the
+    // startup splash): icon, `title` and the window buttons on an App-toned band; advances the
+    // cursor below it.
+    Titlebar::Button
+    DrawWindowTitlebar(Titlebar& titlebar, const char* title, bool maximized, TitlebarButtonState state);
 
     // Carries out a window button on the application's main window: Minimize minimizes,
     // Close asks to close the way the native close button does (unsaved changes first).
