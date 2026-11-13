@@ -319,6 +319,7 @@ namespace Kans
 
     void Scene::OnUpdate(TimeStep ts)
     {
+        m_FrameTimeDelta = ts;
 
         RestoreSpringBoneTransforms();
         UpdatePrefabs();

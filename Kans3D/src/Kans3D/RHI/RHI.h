@@ -57,7 +57,8 @@ namespace Kans::RenderHardware
         Depth32Float,
         Depth24Stencil8,
         R32Float,
-        RG16Float
+        RG16Float,
+        R16Float
     };
     enum class TextureDimension
     {

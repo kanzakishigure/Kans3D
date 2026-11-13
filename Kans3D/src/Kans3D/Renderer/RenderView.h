@@ -3,6 +3,7 @@
 #include <optional>
 #include <unordered_set>
 #include <glm/glm.hpp>
+#include "Kans3D/Core/TimeStep.h"
 #include "Kans3D/Renderer/Camera/Camera.h"
 #include "Kans3D/Renderer/Resource/RenderAssetCache.h"
 #include "Kans3D/Scene/Components.h"
@@ -268,6 +269,7 @@ namespace Kans
         } DebugBuffer                                                            = DebugBuffer::None;
         Kans::AntiAliasing                                EffectiveAA            = Kans::AntiAliasing::None;
         float                                             Time         = 0;
+        TimeStep                                          FrameTimeDelta {1.f / 60.f};
         uint32_t                                          MaxShadowedPointLights = 4;
         std::shared_ptr<ShadowResources>                  Shadows;
         ShadowStatistics                                  ShadowStats;

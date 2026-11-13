@@ -43,9 +43,10 @@ namespace Kans
     }
     void RenderFrame::PrepareTemporal()
     {
-        TemporalActive = Samples == 1 && (View.TemporalJitter || View.Velocity ||
-                                          View.DebugBuffer == RenderView::DebugBuffer::Velocity);
-        VelocityActive = TemporalActive && (View.Velocity || View.DebugBuffer == RenderView::DebugBuffer::Velocity);
+        TemporalActive = Samples == 1 && (View.EffectiveAA == AntiAliasing::TAA || View.TemporalJitter ||
+                                          View.Velocity || View.DebugBuffer == RenderView::DebugBuffer::Velocity);
+        VelocityActive = TemporalActive && (View.EffectiveAA == AntiAliasing::TAA || View.Velocity ||
+                                            View.DebugBuffer == RenderView::DebugBuffer::Velocity);
         if (!TemporalActive)
         {
             Output.InvalidateTemporalHistory();
@@ -62,7 +63,7 @@ namespace Kans
         state.Valid       = true;
         state.World       = &World;
         state.Frame       = Output.GetFrameNumber();
-        const auto jitter = View.TemporalJitter ?
+        const auto jitter = (View.TemporalJitter || View.EffectiveAA == AntiAliasing::TAA) ?
                                 JitterOffset(state.Frame - 1, JitterPhaseCount(Output.GetSize().x, View.Viewport.x)) :
                                 glm::vec2(0);
         Output.SetJitter(jitter);
@@ -81,7 +82,7 @@ namespace Kans
         frame.ViewProjectionNoJitter         = state.Current;
         frame.PreviousViewProjectionNoJitter = state.Previous;
         frame.Jitter                         = state.Jitter;
-        if (View.TemporalJitter)
+        if (View.TemporalJitter || View.EffectiveAA == AntiAliasing::TAA)
         {
             frame.ViewProjection = JitterProjection(frame.ViewProjection, glm::vec2(state.Jitter.z, state.Jitter.w));
             frame.Projection     = JitterProjection(frame.Projection, glm::vec2(state.Jitter.z, state.Jitter.w));
@@ -91,14 +92,14 @@ namespace Kans
     {
         auto projection = DeviceProjection(View.Scene.sceneCamera.camera.GetProjectionMatrix(),
                                            GetDevice()->GetCoordinateConventions());
-        if (TemporalActive && View.TemporalJitter)
+        if (TemporalActive && (View.TemporalJitter || View.EffectiveAA == AntiAliasing::TAA))
             projection = JitterProjection(projection, 2.f * Output.GetJitter() / glm::vec2(View.Viewport));
         return projection;
     }
     Camera RenderFrame::SceneCamera() const
     {
         auto camera = View.Scene.sceneCamera.camera;
-        if (TemporalActive && View.TemporalJitter)
+        if (TemporalActive && (View.TemporalJitter || View.EffectiveAA == AntiAliasing::TAA))
         {
             // SpriteBatch/skybox apply the device conversion themselves. Conjugate its Y sign here.
             auto offset = 2.f * Output.GetJitter() / glm::vec2(View.Viewport);

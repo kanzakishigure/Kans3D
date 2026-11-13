@@ -462,7 +462,9 @@ namespace Kans::RenderHardware
                 {
                     VkPhysicalDeviceFeatures features {};
                     vkGetPhysicalDeviceFeatures(Memory.Owner->Native.Physical, &features);
-                    Require(desc.PixelFormat != Format::RG16Float || features.shaderStorageImageExtendedFormats,
+                    Require((desc.PixelFormat != Format::RG16Float && desc.PixelFormat != Format::R16Float &&
+                             desc.PixelFormat != Format::R8Unorm) ||
+                                features.shaderStorageImageExtendedFormats,
                             "Storage format needs shaderStorageImageExtendedFormats");
                     VkFormatProperties properties {};
                     vkGetPhysicalDeviceFormatProperties(Memory.Owner->Native.Physical, f.Native, &properties);

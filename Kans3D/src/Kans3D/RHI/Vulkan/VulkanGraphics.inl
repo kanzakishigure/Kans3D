@@ -78,6 +78,8 @@ struct VKShader final : Shader
     std::vector<VkShaderStageFlagBits> Stages;
     VKShader(std::shared_ptr<State> owner, const Kans::ShaderData& data) : Memory(std::move(owner))
     {
+        VkPhysicalDeviceFeatures features {};
+        vkGetPhysicalDeviceFeatures(Memory.Owner->Native.Physical, &features);
         DebugName    = data.DebugName;
         DebugCode    = data.Code;
         DebugSources = data.DebugSources;
@@ -119,9 +121,21 @@ struct VKShader final : Shader
                     if ((module.Words[cursor] & 65535) == spv::OpCapability &&
                         module.Words[cursor + 1] == spv::CapabilitySampleRateShading)
                     {
-                        VkPhysicalDeviceFeatures features {};
-                        vkGetPhysicalDeviceFeatures(Memory.Owner->Native.Physical, &features);
                         Require(features.sampleRateShading, "Sample rate shading is unavailable");
+                    }
+                for (size_t cursor = 5; cursor < module.Words.size(); cursor += module.Words[cursor] >> 16)
+                    if ((module.Words[cursor] & 65535) == spv::OpCapability)
+                    {
+                        const auto capability = module.Words[cursor + 1];
+                        Require(capability != spv::CapabilityStorageImageExtendedFormats ||
+                                    features.shaderStorageImageExtendedFormats,
+                                "Shader requires shaderStorageImageExtendedFormats");
+                        Require(capability != spv::CapabilityStorageImageReadWithoutFormat ||
+                                    features.shaderStorageImageReadWithoutFormat,
+                                "Shader requires shaderStorageImageReadWithoutFormat");
+                        Require(capability != spv::CapabilityStorageImageWriteWithoutFormat ||
+                                    features.shaderStorageImageWriteWithoutFormat,
+                                "Shader requires shaderStorageImageWriteWithoutFormat");
                     }
                 spirv_cross::Compiler reflection(module.Words);
                 reflection.set_entry_point(module.EntryPoint, static_cast<spv::ExecutionModel>(module.Stage));
@@ -951,6 +965,10 @@ void ValidateStorageFormat(const ShaderBinding& binding, const VKTexture& textur
                         (binding.StorageFormat == spv::ImageFormatR32ui && format == Format::R32Uint) ||
                         (binding.StorageFormat == spv::ImageFormatR32f && format == Format::R32Float) ||
                         (binding.StorageFormat == spv::ImageFormatRg16f && format == Format::RG16Float) ||
-                        (binding.StorageFormat == spv::ImageFormatRgba8 && format == Format::RGBA8Unorm);
-    Require(match, "Storage image format disagrees with shader binding (explicit supported format required)");
+                        (binding.StorageFormat == spv::ImageFormatRgba8 && format == Format::RGBA8Unorm) ||
+                        (binding.StorageFormat == spv::ImageFormatR16f && format == Format::R16Float) ||
+                        (binding.StorageFormat == spv::ImageFormatR8 && format == Format::R8Unorm) ||
+                        // Formatless accesses are feature-checked when the shader is created.
+                        binding.StorageFormat == spv::ImageFormatUnknown;
+    Require(match, "Storage image format disagrees with shader binding");
 }

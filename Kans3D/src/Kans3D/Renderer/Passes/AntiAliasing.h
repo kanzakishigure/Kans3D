@@ -9,7 +9,8 @@ namespace Kans
         FXAA,
         MSAA2,
         MSAA4,
-        MSAA8
+        MSAA8,
+        TAA
     };
     inline uint32_t AntiAliasingSamples(AntiAliasing mode)
     {
@@ -17,6 +18,7 @@ namespace Kans
         {
             case AntiAliasing::None:
             case AntiAliasing::FXAA:
+            case AntiAliasing::TAA:
                 return 1;
             case AntiAliasing::MSAA2:
                 return 2;

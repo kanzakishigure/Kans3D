@@ -62,6 +62,7 @@ namespace Kans
         ~Scene();
 
         void              OnUpdate(TimeStep ts);
+        TimeStep          GetFrameTimeDelta() const { return m_FrameTimeDelta; }
         Vfx::VfxWorld&    GetVfxWorld() const { return *m_VfxWorld; }
         void              UpdateVfxPreview(float delta, glm::vec3 camera = {});
         UIContext&        UI() { return m_UI; }
@@ -349,6 +350,7 @@ namespace Kans
         friend class Vfx::VfxWorld;
         std::unique_ptr<Vfx::VfxWorld> m_VfxWorld;
         entt::registry                 m_Registry;
+        TimeStep                       m_FrameTimeDelta {1.f / 60.f};
         uint32_t                       m_ViewportWidth = 0, m_ViewportHeight = 0;
         std::string                    m_Name;
         PostProcessSettings            m_PostProcessSettings;

@@ -178,6 +178,7 @@ namespace Kans
         const auto transform = scene.GetWorldTransform(entity);
         RenderView view;
         view.Scene.PostProcess            = scene.GetPostProcessSettings();
+        view.FrameTimeDelta               = scene.GetFrameTimeDelta();
         view.Viewport                     = viewport;
         view.Scene.sceneCamera.camera     = entity.GetComponent<CameraComponent>().SceneCamera;
         view.Scene.sceneCamera.Position   = glm::vec3(transform[3]);

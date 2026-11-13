@@ -77,16 +77,20 @@ namespace Kans
         return shader;
     }
 
-    const InternalShaderData& GetInternalComputeShaderData(const std::string& name, const std::string& source)
+    const InternalShaderData& GetInternalComputeShaderData(const std::string&                        name,
+                                                           const std::string&                        source,
+                                                           const std::map<std::string, std::string>& includes)
     {
         static std::mutex                                                        mutex;
-        static std::map<std::pair<std::string, std::string>, InternalShaderData> cache;
+        static std::map<std::tuple<std::string, std::string, std::map<std::string, std::string>>, InternalShaderData>
+                                                                                 cache;
         const std::lock_guard<std::mutex>                                        lock(mutex);
-        const auto                                                               key = std::make_pair(name, source);
+        const auto key = std::make_tuple(name, source, includes);
         if (auto found = cache.find(key); found != cache.end())
             return found->second;
-        auto product =
-            CompileEmbeddedShaderProgram("KansShaderProgram 1\ncompute=Internal.comp\n", {{"Internal.comp", source}});
+        auto inputs             = includes;
+        inputs["Internal.comp"] = source;
+        auto product            = CompileEmbeddedShaderProgram("KansShaderProgram 1\ncompute=Internal.comp\n", inputs);
         if (auto* error = std::get_if<AssetError>(&product))
             error->Message = "Compute shader '" + name + "': " + error->Message;
         if (auto* data = std::get_if<ShaderData>(&product))

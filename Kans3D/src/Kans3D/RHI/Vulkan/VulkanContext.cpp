@@ -178,6 +178,8 @@ namespace Kans::RenderHardware::VulkanDetail
             graphics.multiDrawIndirect                 = supportedFeatures.multiDrawIndirect;
             graphics.drawIndirectFirstInstance         = supportedFeatures.drawIndirectFirstInstance;
             graphics.shaderStorageImageExtendedFormats = supportedFeatures.shaderStorageImageExtendedFormats;
+            graphics.shaderStorageImageReadWithoutFormat  = supportedFeatures.shaderStorageImageReadWithoutFormat;
+            graphics.shaderStorageImageWriteWithoutFormat = supportedFeatures.shaderStorageImageWriteWithoutFormat;
             VkPhysicalDeviceVulkan12Features f12 {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
             VkPhysicalDeviceFeatures2        features12 {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
             features12.pNext = &f12;
@@ -280,6 +282,8 @@ namespace Kans::RenderHardware::VulkanDetail
                 return {VK_FORMAT_R32G32B32A32_SFLOAT, 16};
             case Format::R32Float:
                 return {VK_FORMAT_R32_SFLOAT, 4};
+            case Format::R16Float:
+                return {VK_FORMAT_R16_SFLOAT, 2};
             case Format::RG16Float:
                 return {VK_FORMAT_R16G16_SFLOAT, 4};
             case Format::RG8Unorm:

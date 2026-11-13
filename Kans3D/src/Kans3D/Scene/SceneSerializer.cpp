@@ -1906,7 +1906,7 @@ namespace Kans
                     if (value["AntiAliasing"])
                     {
                         const auto aa = SceneIndex(value["AntiAliasing"]);
-                        Require(aa <= uint32_t(AntiAliasing::MSAA8), "Invalid camera anti-aliasing mode");
+                        Require(aa <= uint32_t(AntiAliasing::TAA), "Invalid camera anti-aliasing mode");
                         camera.SetAntiAliasing(static_cast<AntiAliasing>(aa));
                     }
                     camera.SetPerspectiveVerticalFOV(Number(value["PerspectiveFOV"]));

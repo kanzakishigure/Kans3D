@@ -607,6 +607,13 @@ namespace Kans
             supportedAA = 1;
         view.EffectiveAA            = EffectiveAntiAliasing(requestedAA, supportedAA);
         frame.Samples               = AntiAliasingSamples(view.EffectiveAA);
+        if (view.EffectiveAA != AntiAliasing::TAA && target.GetFsr3Upscaler())
+        {
+            target.ReleaseFsr3Upscaler();
+            // The general pool intentionally retains allocations on empty graphs. An AA-mode
+            // transition must also release the FSR scratch images it cached for this view.
+            target.GetTransientPool() = {};
+        }
         statistics.EffectiveAA      = view.EffectiveAA;
         statistics.EffectiveSamples = frame.Samples;
         if (frame.Samples == 1)

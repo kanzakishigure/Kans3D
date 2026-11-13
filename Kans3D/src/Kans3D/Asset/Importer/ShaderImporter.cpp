@@ -22,7 +22,9 @@ namespace Kans
         class ShaderInputs
         {
         public:
-            ShaderInputs(const ImportContext& context, bool discover) : m_Context(context), m_Discover(discover) {}
+            ShaderInputs(const ImportContext& context, bool discover, bool embedded = false) :
+                m_Context(context), m_Discover(discover), m_Embedded(embedded)
+            {}
 
             void Add(const std::string& name, const std::string& text) { m_Texts.emplace(name, text); }
 
@@ -32,6 +34,8 @@ namespace Kans
                 const auto found = m_Texts.find(name);
                 if (found != m_Texts.end())
                     return &found->second;
+                if (m_Embedded)
+                    return nullptr; // Internal programs resolve exclusively from supplied memory.
                 const auto file = (m_Context.AssetRoot / fs::u8path(name)).lexically_normal();
                 if (!m_Discover && file != m_Context.SourceFile.lexically_normal() &&
                     !m_Context.SourceInputs.count(file))
@@ -59,11 +63,17 @@ namespace Kans
                 return logical.IsValid() ? logical.ToString() : std::string();
             }
             const std::vector<fs::path>& Files() const { return m_Files; }
+            const std::string*           FindEmbeddedRoot(const std::string& name) const
+            {
+                const auto found = m_Texts.find(name);
+                return m_Embedded && found != m_Texts.end() ? &found->second : nullptr;
+            }
             const fs::path&              Undeclared() const { return m_Undeclared; }
 
         private:
             const ImportContext&               m_Context;
             bool                               m_Discover;
+            bool                               m_Embedded;
             std::map<std::string, std::string> m_Texts;
             std::vector<fs::path>              m_Files;
             fs::path                           m_Undeclared;
@@ -97,6 +107,10 @@ namespace Kans
                     const auto relative = (fs::u8path(requesting).parent_path() / fs::u8path(name)).lexically_normal();
                     const AssetPath logical(relative);
                     const auto*     text = logical.IsValid() ? m_Inputs.Find(logical.ToString()) : nullptr;
+                    // Embedded programs may supply virtual include roots, never filesystem roots.
+                    if (!text)
+                        if (const auto* rootText = m_Inputs.FindEmbeddedRoot(name))
+                            return Result(name, *rootText);
                     if (!text)
                         return Failure("Include not found or not declared");
                     return Result(logical.ToString(), *text);
@@ -277,7 +291,7 @@ void main() { vec2 p=vec2((gl_VertexIndex<<1)&2, gl_VertexIndex&2); gl_Position=
         ImportContext context;
         context.AssetRoot  = "/__kans_engine__";
         context.SourceFile = context.AssetRoot / "Standard.shaderprog";
-        ShaderInputs inputs(context, false);
+        ShaderInputs inputs(context, false, true);
         inputs.Add("Standard.shaderprog", manifest);
         for (const auto& [name, source] : stages)
             inputs.Add(name, source);

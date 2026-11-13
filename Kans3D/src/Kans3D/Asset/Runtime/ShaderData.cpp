@@ -159,7 +159,9 @@ namespace Kans
                          module.Words[cursor + 1] != spv::CapabilityMatrix &&
                          module.Words[cursor + 1] != spv::CapabilitySampleRateShading &&
                          module.Words[cursor + 1] != spv::CapabilityImageQuery &&
-                         module.Words[cursor + 1] != spv::CapabilityStorageImageExtendedFormats) ||
+                         module.Words[cursor + 1] != spv::CapabilityStorageImageExtendedFormats &&
+                         module.Words[cursor + 1] != spv::CapabilityStorageImageReadWithoutFormat &&
+                         module.Words[cursor + 1] != spv::CapabilityStorageImageWriteWithoutFormat) ||
                         opcode == spv::OpExtension)
                         return AssetError {AssetErrorCode::NotImplemented,
                                            "Shader capability/extension is unsupported"};

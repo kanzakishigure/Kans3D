@@ -9,6 +9,7 @@
 #include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Features/ParticleRenderFeature.h"
+#include "Passes/Fsr3Upscaler.h"
 #include "RenderFrame.h"
 #include "Temporal.h"
 
@@ -92,16 +93,33 @@ namespace Kans
         for (size_t i = 0; i < renderer.Output.GetColors().size(); ++i)
         {
             auto image = graph.ImportTexture("SceneColor" + std::to_string(i), renderer.Output.GetColors()[i]);
-            clear.push_back({image, GraphAccess::ColorWrite});
+            clear.push_back(
+                {image, view.EffectiveAA == AntiAliasing::TAA ? GraphAccess::ColorReadWrite : GraphAccess::ColorWrite});
             graph.ExportTexture(image);
         }
         const auto depth = graph.ImportTexture("SceneDepthStencil", renderer.Output.GetDepth());
         clear.push_back({depth, GraphAccess::DepthWrite});
         graph.ExportTexture(depth);
+        if (view.EffectiveAA == AntiAliasing::TAA)
+            clear.push_back({graph.ImportTexture("SceneHDR", renderer.Output.GetHDR()), GraphAccess::ColorWrite});
         graph.AddPass("Clear", clear, [&renderer](auto& context) {
             context.Commands.BeginRendering(renderer.SceneTarget(LoadOp::Clear));
             context.Commands.EndRendering();
+            if (renderer.View.EffectiveAA == AntiAliasing::TAA)
+            {
+                // The compatibility clear is display-space .02. Decode it with the same
+                // exposure/tone curve used at existing display-to-HDR batch boundaries.
+                renderer.Services.GetToneMapping().Record(context.Device,
+                                                          context.Commands,
+                                                          renderer.Output.GetColors()[0],
+                                                          {renderer.Output.GetHDR()},
+                                                          renderer.View.GetPostProcessSettings().Exposure,
+                                                          true,
+                                                          renderer.View.GetPostProcessSettings().ToneMapping);
+            }
         });
+        if (view.EffectiveAA == AntiAliasing::TAA)
+            renderer.PostProcessHDR = true;
     }
     void ForwardPipeline::PreparePostMaterials(RenderFrame& frame)
     {
@@ -208,7 +226,8 @@ namespace Kans
             uniforms.Projection        = DeviceProjection(frame.View.Scene.sceneCamera.camera.GetProjectionMatrix(),
                                                           frame.GetDevice()->GetCoordinateConventions());
             uniforms.ViewProjection    = uniforms.Projection * uniforms.View;
-            if (hdr)
+            // TAA has already resolved SceneHDR to the unjittered display grid.
+            if (hdr && frame.View.EffectiveAA != AntiAliasing::TAA)
                 frame.ApplyTemporalUniforms(uniforms);
             uniforms.InverseView       = glm::inverse(uniforms.View);
             uniforms.InverseProjection = glm::inverse(uniforms.Projection);
@@ -290,7 +309,7 @@ namespace Kans
         PreparePostMaterials(renderer);
         const auto& view = renderer.View;
         using namespace RenderHardware;
-        const bool reconstruct = view.GetPostProcessSettings().FilterSize >= 1;
+        const bool reconstruct = view.GetPostProcessSettings().FilterSize >= 1 || view.EffectiveAA == AntiAliasing::TAA;
         if (reconstruct)
             renderer.DeferToneMapping = true;
         if (renderer.Samples > 1)
@@ -373,7 +392,7 @@ namespace Kans
             if (immediate.Kind == ViewImmediateKind::RecordedSprites)
             {
                 const auto& batch = view.SpriteBatches.at(immediate.Index);
-                if (renderer.TemporalActive && view.TemporalJitter)
+                if (renderer.TemporalActive && (view.TemporalJitter || view.EffectiveAA == AntiAliasing::TAA))
                 {
                     if (!batch.ProjectionBuffer)
                         throw std::invalid_argument(
@@ -406,7 +425,7 @@ namespace Kans
                 });
                 ImmediatePassState spriteState;
                 spriteState.DepthCompare = CompareOp::Always;
-                if (renderer.TemporalActive && view.TemporalJitter)
+                if (renderer.TemporalActive && (view.TemporalJitter || view.EffectiveAA == AntiAliasing::TAA))
                     sprites.BeginScene(renderer.SceneCamera(), view.Scene.sceneCamera.viewMatrix, spriteState);
                 else
                     sprites.BeginScene(view.Scene.sceneCamera.camera, view.Scene.sceneCamera.viewMatrix, spriteState);
@@ -503,6 +522,42 @@ namespace Kans
         if (renderer.VelocityActive && view.MaterialOrder.empty())
             renderer.BuildVelocity(graph);
         Inject(RenderExtensionPoint::AfterTransparent, featureContext);
+        if (view.EffectiveAA == AntiAliasing::TAA)
+        {
+            if (!renderer.PostProcessHDR)
+            {
+                std::vector<GraphUse> uses {
+                    {graph.ImportTexture("SceneColor0", renderer.Output.GetColors()[0]), GraphAccess::SampledRead},
+                    {graph.ImportTexture("SceneHDR", renderer.Output.GetHDR()), GraphAccess::ColorWrite}};
+                append("TAA HDR prefill", std::move(uses), [&renderer, &view](auto& c) {
+                    renderer.Services.GetToneMapping().Record(c.Device,
+                                                              c.Commands,
+                                                              renderer.Output.GetColors()[0],
+                                                              {renderer.Output.GetHDR()},
+                                                              view.GetPostProcessSettings().Exposure,
+                                                              true,
+                                                              view.GetPostProcessSettings().ToneMapping);
+                });
+            }
+            auto&                fsr = renderer.Output.EnsureFsr3Upscaler();
+            Fsr3Upscaler::Inputs inputs;
+            inputs.RenderSize     = view.Viewport;
+            inputs.DisplaySize    = renderer.Output.GetSize();
+            inputs.Color          = renderer.Output.GetHDR();
+            inputs.Depth          = renderer.Output.GetDepth();
+            inputs.MotionVectors  = renderer.Output.GetVelocity();
+            inputs.Projection     = view.Scene.sceneCamera.camera.GetProjectionMatrix();
+            inputs.Jitter         = renderer.Output.GetJitter();
+            inputs.FrameTimeDelta = view.FrameTimeDelta;
+            inputs.Reset          = renderer.Output.GetTemporalState().Reset;
+            const auto resolved   = fsr.AddPasses(graph, inputs);
+            const auto hdr        = graph.ImportTexture("SceneHDR", renderer.Output.GetHDR());
+            graph.AddPass(
+                "FSR resolve to SceneHDR",
+                {{resolved, GraphAccess::TransferRead}, {hdr, GraphAccess::TransferWrite}},
+                [resolved, hdr](auto& c) { c.Commands.CopyTexture(c.Texture(resolved), {}, c.Texture(hdr)); });
+            renderer.PostProcessHDR = true;
+        }
         AddReconstructionFilter(graph, renderer);
         if (!m_PostDraws.empty())
             m_CustomDepth = BuildCustomDepthPass(graph, renderer);

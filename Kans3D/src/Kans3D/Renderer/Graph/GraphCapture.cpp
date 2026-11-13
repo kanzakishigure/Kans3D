@@ -23,6 +23,7 @@ namespace Kans
                 case Format::RGBA16Float:
                     return 8;
                 case Format::RG8Unorm:
+                case Format::R16Float:
                     return 2;
                 case Format::R8Unorm:
                     return 1;
@@ -390,8 +391,12 @@ void main() { vec2 p=vec2((gl_VertexIndex<<1)&2,gl_VertexIndex&2); gl_Position=v
                 auto read    = [&](size_t offset, auto& value) {
                     std::memcpy(&value, result.Bytes.data() + offset, sizeof(value));
                 };
-                if (result.StoredFormat == Format::RGBA16Float || result.StoredFormat == Format::RG16Float)
-                    for (size_t i = 0; i < (result.StoredFormat == Format::RG16Float ? 2u : 4u); ++i)
+                if (result.StoredFormat == Format::RGBA16Float || result.StoredFormat == Format::RG16Float ||
+                    result.StoredFormat == Format::R16Float)
+                    for (size_t i = 0; i < (result.StoredFormat == Format::R16Float  ? 1u :
+                                            result.StoredFormat == Format::RG16Float ? 2u :
+                                                                                       4u);
+                         ++i)
                     {
                         uint16_t value;
                         read(i * 2, value);

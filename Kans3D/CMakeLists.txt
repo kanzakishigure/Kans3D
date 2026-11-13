@@ -17,6 +17,23 @@ add_library(Kans3D STATIC
     ${KANS3D_SOURCES}
 )
 
+# Embed only the source closure used by the seven FSR compute passes. Byte arrays
+# avoid MSVC's string-literal size limits, including for the large FFX core headers.
+set(KANS_FSR_EMBED_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFsrSources.cmake")
+include("${KANS_FSR_EMBED_SCRIPT}")
+set(KANS_FSR_DEPENDS "${KANS_FSR_EMBED_SCRIPT}")
+foreach(relative IN LISTS KANS_FSR_FILES)
+    list(APPEND KANS_FSR_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/FidelityFX-FSR3/${relative}")
+endforeach()
+set(KANS_FSR_GENERATED "${CMAKE_CURRENT_BINARY_DIR}/FsrShaderSources.cpp")
+add_custom_command(OUTPUT "${KANS_FSR_GENERATED}"
+    COMMAND "${CMAKE_COMMAND}"
+        "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}/vendor/FidelityFX-FSR3"
+        "-DOUTPUT=${KANS_FSR_GENERATED}" -P "${KANS_FSR_EMBED_SCRIPT}"
+    DEPENDS ${KANS_FSR_DEPENDS}
+    VERBATIM)
+target_sources(Kans3D PRIVATE "${KANS_FSR_GENERATED}")
+
 # ---- Precompiled header ----
 target_precompile_headers(Kans3D PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:${KANS3D_SRC}/kspch.h>

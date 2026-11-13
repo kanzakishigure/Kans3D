@@ -22,7 +22,9 @@ namespace Kans
                                                                              const std::string& name,
                                                                              const std::string& vertex,
                                                                              const std::string& fragment);
-    const InternalShaderData& GetInternalComputeShaderData(const std::string& name, const std::string& source);
+    const InternalShaderData& GetInternalComputeShaderData(const std::string&                        name,
+                                                           const std::string&                        source,
+                                                           const std::map<std::string, std::string>& includes = {});
     const InternalShaderData& GetBuiltinComputeShaderData(const std::string& name);
     RenderHardware::Handle<RenderHardware::Shader> CreateBuiltinComputeShader(RenderHardware::Device&,
                                                                               const std::string& name);

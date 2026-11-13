@@ -132,9 +132,9 @@ namespace Kans
     }
     bool DrawAntiAliasing(AntiAliasing& mode)
     {
-        const char* names[] = {"Off", "FXAA (fast)", "MSAA 2x", "MSAA 4x", "MSAA 8x"};
+        const char* names[] = {"Off", "FXAA (fast)", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA (FSR 3.1)"};
         int         index   = int(mode);
-        if (!PropertyGrid::Combo("Anti-aliasing", names, 5, index))
+        if (!PropertyGrid::Combo("Anti-aliasing", names, int(std::size(names)), index))
             return false;
         mode = AntiAliasing(index);
         return true;

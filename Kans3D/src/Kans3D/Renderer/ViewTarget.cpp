@@ -2,6 +2,7 @@
 #include "ViewTarget.h"
 #include "Features/BloomFeature.h"
 #include "Graph/GraphCapture.h"
+#include "Passes/Fsr3Upscaler.h"
 #include "Temporal.h"
 namespace Kans
 {
@@ -17,6 +18,12 @@ namespace Kans
         if (!m_Capture)
             m_Capture = std::make_shared<GraphCapture>(m_Device);
         return m_Capture;
+    }
+    Fsr3Upscaler& ViewTarget::EnsureFsr3Upscaler()
+    {
+        if (!m_Fsr3Upscaler)
+            m_Fsr3Upscaler = std::make_shared<Fsr3Upscaler>(*m_Device);
+        return *m_Fsr3Upscaler;
     }
     void ViewTarget::EnsureSampledDepth()
     {
