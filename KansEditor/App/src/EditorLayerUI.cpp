@@ -1,6 +1,6 @@
-#include <cstring>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <cstring>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "Kans3D/ImGui/EditorTheme.h"
@@ -8,6 +8,7 @@
 #include "EditorLayer.h"
 #include "KansEditorCore/Launcher/EditorProcess.h"
 #include "KansEditorCore/Launcher/ProjectGrid.h"
+#include "UI/BloomSettingsWidget.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
 #include "UI/Widgets.h"
@@ -972,6 +973,10 @@ namespace Kans
             PropertyGrid::Text("Frame time", ms(io.Framerate > 0.0f ? 1000.0 / io.Framerate : 0.0));
             const auto viewport = m_Viewport->GetSize();
             PropertyGrid::Text("Viewport", std::to_string(viewport.x) + " x " + std::to_string(viewport.y));
+            // The mode the renderer used (MSAA falls back to a supported sample count).
+            PropertyGrid::Text("Anti-aliasing", AntiAliasingName(stats.EffectiveAA));
+            if (stats.RenderSize != stats.DisplaySize)
+                PropertyGrid::Text("Resolution", RenderResolutionText(stats.RenderSize, stats.DisplaySize));
             PropertyGrid::Text("Editor UI",
                                std::to_string(io.MetricsRenderVertices) + " vertices, " +
                                    std::to_string(io.MetricsRenderIndices) + " indices",

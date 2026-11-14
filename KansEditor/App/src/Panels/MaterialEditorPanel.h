@@ -46,6 +46,7 @@ namespace Kans
 
     private:
         friend struct MaterialEditorPanelTestAccess;
+        friend struct MaterialEditorPanelThemeAccess;
         // Schema of the selected Shader; nullptr while it loads or if it is invalid.
         const MaterialSchema* Schema();
         void                  DrawParameter(const MaterialParameterInfo& parameter, const MaterialSchema& schema);

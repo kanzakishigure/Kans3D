@@ -74,22 +74,22 @@ namespace Kans::ComponentEditors
                 }
                 PropertyGrid::EndGroup();
             }
-            if (PropertyGrid::BeginGroup("Rendering"))
             {
+                // Sharpness and the reactive settings are post-processing: changing them here gives the
+                // camera a post override (a copy of the scene's settings), like editing it below.
                 auto antiAliasing = camera.GetAntiAliasing();
-                if (DrawAntiAliasing(antiAliasing))
-                    camera.SetAntiAliasing(antiAliasing);
-                auto upscaling = camera.GetUpscaling();
-                if (DrawUpscaling(upscaling))
-                    camera.SetUpscaling(upscaling);
-                if (antiAliasing == AntiAliasing::TAA)
-                {
-                    auto settings = camera.ResolvePostProcess(ui.GetScene() ? ui.GetScene()->GetPostProcessSettings() :
+                auto upscaling    = camera.GetUpscaling();
+                auto settings     = camera.ResolvePostProcess(ui.GetScene() ? ui.GetScene()->GetPostProcessSettings() :
                                                                               PostProcessSettings {});
-                    if (DrawTemporalSharpness(settings.Temporal.Sharpness))
-                        camera.SetPostProcessOverride(settings);
-                }
-                PropertyGrid::EndGroup();
+                const auto defaultMode = defaults.GetAntiAliasing();
+                const auto edits =
+                    DrawAntiAliasingGroup(antiAliasing, upscaling, settings.Temporal, nullptr, &defaultMode);
+                if (edits.Mode)
+                    camera.SetAntiAliasing(antiAliasing);
+                if (edits.Upscaling)
+                    camera.SetUpscaling(upscaling);
+                if (edits.Temporal)
+                    camera.SetPostProcessOverride(settings);
             }
             // Post-processing normally comes from the scene; an override applies to this camera only.
             bool overridden = camera.GetPostProcessOverride().has_value();
@@ -108,7 +108,10 @@ namespace Kans::ComponentEditors
                     if (DrawPostProcessSettings(
                             settings,
                             [&](AssetID& dirt) { return ui.AssetPicker("Lens dirt", AssetType::Texture, dirt); },
-                            [&](const char* label, AssetID& id) { return ui.AssetPicker(label, AssetType::Material, id); }))
+                            [&](const char* label, AssetID& id) {
+                                return ui.AssetPicker(label, AssetType::Material, id);
+                            },
+                            false))
                         camera.SetPostProcessOverride(settings);
                 }
                 PropertyGrid::EndGroup();

@@ -1017,13 +1017,49 @@ namespace Kans
             m_Dirty = true;
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Draw back faces too, lit with the flipped normal (leaves, cloth, thin planes).");
-        const char* responses[] = {"Default", "Reactive", "Composition (animated content)"};
-        int         response    = int(render.TemporalResponse);
-        if (ImGui::Combo("Temporal response", &response, responses, int(std::size(responses))))
+        // How TAA (FSR 3.1) treats this material's pixels; other anti-aliasing modes ignore it.
+        const struct
         {
-            render.TemporalResponse = MaterialTemporalResponse(response);
-            m_Dirty                 = true;
+            MaterialTemporalResponse Response;
+            const char*              Name;
+            const char*              Help;
+        } responses[] = {
+            {MaterialTemporalResponse::Default,
+             "Default",
+             "Full temporal history for opaque pixels; transparent and additive modes still derive reactivity from "
+             "their alpha."},
+            {MaterialTemporalResponse::Reactive,
+             "Reactive",
+             "Transparent or fast-changing pixels: less history is used, so they do not smear or ghost."},
+            {MaterialTemporalResponse::Composition,
+             "Composition",
+             "Animated or shader-driven content such as screens and scrolling textures, whose look changes "
+             "without the surface moving."},
+        };
+        const auto* response = &responses[0];
+        for (const auto& entry : responses)
+            if (entry.Response == render.TemporalResponse)
+                response = &entry;
+        if (ImGui::BeginCombo("Temporal response", response->Name))
+        {
+            for (const auto& entry : responses)
+            {
+                if (ImGui::Selectable(entry.Name, entry.Response == render.TemporalResponse))
+                {
+                    render.TemporalResponse = entry.Response;
+                    m_Dirty                 = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", entry.Help);
+            }
+            ImGui::EndCombo();
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("How TAA (FSR 3.1) treats these pixels: %s\n\n"
+                              "Reactive: transparent or fast-changing pixels, so less history is used.\n"
+                              "Composition: animated or shader-driven content such as screens and scrolling "
+                              "textures.",
+                              response->Name);
         if (instance)
         {
             auto& overrides = m_Source.RenderOverrides;

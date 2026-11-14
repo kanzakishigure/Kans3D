@@ -1256,21 +1256,21 @@ namespace Kans
                     m_Camera.SetOrthographic(orthographic);
                 // Exposure, tone mapping and bloom are the scene's (Properties > Post Processing).
                 ImGui::Separator();
-                if (PropertyGrid::Begin("##EditorCameraPost", 96.0f))
                 {
-                    auto antiAliasing = m_Camera.GetAntiAliasing();
-                    if (DrawAntiAliasing(antiAliasing))
+                    // The group fills the popup, so give the popup a width first.
+                    ImGui::Dummy({Px(300.0f), 0.0f});
+                    auto                   antiAliasing = m_Camera.GetAntiAliasing();
+                    auto                   upscaling    = m_Camera.GetUpscaling();
+                    auto                   settings = m_Camera.ResolvePostProcess(m_Scene->GetPostProcessSettings());
+                    const auto&            stats    = m_Client->GetLastResult().FrameStats;
+                    const AntiAliasingView view {stats.RenderSize, stats.DisplaySize};
+                    const auto edits = DrawAntiAliasingGroup(antiAliasing, upscaling, settings.Temporal, &view);
+                    if (edits.Mode)
                         m_Camera.SetAntiAliasing(antiAliasing);
-                    auto upscaling = m_Camera.GetUpscaling();
-                    if (DrawUpscaling(upscaling))
+                    if (edits.Upscaling)
                         m_Camera.SetUpscaling(upscaling);
-                    if (antiAliasing == AntiAliasing::TAA)
-                    {
-                        auto settings = m_Camera.ResolvePostProcess(m_Scene->GetPostProcessSettings());
-                        if (DrawTemporalSharpness(settings.Temporal.Sharpness))
-                            m_Camera.SetPostProcessOverride(settings);
-                    }
-                    PropertyGrid::End();
+                    if (edits.Temporal)
+                        m_Camera.SetPostProcessOverride(settings);
                 }
                 ImGui::EndPopup();
             }
