@@ -42,6 +42,7 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Sampler> m_PostLinearSampler, m_PostPointSampler;
         void                  PreparePostMaterials(RenderFrame& frame);
         void                  AddPostMaterials(RenderGraph& graph, RenderFrame& frame, PostProcessStage stage);
+        void                  Finish(RenderGraph& graph, RenderFrame& renderer);
         void BuildMSAA(RenderGraph& graph, RenderFrame& frame);
         void                  AddScreenUI(RenderGraph&, RenderFrame&);
         void AddFXAA(RenderGraph& graph, RenderFrame& frame);

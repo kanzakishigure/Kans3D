@@ -79,6 +79,9 @@ namespace Kans::ComponentEditors
                 auto antiAliasing = camera.GetAntiAliasing();
                 if (DrawAntiAliasing(antiAliasing))
                     camera.SetAntiAliasing(antiAliasing);
+                auto upscaling = camera.GetUpscaling();
+                if (DrawUpscaling(upscaling))
+                    camera.SetUpscaling(upscaling);
                 if (antiAliasing == AntiAliasing::TAA)
                 {
                     auto settings = camera.ResolvePostProcess(ui.GetScene() ? ui.GetScene()->GetPostProcessSettings() :

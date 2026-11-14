@@ -29,6 +29,8 @@ namespace Kans
         ViewTarget(const ViewTarget&)                                                                    = delete;
         ViewTarget&                                                         operator=(const ViewTarget&) = delete;
         void                                                                Resize(glm::uvec2 size);
+        ViewTarget&                        ConfigureRenderTarget(glm::uvec2 size, float ratio);
+        const std::shared_ptr<ViewTarget>& GetRenderTarget() const { return m_RenderTarget; }
         void                                                                EnsureSampledDepth();
         void                                                                EnsureNormalRoughness();
         void                                                                EnsureVelocity();
@@ -83,6 +85,8 @@ namespace Kans
         uint32_t                                                     m_OutputCount;
         bool                                                         m_SampledDepth;
         glm::uvec2                                                   m_Size {};
+        std::shared_ptr<ViewTarget>                                  m_RenderTarget;
+        float                                                        m_RenderRatio = 1.f;
         std::vector<RenderHardware::Handle<RenderHardware::Texture>> m_Colors;
         RenderHardware::Handle<RenderHardware::Texture>              m_HDR, m_Depth;
         RenderHardware::Handle<RenderHardware::Texture>              m_NormalRoughness;

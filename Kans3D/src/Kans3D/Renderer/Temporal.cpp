@@ -12,7 +12,7 @@ namespace Kans
         if (!displayWidth || !renderWidth)
             throw std::invalid_argument("Jitter requires nonzero widths");
         const double ratio = double(displayWidth) / renderWidth;
-        const double count = std::ceil(8 * ratio * ratio);
+        const double count = std::round(8 * ratio * ratio);
         if (count > UINT32_MAX)
             throw std::overflow_error("Jitter phase count overflow");
         return std::max(1u, uint32_t(count));
@@ -63,9 +63,12 @@ namespace Kans
         state.Valid       = true;
         state.World       = &World;
         state.Frame       = Output.GetFrameNumber();
-        const auto jitter = (View.TemporalJitter || View.EffectiveAA == AntiAliasing::TAA) ?
-                                JitterOffset(state.Frame - 1, JitterPhaseCount(Output.GetSize().x, View.Viewport.x)) :
-                                glm::vec2(0);
+        const auto jitter =
+            (View.TemporalJitter || View.EffectiveAA == AntiAliasing::TAA) ?
+                JitterOffset(state.Frame - 1,
+                             JitterPhaseCount(DisplayFrame ? DisplayFrame->View.Viewport.x : Output.GetSize().x,
+                                              View.Viewport.x)) :
+                glm::vec2(0);
         Output.SetJitter(jitter);
         state.Jitter = glm::vec4(jitter, 2.f * jitter / glm::vec2(View.Viewport));
         for (auto it = state.Objects.begin(); it != state.Objects.end();)
@@ -540,6 +543,97 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
         if (rendering)
             commands->EndRendering();
         Order(graph, graph.AddRecordedPass("Object velocity", std::move(uses), commands));
+    }
+    void RenderFrame::BuildDisplayDepth(RenderGraph& graph, RenderFrame& display)
+    {
+        using namespace RenderHardware;
+        display.Output.EnsureSampledDepth();
+        const auto      input = Output.GetDepth(), output = display.Output.GetDepth();
+        const auto      src = graph.ImportTexture("Render depth", input);
+        const auto      dst = graph.ImportTexture("SceneDepthStencil", output);
+        const glm::vec4 mapping(glm::vec2(Output.GetSize()) / glm::vec2(display.Output.GetSize()), Output.GetJitter());
+        auto            device = GetDevice();
+        auto&           state  = display.Output.GetTemporalState();
+        PrepareResources(state, *device);
+        const auto layout  = state.FullscreenLayout;
+        auto       uniform = device->CreateBuffer({sizeof(mapping), BufferUsage::Uniform, MemoryUsage::Upload});
+        uniform->Write(0, &mapping, sizeof(mapping));
+        auto group = device->CreateBindGroup(
+            {layout, {{0, uniform, 0, sizeof(mapping)}, {1, {}, 0, 0, input, state.PointSampler}}});
+        PipelineDesc pipeline;
+        pipeline.Program         = Services.GetInternalProgram("FSR display depth", FullscreenVertex, R"(#version 450
+layout(set=0,binding=0,std140) uniform Mapping { vec4 scaleJitter; } u;
+layout(set=0,binding=1) uniform sampler2D sceneDepth;
+void main() {
+    ivec2 p = ivec2(floor(gl_FragCoord.xy*u.scaleJitter.xy+u.scaleJitter.zw));
+    gl_FragDepth = texelFetch(sceneDepth,clamp(p,ivec2(0),textureSize(sceneDepth,0)-1),0).r;
+}
+)");
+        pipeline.GroupLayouts    = {layout};
+        pipeline.Rasterizer.Cull = CullMode::None;
+        pipeline.HasDepthStencil = true;
+        pipeline.DepthStencilFormat     = output->GetDesc().PixelFormat;
+        pipeline.DepthStencil.DepthTest = pipeline.DepthStencil.DepthWrite = true;
+        pipeline.DepthStencil.DepthCompare                                 = CompareOp::Always;
+        auto gpu                                                           = Services.CachedPipeline(pipeline);
+        Order(graph,
+              graph.AddPass("Display depth (unjittered)",
+                            {{src, GraphAccess::SampledRead}, {dst, GraphAccess::DepthWrite}},
+                            [gpu, group, output](auto& c) {
+                                RenderingDesc target;
+                                target.Depth.Target = output;
+                                target.Depth.Load   = LoadOp::Clear;
+                                c.Commands.BeginRendering(target);
+                                c.Commands.SetViewport(
+                                    {0, 0, float(output->GetDesc().Width), float(output->GetDesc().Height)});
+                                c.Commands.SetScissor({0, 0, output->GetDesc().Width, output->GetDesc().Height});
+                                c.Commands.BindPipeline(gpu);
+                                c.Commands.BindGroup(group);
+                                c.Commands.Draw(3);
+                                c.Commands.EndRendering();
+                            }));
+        // Scene materials only write stencil reference 1. Preserve it for legacy stencil outlines;
+        // post-material custom stencil is independently rasterized at display size.
+        if (std::none_of(View.Draws.begin(), View.Draws.end(), [](const auto& draw) {
+                return draw.Stencil == ModelStencilMode::WriteReference;
+            }))
+            return;
+        BindGroupDesc stencilGroup {layout,
+                                    {{0, uniform, 0, sizeof(mapping)}, {1, {}, 0, 0, input, state.PointSampler}}};
+        stencilGroup.Entries.back().Aspect      = TextureAspect::Stencil;
+        stencilGroup.Entries.back().Subresource = TextureSubresource {};
+        auto stencilBindings                    = device->CreateBindGroup(stencilGroup);
+        pipeline.Program = Services.GetInternalProgram("FSR display stencil", FullscreenVertex, R"(#version 450
+layout(set=0,binding=0,std140) uniform Mapping { vec4 scaleJitter; } u;
+layout(set=0,binding=1) uniform usampler2D sceneStencil;
+void main() {
+    ivec2 p = ivec2(floor(gl_FragCoord.xy*u.scaleJitter.xy+u.scaleJitter.zw));
+    if (texelFetch(sceneStencil,clamp(p,ivec2(0),textureSize(sceneStencil,0)-1),0).r != 1u) discard;
+}
+)");
+        pipeline.DepthStencil.DepthTest = pipeline.DepthStencil.DepthWrite = false;
+        pipeline.DepthStencil.StencilTest                                  = true;
+        pipeline.DepthStencil.Front.Compare                                = CompareOp::Always;
+        pipeline.DepthStencil.Front.Reference                              = 1;
+        pipeline.DepthStencil.Front.Pass                                   = StencilOp::Replace;
+        pipeline.DepthStencil.Back                                         = pipeline.DepthStencil.Front;
+        auto stencilPipeline                                               = Services.CachedPipeline(pipeline);
+        Order(graph,
+              graph.AddPass("Display stencil (unjittered)",
+                            {{src, GraphAccess::SampledRead}, {dst, GraphAccess::DepthReadWrite}},
+                            [stencilPipeline, stencilBindings, output](auto& c) {
+                                RenderingDesc target;
+                                target.Depth.Target = output;
+                                target.Depth.Load   = LoadOp::Load;
+                                c.Commands.BeginRendering(target);
+                                c.Commands.SetViewport(
+                                    {0, 0, float(output->GetDesc().Width), float(output->GetDesc().Height)});
+                                c.Commands.SetScissor({0, 0, output->GetDesc().Width, output->GetDesc().Height});
+                                c.Commands.BindPipeline(stencilPipeline);
+                                c.Commands.BindGroup(stencilBindings);
+                                c.Commands.Draw(3);
+                                c.Commands.EndRendering();
+                            }));
     }
     void RenderFrame::BuildDebugBuffer(RenderGraph& graph)
     {

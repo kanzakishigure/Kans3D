@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include "Kans3D/Renderer/Passes/AntiAliasing.h"
 #include "Kans3D/Renderer/Passes/PostProcessSettings.h"
+#include "Kans3D/Renderer/Passes/Upscaling.h"
 
 namespace Kans
 {
@@ -42,6 +43,14 @@ namespace Kans
         BloomSettings& GetBloomSettings() { return EnsurePostProcess().Bloom; }
         void           SetBloomSettings(const BloomSettings& value) { EnsurePostProcess().Bloom = value.Validated(); }
 
+        const UpscalingSettings& GetUpscaling() const { return m_Upscaling; }
+        void                     SetUpscaling(UpscalingSettings settings)
+        {
+            settings.Ratio();
+            settings.CustomRatio =
+                std::isfinite(settings.CustomRatio) ? std::clamp(settings.CustomRatio, 1.f, 3.f) : 1.f;
+            m_Upscaling = settings;
+        }
         AntiAliasing GetAntiAliasing() const { return m_AntiAliasing; }
         void         SetAntiAliasing(AntiAliasing mode)
         {
@@ -58,6 +67,7 @@ namespace Kans
                 m_PostProcessOverride.emplace();
             return *m_PostProcessOverride;
         }
+        UpscalingSettings m_Upscaling;
         AntiAliasing  m_AntiAliasing = AntiAliasing::None;
     };
 

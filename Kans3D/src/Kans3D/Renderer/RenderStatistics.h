@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <glm/glm.hpp>
 #include "Kans3D/RHI/RHI.h"
 #include "Kans3D/Renderer/Passes/AntiAliasing.h"
 
@@ -60,6 +61,7 @@ namespace Kans
     struct FrameStatistics
     {
         uint64_t Frame                        = 0;
+        glm::uvec2   RenderSize {}, DisplaySize {};
         AntiAliasing EffectiveAA                  = AntiAliasing::None;
         uint32_t     EffectiveSamples             = 1;
         double   WorldSyncExtractMilliseconds = 0, GraphBuildMilliseconds = 0, CompileMilliseconds = 0,

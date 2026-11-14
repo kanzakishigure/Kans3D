@@ -607,6 +607,31 @@ namespace Kans
             supportedAA = 1;
         view.EffectiveAA            = EffectiveAntiAliasing(requestedAA, supportedAA);
         frame.Samples               = AntiAliasingSamples(view.EffectiveAA);
+        // Upscaling is meaningful only for TAA; every other AA mode ignores this camera/view setting.
+        const float ratio       = view.EffectiveAA == AntiAliasing::TAA ?
+                                      view.Upscaling.value_or(view.Scene.sceneCamera.camera.GetUpscaling()).Ratio() :
+                                      1.f;
+        const auto  renderSize  = UpscalingRenderSize(view.Viewport, ratio);
+        auto&       sceneTarget = target.ConfigureRenderTarget(renderSize, ratio);
+        std::optional<RenderView>    sceneView;
+        std::unique_ptr<RenderFrame> sceneFrame;
+        RenderFrame*                 rendering = &frame;
+        if (&sceneTarget != &target)
+        {
+            sceneView           = view;
+            sceneView->Viewport = renderSize;
+            sceneFrame          = std::make_unique<RenderFrame>(
+                RenderFrame {world, *sceneView, sceneTarget, *this, result.Stats, result.SpriteStats, result.Complete});
+            sceneFrame->DisplayFrame = &frame;
+            frame.RenderSource       = sceneFrame.get();
+            // A one-pixel-wide display can still upscale vertically; the SDK's extra -1 applies there too.
+            sceneFrame->MaterialMipBias =
+                renderSize.x == view.Viewport.x ? -1.f : UpscalingMipBias(renderSize.x, view.Viewport.x);
+            sceneTarget.NextFrameNumber();
+            rendering = sceneFrame.get();
+        }
+        statistics.RenderSize  = renderSize;
+        statistics.DisplaySize = view.Viewport;
         if (view.EffectiveAA != AntiAliasing::TAA && target.GetFsr3Upscaler())
         {
             target.ReleaseFsr3Upscaler();
@@ -624,12 +649,18 @@ namespace Kans
         try
         {
             ParticleRenderFeature particles;
-            particles.Prepare(view, frame);
+            particles.Prepare(rendering->View, *rendering);
             if (view.Features)
-                view.Features->Prepare(view, frame);
-            frame.PrepareDrawLists();
-            frame.PrepareTemporal();
-            pipeline->Prepare(view);
+                view.Features->Prepare(rendering->View, *rendering);
+            rendering->PrepareDrawLists();
+            rendering->PrepareTemporal();
+            pipeline->Prepare(rendering->View);
+            if (sceneView)
+            {
+                view          = *sceneView;
+                view.Viewport = target.GetSize();
+                pipeline->Prepare(view);
+            }
             if (view.Debug.CaptureGraph)
             {
                 capture = target.GetGraphCapture();
@@ -639,7 +670,7 @@ namespace Kans
                                                      m_Device->GetCoordinateConventions()));
             }
             result.Graph.SetExecutionDebug(&target.GetFrameProfiler(), statistics.Frame, capture.get());
-            pipeline->Build(result.Graph, frame);
+            pipeline->Build(result.Graph, *rendering);
             statistics.GraphBuildMilliseconds = RenderClockMilliseconds() - buildStart;
             const auto compileStart           = RenderClockMilliseconds();
             result.Graph.Compile();
@@ -681,6 +712,12 @@ namespace Kans
                 for (auto& gpu : statistics.Gpu->Passes)
                     if (gpu.ID == pass.ID)
                         pass.GpuMilliseconds = gpu.EndMilliseconds - gpu.BeginMilliseconds;
+        }
+        if (sceneView)
+        {
+            view.Culling     = sceneView->Culling;
+            view.ShadowStats = sceneView->ShadowStats;
+            view.Shadows     = sceneView->Shadows;
         }
         statistics.Culling               = view.Culling;
         statistics.Shadows               = view.ShadowStats.PerPass;
@@ -774,6 +811,8 @@ namespace Kans
                 draws.push_back(draw);
             }
         std::stable_partition(draws.begin(), draws.end(), [](const auto& d) { return !d.IgnoreDepth; });
+        // Picking renders its own unjittered ID/depth target at view.Viewport (display size).
+        // No scene-buffer readback occurs here, so display coordinates require no render-size mapping.
         const auto hit = m_Picker.PickSurface(draws,
                                               view.Scene.sceneCamera.camera.GetProjectionMatrix() *
                                                   view.Scene.sceneCamera.viewMatrix,

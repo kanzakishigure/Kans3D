@@ -14,7 +14,7 @@ namespace Kans
     public:
         bool RunsAt(RenderExtensionPoint point) const override
         {
-            return point == RenderExtensionPoint::AfterTransparent;
+            return point == RenderExtensionPoint::AfterTransparent || point == RenderExtensionPoint::BeforePostProcess;
         }
         void AddPasses(RenderExtensionPoint point, const RenderFeatureContext& context) override;
     };

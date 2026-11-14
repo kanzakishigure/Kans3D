@@ -232,6 +232,8 @@ namespace Kans
         const auto           litFrame = frame;
         for (const auto& item : ready)
         {
+            if (View.EffectiveAA == AntiAliasing::TAA && item.AlwaysOnTop && (item.Text || item.UI))
+                continue; // Overlay text/UI uses the unjittered display-size continuation.
             if (transparentOnly &&
                 *transparentOnly != (item.Text || item.UI || IsTransparentMaterial(item.Render.AlphaMode)))
                 continue;
@@ -314,6 +316,7 @@ namespace Kans
                 object.MaterialRender.x = 5.0f;
             objects->Write(range * objectStride, &object, sizeof(object));
             MaterialPassData pass;
+            pass.MaterialMipBias    = MaterialMipBias;
             pass.Palette            = mesh->Skin ? Assets()->GetSkinningPalette(draw.SkinPose, mesh) :
                                                    RenderHardware::Handle<RenderHardware::Buffer>();
             pass.Frame              = frames;
@@ -362,7 +365,7 @@ namespace Kans
                 if (!pass.MaterialGroup && writeTemporalMasks && VelocitySurfaceDraws.count(item.DrawIndex))
                     pass.MaterialGroup = VelocitySurfaceDraws.at(item.DrawIndex).Material;
                 if (!pass.MaterialGroup)
-                    pass.MaterialGroup = Assets()->GetMaterialGroup(*shader, *instance, &complete);
+                    pass.MaterialGroup = Assets()->GetMaterialGroup(*shader, *instance, &complete, MaterialMipBias);
                 Complete &= complete;
                 VelocitySurfaceDraws[item.DrawIndex] = {pass.MaterialGroup,
                                                         pass.PrepassCovered ? PrepassDraws.at(item.DrawIndex).Images :

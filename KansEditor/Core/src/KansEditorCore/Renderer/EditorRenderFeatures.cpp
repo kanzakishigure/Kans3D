@@ -29,11 +29,14 @@ namespace Kans
     }
     void DebugGeometryFeature::AddPasses(RenderExtensionPoint point, const RenderFeatureContext& context)
     {
-        if (context.View.Geometry.empty())
+        if (!context.Frame || context.Frame->DisplayFrame ||
+            (point == RenderExtensionPoint::BeforePostProcess) != (context.View.EffectiveAA == AntiAliasing::TAA) ||
+            context.View.Geometry.empty())
             return;
         auto&       renderer = *context.Frame;
         const auto& view     = context.View;
         auto        uses     = context.Target;
+        // Legacy geometry keeps its HDR output contract, after TAA has resolved at display size.
         if (renderer.Samples == 1 && renderer.ReconstructsHDR())
         {
             const auto hdr = context.Graph.ImportTexture("SceneHDR", renderer.Output.GetHDR());

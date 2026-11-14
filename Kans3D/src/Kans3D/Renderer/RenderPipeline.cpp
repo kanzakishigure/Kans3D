@@ -404,7 +404,14 @@ namespace Kans
                     batch.ProjectionBuffer->Write(0, &projection, sizeof(projection));
                 }
                 sampled(uses, batch.Texture, "SpriteTexture");
-                auto pass = graph.AddRecordedPass("Renderer2D batch", std::move(uses), batch.Commands);
+                auto commands = batch.Commands;
+                if (renderer.DisplayFrame)
+                {
+                    if (!batch.RecordAtSize)
+                        throw std::invalid_argument("Upscaling recorded sprites requires SpriteBatch draw metadata");
+                    commands = batch.RecordAtSize(renderer.SceneTarget(LoadOp::Load), view.Viewport);
+                }
+                auto pass = graph.AddRecordedPass("Renderer2D batch", std::move(uses), std::move(commands));
                 if (pass)
                     graph.OrderAfter(pass, pass - 1);
             }
@@ -538,7 +545,8 @@ namespace Kans
                         const auto* instance =
                             renderer.Assets()->GetInstanceMaterialBindings(*bindings, draw.Parameters);
                         bool complete = true;
-                        auto group    = renderer.Assets()->GetMaterialGroup(*shader, *instance, &complete);
+                        auto group    = renderer.Assets()->GetMaterialGroup(
+                            *shader, *instance, &complete, renderer.MaterialMipBias);
                         renderer.Complete &= complete;
                         const auto index = size_t(&draw - view.Draws.data());
                         if (renderer.VelocityActive && group)
@@ -624,6 +632,11 @@ namespace Kans
         if (renderer.VelocityActive && view.MaterialOrder.empty() && view.EffectiveAA != AntiAliasing::TAA)
             renderer.BuildVelocity(graph);
         Inject(RenderExtensionPoint::AfterTransparent, featureContext);
+        if (renderer.DisplayFrame && view.DebugBuffer != RenderView::DebugBuffer::None)
+        {
+            renderer.BuildDebugBuffer(graph);
+            renderer.PostProcessHDR = false;
+        }
         if (view.EffectiveAA == AntiAliasing::TAA)
         {
             if (!renderer.PostProcessHDR)
@@ -641,10 +654,11 @@ namespace Kans
                                                               view.GetPostProcessSettings().ToneMapping);
                 });
             }
-            auto&                fsr = renderer.Output.EnsureFsr3Upscaler();
+            auto& displayOutput = renderer.DisplayFrame ? renderer.DisplayFrame->Output : renderer.Output;
+            auto& fsr           = displayOutput.EnsureFsr3Upscaler();
             Fsr3Upscaler::Inputs inputs;
             inputs.RenderSize     = view.Viewport;
-            inputs.DisplaySize    = renderer.Output.GetSize();
+            inputs.DisplaySize    = displayOutput.GetSize();
             inputs.Color          = renderer.Output.GetHDR();
             inputs.Depth          = renderer.Output.GetDepth();
             inputs.MotionVectors  = renderer.Output.GetVelocity();
@@ -656,13 +670,43 @@ namespace Kans
             inputs.MaterialMasks  = renderer.TemporalMasks;
             inputs.Settings       = view.GetPostProcessSettings().Temporal;
             const auto resolved   = fsr.AddPasses(graph, inputs);
-            const auto hdr        = graph.ImportTexture("SceneHDR", renderer.Output.GetHDR());
+            const auto hdr        = graph.ImportTexture("SceneHDR", displayOutput.GetHDR());
             graph.AddPass(
                 "FSR resolve to SceneHDR",
                 {{resolved, GraphAccess::TransferRead}, {hdr, GraphAccess::TransferWrite}},
                 [resolved, hdr](auto& c) { c.Commands.CopyTexture(c.Texture(resolved), {}, c.Texture(hdr)); });
             renderer.PostProcessHDR = true;
         }
+        if (renderer.DisplayFrame)
+        {
+            renderer.BuildDisplayDepth(graph, *renderer.DisplayFrame);
+            renderer.DisplayFrame->DeferToneMapping = renderer.DisplayFrame->PostProcessHDR = true;
+            Finish(graph, *renderer.DisplayFrame);
+        }
+        else
+            Finish(graph, renderer);
+    }
+    void ForwardPipeline::Finish(RenderGraph& graph, RenderFrame& renderer)
+    {
+        using namespace RenderHardware;
+        const auto&           view = renderer.View;
+        std::vector<GraphUse> target;
+        for (size_t i = 0; i < renderer.Output.GetColors().size(); ++i)
+        {
+            const auto color = graph.ImportTexture("SceneColor" + std::to_string(i), renderer.Output.GetColors()[i]);
+            target.push_back({color, GraphAccess::ColorReadWrite});
+            graph.ExportTexture(color);
+        }
+        target.push_back(
+            {graph.ImportTexture("SceneDepthStencil", renderer.Output.GetDepth()), GraphAccess::DepthReadWrite});
+        graph.ExportTexture(target.back().Texture);
+        RenderFeatureContext featureContext {graph, renderer.View, target, &renderer};
+        auto                 append = [&](std::string name, std::vector<GraphUse> uses, RenderGraph::Record record) {
+            auto pass = graph.AddPass(std::move(name), std::move(uses), std::move(record));
+            if (pass)
+                graph.OrderAfter(pass, pass - 1);
+            return pass;
+        };
         AddReconstructionFilter(graph, renderer);
         if (!m_PostDraws.empty())
             m_CustomDepth = BuildCustomDepthPass(graph, renderer);
@@ -689,7 +733,8 @@ namespace Kans
         AddPostMaterials(graph, renderer, PostProcessStage::AfterToneMap);
         if (view.EffectiveAA == AntiAliasing::FXAA)
             AddFXAA(graph, renderer);
-        renderer.BuildDebugBuffer(graph);
+        if (!renderer.RenderSource)
+            renderer.BuildDebugBuffer(graph);
         AddScreenUI(graph, renderer);
         Inject(RenderExtensionPoint::Overlay, featureContext);
     }
@@ -697,7 +742,14 @@ namespace Kans
     void ForwardPipeline::AddScreenUI(RenderGraph& graph, RenderFrame& frame)
     {
         using namespace RenderHardware;
-        if (std::none_of(frame.View.UIs.begin(), frame.View.UIs.end(), [](auto& ui) { return ui.Screen; }))
+        const bool worldOverlays = frame.View.EffectiveAA == AntiAliasing::TAA;
+        const bool overlayText =
+            worldOverlays && std::any_of(frame.View.Texts.begin(), frame.View.Texts.end(), [](auto& t) {
+                return t.Style.AlwaysOnTop && !t.Style.Text.empty();
+            });
+        if (!overlayText && std::none_of(frame.View.UIs.begin(), frame.View.UIs.end(), [&](auto& ui) {
+                return ui.Screen || (worldOverlays && ui.AlwaysOnTop);
+            }))
             return;
         auto output      = graph.ImportTexture("SceneColor0", frame.Output.GetColors()[0]);
         auto desc        = frame.Output.GetColors()[0]->GetDesc();
@@ -717,6 +769,13 @@ namespace Kans
         std::vector<GraphUse> uses {{srgb, GraphAccess::ColorReadWrite}};
         for (auto& image : frame.Services.GetUIRenderer().Textures())
             uses.push_back({graph.ImportTexture("UI image/atlas", image), GraphAccess::SampledRead});
+        if (overlayText)
+            for (auto& image : frame.Services.GetTextRenderer().Textures())
+            {
+                const auto texture = graph.ImportTexture("Overlay text atlas", image);
+                if (std::none_of(uses.begin(), uses.end(), [&](auto use) { return use.Texture == texture; }))
+                    uses.push_back({texture, GraphAccess::SampledRead});
+            }
         append("Screen UI (linear blending, sRGB output)", std::move(uses), [&frame, srgb](auto& c) {
             RenderingDesc target;
             target.Colors.push_back({c.Texture(srgb)});
@@ -729,6 +788,26 @@ namespace Kans
             projection[1][1] = 2.f / viewport.y;
             projection[3][0] = -1;
             projection[3][1] = -1;
+            const auto worldProjection = DeviceProjection(frame.View.Scene.sceneCamera.camera.GetProjectionMatrix() *
+                                                              frame.View.Scene.sceneCamera.viewMatrix,
+                                                          c.Device.GetCoordinateConventions());
+            if (frame.View.EffectiveAA == AntiAliasing::TAA)
+            {
+                for (auto text : frame.View.Texts)
+                    if (text.Style.AlwaysOnTop && !text.Style.Text.empty() && frame.View.Highlights.Isolate.empty())
+                    {
+                        text.Transform = TextWorldTransform(text.Style,
+                                                            text.Transform,
+                                                            frame.View.Scene.sceneCamera.Position,
+                                                            frame.View.Scene.sceneCamera.viewMatrix);
+                        frame.Services.GetTextRenderer().Draw(c.Commands, text, worldProjection, target);
+                        ++frame.Stats.DrawCalls;
+                        frame.Stats.Triangles += text.Layout->Get().Glyphs.size() * 2;
+                    }
+                for (auto& ui : frame.View.UIs)
+                    if (!ui.Screen && ui.AlwaysOnTop)
+                        frame.Services.GetUIRenderer().Draw(c.Commands, ui, worldProjection, target, viewport);
+            }
             for (auto& ui : frame.View.UIs)
                 if (ui.Screen)
                     frame.Services.GetUIRenderer().Draw(c.Commands, ui, projection, target, viewport);

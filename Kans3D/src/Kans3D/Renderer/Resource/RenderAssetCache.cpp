@@ -500,7 +500,12 @@ namespace Kans
             // A descriptor published this frame is never rewritten, including after synchronous
             // command retirement. BeginFrame waits for GPU completion before advancing m_Frame;
             // descriptor ownership also protects commands not submitted at that boundary.
-            if (retired.empty() &&
+            const bool biasedAvailable =
+                std::all_of(candidate->BiasedGroups.begin(), candidate->BiasedGroups.end(), [&](const auto& item) {
+                    return !item.second.Group ||
+                           (candidate->SnapshotFrame != m_Frame && item.second.Group.use_count() == 1);
+                });
+            if (retired.empty() && biasedAvailable &&
                 (!candidate->Group || (candidate->SnapshotFrame != m_Frame && candidate->Group.use_count() == 1)))
             {
                 result = candidate.get();
@@ -825,7 +830,10 @@ namespace Kans
     }
 
     RenderHardware::Handle<RenderHardware::BindGroup>
-    RenderAssetCache::GetMaterialGroup(const GpuShader& shader, const GpuMaterialBindings& bindings, bool* result)
+    RenderAssetCache::GetMaterialGroup(const GpuShader&           shader,
+                                       const GpuMaterialBindings& bindings,
+                                       bool*                      result,
+                                       float                      mipBias)
     {
         bool complete = true;
         RenderHardware::BindGroupDesc group;
@@ -887,6 +895,17 @@ namespace Kans
                 }
                 texture = fallback;
             }
+            if (mipBias != 0)
+            {
+                auto& biased = m_BiasedSamplers[{sampler, mipBias}];
+                if (!biased)
+                {
+                    auto desc = sampler->GetDesc();
+                    desc.MipLodBias += mipBias;
+                    biased = GetDevice()->CreateSampler(desc);
+                }
+                sampler = biased;
+            }
             auto image = texture->GetResource();
             images.push_back(image);
             RenderHardware::BindGroupEntry entry;
@@ -901,6 +920,26 @@ namespace Kans
         {
             bindings.Images = std::move(images);
             return nullptr; // Compatibility texture-only binding has no uniform blocks.
+        }
+        if (mipBias != 0)
+        {
+            auto&                                                        cached = bindings.BiasedGroups[mipBias];
+            std::vector<RenderHardware::Handle<RenderHardware::Sampler>> samplers;
+            for (const auto& entry : group.Entries)
+                if (entry.SamplerResource)
+                    samplers.push_back(entry.SamplerResource);
+            if (!cached.Group || cached.Images != images || cached.Samplers != samplers)
+            {
+                if (cached.Group && cached.Group.use_count() > 1)
+                    bindings.RetiredGroups.push_back(cached.Group);
+                cached.Group    = GetDevice()->CreateBindGroup(group);
+                cached.Images   = images;
+                cached.Samplers = std::move(samplers);
+            }
+            if (bindings.Images != images)
+                bindings.Group.reset();
+            bindings.Images = std::move(images);
+            return cached.Group;
         }
         if (!bindings.Group || bindings.Images != images)
         {
@@ -977,6 +1016,7 @@ namespace Kans
         m_MaterialSampler.reset();
         m_TextureSamplers.clear();
         m_ProductSamplers.clear();
+        m_BiasedSamplers.clear();
         m_ShadowFallback.reset();
     }
 } // namespace Kans

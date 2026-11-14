@@ -656,8 +656,11 @@ namespace Kans
         // Post-processing comes from the scene settings; the editor view starts with the scene
         // camera's anti-aliasing, which the viewport's camera menu can still change.
         if (Entity camera = m_ActiveScene->GetCameraEntity())
+        {
+            m_ViewportPanel.GetCamera().SetUpscaling(camera.GetComponent<CameraComponent>().SceneCamera.GetUpscaling());
             m_ViewportPanel.GetCamera().SetAntiAliasing(
                 camera.GetComponent<CameraComponent>().SceneCamera.GetAntiAliasing());
+        }
         QueueMissingSceneAssets();
         return activated;
     }

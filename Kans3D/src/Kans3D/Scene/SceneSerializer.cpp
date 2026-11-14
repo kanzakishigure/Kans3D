@@ -1329,6 +1329,11 @@ namespace Kans
                 value["AspectRatio"]          = camera.GetAspectRatio();
                 if (camera.GetPostProcessOverride())
                     value["PostProcessOverride"] = EncodePostProcess(*camera.GetPostProcessOverride());
+                if (!(camera.GetUpscaling() == UpscalingSettings {}))
+                {
+                    value["Upscaling"]["Mode"]        = uint32_t(camera.GetUpscaling().Mode);
+                    value["Upscaling"]["CustomRatio"] = camera.GetUpscaling().CustomRatio;
+                }
                 if (camera.GetAntiAliasing() != AntiAliasing::None)
                     value["AntiAliasing"] = uint32_t(camera.GetAntiAliasing());
                 value["Primary"]          = component.Primary;
@@ -1908,6 +1913,7 @@ namespace Kans
                           "Exposure",
                           "Bloom",
                           "AntiAliasing",
+                          "Upscaling",
                           "Primary",
                           "FixedAspectRatio"});
                     auto type = SceneIndex(value["ProjectionType"]);
@@ -1925,6 +1931,20 @@ namespace Kans
                         camera.SetExposure(Number(value["Exposure"]));
                     if (value["Bloom"])
                         camera.SetBloomSettings(DecodeBloom(value["Bloom"]));
+                    if (const auto upscale = value["Upscaling"])
+                    {
+                        Keys(upscale, {"Mode", "CustomRatio"});
+                        UpscalingSettings settings;
+                        if (upscale["Mode"])
+                        {
+                            const auto mode = SceneIndex(upscale["Mode"]);
+                            Require(mode <= uint32_t(UpscalingMode::Custom), "Invalid camera upscaling mode");
+                            settings.Mode = static_cast<UpscalingMode>(mode);
+                        }
+                        if (upscale["CustomRatio"])
+                            settings.CustomRatio = Number(upscale["CustomRatio"]);
+                        camera.SetUpscaling(settings);
+                    }
                     if (value["AntiAliasing"])
                     {
                         const auto aa = SceneIndex(value["AntiAliasing"]);

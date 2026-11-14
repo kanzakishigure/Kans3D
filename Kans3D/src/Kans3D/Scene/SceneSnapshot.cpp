@@ -34,7 +34,7 @@ namespace Kans
                    x.GetOrthographicNearClip() == y.GetOrthographicNearClip() &&
                    x.GetOrthographicFarClip() == y.GetOrthographicFarClip() &&
                    x.GetPostProcessOverride() == y.GetPostProcessOverride() &&
-                   x.GetAntiAliasing() == y.GetAntiAliasing() &&
+                   x.GetAntiAliasing() == y.GetAntiAliasing() && x.GetUpscaling() == y.GetUpscaling() &&
                    // A free aspect ratio follows the viewport; resizing it is not an edit.
                    (!a.FixedAspectRatio || x.GetAspectRatio() == y.GetAspectRatio());
         }

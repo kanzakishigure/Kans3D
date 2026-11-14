@@ -16,6 +16,7 @@ namespace Kans
         bool                                                           ParticleMesh   = false;
         size_t                                                         IndirectOffset = 0;
         uint32_t                                                       Samples = 1;
+        float                                                          MaterialMipBias = 0;
         MaterialRenderState                 Render;
         RenderHardware::Handle<RenderHardware::Shader>                 VertexSource;
         RenderHardware::Handle<RenderHardware::BindGroupLayout>        VertexLayout;

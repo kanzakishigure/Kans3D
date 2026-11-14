@@ -594,10 +594,12 @@ namespace Kans::RenderHardware
         };
         struct VKSampler final : Sampler
         {
+            SamplerDesc        Desc;
+            const SamplerDesc& GetDesc() const override { return Desc; }
             Allocation Memory;
             VkSampler  Native = VK_NULL_HANDLE;
             bool       Comparison = false;
-            VKSampler(std::shared_ptr<State> owner, const SamplerDesc& desc) : Memory(std::move(owner))
+            VKSampler(std::shared_ptr<State> owner, const SamplerDesc& desc) : Desc(desc), Memory(std::move(owner))
             {
                 Require(std::isfinite(desc.MinLod) && std::isfinite(desc.MaxLod) && desc.MinLod >= 0 &&
                             desc.MaxLod >= desc.MinLod,
@@ -626,6 +628,9 @@ namespace Kans::RenderHardware
                 Comparison            = desc.CompareEnabled;
                 sampler.compareEnable = desc.CompareEnabled;
                 sampler.compareOp     = static_cast<VkCompareOp>(uint32_t(desc.Compare));
+                sampler.mipLodBias    = std::clamp(desc.MipLodBias,
+                                                   -Memory.Owner->Native.Properties.limits.maxSamplerLodBias,
+                                                   Memory.Owner->Native.Properties.limits.maxSamplerLodBias);
                 sampler.minLod       = desc.MinLod;
                 sampler.maxLod       = desc.MaxLod;
                 auto device          = Memory.Owner->Native.Logical;

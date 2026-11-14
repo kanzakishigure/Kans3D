@@ -1261,6 +1261,9 @@ namespace Kans
                     auto antiAliasing = m_Camera.GetAntiAliasing();
                     if (DrawAntiAliasing(antiAliasing))
                         m_Camera.SetAntiAliasing(antiAliasing);
+                    auto upscaling = m_Camera.GetUpscaling();
+                    if (DrawUpscaling(upscaling))
+                        m_Camera.SetUpscaling(upscaling);
                     if (antiAliasing == AntiAliasing::TAA)
                     {
                         auto settings = m_Camera.ResolvePostProcess(m_Scene->GetPostProcessSettings());

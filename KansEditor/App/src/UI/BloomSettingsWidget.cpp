@@ -140,6 +140,17 @@ namespace Kans
         static const float defaultSharpness = TemporalReconstructionSettings {}.Sharpness;
         return PropertyGrid::Float("Sharpness", sharpness, .01f, 0.f, 1.f, "%.2f", &defaultSharpness);
     }
+    bool DrawUpscaling(UpscalingSettings& settings)
+    {
+        const char* names[] = {
+            "Native (1x)", "Quality (1.5x)", "Balanced (1.7x)", "Performance (2x)", "Ultra Performance (3x)", "Custom"};
+        int  index    = int(settings.Mode);
+        bool changed  = PropertyGrid::Combo("Upscaling", names, int(std::size(names)), index);
+        settings.Mode = UpscalingMode(index);
+        if (settings.Mode == UpscalingMode::Custom)
+            changed |= PropertyGrid::Float("Upscale ratio", settings.CustomRatio, .01f, 1.f, 3.f, "%.2f");
+        return changed;
+    }
     bool DrawAntiAliasing(AntiAliasing& mode)
     {
         const char* names[] = {"Off", "FXAA (fast)", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA (FSR 3.1)"};

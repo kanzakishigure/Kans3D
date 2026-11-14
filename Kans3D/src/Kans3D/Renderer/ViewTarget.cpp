@@ -50,6 +50,23 @@ namespace Kans
             m_Fsr3Upscaler = std::make_shared<Fsr3Upscaler>(*m_Device);
         return *m_Fsr3Upscaler;
     }
+    ViewTarget& ViewTarget::ConfigureRenderTarget(glm::uvec2 size, float ratio)
+    {
+        if (ratio != m_RenderRatio || (m_RenderTarget && m_RenderTarget->GetSize() != size))
+        {
+            m_RenderTarget.reset();
+            ReleaseFsr3Upscaler();
+            InvalidateTemporalHistory();
+            m_Pool = {};
+        }
+        m_RenderRatio = ratio;
+        if (ratio == 1.f)
+            return *this;
+        if (!m_RenderTarget)
+            m_RenderTarget = std::make_shared<ViewTarget>(m_Device, m_OutputCount, true);
+        m_RenderTarget->Resize(size);
+        return *m_RenderTarget;
+    }
     void ViewTarget::EnsureSampledDepth()
     {
         using namespace RenderHardware;
@@ -84,6 +101,8 @@ namespace Kans
     }
     void ViewTarget::InvalidateTemporalHistory()
     {
+        if (m_RenderTarget)
+            m_RenderTarget->InvalidateTemporalHistory();
         if (m_Temporal)
         {
             m_Temporal->Valid = false;
@@ -133,6 +152,8 @@ namespace Kans
         m_HDR      = std::move(hdr);
         m_Depth    = std::move(depth);
         m_Size     = size;
+        m_RenderTarget.reset();
+        // AddPasses recreates size-dependent FSR resources while preserving the context identity.
         m_NormalRoughness.reset();
         m_SceneVelocity.reset();
         m_VelocityValid = false;

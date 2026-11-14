@@ -238,6 +238,7 @@ namespace Kans::RenderHardware
         float       MinLod = 0, MaxLod = 1000;
         bool        CompareEnabled = false;
         CompareOp   Compare        = CompareOp::LessEqual;
+        float       MipLodBias     = 0;
     };
     class Resource
     {
@@ -261,7 +262,10 @@ namespace Kans::RenderHardware
         virtual const TextureDesc& GetDesc() const = 0;
     };
     class Sampler : public Resource
-    {};
+    {
+    public:
+        virtual const SamplerDesc& GetDesc() const = 0;
+    };
     class PipelineCreationError : public std::runtime_error
     {
     public:

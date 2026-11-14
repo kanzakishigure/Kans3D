@@ -123,6 +123,7 @@ namespace Kans
                                                          0};
                             auto             uniforms = gpu->UploadUniform(graph, &uniform, sizeof(uniform));
                             MaterialPassData pass;
+                            pass.MaterialMipBias   = frame.MaterialMipBias;
                             pass.DebugName         = "VFX/" + instance->Asset()->assetID.ToString() + "/" +
                                                      e.Compiled->Settings.Name + "/Shadow";
                             pass.Frame             = gpu->UploadUniform(graph, &lighting, sizeof(lighting));
@@ -250,6 +251,7 @@ namespace Kans
                                                          float(bindings->Render.DoubleSided),
                                                          0};
                                 MaterialPassData pass;
+                                pass.MaterialMipBias   = frame.MaterialMipBias;
                                 pass.DebugName         = "VFX/" + instance->Asset()->assetID.ToString() + "/" +
                                                          e.Compiled->Settings.Name + "/Shadow";
                                 pass.Frame             = frameBuffer;
@@ -658,7 +660,7 @@ namespace Kans
                         use({graph.ImportTexture("VFX point shadows", image), GraphAccess::SampledRead});
                 }
                 use({depth, GraphAccess::SampledRead});
-                auto material = frame->Assets()->GetMaterialGroup(*shader, *bindings);
+                auto material = frame->Assets()->GetMaterialGroup(*shader, *bindings, nullptr, frame->MaterialMipBias);
                 if (!material)
                     continue;
                 pass.MaterialGroup = material;

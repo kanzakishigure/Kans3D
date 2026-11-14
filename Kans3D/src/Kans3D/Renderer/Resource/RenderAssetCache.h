@@ -52,6 +52,13 @@ namespace Kans
     {
         mutable RenderHardware::Handle<RenderHardware::BindGroup>            Group;
         mutable std::vector<RenderHardware::Handle<RenderHardware::Texture>> Images;
+        struct BiasedGroup
+        {
+            RenderHardware::Handle<RenderHardware::BindGroup>            Group;
+            std::vector<RenderHardware::Handle<RenderHardware::Texture>> Images;
+            std::vector<RenderHardware::Handle<RenderHardware::Sampler>> Samplers;
+        };
+        mutable std::map<float, BiasedGroup> BiasedGroups;
         // Replaced descriptor snapshots may still belong to unsubmitted command lists.
         mutable std::vector<std::weak_ptr<RenderHardware::BindGroup>> RetiredGroups;
         uint64_t                                                      SnapshotFrame = UINT64_MAX;
@@ -119,8 +126,10 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Texture> GetTextureResource(AssetID id);
         // Sampling belongs to an independent RHI sampler, never mutable native image state.
         void SetTextureSampler(AssetID id, const RenderHardware::SamplerDesc& desc);
-        RenderHardware::Handle<RenderHardware::BindGroup>
-        GetMaterialGroup(const GpuShader& shader, const GpuMaterialBindings& bindings, bool* complete = nullptr);
+        RenderHardware::Handle<RenderHardware::BindGroup> GetMaterialGroup(const GpuShader&           shader,
+                                                                           const GpuMaterialBindings& bindings,
+                                                                           bool* complete = nullptr,
+                                                                           float mipBias  = 0);
 
         const GpuMaterialBindings* GetInstanceMaterialBindings(const GpuMaterialBindings&                   base,
                                                                const Ref<const InstanceMaterialParameters>& parameters);
@@ -188,6 +197,9 @@ namespace Kans
         std::map<std::pair<RenderHardware::Filter, RenderHardware::AddressMode>,
                  RenderHardware::Handle<RenderHardware::Sampler>>
                                                                                      m_ProductSamplers;
+        std::map<std::pair<RenderHardware::Handle<RenderHardware::Sampler>, float>,
+                 RenderHardware::Handle<RenderHardware::Sampler>>
+                                                                                     m_BiasedSamplers;
         std::array<Ref<Texture2D>, 3>                                      m_FallbackTextures;
         AssetManager&                                                      m_Assets;
         std::shared_ptr<ShadowResources>                                             m_ShadowFallback;

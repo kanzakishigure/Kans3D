@@ -4,6 +4,7 @@
 #include "Kans3D/Renderer/Passes/AntiAliasing.h"
 #include "Kans3D/Renderer/Passes/BloomSettings.h"
 #include "Kans3D/Renderer/Passes/PostProcessSettings.h"
+#include "Kans3D/Renderer/Passes/Upscaling.h"
 
 namespace Kans
 {
@@ -20,5 +21,6 @@ namespace Kans
                                  const AssetRowPicker&                 materialPicker = {});
     // Anti-aliasing row for an open PropertyGrid; true when the mode changed.
     bool DrawAntiAliasing(AntiAliasing& mode);
+    bool DrawUpscaling(UpscalingSettings& settings);
     bool DrawTemporalSharpness(float& sharpness);
 } // namespace Kans

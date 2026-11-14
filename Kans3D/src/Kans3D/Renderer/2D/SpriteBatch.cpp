@@ -252,9 +252,10 @@ void main() { Color = V_Color * texture(Image,V_UV * V_Tiling); }
         if (!pipeline)
             pipeline = device.CreatePipeline(desc);
         commands->BindPipeline(pipeline);
-        commands->BindGroup(device.CreateBindGroup(
+        auto group = device.CreateBindGroup(
             {m_Data->Layout,
-             {{0, frame, 0, sizeof(glm::mat4), {}, {}}, {1, {}, 0, 0, image, device.CreateSampler(sampling)}}}));
+             {{0, frame, 0, sizeof(glm::mat4), {}, {}}, {1, {}, 0, 0, image, device.CreateSampler(sampling)}}});
+        commands->BindGroup(group);
         commands->BindVertexBuffers({{0, vertices, 0}});
         commands->BindIndexBuffer(m_Data->Indices, IndexType::Uint32);
         commands->DrawIndexed(uint32_t(m_Data->Vertices.size() / 4) * 6);
@@ -263,7 +264,28 @@ void main() { Color = V_Color * texture(Image,V_UV * V_Tiling); }
         if (owned)
         {
             if (m_Data->BatchSubmission)
-                m_Data->BatchSubmission({owned, image, frame, m_Data->ViewProjection});
+            {
+                auto record = [gpu = m_Data->GPU,
+                               pipeline,
+                               group,
+                               vertices,
+                               indices = m_Data->Indices,
+                               count   = uint32_t(m_Data->Vertices.size() / 4) * 6](const RenderingDesc& target,
+                                                                                  glm::uvec2           size) {
+                    auto list = gpu->CreateCommandList();
+                    list->BeginRendering(target);
+                    list->SetViewport({0, 0, float(size.x), float(size.y)});
+                    list->SetScissor({0, 0, size.x, size.y});
+                    list->BindPipeline(pipeline);
+                    list->BindGroup(group);
+                    list->BindVertexBuffers({{0, vertices, 0}});
+                    list->BindIndexBuffer(indices, IndexType::Uint32);
+                    list->DrawIndexed(count);
+                    list->EndRendering();
+                    return list;
+                };
+                m_Data->BatchSubmission({owned, image, frame, m_Data->ViewProjection, std::move(record)});
+            }
             else if (m_Data->Submission)
                 m_Data->Submission(owned, image);
             else

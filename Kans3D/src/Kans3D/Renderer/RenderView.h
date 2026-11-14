@@ -213,6 +213,11 @@ namespace Kans
         // reprojected.
         RenderHardware::Handle<RenderHardware::Buffer> ProjectionBuffer;
         glm::mat4                                      Projection {1};
+        // Recorded attachment handles/viewport cannot be resized. Keep immutable draw inputs
+        // so the pipeline can record the same batch against a render-size target.
+        std::function<RenderHardware::Handle<RenderHardware::CommandList>(const RenderHardware::RenderingDesc&,
+                                                                          glm::uvec2)>
+            RecordAtSize;
     };
     enum class ViewImmediateKind
     {
@@ -259,6 +264,7 @@ namespace Kans
         std::string                                       Pipeline = "Forward";
         std::optional<float>                              Exposure;
         std::optional<Kans::AntiAliasing>                 AntiAliasing; // nullopt inherits the camera.
+        std::optional<UpscalingSettings>                  Upscaling;    // nullopt inherits the camera.
         bool                                              DepthPrepass           = true;
         bool                                              TemporalJitter = false, Velocity = false, CameraCut = false;
         enum class DebugBuffer

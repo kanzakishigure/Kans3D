@@ -256,7 +256,8 @@ namespace Kans
         bool        complete = true;
         const auto* instance =
             data.MaterialGroup ? &bindings : cache.GetInstanceMaterialBindings(bindings, data.Parameters);
-        auto material = data.MaterialGroup ? data.MaterialGroup : cache.GetMaterialGroup(shader, *instance, &complete);
+        auto material = data.MaterialGroup ? data.MaterialGroup :
+                                             cache.GetMaterialGroup(shader, *instance, &complete, data.MaterialMipBias);
         if (!material)
             return false;
         commands.BindPipeline(pipeline);

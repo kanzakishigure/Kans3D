@@ -16,6 +16,12 @@ namespace Kans
         SceneRenderStats&             Stats;
         SpriteStatistics&             SpriteStats;
         bool&                         Complete;
+        // Non-null only for a split render/display view. Both frames live through graph execution.
+        RenderFrame* DisplayFrame    = nullptr;
+        RenderFrame* RenderSource    = nullptr;
+        float        MaterialMipBias = 0;
+        void         BuildDisplayDepth(RenderGraph& graph, RenderFrame& display);
+
         std::optional<double>         FinalPostRecordMilliseconds;
         bool                          DeferToneMapping = false, PostProcessHDR = false;
         uint32_t                                        Samples    = 1;

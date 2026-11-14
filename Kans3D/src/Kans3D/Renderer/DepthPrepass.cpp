@@ -108,6 +108,7 @@ namespace Kans
                         continue; // Main retains its depth write; flag remains zero.
                 }
                 MaterialPassData data;
+                data.MaterialMipBias = MaterialMipBias;
                 data.DepthPrepass = true;
                 // Preserve Main's stencil history even if a later unmarked opaque
                 // surface hides this draw before Main runs (selection outlines use it).
@@ -161,7 +162,7 @@ namespace Kans
                 std::memcpy(packed.data() + data.ObjectOffset, &object, sizeof(object));
                 const auto* instance = Assets()->GetInstanceMaterialBindings(*bindings, draw.Parameters);
                 bool        complete = true;
-                data.MaterialGroup   = Assets()->GetMaterialGroup(*shader, *instance, &complete);
+                data.MaterialGroup   = Assets()->GetMaterialGroup(*shader, *instance, &complete, MaterialMipBias);
                 Complete &= complete;
                 if (!data.MaterialGroup)
                     continue;
