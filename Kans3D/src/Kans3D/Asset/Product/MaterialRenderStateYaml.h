@@ -19,7 +19,8 @@ namespace Kans
         {
             const auto name = entry.first.as<std::string>();
             if (!fields.insert(name).second ||
-                !std::set<std::string> {"alpha_mode", "alpha_cutoff", "double_sided", "receive_shadows"}.count(name))
+                !std::set<std::string> {"alpha_mode", "alpha_cutoff", "double_sided", "receive_shadows", "temporal"}
+                     .count(name))
                 throw std::runtime_error("unknown or duplicate render field '" + name + "'");
         }
         if (node["alpha_mode"])
@@ -37,6 +38,16 @@ namespace Kans
                 state.AlphaMode = MaterialAlphaMode::Premultiplied;
             else if (mode != "opaque")
                 throw std::runtime_error("invalid material alpha_mode '" + mode + "'");
+        }
+        if (node["temporal"])
+        {
+            const auto response = node["temporal"].as<std::string>();
+            if (response == "reactive")
+                state.TemporalResponse = MaterialTemporalResponse::Reactive;
+            else if (response == "composition")
+                state.TemporalResponse = MaterialTemporalResponse::Composition;
+            else if (response != "default")
+                throw std::runtime_error("invalid material temporal response '" + response + "'");
         }
         if (node["alpha_cutoff"])
             state.AlphaCutoff = node["alpha_cutoff"].as<float>();
@@ -64,6 +75,9 @@ namespace Kans
             << "double_sided" << YAML::Value << state.DoubleSided;
         if (!state.ReceiveShadows)
             out << YAML::Key << "receive_shadows" << YAML::Value << false;
+        if (state.TemporalResponse != MaterialTemporalResponse::Default)
+            out << YAML::Key << "temporal" << YAML::Value
+                << (state.TemporalResponse == MaterialTemporalResponse::Reactive ? "reactive" : "composition");
         out << YAML::EndMap;
     }
 } // namespace Kans

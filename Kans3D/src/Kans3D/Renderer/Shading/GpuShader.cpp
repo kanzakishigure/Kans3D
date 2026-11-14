@@ -263,6 +263,39 @@ namespace Kans
         program = m_Device->CreateShader(std::get<ShaderData>(converted));
         return program;
     }
+    RenderHardware::Handle<RenderHardware::Shader>
+    GpuShader::PrepareTemporalMasks(uint64_t                                       key,
+                                    uint32_t                                       location,
+                                    const MaterialRenderState&                     render,
+                                    RenderHardware::Handle<RenderHardware::Shader> vertexSource,
+                                    bool                                           skinned,
+                                    bool                                           smoothFallback,
+                                    bool                                           invalidateNormals,
+                                    const GpuShaderPass*                           extraPass) const
+    {
+        auto& program = m_TemporalMaskPrograms[key];
+        if (program)
+            return program;
+        auto source = *m_Source;
+        source.Passes.clear();
+        if (extraPass)
+            source.Code = m_Source->Passes.at(size_t(extraPass - Passes.data())).Code;
+        auto checked = [](std::variant<ShaderData, AssetError> result) {
+            if (const auto* error = std::get_if<AssetError>(&result))
+                throw std::runtime_error(error->Message);
+            return std::get<ShaderData>(std::move(result));
+        };
+        if (vertexSource)
+            source =
+                checked(MakeParticleSpriteShader(source, vertexSource == MeshProgram, vertexSource == RibbonProgram));
+        else if (skinned)
+            source = checked(MakeSkinnedShader(source, smoothFallback));
+        source = checked(MakeTemporalMaskShader(source.Code, location, render));
+        if (invalidateNormals && !extraPass)
+            source = checked(MakePrepassInvalidationShader(source.Code, location - 1));
+        program = m_Device->CreateShader(source);
+        return program;
+    }
     GpuShader::~GpuShader()                               = default;
     GpuShader::GpuShader(GpuShader&&) noexcept            = default;
     GpuShader& GpuShader::operator=(GpuShader&&) noexcept = default;
@@ -300,6 +333,7 @@ namespace Kans
         copy.PostStage                    = PostStage;
         copy.m_SamplerFallbacks           = m_SamplerFallbacks;
         copy.m_PrepassInvalidationPrograms  = m_PrepassInvalidationPrograms;
+        copy.m_TemporalMaskPrograms         = m_TemporalMaskPrograms;
         return copy;
     }
 } // namespace Kans

@@ -1074,6 +1074,13 @@ namespace Kans
                     material["Enabled"] = false;
                 node["Materials"].push_back(material);
             }
+            if (!(settings.Temporal == TemporalReconstructionSettings {}))
+            {
+                node["Temporal"]["Sharpness"]           = settings.Temporal.Sharpness;
+                node["Temporal"]["ReactiveScale"]       = settings.Temporal.ReactiveScale;
+                node["Temporal"]["ReactiveThreshold"]   = settings.Temporal.ReactiveThreshold;
+                node["Temporal"]["ReactiveBinaryValue"] = settings.Temporal.ReactiveBinaryValue;
+            }
             node["Bloom"]       = EncodeBloom(input.Bloom);
             node["Tonemapping"] = settings.ToneMapping == ToneMappingMode::ACES ? "ACES" : "Standard";
             if (settings.FilterSize != 0)
@@ -1082,7 +1089,7 @@ namespace Kans
         }
         PostProcessSettings DecodePostProcess(const YAML::Node& node)
         {
-            Keys(node, {"Exposure", "Bloom", "Tonemapping", "FilterSize", "Materials"});
+            Keys(node, {"Exposure", "Bloom", "Tonemapping", "FilterSize", "Materials", "Temporal"});
             PostProcessSettings settings;
             if (node["Materials"])
             {
@@ -1095,6 +1102,18 @@ namespace Kans
                     Require(id.IsValid(), "Invalid post material identity");
                     settings.Materials.push_back({id, entry["Enabled"] ? entry["Enabled"].as<bool>() : true});
                 }
+            }
+            if (const auto temporal = node["Temporal"])
+            {
+                Keys(temporal, {"Sharpness", "ReactiveScale", "ReactiveThreshold", "ReactiveBinaryValue"});
+                if (temporal["Sharpness"])
+                    settings.Temporal.Sharpness = Number(temporal["Sharpness"]);
+                if (temporal["ReactiveScale"])
+                    settings.Temporal.ReactiveScale = Number(temporal["ReactiveScale"]);
+                if (temporal["ReactiveThreshold"])
+                    settings.Temporal.ReactiveThreshold = Number(temporal["ReactiveThreshold"]);
+                if (temporal["ReactiveBinaryValue"])
+                    settings.Temporal.ReactiveBinaryValue = Number(temporal["ReactiveBinaryValue"]);
             }
             if (node["Exposure"])
                 settings.Exposure = Number(node["Exposure"]);

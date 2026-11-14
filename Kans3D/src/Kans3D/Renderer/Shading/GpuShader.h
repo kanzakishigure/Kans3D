@@ -2,6 +2,7 @@
 #include <map>
 #include <variant>
 #include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
+#include "Kans3D/Asset/Runtime/ModelData.h"
 #include "Kans3D/RHI/RHI.h"
 
 namespace Kans
@@ -71,6 +72,15 @@ namespace Kans
         PrepareDepthOnlyPrepass(size_t pass, bool skinned, bool smoothNormalFallback = false) const;
         RenderHardware::Handle<RenderHardware::Shader>
         PreparePrepassInvalidation(uint32_t location, bool skinned, bool smoothNormalFallback = false) const;
+        RenderHardware::Handle<RenderHardware::Shader>
+        PrepareTemporalMasks(uint64_t                                       key,
+                             uint32_t                                       location,
+                             const MaterialRenderState&                     render,
+                             RenderHardware::Handle<RenderHardware::Shader> vertexSource,
+                             bool                                           skinned,
+                             bool                                           smoothFallback,
+                             bool                                           invalidateNormals,
+                             const GpuShaderPass*                           extraPass) const;
         ~GpuShader();
         GpuShader(GpuShader&& other) noexcept;
         GpuShader& operator=(GpuShader&& other) noexcept;
@@ -95,6 +105,7 @@ namespace Kans
 
     private:
         GpuShader() = default;
+        mutable std::map<uint64_t, RenderHardware::Handle<RenderHardware::Shader>> m_TemporalMaskPrograms;
         std::shared_ptr<const ShaderData> m_Source;
         mutable std::array<std::shared_ptr<const ShaderData>, 2>              m_SkinnedSources;
         mutable std::array<RenderHardware::Handle<RenderHardware::Shader>, 2> m_StandardDepthNormalsPrograms;

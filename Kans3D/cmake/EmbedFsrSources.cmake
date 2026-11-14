@@ -1,4 +1,4 @@
-# Exact GLSL dependency closure for the seven SDK 1.1.4 FP32/no-wave passes.
+# GLSL dependency closure for the SDK 1.1.4 FP32/no-wave passes.
 set(KANS_FSR_FILES
     gpu/ffx_common_types.h
     gpu/ffx_core.h
@@ -20,6 +20,10 @@ set(KANS_FSR_FILES
     gpu/fsr3upscaler/ffx_fsr3upscaler_shading_change_pyramid.h
     gpu/fsr3upscaler/ffx_fsr3upscaler_upsample.h
     gpu/spd/ffx_spd.h
+    gpu/fsr1/ffx_fsr1.h
+    gpu/fsr3upscaler/ffx_fsr3upscaler_rcas.h
+    shaders/ffx_fsr3upscaler_rcas_pass.glsl
+    shaders/ffx_fsr3upscaler_autogen_reactive_pass.glsl
     shaders/ffx_fsr3upscaler_accumulate_pass.glsl
     shaders/ffx_fsr3upscaler_luma_instability_pass.glsl
     shaders/ffx_fsr3upscaler_luma_pyramid_pass.glsl

@@ -396,6 +396,9 @@ void main() {
             b.SourceAlpha      = RH::BlendFactor::One;
             b.DestinationAlpha = RH::BlendFactor::OneMinusSourceAlpha;
         }
+        for (size_t i = 0; i < p.ColorFormats.size(); ++i)
+            if (p.ColorFormats[i] == RH::Format::RG8Unorm)
+                p.Blends[i].WriteMask = 0;
         commands.BindPipeline(m_Renderer.CachedPipeline(p));
         commands.BindVertexBuffers({{0, g.Vertices, 0}});
         for (auto& b : g.Batches)

@@ -47,6 +47,78 @@ namespace Kans
         };
     } // namespace
 
+    std::variant<ShaderData, AssetError>
+    MakeTemporalMaskShader(const ShaderProgramCode& code, uint32_t location, const MaterialRenderState& render)
+    {
+        try
+        {
+            ShaderData result;
+            result.Code      = code;
+            result.DebugName = "Temporal material masks";
+            for (auto& module : result.Code.Modules)
+            {
+                if (module.Stage != ShaderProductStage::Fragment)
+                    continue;
+                spirv_cross::CompilerGLSL cross(module.Words);
+                auto                      options = cross.get_common_options();
+                options.version                   = 450;
+                options.vulkan_semantics          = true;
+                cross.set_common_options(options);
+                std::string color, mask = "kans_GeneratedTemporalResponse";
+                bool        authored = false;
+                for (const auto& output : cross.get_shader_resources().stage_outputs)
+                {
+                    if (cross.get_decoration(output.id, spv::DecorationLocation) == 0)
+                    {
+                        cross.set_name(output.id, "kans_SurfaceColor");
+                        color = "kans_SurfaceColor";
+                    }
+                    if (output.name == "kans_TemporalResponse")
+                    {
+                        authored = true;
+                        mask     = "kans_TemporalResponse";
+                        cross.set_decoration(output.id, spv::DecorationLocation, location);
+                    }
+                }
+                auto       source = cross.compile();
+                const auto main   = source.find("void main()");
+                if (main == std::string::npos || color.empty())
+                    throw std::runtime_error("Missing surface color/main");
+                source.replace(main, 11, "void kans_TemporalMain()");
+                if (!authored)
+                    source += "\nlayout(location=" + std::to_string(location) + ") out vec2 " + mask + ";\n";
+                // Dithered hair is intentionally not reactive: temporal reconstruction resolves its coverage.
+                const auto        response = render.TemporalResponse;
+                const std::string reactive = response == MaterialTemporalResponse::Reactive ?
+                                                 "0.9" :
+                                             render.AlphaMode == MaterialAlphaMode::Additive ?
+                                                 "min(0.9, "
+                                                 "dot(max(kans_SurfaceColor.rgb,vec3(0)),vec3(0.2126,0.7152,0.0722))*"
+                                                 "clamp(kans_SurfaceColor.a,0.0,1.0))" :
+                                             IsTransparentMaterial(render.AlphaMode) ?
+                                                 "min(0.9,clamp(kans_SurfaceColor.a,0.0,1.0))" :
+                                                 "0.0";
+                source += "\nvoid main(){" + mask + "=vec2(0); kans_TemporalMain(); " + mask + "=max(clamp(" + mask +
+                          ",vec2(0),vec2(1)),vec2(" + reactive + "," +
+                          (response == MaterialTemporalResponse::Composition ? "1.0" : "0.0") + "));}\n";
+                shaderc::Compiler       compiler;
+                shaderc::CompileOptions compileOptions;
+                compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
+                auto compiled =
+                    compiler.CompileGlslToSpv(source, shaderc_fragment_shader, "TemporalMasks.frag", compileOptions);
+                if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
+                    throw std::runtime_error(compiled.GetErrorMessage());
+                module.Words.assign(compiled.cbegin(), compiled.cend());
+                module.EntryPoint = "main";
+            }
+            return result;
+        }
+        catch (const std::exception& error)
+        {
+            return AssetError {AssetErrorCode::InvalidData, error.what()};
+        }
+    }
+
     void MakeSurfacePositionInvariant(ShaderData& data)
     {
         if (data.Domain != ShaderDomain::Surface)

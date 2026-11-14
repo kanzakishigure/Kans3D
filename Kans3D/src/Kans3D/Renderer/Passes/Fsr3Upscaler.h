@@ -4,6 +4,7 @@
 #include "Kans3D/Asset/Runtime/ShaderData.h"
 #include "Kans3D/Core/TimeStep.h"
 #include "Kans3D/Renderer/Graph/RenderGraph.h"
+#include "PostProcessSettings.h"
 
 namespace Kans
 {
@@ -30,6 +31,14 @@ namespace Kans
                                     bool                 reset,
                                     const Fsr3Constants& previous);
 
+    struct alignas(16) Fsr3ReactiveConstants
+    {
+        float    Scale = 1, Threshold = .2f, BinaryValue = .9f;
+        uint32_t Flags = 13; // SDK: tonemap | threshold | components max.
+    };
+    static_assert(sizeof(Fsr3ReactiveConstants) == 16);
+    glm::uvec4 MakeFsr3RcasConstants(float sharpness);
+
     class Fsr3Upscaler
     {
     public:
@@ -37,6 +46,8 @@ namespace Kans
         {
             glm::uvec2                                      RenderSize {}, DisplaySize {};
             RenderHardware::Handle<RenderHardware::Texture> Color, Depth, MotionVectors;
+            GraphTexture                                    OpaqueOnly = uint32_t(-1), MaterialMasks = uint32_t(-1);
+            TemporalReconstructionSettings                  Settings;
             // Engine projection before DeviceProjection, finite conventional Z (near=0, far=1 on Vulkan).
             glm::mat4 Projection {1};
             glm::vec2 Jitter {};
@@ -61,7 +72,7 @@ namespace Kans
         };
         struct UniformBuffers
         {
-            RenderHardware::Handle<RenderHardware::Buffer> Constants, Spd;
+            RenderHardware::Handle<RenderHardware::Buffer> Constants, Spd, Reactive, Rcas;
         };
         std::vector<UniformBuffers>                                            m_Uniforms;
         RenderHardware::Device&                                                m_Device;

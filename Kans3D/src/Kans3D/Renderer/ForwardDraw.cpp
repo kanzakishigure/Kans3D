@@ -143,7 +143,8 @@ namespace Kans
         const std::function<void(const RenderHardware::Handle<RenderHardware::Texture>&)>& sampled,
         const std::string&                                                                 tag,
         const RenderView*                                                                  suppliedView,
-        RenderHardware::Handle<RenderHardware::CommandList>*                               finalPost)
+        RenderHardware::Handle<RenderHardware::CommandList>*                               finalPost,
+        std::optional<bool>                                                                transparentOnly)
     {
         const auto& view = suppliedView ? *suppliedView : View;
         if (view.MaterialOrder.empty())
@@ -179,7 +180,19 @@ namespace Kans
             Services.GetDevice()->CreateBuffer({frameStride * ready.size(), BufferUsage::Uniform, MemoryUsage::Upload});
         auto objects = Services.GetDevice()->CreateBuffer(
             {objectStride * ready.size(), BufferUsage::Uniform, MemoryUsage::Upload});
-        bool rendering = false, hdr = (DeferToneMapping || HasBackgroundColor()) && PostProcessHDR;
+        const bool writeTemporalMasks = TemporalMasks != uint32_t(-1) && tag.empty() && !suppliedView;
+        const auto materialTarget     = [&](LoadOp load, bool hdr, bool invalidate = false) {
+            auto target = SceneTarget(load, hdr);
+            if (invalidate)
+                target.Colors.push_back({Output.GetNormalRoughness(), {}, load});
+            if (writeTemporalMasks)
+                target.Colors.push_back({SceneGraph->Texture(TemporalMasks), {}, load});
+            return target;
+        };
+        // TAA material recording is deferred past graph construction's display-space state changes.
+        const bool deferToneMapping = DeferToneMapping || writeTemporalMasks;
+        bool       rendering        = false,
+                   hdr = writeTemporalMasks || ((deferToneMapping || HasBackgroundColor()) && PostProcessHDR);
         bool invalidatingNormals = false;
         auto resolve = [&](RenderHardware::CommandList& output) {
             Services.GetToneMapping().Record(*Services.GetDevice(),
@@ -207,9 +220,7 @@ namespace Kans
                                                  View.GetPostProcessSettings().ToneMapping);
             hdr = nextHDR;
             invalidatingNormals = invalidate;
-            auto target         = SceneTarget(LoadOp::Load, hdr);
-            if (invalidate)
-                target.Colors.push_back({Output.GetNormalRoughness(), {}, LoadOp::Load});
+            auto target         = materialTarget(LoadOp::Load, hdr, invalidate);
             commands->BeginRendering(target);
             commands->SetViewport({0, 0, float(View.Viewport.x), float(View.Viewport.y), 0, 1});
             commands->SetScissor({0, 0, View.Viewport.x, View.Viewport.y});
@@ -221,6 +232,9 @@ namespace Kans
         const auto           litFrame = frame;
         for (const auto& item : ready)
         {
+            if (transparentOnly &&
+                *transparentOnly != (item.Text || item.UI || IsTransparentMaterial(item.Render.AlphaMode)))
+                continue;
             if (item.UI)
             {
                 if (!tag.empty())
@@ -229,7 +243,7 @@ namespace Kans
                 Services.GetUIRenderer().Draw(*commands,
                                               view.UIs[item.DrawIndex],
                                               frame.ViewProjection,
-                                              SceneTarget(LoadOp::Load, true),
+                                              materialTarget(LoadOp::Load, true),
                                               View.Viewport);
                 continue;
             }
@@ -241,7 +255,8 @@ namespace Kans
                 auto text      = view.Texts[item.DrawIndex];
                 text.Transform = TextWorldTransform(
                     text.Style, text.Transform, View.Scene.sceneCamera.Position, View.Scene.sceneCamera.viewMatrix);
-                Services.GetTextRenderer().Draw(*commands, text, frame.ViewProjection, SceneTarget(LoadOp::Load, true));
+                Services.GetTextRenderer().Draw(
+                    *commands, text, frame.ViewProjection, materialTarget(LoadOp::Load, true));
                 ++Stats.DrawCalls;
                 Stats.Triangles += text.Layout->Get().Glyphs.size() * 2;
                 continue;
@@ -318,11 +333,10 @@ namespace Kans
                                     !IsTransparentMaterial(render.AlphaMode) && !PrepassDraws.count(item.DrawIndex);
             beginTarget(nextHDR, invalidate);
             pass.ColorFormats.clear();
-            for (const auto& color : SceneTarget(LoadOp::Load, nextHDR).Colors)
+            for (const auto& color : materialTarget(LoadOp::Load, nextHDR, invalidate).Colors)
                 pass.ColorFormats.push_back(color.Target->GetDesc().PixelFormat);
             pass.InvalidatePrepassNormals = invalidate;
-            if (invalidate)
-                pass.ColorFormats.push_back(Output.GetNormalRoughness()->GetDesc().PixelFormat);
+            pass.WriteTemporalMasks       = writeTemporalMasks;
             pass.Wireframe    = draw.ViewMode == SceneViewMode::Wireframe;
             pass.WriteStencil = draw.Stencil == ModelStencilMode::WriteReference;
             pass.Render       = render;
@@ -345,6 +359,8 @@ namespace Kans
             {
                 const auto* instance = Assets()->GetInstanceMaterialBindings(*bindings, draw.Parameters);
                 bool        complete = true;
+                if (!pass.MaterialGroup && writeTemporalMasks && VelocitySurfaceDraws.count(item.DrawIndex))
+                    pass.MaterialGroup = VelocitySurfaceDraws.at(item.DrawIndex).Material;
                 if (!pass.MaterialGroup)
                     pass.MaterialGroup = Assets()->GetMaterialGroup(*shader, *instance, &complete);
                 Complete &= complete;
@@ -390,9 +406,20 @@ namespace Kans
         }
         if (rendering)
             commands->EndRendering();
-        if (DeferToneMapping)
+        if (View.EffectiveAA == AntiAliasing::TAA && !hdr)
+        {
+            Services.GetToneMapping().Record(*GetDevice(),
+                                             *commands,
+                                             Colors()[0],
+                                             {HDR()},
+                                             View.GetPostProcessSettings().Exposure,
+                                             true,
+                                             View.GetPostProcessSettings().ToneMapping);
+            hdr = true;
+        }
+        if (deferToneMapping)
             PostProcessHDR = hdr;
-        if (hdr && !DeferToneMapping)
+        if (hdr && !deferToneMapping)
         {
             if (finalPost)
             {

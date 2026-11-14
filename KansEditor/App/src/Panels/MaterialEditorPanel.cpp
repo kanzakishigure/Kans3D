@@ -946,7 +946,10 @@ namespace Kans
                 effective.AlphaCutoff = *overrides.AlphaCutoff;
             if (overrides.DoubleSided)
                 effective.DoubleSided = *overrides.DoubleSided;
-            const bool any = overrides.AlphaMode || overrides.AlphaCutoff || overrides.DoubleSided;
+            if (overrides.TemporalResponse)
+                effective.TemporalResponse = *overrides.TemporalResponse;
+            const bool any =
+                overrides.AlphaMode || overrides.AlphaCutoff || overrides.DoubleSided || overrides.TemporalResponse;
             if (any)
             {
                 ImGui::SameLine();
@@ -1012,9 +1015,20 @@ namespace Kans
         }
         if (ImGui::Checkbox("Double-sided", &render.DoubleSided))
             m_Dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Draw back faces too, lit with the flipped normal (leaves, cloth, thin planes).");
+        const char* responses[] = {"Default", "Reactive", "Composition (animated content)"};
+        int         response    = int(render.TemporalResponse);
+        if (ImGui::Combo("Temporal response", &response, responses, int(std::size(responses))))
+        {
+            render.TemporalResponse = MaterialTemporalResponse(response);
+            m_Dirty                 = true;
+        }
         if (instance)
         {
             auto& overrides = m_Source.RenderOverrides;
+            if (render.TemporalResponse != before.TemporalResponse)
+                overrides.TemporalResponse = render.TemporalResponse;
             if (render.AlphaMode != before.AlphaMode)
                 overrides.AlphaMode = render.AlphaMode;
             if (render.AlphaCutoff != before.AlphaCutoff)
@@ -1022,8 +1036,6 @@ namespace Kans
             if (render.DoubleSided != before.DoubleSided)
                 overrides.DoubleSided = render.DoubleSided;
         }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Draw back faces too, lit with the flipped normal (leaves, cloth, thin planes).");
         DrawPasses(instance, parent);
     }
 

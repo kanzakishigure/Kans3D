@@ -86,7 +86,8 @@ namespace Kans
         return (uint32_t(state.AlphaMode) <= uint32_t(MaterialAlphaMode::Dithered) ||
                 state.AlphaMode == MaterialAlphaMode::Additive ||
                 state.AlphaMode == MaterialAlphaMode::Premultiplied) &&
-               std::isfinite(state.AlphaCutoff) && state.AlphaCutoff >= 0;
+               std::isfinite(state.AlphaCutoff) && state.AlphaCutoff >= 0 &&
+               uint32_t(state.TemporalResponse) <= uint32_t(MaterialTemporalResponse::Composition);
     }
 
     std::variant<std::monostate, AssetError> ValidateMaterialData(const MaterialData& data)

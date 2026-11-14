@@ -122,6 +122,11 @@ namespace Kans
                                            &defaults.FilterSize);
             PropertyGrid::EndGroup();
         }
+        if (PropertyGrid::BeginGroup("Temporal anti-aliasing"))
+        {
+            changed |= DrawTemporalSharpness(settings.Temporal.Sharpness);
+            PropertyGrid::EndGroup();
+        }
         changed |= DrawBloomSettings(settings.Bloom, dirtPicker);
         if (materialPicker && PropertyGrid::BeginGroup("Post materials"))
         {
@@ -129,6 +134,11 @@ namespace Kans
             PropertyGrid::EndGroup();
         }
         return changed;
+    }
+    bool DrawTemporalSharpness(float& sharpness)
+    {
+        static const float defaultSharpness = TemporalReconstructionSettings {}.Sharpness;
+        return PropertyGrid::Float("Sharpness", sharpness, .01f, 0.f, 1.f, "%.2f", &defaultSharpness);
     }
     bool DrawAntiAliasing(AntiAliasing& mode)
     {

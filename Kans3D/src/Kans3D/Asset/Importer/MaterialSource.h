@@ -9,6 +9,7 @@ namespace Kans
     struct MaterialRenderOverrides
     {
         std::optional<MaterialAlphaMode> AlphaMode;
+        std::optional<MaterialTemporalResponse> TemporalResponse;
         std::optional<float>             AlphaCutoff;
         std::optional<bool>              DoubleSided;
         std::optional<bool>              ReceiveShadows;

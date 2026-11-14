@@ -16,6 +16,9 @@ namespace Kans
                 },
                 {"Kans3D/Engine.glsl", R"(#ifndef KANS3D_ENGINE_GLSL
 #define KANS3D_ENGINE_GLSL
+// Optional fragment output: R reactivity, G content/composition change, each [0,1].
+// Declare with KANS_TEMPORAL_RESPONSE; assign kans_TemporalResponse in main.
+#define KANS_TEMPORAL_RESPONSE layout(location=3) out vec2 kans_TemporalResponse
 #define KANS_LIGHT_COUNT 4
 #define KANS_POINT_LIGHT_LIMIT 16
 // Engine data (descriptor set 0). Lighting positions and directions are in world space.
@@ -859,10 +862,20 @@ vec4 KansToneMap(vec3 color)
                 input.Scalar != ShaderInterfaceScalar::Float ||
                 input.Components != (input.Location == 7 ? 3 : vertexComponents[input.Location]))
                 return Contract("vertex input '" + input.Name + "' does not match the engine vertex layout");
-        if (!(depthOnly && fragment->Outputs.empty()) &&
-            (fragment->Outputs.size() != 1 || fragment->Outputs[0].Location != 0 ||
-             fragment->Outputs[0].Components != 4 || fragment->Outputs[0].Columns != 1 ||
-             fragment->Outputs[0].Scalar != ShaderInterfaceScalar::Float))
+        auto colorOutputs = fragment->Outputs;
+        if (domain == ShaderDomain::Surface && !depthOnly && !depthNormals)
+            colorOutputs.erase(std::remove_if(colorOutputs.begin(),
+                                              colorOutputs.end(),
+                                              [](const auto& output) {
+                                                  return output.Name == "kans_TemporalResponse" &&
+                                                         output.Location == 3 && output.Components == 2 &&
+                                                         output.Columns == 1 &&
+                                                         output.Scalar == ShaderInterfaceScalar::Float;
+                                              }),
+                               colorOutputs.end());
+        if (!(depthOnly && colorOutputs.empty()) &&
+            (colorOutputs.size() != 1 || colorOutputs[0].Location != 0 || colorOutputs[0].Components != 4 ||
+             colorOutputs[0].Columns != 1 || colorOutputs[0].Scalar != ShaderInterfaceScalar::Float))
             return Contract(depthNormals ?
                                 "DepthNormals fragment stage must write one vec4 normal/roughness at location 0" :
                                 "the fragment stage must write one vec4 color at location 0");

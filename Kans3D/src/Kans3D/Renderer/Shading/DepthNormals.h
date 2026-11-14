@@ -1,8 +1,11 @@
 #pragma once
+#include "Kans3D/Asset/Runtime/ModelData.h"
 #include "Kans3D/Asset/Runtime/ShaderData.h"
 
 namespace Kans
 {
+    std::variant<ShaderData, AssetError>
+    MakeTemporalMaskShader(const ShaderProgramCode& code, uint32_t location, const MaterialRenderState& render);
     // Decorate Surface position outputs in-place; retain every original instruction.
     void MakeSurfacePositionInvariant(ShaderData& data);
     // Only the fragment stage is replaced; the supplied vertex product is copied verbatim.

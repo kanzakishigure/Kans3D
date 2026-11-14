@@ -20,4 +20,5 @@ namespace Kans
                                  const AssetRowPicker&                 materialPicker = {});
     // Anti-aliasing row for an open PropertyGrid; true when the mode changed.
     bool DrawAntiAliasing(AntiAliasing& mode);
+    bool DrawTemporalSharpness(float& sharpness);
 } // namespace Kans

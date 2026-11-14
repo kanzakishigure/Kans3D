@@ -236,7 +236,6 @@ namespace Kans
             uniforms.LightingInfo.y    = frame.View.GetPostProcessSettings().Exposure;
             auto buffer =
                 frame.GetDevice()->CreateBuffer({sizeof(uniforms), BufferUsage::Uniform, MemoryUsage::Upload});
-            buffer->Write(0, &uniforms, sizeof(uniforms));
             const auto custom = m_CustomDepth;
             if (!m_PostLinearSampler)
             {
@@ -254,12 +253,15 @@ namespace Kans
                    [draw,
                     &frame,
                     buffer,
+                    uniforms,
                     input,
                     output,
                     depth,
                     custom,
                     linear = m_PostLinearSampler,
                     point  = m_PostPointSampler](auto& c) {
+                       // Upload in graph order, after deferred scene draws have written their jittered uniforms.
+                       buffer->Write(0, &uniforms, sizeof(uniforms));
                        PipelineDesc pipeline;
                        pipeline.Program         = draw.Shader->Program;
                        pipeline.GroupLayouts    = {draw.Shader->EngineLayout, draw.Shader->MaterialLayout};
@@ -470,8 +472,108 @@ namespace Kans
         // geometry against their depth before the opaque lighting pass.
         if (view.DepthPrepass || view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
             renderer.BuildDepthPrepass(graph);
+        GraphTexture opaqueOnly = uint32_t(-1);
+        if (view.EffectiveAA == AntiAliasing::TAA)
+        {
+            renderer.SceneGraph = &graph;
+            TextureDesc masks;
+            masks.Width       = view.Viewport.x;
+            masks.Height      = view.Viewport.y;
+            masks.PixelFormat = Format::RG8Unorm;
+            masks.Usage       = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled |
+                                RenderHardware::TextureUsage::CopySource;
+            renderer.TemporalMasks = graph.CreateTexture("Temporal material masks", masks);
+            append("Clear temporal material masks",
+                   {{renderer.TemporalMasks, GraphAccess::ColorWrite}},
+                   [mask = renderer.TemporalMasks](auto& c) {
+                       RenderingDesc clear;
+                       clear.Colors.push_back({c.Texture(mask), {}, LoadOp::Clear});
+                       c.Commands.BeginRendering(clear);
+                       c.Commands.EndRendering();
+                   });
+            if (!renderer.PostProcessHDR)
+            {
+                append("TAA opaque HDR prefill",
+                       {{graph.ImportTexture("SceneColor0", renderer.Output.GetColors()[0]), GraphAccess::SampledRead},
+                        {graph.ImportTexture("SceneHDR", renderer.Output.GetHDR()), GraphAccess::ColorWrite}},
+                       [&renderer, &view](auto& c) {
+                           renderer.Services.GetToneMapping().Record(c.Device,
+                                                                     c.Commands,
+                                                                     renderer.Output.GetColors()[0],
+                                                                     {renderer.Output.GetHDR()},
+                                                                     view.GetPostProcessSettings().Exposure,
+                                                                     true,
+                                                                     view.GetPostProcessSettings().ToneMapping);
+                       });
+                renderer.PostProcessHDR = true;
+            }
+        }
         Inject(RenderExtensionPoint::BeforeOpaque, featureContext);
-        if (!view.MaterialOrder.empty())
+        if (view.EffectiveAA == AntiAliasing::TAA)
+        {
+            auto       materialUses = target;
+            const auto hdr          = graph.ImportTexture("SceneHDR", renderer.Output.GetHDR());
+            materialUses.push_back({hdr, GraphAccess::ColorReadWrite});
+            materialUses.push_back({renderer.TemporalMasks, GraphAccess::ColorReadWrite});
+            if (auto normal = renderer.Output.GetNormalRoughness())
+                materialUses.push_back(
+                    {graph.ImportTexture("SceneNormalRoughness", normal), GraphAccess::ColorReadWrite});
+            for (const auto& image : renderer.Services.GetUIRenderer().Textures())
+                sampled(materialUses, image, "UITexture");
+            for (const auto& image : renderer.Services.GetTextRenderer().Textures())
+                sampled(materialUses, image, "FontAtlas");
+            for (const auto& image : renderer.GetMaterialEnvironment())
+                sampled(materialUses, image, "MaterialEnvironment");
+            if (view.Shadows)
+            {
+                sampled(materialUses, view.Shadows->Directional, "DirectionalShadowAtlas");
+                for (const auto& image : view.Shadows->Points)
+                    sampled(materialUses, image, "PointShadowCube");
+            }
+            // Resolve descriptors before declaring resources; recording is deferred until transient allocation.
+            for (const auto& draw : view.Draws)
+                if (const auto* bindings = renderer.GetBindings(draw.Material, draw.ViewMode != SceneViewMode::Lit))
+                    if (const auto* shader = renderer.GetShader(draw.Material, bindings->Shader))
+                    {
+                        const auto* instance =
+                            renderer.Assets()->GetInstanceMaterialBindings(*bindings, draw.Parameters);
+                        bool complete = true;
+                        auto group    = renderer.Assets()->GetMaterialGroup(*shader, *instance, &complete);
+                        renderer.Complete &= complete;
+                        const auto index = size_t(&draw - view.Draws.data());
+                        if (renderer.VelocityActive && group)
+                            renderer.VelocitySurfaceDraws[index] =
+                                renderer.PrepassDraws.count(index) ? renderer.PrepassDraws.at(index) :
+                                                                     RenderFrame::PrepassDraw {group, instance->Images};
+                        for (const auto& image : instance->Images)
+                            sampled(materialUses, image, "MaterialTexture");
+                        if (renderer.PrepassDraws.count(index))
+                            for (const auto& image : renderer.PrepassDraws.at(index).Images)
+                                sampled(materialUses, image, "PrepassMaterialTexture");
+                    }
+            if (!view.MaterialOrder.empty())
+                append("Materials (opaque/mask)", materialUses, [&renderer](auto& c) {
+                    // Graph construction may already have advanced its logical state through tone mapping.
+                    renderer.PostProcessHDR = true;
+                    renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, false);
+                });
+            Inject(RenderExtensionPoint::AfterOpaque, featureContext);
+            auto opaqueDesc  = renderer.Output.GetHDR()->GetDesc();
+            opaqueDesc.Usage = RenderHardware::TextureUsage::CopyDestination |
+                               RenderHardware::TextureUsage::CopySource | RenderHardware::TextureUsage::Sampled;
+            opaqueOnly       = graph.CreateTexture("Temporal opaque color", opaqueDesc);
+            append("Opaque HDR snapshot",
+                   {{hdr, GraphAccess::TransferRead}, {opaqueOnly, GraphAccess::TransferWrite}},
+                   [hdr, opaqueOnly](auto& c) { c.Commands.CopyTexture(c.Texture(hdr), {}, c.Texture(opaqueOnly)); });
+            if (!view.MaterialOrder.empty())
+                append("Materials (blend)", materialUses, [&renderer](auto& c) {
+                    renderer.PostProcessHDR = true;
+                    renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, true);
+                });
+            if (renderer.VelocityActive)
+                renderer.BuildVelocity(graph);
+        }
+        else if (!view.MaterialOrder.empty())
         {
             auto uses = target;
             if (auto normal = renderer.Output.GetNormalRoughness())
@@ -519,7 +621,7 @@ namespace Kans
                 graph.OrderAfter(resolve, resolve - 1);
             }
         }
-        if (renderer.VelocityActive && view.MaterialOrder.empty())
+        if (renderer.VelocityActive && view.MaterialOrder.empty() && view.EffectiveAA != AntiAliasing::TAA)
             renderer.BuildVelocity(graph);
         Inject(RenderExtensionPoint::AfterTransparent, featureContext);
         if (view.EffectiveAA == AntiAliasing::TAA)
@@ -550,6 +652,9 @@ namespace Kans
             inputs.Jitter         = renderer.Output.GetJitter();
             inputs.FrameTimeDelta = view.FrameTimeDelta;
             inputs.Reset          = renderer.Output.GetTemporalState().Reset;
+            inputs.OpaqueOnly     = opaqueOnly;
+            inputs.MaterialMasks  = renderer.TemporalMasks;
+            inputs.Settings       = view.GetPostProcessSettings().Temporal;
             const auto resolved   = fsr.AddPasses(graph, inputs);
             const auto hdr        = graph.ImportTexture("SceneHDR", renderer.Output.GetHDR());
             graph.AddPass(

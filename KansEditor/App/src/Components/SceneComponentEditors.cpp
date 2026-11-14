@@ -79,6 +79,13 @@ namespace Kans::ComponentEditors
                 auto antiAliasing = camera.GetAntiAliasing();
                 if (DrawAntiAliasing(antiAliasing))
                     camera.SetAntiAliasing(antiAliasing);
+                if (antiAliasing == AntiAliasing::TAA)
+                {
+                    auto settings = camera.ResolvePostProcess(ui.GetScene() ? ui.GetScene()->GetPostProcessSettings() :
+                                                                              PostProcessSettings {});
+                    if (DrawTemporalSharpness(settings.Temporal.Sharpness))
+                        camera.SetPostProcessOverride(settings);
+                }
                 PropertyGrid::EndGroup();
             }
             // Post-processing normally comes from the scene; an override applies to this camera only.

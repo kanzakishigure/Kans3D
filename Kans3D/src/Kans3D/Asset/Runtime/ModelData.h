@@ -63,6 +63,14 @@ namespace Kans
                mode == MaterialAlphaMode::Premultiplied;
     }
 
+    // Describes content stability, independently of the reconstruction technique.
+    enum class MaterialTemporalResponse : uint32_t
+    {
+        Default,
+        Reactive,
+        Composition
+    };
+
     // Render state belongs to the material, independently of its Shader.
     struct MaterialRenderState
     {
@@ -70,6 +78,7 @@ namespace Kans
         float             AlphaCutoff    = 0.5f;
         bool              DoubleSided    = false;
         bool              ReceiveShadows = true;
+        MaterialTemporalResponse TemporalResponse = MaterialTemporalResponse::Default;
     };
 
     [[nodiscard]] bool IsValidMaterialRenderState(const MaterialRenderState& state);

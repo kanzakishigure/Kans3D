@@ -42,8 +42,6 @@ namespace Kans
                                              0u)
                         << 4) |
                        (uint32_t(coverage) << 6);
-        for (size_t i = 0; i < data.ColorFormats.size(); ++i)
-            key |= uint32_t(data.ColorFormats[i]) << (12 + i * 6);
         key |= uint32_t(smoothStream) << 31;
         key |= uint32_t(data.Render.AlphaMode == MaterialAlphaMode::Additive) << 28;
         key |= uint32_t(data.Render.AlphaMode == MaterialAlphaMode::Premultiplied) << 29;
@@ -54,6 +52,14 @@ namespace Kans
         key |= uint64_t(data.DepthPrepass) << 33;
         key |= uint64_t(data.PrepassCovered && !extraPass) << 34;
         key |= uint64_t(data.InvalidatePrepassNormals) << 35;
+        key |= uint64_t(data.WriteTemporalMasks) << 36;
+        key |= uint64_t(data.Render.TemporalResponse) << 37;
+        // Attachment formats sit above the state bits, exactly (6 bits each), so a format never
+        // aliases a state bit: HDR, the prepass normal and the two temporal masks fit in four slots.
+        if (data.ColorFormats.size() > 4)
+            throw std::logic_error("Material pipeline key supports at most four colour attachments");
+        for (size_t i = 0; i < data.ColorFormats.size(); ++i)
+            key |= uint64_t(data.ColorFormats[i]) << (38 + i * 6);
         Handle<Pipeline> shadowPipeline;
         auto&            pipeline = (data.ShadowDepth || data.CustomDepth) ? shadowPipeline :
                                     extraPass                              ? extraPass->Pipelines[key] :
@@ -71,9 +77,19 @@ namespace Kans
                 desc.Program = smoothFallback ? (extraPass ? extraPass->SkinnedNormalFallbackProgram :
                                                              shader.SkinnedNormalFallbackProgram) :
                                                 (extraPass ? extraPass->SkinnedProgram : shader.SkinnedProgram);
-            if (data.InvalidatePrepassNormals && !extraPass)
+            if (data.InvalidatePrepassNormals && !extraPass && !data.WriteTemporalMasks)
                 desc.Program =
                     shader.PreparePrepassInvalidation(uint32_t(data.ColorFormats.size() - 1), skinned, smoothFallback);
+            if (data.WriteTemporalMasks)
+                desc.Program = shader.PrepareTemporalMasks(
+                    key ^ (uint64_t(extraPass ? size_t(extraPass - shader.Passes.data()) + 1 : 0) << 48),
+                    uint32_t(data.ColorFormats.size() - 1),
+                    data.Render,
+                    data.VertexSource,
+                    skinned,
+                    smoothFallback,
+                    data.InvalidatePrepassNormals,
+                    extraPass);
             desc.DebugName =
                 data.DebugName.empty() ? desc.Program->DebugName : data.DebugName + "/" + desc.Program->DebugName;
             desc.GroupLayouts = {shader.EngineLayout, shader.MaterialLayout};
@@ -180,8 +196,19 @@ namespace Kans
             desc.Blends.resize(data.ColorFormats.size(), blend);
             if (data.InvalidatePrepassNormals)
             {
-                desc.Blends.back()           = {};
-                desc.Blends.back().WriteMask = extraPass ? 0 : 15;
+                auto& normal     = desc.Blends.at(desc.Blends.size() - (data.WriteTemporalMasks ? 2 : 1));
+                normal           = {};
+                normal.WriteMask = extraPass ? 0 : 15;
+            }
+            if (data.WriteTemporalMasks)
+            {
+                auto& mask = desc.Blends.back();
+                mask       = {};
+                // Opaque replacement removes hidden masks; transparent layers max-combine visible contributions.
+                mask.Enabled = transparent;
+                mask.ColorOp = mask.AlphaOp = BlendOp::Max;
+                mask.SourceColor = mask.DestinationColor = BlendFactor::One;
+                mask.WriteMask                           = 3;
             }
             if (data.ShadowDepth || data.CustomDepth)
             {

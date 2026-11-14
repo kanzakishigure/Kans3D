@@ -1261,6 +1261,12 @@ namespace Kans
                     auto antiAliasing = m_Camera.GetAntiAliasing();
                     if (DrawAntiAliasing(antiAliasing))
                         m_Camera.SetAntiAliasing(antiAliasing);
+                    if (antiAliasing == AntiAliasing::TAA)
+                    {
+                        auto settings = m_Camera.ResolvePostProcess(m_Scene->GetPostProcessSettings());
+                        if (DrawTemporalSharpness(settings.Temporal.Sharpness))
+                            m_Camera.SetPostProcessOverride(settings);
+                    }
                     PropertyGrid::End();
                 }
                 ImGui::EndPopup();

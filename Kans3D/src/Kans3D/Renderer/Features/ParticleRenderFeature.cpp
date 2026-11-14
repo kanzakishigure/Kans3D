@@ -618,8 +618,11 @@ namespace Kans
                 const bool materialHDR = shader->OutputSpace == ShaderOutputSpace::LinearHDR;
                 const bool previousHDR = workingHDR;
                 auto       target      = frame->Output.Target(LoadOp::Load, materialHDR);
+                pass.WriteTemporalMasks = frame->TemporalMasks != uint32_t(-1);
                 for (const auto& color : target.Colors)
                     pass.ColorFormats.push_back(color.Target->GetDesc().PixelFormat);
+                if (pass.WriteTemporalMasks)
+                    pass.ColorFormats.push_back(Format::RG8Unorm);
                 auto       uses = context.Target;
                 const auto use  = [&](GraphUse entry) {
                     auto at = std::find_if(uses.begin(), uses.end(), [&](const auto& existing) {
@@ -631,6 +634,8 @@ namespace Kans
                         at->Access = entry.Access;
                 };
 
+                if (pass.WriteTemporalMasks)
+                    use({frame->TemporalMasks, GraphAccess::ColorReadWrite});
                 auto hdr = frame->Samples > 1 && !frame->MSAAResolved ?
                                frame->MSHDR :
                                graph.ImportTexture("SceneHDR", frame->Output.GetHDR());
@@ -714,7 +719,7 @@ namespace Kans
                                       tone(true);
                                   if (!materialHDR)
                                       tone(false);
-                                  c.Commands.BeginRendering(frame->SceneTarget(LoadOp::Load, materialHDR));
+                                  c.Commands.BeginRendering(frame->MaterialTarget(LoadOp::Load, materialHDR));
                                   GpuMesh empty;
                                   bool    recorded = false;
                                   try
@@ -738,7 +743,7 @@ namespace Kans
                                   if (!materialHDR)
                                       tone(true);
                                   frame->PostProcessHDR = true;
-                                  if (!frame->DeferToneMapping)
+                                  if (!frame->DeferToneMapping && frame->View.EffectiveAA != AntiAliasing::TAA)
                                       tone(false);
                                   if (recorded)
                                   {

@@ -23,6 +23,7 @@ namespace Kans
         std::vector<GraphTexture>                       MSColors;
         GraphTexture                                    MSHDR = 0, MSDepth = 0;
         bool                                            MSAAResolved = false;
+        GraphTexture                                    TemporalMasks = uint32_t(-1);
         struct PrepassDraw
         {
             RenderHardware::Handle<RenderHardware::BindGroup>            Material;
@@ -92,6 +93,16 @@ namespace Kans
             }
             return target;
         }
+        RenderHardware::RenderingDesc
+        MaterialTarget(RenderHardware::LoadOp load, bool hdr, bool invalidate = false) const
+        {
+            auto target = SceneTarget(load, hdr);
+            if (invalidate)
+                target.Colors.push_back({Output.GetNormalRoughness(), {}, load});
+            if (TemporalMasks != uint32_t(-1))
+                target.Colors.push_back({SceneGraph->Texture(TemporalMasks), {}, load});
+            return target;
+        }
         std::array<RenderHardware::Handle<RenderHardware::Texture>, 3> GetMaterialEnvironment();
         std::shared_ptr<RenderHardware::Device> GetDevice() const { return Services.GetDevice(); }
         bool IncludesSection(UUID entity, UUID instanceRoot, const GpuMesh* mesh, uint32_t section) const;
@@ -102,7 +113,8 @@ namespace Kans
             const std::function<void(const RenderHardware::Handle<RenderHardware::Texture>&)>& sampled   = {},
             const std::string&                                                                 tag       = {},
             const RenderView*                                                                  view      = nullptr,
-            RenderHardware::Handle<RenderHardware::CommandList>*                               finalPost = nullptr);
+            RenderHardware::Handle<RenderHardware::CommandList>*                               finalPost = nullptr,
+            std::optional<bool>                                                                transparentOnly = {});
         void SubmitPrefabPreview(const PrefabPreview& preview);
         void AppendPrefabPreviewDraws(const PrefabPreview& preview, std::vector<MeshDraw>& draws);
         void AppendEntityDraws(UUID entity, uint32_t id, std::vector<MeshDraw>& draws);

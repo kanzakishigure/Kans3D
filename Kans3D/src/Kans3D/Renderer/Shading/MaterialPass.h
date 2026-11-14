@@ -27,6 +27,7 @@ namespace Kans
         bool                                                           ShadowDepth = false, CustomDepth = false;
         bool                                                           DepthPrepass = false, PrepassCovered = false;
         bool                                                           InvalidatePrepassNormals = false;
+        bool                                                           WriteTemporalMasks       = false;
         uint8_t                                                        CustomStencil = 0;
         RenderHardware::Handle<RenderHardware::BindGroup>              MaterialGroup;
         RenderHardware::FrontFace                      DepthFront = RenderHardware::FrontFace::CounterClockwise;

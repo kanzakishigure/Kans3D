@@ -10,7 +10,8 @@ namespace Kans
     {
         Immediate, // At each original immediate submission, before that submission's core draw.
         BeforeOpaque,
-        AfterTransparent, // Opaque/mask and blend currently share one material batch.
+        AfterOpaque, // TAA exposes the opaque/transparency boundary before its HDR snapshot.
+        AfterTransparent,
         BeforePostProcess,
         Overlay
     };

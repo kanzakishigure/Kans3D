@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include "Fsr3Upscaler.h"
+#include <glm/gtc/packing.hpp>
 #include "Kans3D/Renderer/Shading/FsrShaderSources.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Kans3D/Renderer/Temporal.h"
@@ -15,14 +16,20 @@ namespace Kans
                                            "shading_change",
                                            "prepare_reactivity",
                                            "luma_instability",
-                                           "accumulate"};
+                                           "accumulate",
+                                           "autogen_reactive",
+                                           "combine_masks",
+                                           "rcas"};
         constexpr const char* Names[]   = {"FSR prepare inputs",
                                            "FSR luma pyramid",
                                            "FSR shading change pyramid",
                                            "FSR shading change",
                                            "FSR prepare reactivity",
                                            "FSR luma instability",
-                                           "FSR accumulate"};
+                                           "FSR accumulate",
+                                           "FSR generate reactive",
+                                           "FSR combine masks",
+                                           "FSR RCAS"};
         TextureDesc           Description(glm::uvec2 size, Format format)
         {
             TextureDesc d;
@@ -88,6 +95,14 @@ namespace Kans
         c.FrameIndex = reset ? 0 : previous.FrameIndex + 1;
         return c;
     }
+    glm::uvec4 MakeFsr3RcasConstants(float sharpness)
+    {
+        // SDK FsrRcasCon: exp2(-((-2 * sharpness) + 2)); remaining words are FP16/unused.
+        const float value = std::exp2(2.f * std::clamp(sharpness, 0.f, 1.f) - 2.f);
+        uint32_t    bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        return {bits, glm::packHalf2x16(glm::vec2(value)), 0, 0};
+    }
     Fsr3Upscaler::Fsr3Upscaler(RenderHardware::Device& device) : m_Device(device)
     {
         using namespace RenderHardware;
@@ -100,6 +115,10 @@ namespace Kans
         {
             uniform.Constants = device.CreateBuffer(
                 {sizeof(Fsr3Constants), BufferUsage::Uniform | BufferUsage::CopyDestination, MemoryUsage::DeviceLocal});
+            uniform.Reactive = device.CreateBuffer(
+                {16, BufferUsage::Uniform | BufferUsage::CopyDestination, MemoryUsage::DeviceLocal});
+            uniform.Rcas = device.CreateBuffer(
+                {16, BufferUsage::Uniform | BufferUsage::CopyDestination, MemoryUsage::DeviceLocal});
             uniform.Spd = device.CreateBuffer(
                 {32, BufferUsage::Uniform | BufferUsage::CopyDestination, MemoryUsage::DeviceLocal});
         }
@@ -114,14 +133,39 @@ namespace Kans
         for (const auto& [path, source] : sources)
             if (path.rfind("gpu/", 0) == 0)
                 includes.emplace(path.substr(4), source);
+        // RCAS reads a cross around each pixel; samplerless loads need an explicit edge clamp.
+        auto&             callbacks = includes.at("fsr3upscaler/ffx_fsr3upscaler_callbacks_glsl.h");
+        const std::string rcasLoad  = "texelFetch(r_rcas_input, iPxPos, 0)";
+        callbacks.replace(
+            callbacks.find(rcasLoad),
+            rcasLoad.size(),
+            "texelFetch(r_rcas_input, clamp(iPxPos, FfxInt32x2(0), textureSize(r_rcas_input, 0) - 1), 0)");
         for (const auto* entry : Entries)
         {
-            auto source = sources.at(std::string("shaders/ffx_fsr3upscaler_") + entry + "_pass.glsl");
+            auto source = std::string(entry) == "combine_masks" ?
+                              R"(#version 450
+layout(local_size_x=8,local_size_y=8) in;
+layout(set=0,binding=0) uniform texture2D r_auto_reactive;
+layout(set=0,binding=1) uniform texture2D r_material_masks;
+layout(set=0,binding=2,r8) writeonly uniform image2D rw_reactive_mask;
+layout(set=0,binding=3,r8) writeonly uniform image2D rw_transparency_and_composition_mask;
+void main(){ ivec2 p=ivec2(gl_GlobalInvocationID.xy); if(any(greaterThanEqual(p,imageSize(rw_reactive_mask))))return;
+vec2 material=texelFetch(r_material_masks,p,0).rg;
+// Composition changes invalidate accumulation as well as locks (the SDK T&C input controls locks).
+imageStore(rw_reactive_mask,p,vec4(max(texelFetch(r_auto_reactive,p,0).r,max(material.r,material.g))));
+imageStore(rw_transparency_and_composition_mask,p,vec4(material.g)); }
+)" :
+                              sources.at(std::string("shaders/ffx_fsr3upscaler_") + entry + "_pass.glsl");
+            if (std::string(entry) == "combine_masks")
+                source.insert(source.find('\n') + 1, "#extension GL_EXT_samplerless_texture_functions : require\n");
+            if (std::string(entry) == "autogen_reactive")
+                source.insert(source.find("    FfxFloat32x3 ColorPreAlpha"),
+                              "    if (any(greaterThanEqual(uDispatchThreadId, FfxUInt32x2(RenderSize())))) return;\n");
             // FP32, no wave/subgroup requirements: lavapipe and portable Vulkan RHI.
             // FFX_WAVE must be UNDEFINED (the headers use defined(), not its value).
             // SPD uses shared-memory reductions. Analytic Lanczos avoids a lookup texture.
             // HDR input, render-resolution unjittered UV motion, conventional finite depth,
-            // no sharpening. Samplerless texture functions are core SPIR-V sampled images.
+            // separate optional RCAS. Samplerless texture functions are core SPIR-V sampled images.
             source.insert(source.find('\n', source.find("#version")) + 1, R"(
 #define FFX_GPU 1
 #define FFX_GLSL 1
@@ -194,6 +238,13 @@ namespace Kans
             spdGroups.x * spdGroups.y,
             {},
             in.RenderSize};
+        const auto                  settings = in.Settings.Validated();
+        const Fsr3ReactiveConstants reactive {
+            settings.ReactiveScale, settings.ReactiveThreshold, settings.ReactiveBinaryValue, 13};
+        const auto rcas           = MakeFsr3RcasConstants(settings.Sharpness);
+        const auto reactiveBuffer = uniform.Reactive, rcasBuffer = uniform.Rcas;
+        const auto graphReactive = graph.ImportBuffer("FSR reactive constants", reactiveBuffer);
+        const auto graphRcas     = graph.ImportBuffer("FSR RCAS constants", rcasBuffer);
         const auto                          spdBuffer      = uniform.Spd;
         const auto                          graphConstants = graph.ImportBuffer("FSR constants", constants);
         const auto                          graphSpd       = graph.ImportBuffer("FSR SPD constants", spdBuffer);
@@ -211,6 +262,13 @@ namespace Kans
         images["rw_internal_upscaled_color"]                 = images.at("history" + current);
         images["r_frame_info"] = images["rw_frame_info"] = images.at("frameInfo");
         images["rw_spd_global_atomic"]                   = images.at("atomic");
+        images["r_auto_reactive"] = images["r_material_masks"] = images.at("black");
+        const bool generateReactive                            = in.OpaqueOnly != uint32_t(-1);
+        const bool combineMasks                                = generateReactive || in.MaterialMasks != uint32_t(-1);
+        if (in.MaterialMasks != uint32_t(-1))
+            images["r_material_masks"] = in.MaterialMasks;
+        if (generateReactive)
+            images["r_input_opaque_only"] = in.OpaqueOnly;
         images["r_reactive_mask"] = images["r_transparency_and_composition_mask"] = images.at("black");
         images["r_input_exposure"]                                                = images.at("exposure");
         images["r_lanczos_lut"]                                                   = images.at("black");
@@ -222,6 +280,18 @@ namespace Kans
             images["r_" + name] = images["rw_" + name] = id;
             return id;
         };
+        if (generateReactive)
+        {
+            const auto automatic      = transient("output_autoreactive", in.RenderSize, Format::R32Float);
+            images["r_auto_reactive"] = automatic;
+            // The SDK declares this unused UAV alongside autoreactive; the entry writes only autoreactive.
+            images["rw_output_autocomposition"] = automatic;
+        }
+        if (combineMasks)
+        {
+            transient("reactive_mask", in.RenderSize, Format::R8Unorm);
+            transient("transparency_and_composition_mask", in.RenderSize, Format::R8Unorm);
+        }
         transient("reconstructed_previous_nearest_depth", in.RenderSize, Format::R32Uint);
         transient("dilated_motion_vectors", in.RenderSize, Format::RG16Float);
         transient("dilated_depth", in.RenderSize, Format::R32Float);
@@ -232,6 +302,11 @@ namespace Kans
         transient("dilated_reactive_masks", in.RenderSize, Format::RGBA8Unorm);
         transient("luma_instability", in.RenderSize, Format::R16Float);
         const auto output      = transient("upscaled_output", in.DisplaySize, Format::RGBA16Float);
+        images["r_rcas_input"] = output;
+        const auto sharpened =
+            settings.Sharpness > 0 ?
+                graph.CreateTexture("FSR sharpened output", Description(in.DisplaySize, Format::RGBA16Float)) :
+                output;
         auto       pyramidDesc = Description(glm::max(in.RenderSize / 2u, glm::uvec2(1)), Format::RG16Float);
         pyramidDesc.MipLevels =
             std::min(6u, uint32_t(std::floor(std::log2(std::max(pyramidDesc.Width, pyramidDesc.Height)))) + 1);
@@ -242,7 +317,9 @@ namespace Kans
         // Clear persistent histories on reset as well as all atomic/discarded surfaces before
         // their first read. Explicit graph declarations keep the clears and histories alive.
         std::vector<GraphUse>     clearUses {{graphConstants, GraphAccess::TransferWrite},
-                                             {graphSpd, GraphAccess::TransferWrite}};
+                                             {graphSpd, GraphAccess::TransferWrite},
+                                             {graphReactive, GraphAccess::TransferWrite},
+                                             {graphRcas, GraphAccess::TransferWrite}};
         std::vector<GraphTexture> zeros;
         if (reset)
             for (const auto& [name, texture] : m_Resources)
@@ -272,9 +349,15 @@ namespace Kans
                            frameInfo = images.at("frameInfo"),
                            exposure  = images.at("exposure"),
                            constants,
+                           reactiveBuffer,
+                           rcasBuffer,
+                           reactive,
+                           rcas,
                            spdBuffer,
                            parameters = m_Constants,
                            spd](auto& c) {
+                              c.Commands.UpdateBuffer(reactiveBuffer, 0, &reactive, sizeof(reactive));
+                              c.Commands.UpdateBuffer(rcasBuffer, 0, &rcas, sizeof(rcas));
                               c.Commands.UpdateBuffer(constants, 0, &parameters, sizeof(parameters));
                               c.Commands.UpdateBuffer(spdBuffer, 0, &spd, sizeof(spd));
                               for (auto id : zeros)
@@ -289,8 +372,12 @@ namespace Kans
                           });
         if (first)
             graph.OrderAfter(first, first - 1);
-        for (size_t i = 0; i < m_Passes.size(); ++i)
+        for (size_t i : {7u, 8u, 0u, 1u, 2u, 3u, 4u, 5u, 6u, 9u})
         {
+            if ((i == 7 && !generateReactive) || (i == 8 && !combineMasks) || (i == 9 && settings.Sharpness == 0))
+                continue;
+            if (i == 9)
+                images["rw_upscaled_output"] = sharpened;
             const auto&           pass = m_Passes[i];
             std::vector<GraphUse> uses;
             for (const auto& binding : pass.Bindings)
@@ -313,8 +400,13 @@ namespace Kans
             uses.push_back({graphConstants, GraphAccess::UniformRead});
             if (i == 1 || i == 2)
                 uses.push_back({graphSpd, GraphAccess::UniformRead});
+            if (i == 7)
+                uses.push_back({graphReactive, GraphAccess::UniformRead});
+            if (i == 9)
+                uses.push_back({graphRcas, GraphAccess::UniformRead});
             // History writes are observable next frame even if this frame's display is not exported.
-            const auto groups = (i == 1 || i == 2) ? spdGroups :
+            const auto groups = i == 9             ? (in.DisplaySize + 15u) / 16u :
+                                (i == 1 || i == 2) ? spdGroups :
                                                      ((i == 3 ? glm::max(in.RenderSize / 2u, glm::uvec2(1)) :
                                                        i == 6 ? in.DisplaySize :
                                                                 in.RenderSize) +
@@ -324,7 +416,15 @@ namespace Kans
                 Names[i],
                 GraphPassKind::Compute,
                 std::move(uses),
-                [this, i, images, constants, spdBuffer, groups, mips = pyramidDesc.MipLevels](auto& c) {
+                [this,
+                 i,
+                 images,
+                 constants,
+                 reactiveBuffer,
+                 rcasBuffer,
+                 spdBuffer,
+                 groups,
+                 mips = pyramidDesc.MipLevels](auto& c) {
                     const auto&   p = m_Passes[i];
                     BindGroupDesc group;
                     group.Layout = p.Layout;
@@ -334,7 +434,11 @@ namespace Kans
                         e.Slot = binding.Binding;
                         if (binding.Kind == ShaderBindingKind::UniformBuffer)
                         {
-                            if (binding.Name == "cbSPD_t")
+                            if (binding.Name == "cbGenerateReactive_t")
+                                e.BufferResource = reactiveBuffer;
+                            else if (binding.Name == "cbRCAS_t")
+                                e.BufferResource = rcasBuffer;
+                            else if (binding.Name == "cbSPD_t")
                                 e.BufferResource = spdBuffer;
                             else if (binding.Name == "cbFSR3UPSCALER_t")
                                 e.BufferResource = constants;
@@ -363,6 +467,6 @@ namespace Kans
             graph.OrderAfter(id, id - 1);
         }
         ++m_Frame;
-        return output;
+        return sharpened;
     }
 } // namespace Kans

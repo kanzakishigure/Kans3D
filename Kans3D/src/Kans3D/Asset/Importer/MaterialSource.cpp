@@ -263,6 +263,8 @@ namespace Kans
             if (source.Parent.IsValid())
             {
                 const auto render = root["render"];
+                if (render && render["temporal"])
+                    source.RenderOverrides.TemporalResponse = source.Render.TemporalResponse;
                 if (render && render["alpha_mode"])
                     source.RenderOverrides.AlphaMode = source.Render.AlphaMode;
                 if (render && render["alpha_cutoff"])
@@ -333,9 +335,12 @@ namespace Kans
                 throw std::invalid_argument("an instance cannot specify both parent and shader");
             out << YAML::Key << "parent" << YAML::Value << source.Parent.ToString();
             const auto& render = source.RenderOverrides;
-            if (render.AlphaMode || render.AlphaCutoff || render.DoubleSided || render.ReceiveShadows)
+            if (render.AlphaMode || render.AlphaCutoff || render.DoubleSided || render.ReceiveShadows ||
+                render.TemporalResponse)
             {
                 MaterialRenderState state;
+                if (render.TemporalResponse)
+                    state.TemporalResponse = *render.TemporalResponse;
                 if (render.AlphaMode)
                     state.AlphaMode = *render.AlphaMode;
                 if (render.AlphaCutoff)
@@ -351,6 +356,11 @@ namespace Kans
                             state.AlphaMode == MaterialAlphaMode::Additive      ? "additive" :
                             state.AlphaMode == MaterialAlphaMode::Premultiplied ? "premultiplied" :
                                                                                   "opaque");
+                if (render.TemporalResponse)
+                    out << YAML::Key << "temporal" << YAML::Value
+                        << (*render.TemporalResponse == MaterialTemporalResponse::Reactive    ? "reactive" :
+                            *render.TemporalResponse == MaterialTemporalResponse::Composition ? "composition" :
+                                                                                                "default");
                 if (render.AlphaCutoff)
                     out << YAML::Key << "alpha_cutoff" << YAML::Value << *render.AlphaCutoff;
                 if (render.ReceiveShadows)
@@ -511,6 +521,8 @@ namespace Kans
             else
                 effective.Textures.erase(name);
         }
+        if (instance.RenderOverrides.TemporalResponse)
+            effective.Render.TemporalResponse = *instance.RenderOverrides.TemporalResponse;
         if (instance.RenderOverrides.AlphaMode)
             effective.Render.AlphaMode = *instance.RenderOverrides.AlphaMode;
         if (instance.RenderOverrides.AlphaCutoff)
