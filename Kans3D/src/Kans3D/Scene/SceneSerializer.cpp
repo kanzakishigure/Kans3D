@@ -1251,7 +1251,10 @@ namespace Kans
                     v["Bindings"][id] = uint64_t(entityID);
                 node["TimelinePlayerComponent"] = v;
             }
-            if (entity.HasComponent<AnimatorComponent>())
+            if (entity.HasComponent<AnimatorComponent>() &&
+                (!entity.HasComponent<PrefabInstanceComponent>() ||
+                 !entity.GetComponent<PrefabInstanceComponent>().IsGeneratedAnimator(
+                     entity.GetComponent<AnimatorComponent>())))
             {
                 const auto& a        = entity.GetComponent<AnimatorComponent>();
                 auto        v        = node["AnimatorComponent"];

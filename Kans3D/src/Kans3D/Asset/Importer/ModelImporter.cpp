@@ -357,7 +357,7 @@ namespace Kans
         auto settings = ParseModelSettings(context.Settings);
         if (const auto* error = std::get_if<AssetError>(&settings))
             return *error;
-        auto parsed = ParseModelCpu(context.SourceFile, std::get<ModelSettings>(settings).RecomputeMorphNormals);
+        auto parsed = DiscoverModelCpuInputs(context.SourceFile);
         if (const auto* error = std::get_if<AssetError>(&parsed))
             return *error;
         const auto&  model = std::get<ImportedModelData>(parsed);

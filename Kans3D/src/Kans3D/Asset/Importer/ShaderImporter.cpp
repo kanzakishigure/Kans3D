@@ -155,7 +155,8 @@ namespace Kans
 
         // Compiles the source (a stage file or a .shaderprog listing stage files and
         // parameter defaults).
-        std::variant<ShaderData, AssetError> CompileShader(const ImportContext& context, ShaderInputs& inputs)
+        std::variant<ShaderData, AssetError>
+        CompileShader(const ImportContext& context, ShaderInputs& inputs, bool discoverOnly = false)
         {
             auto extension = context.SourceFile.extension().u8string();
             std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
@@ -244,7 +245,9 @@ namespace Kans
                 const auto* text = inputs.Find(name);
                 if (!text)
                     return AssetError {AssetErrorCode::NotFound, "Cannot read Shader stage source " + name};
-                shaderc::Compiler       compiler;
+                // Keep shaderc's compiler initialization alive across an import worker's
+                // sources; repeated startup checks otherwise initialize it for every stage.
+                thread_local shaderc::Compiler compiler;
                 shaderc::CompileOptions options;
                 options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
                 options.SetWarningsAsErrors();
@@ -254,6 +257,17 @@ namespace Kans
                 const auto kind     = stage == ShaderProductStage::Vertex   ? shaderc_vertex_shader :
                                       stage == ShaderProductStage::Fragment ? shaderc_fragment_shader :
                                                                               shaderc_compute_shader;
+                // Discovery runs even on fingerprint hits. Resolve conditional and nested
+                // includes without generating SPIR-V that the cache check would discard.
+                if (discoverOnly)
+                {
+                    const auto preprocessed = compiler.PreprocessGlsl(*text, kind, name.c_str(), options);
+                    if (preprocessed.GetCompilationStatus() != shaderc_compilation_status_success)
+                        return AssetError {AssetErrorCode::InvalidData,
+                                           "Shader preprocessing failed: " +
+                                               preprocessed.GetErrorMessage().substr(0, 4096)};
+                    continue;
+                }
                 const auto compiled = compiler.CompileGlslToSpv(*text, kind, name.c_str(), options);
                 if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
                 {
@@ -271,6 +285,8 @@ namespace Kans
                         if (code == &pass.Code)
                             pass.DebugSources[stage] = *text;
             }
+            if (discoverOnly)
+                return shader;
             auto valid = ValidateMaterialShaderPasses(shader.Code, shader.Passes);
             if (auto* error = std::get_if<AssetError>(&valid))
                 return *error;
@@ -318,7 +334,7 @@ namespace Kans
         if (!ValidContext(context))
             return AssetError {AssetErrorCode::InvalidArgument, "Invalid Shader import context"};
         ShaderInputs inputs(context, true);
-        auto         compiled = CompileShader(context, inputs);
+        auto         compiled = CompileShader(context, inputs, true);
         if (auto* error = std::get_if<AssetError>(&compiled))
             return std::move(*error);
         ImportInputs result;

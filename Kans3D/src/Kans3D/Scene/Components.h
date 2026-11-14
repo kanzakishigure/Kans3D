@@ -232,12 +232,22 @@ namespace Kans
         std::optional<ProductModelComponent>      LegacyPending;
         // Runtime state; serializers omit it, snapshots use it to rebuild atomically.
         Ref<const PrefabAsset>                    Source;
+        AssetID                                   GeneratedAnimatorSkeleton;
         std::map<std::string, PrefabNodeState>    Nodes;
         std::map<AssetID, Ref<const MeshAsset>>   MeshSources;
         Ref<const PrefabAsset>                    ExpandedSource;
         std::map<std::string, PrefabNodeOverride> AppliedOverrides;
         bool                                      Expanded  = false;
         uint64_t                                  DrawOrder = 0;
+
+        bool IsGeneratedAnimator(const AnimatorComponent& animator) const
+        {
+            if (!GeneratedAnimatorSkeleton.IsValid())
+                return false;
+            AnimatorComponent generated;
+            generated.Skeleton = GeneratedAnimatorSkeleton;
+            return animator == generated;
+        }
     };
 
     struct CameraComponent

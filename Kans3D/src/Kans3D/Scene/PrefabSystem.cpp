@@ -222,7 +222,10 @@ namespace Kans
             return;
         if (instance.Source->GetMeshData().Skeleton.IsValid() && !root.HasComponent<AnimatorComponent>() &&
             !root.HasComponent<IKComponent>() && !root.HasComponent<ShapeKeysComponent>())
+        {
             root.AddComponent<AnimatorComponent>().Skeleton = instance.Source->GetMeshData().Skeleton;
+            instance.GeneratedAnimatorSkeleton              = instance.Source->GetMeshData().Skeleton;
+        }
         const auto& nodes = instance.Source->GetEntities();
         // Require all CPU meshes before migration: a missing material table must not
         // silently discard a pending old-part override.

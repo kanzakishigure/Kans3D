@@ -17,7 +17,7 @@ namespace Kans
             if (m_Terminal)
             {
                 m_Task = progress.Begin(
-                    EditorProgressCategory::Import, "Importing assets", [&service] { (void)service.Cancel(); });
+                    EditorProgressCategory::Import, "Updating assets", [&service] { (void)service.Cancel(); });
                 m_Done = m_Total = 0;
             }
             else
@@ -36,7 +36,9 @@ namespace Kans
                 "validating products", "writing products", "committing products", "committed"};
             if (!detail.empty())
                 detail += ": ";
-            detail += s.Phase ? phases[int(*s.Phase)] : "building products";
+            detail += s.Phase            ? phases[int(*s.Phase)] :
+                      s.Source.IsValid() ? "building products" :
+                                           "checking for changes";
         }
         progress.Update(*m_Task, std::move(detail), m_Done + s.Completed, m_Total, s.ItemFraction);
         if (s.State == EditorAssetImportState::Building)

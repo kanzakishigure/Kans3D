@@ -219,6 +219,8 @@ namespace Kans
             Kans::Capture(entity, item.PrefabParent);
             if (item.Prefab)
             {
+                if (item.Animator && item.Prefab->IsGeneratedAnimator(*item.Animator))
+                    item.Animator.reset();
                 item.Prefab->Expanded = false;
                 item.Prefab->Nodes.clear();
             }
@@ -228,12 +230,19 @@ namespace Kans
                 const auto& owned = parent.GetComponent<PrefabOwnedComponent>();
                 item.PrefabParent = PrefabAttachmentComponent {owned.Instance, owned.NodeKey};
             }
+            // Attachments wait under the instance root while its products load.
+            // Capture their authored parent, independent of that temporary hierarchy.
+            if (item.PrefabParent)
+                item.Relationship.Parent = PrefabEntityUUID(item.PrefabParent->Instance, item.PrefabParent->NodeKey);
             auto& children = item.Relationship.Children;
             children.erase(std::remove_if(children.begin(),
                                           children.end(),
                                           [&](UUID child) {
                                               auto e = GetEntityByUUID(child);
-                                              return e && e.HasComponent<PrefabOwnedComponent>();
+                                              return e &&
+                                                     (e.HasComponent<PrefabOwnedComponent>() ||
+                                                      (e.HasComponent<PrefabAttachmentComponent>() &&
+                                                       e.GetComponent<PrefabAttachmentComponent>().Instance == id));
                                           }),
                            children.end());
             Kans::Capture(entity, item.DirLight);

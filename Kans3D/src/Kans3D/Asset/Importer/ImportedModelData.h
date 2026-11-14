@@ -91,6 +91,9 @@ namespace Kans
     // Inspection avoids Assimp's validator retry for morph-only animations: one
     // Assimp read, followed by the same owned-data validation as regular parsing.
     [[nodiscard]] std::variant<ImportedModelData, AssetError> InspectModelCpu(const std::filesystem::path& path);
+    // Dependency discovery reads materials and file references only. Meshes,
+    // skeletons and animation data are built/validated by ParseModelCpu at import.
+    [[nodiscard]] std::variant<ImportedModelData, AssetError> DiscoverModelCpuInputs(const std::filesystem::path& path);
     // Uniformly scales the model by scaling its root nodes.
     void ScaleModel(ImportedModelData& model, float scale);
     // Finds the file a model's texture reference points to. Accepts backslashes,

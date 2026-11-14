@@ -332,7 +332,8 @@ namespace Kans
                       const std::vector<std::filesystem::path>* allowedFiles,
                       std::optional<bool>                       recomputeMorphNormals,
                       bool                                      sourceNormals,
-                      bool                                      singleRead = false)
+                      bool                                      singleRead = false,
+                      bool                                      inputsOnly = false)
     {
         std::error_code error;
         if (!std::filesystem::is_regular_file(path, error))
@@ -456,7 +457,7 @@ namespace Kans
         YAML::Node              gltf;
         std::vector<YAML::Node> gltfMeshes, gltfPrimitives;
         std::vector<size_t>     gltfMeshIndices;
-        if (gltfSource)
+        if (gltfSource && !inputsOnly)
         {
             try
             {
@@ -571,6 +572,9 @@ namespace Kans
             }
             result.Materials.push_back(std::move(data));
         }
+
+        if (inputsOnly)
+            return result;
 
         for (uint32_t i = 0; i < scene->mNumMeshes; ++i)
         {
@@ -1207,6 +1211,10 @@ namespace Kans
     std::variant<ImportedModelData, AssetError> InspectModelCpu(const std::filesystem::path& path)
     {
         return ParseModelCpuImpl(path, nullptr, {}, false, true);
+    }
+    std::variant<ImportedModelData, AssetError> DiscoverModelCpuInputs(const std::filesystem::path& path)
+    {
+        return ParseModelCpuImpl(path, nullptr, {}, false, false, true);
     }
     std::variant<std::filesystem::path, AssetError> ResolveModelTexture(const std::filesystem::path& modelFile,
                                                                         const std::string&           reference)
