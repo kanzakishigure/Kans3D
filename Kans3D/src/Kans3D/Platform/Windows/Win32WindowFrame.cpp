@@ -12,6 +12,10 @@ namespace Kans
     namespace
     {
         constexpr wchar_t Property[] = L"Kans3D.CustomWindowFrame";
+        // Local values also compile with SDKs predating the Windows 11 DWM enums.
+        constexpr DWORD   WindowCornerPreference = 33; // DWMWA_WINDOW_CORNER_PREFERENCE.
+        constexpr DWORD   RoundCorners           = 2;  // DWMWCP_ROUND.
+        constexpr DWORD   BorderColor            = 34; // DWMWA_BORDER_COLOR.
         WindowSize        FrameThickness(HWND window)
         {
             const UINT dpi     = GetDpiForWindow(window);
@@ -37,6 +41,7 @@ namespace Kans
         ExtendFrame();
         SetWindowPos(
             m_Window, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        ApplyNativeEdge();
     }
     Win32WindowFrame::~Win32WindowFrame()
     {
@@ -56,12 +61,29 @@ namespace Kans
     {
         SetWindowPos(m_Window, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
-    void Win32WindowFrame::ExtendFrame() const
+    void Win32WindowFrame::SetWindowEdgeColor(float r, float g, float b)
+    {
+        if (m_EdgeColor.Update(r, g, b) && m_HasNativeWindowEdge)
+        {
+            const COLORREF color = m_EdgeColor.Value();
+            DwmSetWindowAttribute(m_Window, BorderColor, &color, sizeof(color));
+        }
+    }
+    void Win32WindowFrame::ApplyNativeEdge()
+    {
+        // Windows 10 rejects the preference; keep the renderer's fallback edge there.
+        m_HasNativeWindowEdge =
+            DwmSetWindowAttribute(m_Window, WindowCornerPreference, &RoundCorners, sizeof(RoundCorners)) == S_OK;
+        const COLORREF color = m_EdgeColor.Value();
+        DwmSetWindowAttribute(m_Window, BorderColor, &color, sizeof(color));
+    }
+    void Win32WindowFrame::ExtendFrame()
     {
         // One transparent DWM pixel preserves the shadow. WM_NCCALCSIZE gives the
         // renderer the whole normal rectangle, so no unpainted caption strip remains.
         const MARGINS margins {0, 0, 1, 0};
         DwmExtendFrameIntoClientArea(m_Window, &margins);
+        ApplyNativeEdge();
     }
     int Win32WindowFrame::HitTest(POINT screen) const
     {
@@ -159,6 +181,7 @@ namespace Kans
                              0,
                              0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                ApplyNativeEdge();
                 return result;
             }
             case WM_NCMOUSEMOVE: {

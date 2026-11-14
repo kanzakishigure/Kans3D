@@ -169,18 +169,22 @@ namespace Kans
     void Titlebar::End()
     {
         m_Regions.Publish();
+        // TextOff gives both the DWM border and the fallback a quiet, visible edge against App.
+        const auto& edge = EditorTheme::Colors().TextOff;
+        if (m_Window)
+            m_Window->SetWindowEdgeColor(edge.x, edge.y, edge.z);
         // Above every window, inside the client rectangle; resize hit-testing is the window
         // procedure's and is unaffected.
         ImGuiViewport* viewport = ImGui::GetMainViewport();
-        if (!ShowsWindowEdge(IsCustom(), m_Window && m_Window->IsMaximized(), viewport->Size.x, viewport->Size.y))
+        if (!ShowsWindowEdge(IsCustom(),
+                             m_Window && m_Window->IsMaximized(),
+                             m_Window && m_Window->HasNativeWindowEdge(),
+                             viewport->Size.x,
+                             viewport->Size.y))
             return;
         const ImVec2 max {viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y};
-        ImGui::GetForegroundDrawList(viewport)->AddRect(viewport->Pos,
-                                                        max,
-                                                        ImGui::GetColorU32(EditorTheme::Colors().Line),
-                                                        0.0f,
-                                                        0,
-                                                        std::max(1.0f, IM_ROUND(EditorTheme::Px(1.0f))));
+        ImGui::GetForegroundDrawList(viewport)->AddRect(
+            viewport->Pos, max, ImGui::GetColorU32(edge), 0.0f, 0, std::max(1.0f, IM_ROUND(EditorTheme::Px(1.0f))));
     }
 
     Titlebar::Button

@@ -372,6 +372,21 @@ namespace Kans
         return false;
 #endif
     }
+    bool WindowsWindow::HasNativeWindowEdge() const
+    {
+#ifdef _WIN32
+        return HasCustomTitlebar() && m_CustomFrame->HasNativeWindowEdge();
+#else
+        return false;
+#endif
+    }
+    void WindowsWindow::SetWindowEdgeColor(float r, float g, float b)
+    {
+#ifdef _WIN32
+        if (HasCustomTitlebar())
+            m_CustomFrame->SetWindowEdgeColor(r, g, b);
+#endif
+    }
     TitlebarButtonState WindowsWindow::GetTitlebarButtonState() const
     {
 #ifdef _WIN32

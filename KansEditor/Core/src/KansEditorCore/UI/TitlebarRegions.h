@@ -46,6 +46,7 @@ namespace Kans
     };
 
     // Whether a window that draws its own titlebar outlines its edge with a hairline: only while
-    // restored. A maximized window meets the screen edges and a minimized one has no client area.
-    bool ShowsWindowEdge(bool customTitlebar, bool maximized, float width, float height);
+    // restored without a native edge. A maximized window meets the screen edges and a minimized
+    // one has no client area.
+    bool ShowsWindowEdge(bool customTitlebar, bool maximized, bool nativeEdge, float width, float height);
 } // namespace Kans

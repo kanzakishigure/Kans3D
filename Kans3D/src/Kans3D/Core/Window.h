@@ -58,6 +58,8 @@ namespace Kans
         virtual void                SetTitlebarHitTest(std::function<TitlebarHit(int x, int y)> callback) = 0;
         virtual TitlebarButtonState GetTitlebarButtonState() const                                        = 0;
         virtual bool                HasCustomTitlebar() const                                             = 0;
+        virtual bool                HasNativeWindowEdge() const { return false; }
+        virtual void                SetWindowEdgeColor(float r, float g, float b) {}
 
         virtual unsigned int               GetWidth() const                                        = 0;
         virtual unsigned int               GetHeight() const                                       = 0;

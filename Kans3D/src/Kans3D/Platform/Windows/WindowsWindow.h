@@ -43,6 +43,8 @@ namespace Kans
         }
         TitlebarButtonState GetTitlebarButtonState() const override;
         bool                HasCustomTitlebar() const override;
+        bool                HasNativeWindowEdge() const override;
+        void                SetWindowEdgeColor(float r, float g, float b) override;
 
         inline unsigned int GetWidth() const override { return m_Specification.Width; }
         inline unsigned int GetHeight() const override { return m_Specification.Height; }
