@@ -340,7 +340,27 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
                               Handle<RenderHardware::Buffer>() :
                               device->CreateBuffer({packed.size(), BufferUsage::Uniform, MemoryUsage::Upload});
         size_t range    = 0;
-        std::vector<GraphUse> uses {{velocity, GraphAccess::ColorReadWrite}, {depth, GraphAccess::DepthReadWrite}};
+        std::vector<GraphUse> uses;
+        const auto            use = [&](GraphUse added) {
+            const auto existing = std::find_if(uses.begin(), uses.end(), [&](const auto& value) {
+                return value.IsBuffer == added.IsBuffer && value.Texture == added.Texture;
+            });
+            if (existing == uses.end())
+                uses.push_back(added);
+            else if (existing->Access != added.Access)
+            {
+                const auto storage = [](GraphAccess access) {
+                    return access == GraphAccess::StorageRead || access == GraphAccess::StorageWrite ||
+                           access == GraphAccess::StorageReadWrite;
+                };
+                if (storage(existing->Access) && storage(added.Access))
+                    existing->Access = GraphAccess::StorageReadWrite;
+                else
+                    throw std::invalid_argument("Object velocity: incompatible resource accesses");
+            }
+        };
+        use({velocity, GraphAccess::ColorReadWrite});
+        use({depth, GraphAccess::DepthReadWrite});
         EngineFrameUniforms   frame;
         frame.ViewProjection = state.Current;
         frame.Projection     = DeviceProjection(state.Projection, device->GetCoordinateConventions());
@@ -392,7 +412,7 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
                                            offset,
                                            reinterpret_cast<const uint8_t*>(data.data()) + offset,
                                            std::min(size_t(65536), bytes - offset));
-                uses.push_back({graph.ImportBuffer("Velocity palette", buffer), GraphAccess::StorageReadWrite});
+                use({graph.ImportBuffer("Velocity palette", buffer), GraphAccess::StorageReadWrite});
             };
             // Preserve a GPU copy from the first observed pose, even while the object is static.
             if (skinned && draw.EntityID != UUID(0) && (moving || reset))
@@ -426,8 +446,9 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
                         current = history.CurrentPalette;
                     }
                     else
-                        uses.push_back({graph.ImportBuffer("Velocity current palette", current), GraphAccess::StorageRead});
+                        use({graph.ImportBuffer("Velocity current palette", current), GraphAccess::StorageRead});
                     auto deltas = mesh->MorphDeltas ? mesh->MorphDeltas : current;
+                    use({graph.ImportBuffer("Velocity morph deltas", deltas), GraphAccess::StorageRead});
                     skinGroup   = device->CreateBindGroup(
                         {state.SkinLayout,
                          {{0, current, 0, palette.size() * sizeof(glm::mat4)},
@@ -481,21 +502,13 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
                                               {4, {}, 0, 0, environment[2], Services.GetMaterialEnvironmentSampler()},
                                               {15, uniforms, offset + frameBytes + objectBytes, sizeof(previous)}}}));
                 for (const auto& image : environment)
-                {
-                    const auto id = graph.ImportTexture("Velocity engine input", image);
-                    if (std::none_of(uses.begin(), uses.end(), [&](auto use) { return use.Texture == id; }))
-                        uses.push_back({id, GraphAccess::SampledRead});
-                }
+                    use({graph.ImportTexture("Velocity engine input", image), GraphAccess::SampledRead});
                 if (standard)
                 {
                     const auto& surface = VelocitySurfaceDraws.at(item.DrawIndex);
                     commands->BindGroup(surface.Material);
                     for (const auto& image : surface.Images)
-                    {
-                        const auto id = graph.ImportTexture("Velocity alpha input", image);
-                        if (std::none_of(uses.begin(), uses.end(), [&](auto use) { return use.Texture == id; }))
-                            uses.push_back({id, GraphAccess::SampledRead});
-                    }
+                        use({graph.ImportTexture("Velocity alpha input", image), GraphAccess::SampledRead});
                 }
                 else
                     commands->BindGroup(device->CreateBindGroup({state.EmptyMaterialLayout, {}}));
