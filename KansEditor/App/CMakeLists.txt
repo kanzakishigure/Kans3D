@@ -9,6 +9,11 @@ file(GLOB_RECURSE EDITOR_SOURCES CONFIGURE_DEPENDS
 
 add_executable(KansEditor ${EDITOR_SOURCES})
 
+# ---- Windows: application icon (Explorer, taskbar and window class) ----
+if(WIN32)
+    target_sources(KansEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/res/KansEditor.rc)
+endif()
+
 # ---- Include directories (vendor headers propagate via Kans3D PUBLIC links) ----
 target_include_directories(KansEditor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

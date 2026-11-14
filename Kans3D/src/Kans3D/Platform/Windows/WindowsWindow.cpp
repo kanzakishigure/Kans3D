@@ -89,6 +89,14 @@ namespace Kans
         m_Specification.Height = size.Height;
         UpdateNormalRectangle();
         // set the windows Icon
+#ifdef _WIN32
+        // An executable with a GLFW_ICON resource already gives the window class its multi-size
+        // icon, which Windows scales far better than one PNG.
+        const bool exeIcon = FindResourceW(nullptr, L"GLFW_ICON", MAKEINTRESOURCEW(14) /* RT_GROUP_ICON */) != nullptr;
+#else
+        const bool exeIcon = false;
+#endif
+        if (!exeIcon)
         {
             GLFWimage             icon;
             int                   channels;

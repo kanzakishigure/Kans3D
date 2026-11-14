@@ -1,0 +1,2 @@
+// Explorer and taskbar icon; GLFW also uses a resource named GLFW_ICON for the window class.
+GLFW_ICON ICON "../../Resources/Icon/Kans3D.ico"
