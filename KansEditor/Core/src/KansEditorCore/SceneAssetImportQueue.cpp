@@ -7,9 +7,30 @@ namespace Kans
     std::variant<std::monostate, AssetError> SceneAssetImportQueue::Collect(EditorAssetImportService& service,
                                                                             const Scene&              scene)
     {
+        try
+        {
+            std::set<SourceAssetID> referenced;
+            for (auto id : CollectSceneAssetReferences(scene))
+                referenced.insert(id.GetSourceID());
+            m_Referenced     = std::move(referenced);
+            m_CollectPending = true;
+            return CollectSources(service);
+        }
+        catch (const std::exception& error)
+        {
+            return AssetError {AssetErrorCode::InvalidData, error.what()};
+        }
+    }
+
+    std::variant<std::monostate, AssetError> SceneAssetImportQueue::Rematch(EditorAssetImportService& service)
+    {
+        m_CollectPending = true;
+        return CollectSources(service);
+    }
+
+    std::variant<std::monostate, AssetError> SceneAssetImportQueue::CollectSources(EditorAssetImportService& service)
+    {
         auto sources = service.GetSources();
-        // The initial sweep owns Project until Poll consumes completion. The caller
-        // repeats collection then, using the newly scanned source database.
         if (auto error = std::get_if<AssetError>(&sources))
         {
             if (error->Code == AssetErrorCode::Cancelled)
@@ -18,9 +39,8 @@ namespace Kans
         }
         try
         {
-            std::set<SourceAssetID> referenced, published;
-            for (auto id : CollectSceneAssetReferences(scene))
-                referenced.insert(id.GetSourceID());
+            m_CollectPending = false;
+            std::set<SourceAssetID> published;
             for (const auto& record : service.GetRuntimeAssetRegistry()->GetAllProducts())
                 if (record.Target == EditorAssetTarget)
                     published.insert(record.Metadata.assetID.GetSourceID());
@@ -35,7 +55,7 @@ namespace Kans
                     old->second = revision;
                 }
                 if (source.Exists && !published.count(source.sourceAssetID) &&
-                    (referenced.count(source.sourceAssetID) || source.Path.GetPath().extension() == ".shaderprog") &&
+                    (m_Referenced.count(source.sourceAssetID) || source.Path.GetPath().extension() == ".shaderprog") &&
                     m_AutoImported.insert(source.sourceAssetID).second)
                     if (std::find(m_AutoImports.begin(), m_AutoImports.end(), source.sourceAssetID) ==
                         m_AutoImports.end())
@@ -51,6 +71,12 @@ namespace Kans
 
     std::variant<std::monostate, AssetError> SceneAssetImportQueue::StartNext(EditorAssetImportService& service)
     {
+        if (m_CollectPending)
+        {
+            auto collected = CollectSources(service);
+            if (auto error = std::get_if<AssetError>(&collected))
+                return *error;
+        }
         if (m_AutoImports.empty())
             return std::monostate {};
         auto snapshot = service.GetSnapshot();

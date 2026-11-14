@@ -290,8 +290,9 @@ namespace Kans
                     StartPendingPlacementBuild();
                 else
                     PlacePendingModel();
-                // The open-time sweep may have discovered previously unknown scene sources.
-                QueueMissingSceneAssets();
+                // The open-time sweep may have discovered previously unknown scene sources. The scene's
+                // references were captured when it opened; serializing it again here froze the editor.
+                Record(m_SceneAssetImports.Rematch(*m_AssetImports));
                 if (!m_Play.IsActive())
                     m_History.Record(*m_ActiveScene);
             }
