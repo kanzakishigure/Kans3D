@@ -4,6 +4,15 @@
 #include <set>
 namespace Kans
 {
+    void FrameProfiler::AbortFrame(uint64_t frame)
+    {
+        // Unwritten queries will never become ready. Submitted commands retain their
+        // own pool lease until their fence retires; do not recycle a partial pool.
+        m_Pending.erase(std::remove_if(m_Pending.begin(),
+                                       m_Pending.end(),
+                                       [frame](const auto& pending) { return pending.Frame == frame; }),
+                        m_Pending.end());
+    }
     GraphDebugID GraphNameID(const std::string& name, bool resource, uint32_t occurrence)
     {
         uint64_t hash = 14695981039346656037ull;

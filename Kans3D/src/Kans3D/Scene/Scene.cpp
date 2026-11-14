@@ -1,4 +1,5 @@
 #include "kspch.h"
+#include "Kans3D/Core/Debug/ErrorBoundary.h"
 #include "Kans3D/Physics/ClothSolver.h"
 
 #include <set>
@@ -886,7 +887,8 @@ namespace Kans
         m_Registry.view<NativeScriptComponent>().each([](auto& nsc) {
             if (nsc.Instance)
             {
-                nsc.Instance->OnDestory();
+                ErrorBoundary cleanup;
+                cleanup.Try("Play script OnDestroy", [&] { nsc.Instance->OnDestory(); });
                 nsc.DestoryInstanceFunction(&nsc);
                 nsc.Instance = nullptr;
             }

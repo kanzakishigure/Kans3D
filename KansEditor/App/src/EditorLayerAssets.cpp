@@ -967,7 +967,7 @@ namespace Kans
             client->SetGrid(grid);
             client->SetGizmo(look.Gizmo);
             client->Resize(size);
-            client->RenderEditor(camera);
+            client->RenderEditor(camera, "VFX preview");
             frame.Image              = client->GetOutput();
             frame.VfxGpuMilliseconds = VfxPreview::VfxGpuMilliseconds(client->GetLastResult().FrameStats);
             return frame;
@@ -1038,7 +1038,8 @@ namespace Kans
     void EditorLayer::DrawVfxModuleEditors()
     {
         for (auto& editor : m_VfxSystemEditors)
-            editor->Draw();
+            m_Panels.DrawStandalone(
+                editor->GetFile().u8string(), editor->GetFile().filename().u8string(), [&] { editor->Draw(); });
         m_VfxSystemEditors.erase(std::remove_if(m_VfxSystemEditors.begin(), m_VfxSystemEditors.end(),
                                                 [](const auto& editor) { return !editor->IsOpen() && !editor->IsAskingToClose(); }),
                                  m_VfxSystemEditors.end());
@@ -1054,7 +1055,8 @@ namespace Kans
                 OpenVfxSystem(file);
         }
         for (auto& editor : m_VfxModuleEditors)
-            editor->Draw();
+            m_Panels.DrawStandalone(
+                editor->GetFile().u8string(), editor->GetFile().filename().u8string(), [&] { editor->Draw(); });
         m_VfxModuleEditors.erase(std::remove_if(m_VfxModuleEditors.begin(), m_VfxModuleEditors.end(),
                                                 [](const auto& editor) { return !editor->IsOpen() && !editor->IsAskingToClose(); }),
                                  m_VfxModuleEditors.end());

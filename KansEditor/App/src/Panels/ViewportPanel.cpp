@@ -107,6 +107,22 @@ namespace Kans
         }
         ImGui::Image(static_cast<ImTextureID>(output), m_ImageSize, ImVec2(0, 1), ImVec2(1, 0));
         m_ImageHovered = ImGui::IsItemHovered();
+        if (const auto& error = m_Client->GetRenderError(); !error.Message().empty())
+        {
+            const auto&  theme   = EditorTheme::Colors();
+            auto*        draw    = ImGui::GetWindowDrawList();
+            const float  padding = EditorTheme::Px(4);
+            const float  height  = ImGui::GetTextLineHeight() + padding * 2;
+            const ImVec2 end {m_Max.x, std::min(m_Max.y, m_Min.y + height)};
+            draw->AddRectFilled(m_Min, end, ImGui::GetColorU32(theme.Danger));
+            draw->PushClipRect(m_Min, end, true);
+            draw->AddText(
+                {m_Min.x + padding, m_Min.y + padding}, ImGui::GetColorU32(theme.Text), error.Message().c_str());
+            draw->PopClipRect();
+            if (ImGui::IsMouseHoveringRect(m_Min, end))
+                ImGui::SetTooltip(
+                    "%s\nFailed frames: %llu", error.Message().c_str(), static_cast<unsigned long long>(error.Count()));
+        }
         if (m_Playing)
         {
             // A colored frame marks play mode; changes made now are discarded on stop.

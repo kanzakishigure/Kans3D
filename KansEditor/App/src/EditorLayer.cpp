@@ -315,7 +315,16 @@ namespace Kans
         else
             m_UIInput = {};
         const uint64_t loads   = m_Play.GetSceneLoadCount();
-        const bool     updated = m_Play.Update(*m_ActiveScene, ts);
+        const bool     wasPlaying = m_Play.IsActive();
+        const UUID     selected   = m_HierarchyPanel.GetSelected() ? m_HierarchyPanel.GetSelected().GetUUID() : UUID(0);
+        const bool     updated    = m_Play.Update(*m_ActiveScene, ts);
+        if (wasPlaying && !m_Play.IsActive() && !m_Play.GetLastUpdateError().empty())
+        {
+            m_HierarchyPanel.SetSelected(selected ? m_ActiveScene->GetEntityByUUID(selected) : Entity {});
+            m_PlayErrorNotification = true;
+            m_EditPending           = false;
+            QueueMissingSceneAssets();
+        }
         // A script loaded another scene: the selection named entities of the one it replaced.
         if (m_Play.GetSceneLoadCount() != loads)
         {

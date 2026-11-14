@@ -1,5 +1,7 @@
 #pragma once
+#include <unordered_map>
 #include "Kans3D/Core/Base/Base.h"
+#include "Kans3D/Core/Debug/ErrorBoundary.h"
 #include "Kans3D/Core/Events/ApplicationEvent.h"
 #include "Kans3D/Core/Events/Event.h"
 #include "Kans3D/Core/LayerStack.h"
@@ -84,6 +86,13 @@ namespace Kans
         bool          m_Minimized = false;
 
         LayerStack m_LayerStack;
+        struct LayerFailures
+        {
+            ErrorBoundary            Update, UI;
+            ConsecutiveFrameFailures Consecutive;
+            std::exception_ptr       Failure;
+        };
+        std::unordered_map<Layer*, LayerFailures> m_LayerFailures;
 
         TimeStep m_TimeStep;
         TimeStep m_Frametime;

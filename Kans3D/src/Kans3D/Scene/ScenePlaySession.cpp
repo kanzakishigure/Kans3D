@@ -1,5 +1,7 @@
 #include "kspch.h"
 #include "ScenePlaySession.h"
+#include "Kans3D/Core/Debug/ErrorBoundary.h"
+#include "Kans3D/Core/Debug/FatalError.h"
 #include "Kans3D/Physics/PhysicsSettings.h"
 #include "Kans3D/Script/ScriptInput.h"
 #include "Scene.h"
@@ -25,6 +27,7 @@ namespace Kans
         }
 
         m_Snapshot = scene.Capture();
+        m_UpdateError.clear();
         m_Scene = &scene;
         m_PlayTime = 0.0f;
         m_FrameCount = 0;
@@ -75,6 +78,25 @@ namespace Kans
     }
 
     bool ScenePlaySession::Update(Scene& scene, TimeStep ts)
+    {
+        ErrorBoundary error;
+        bool          updated = false;
+        if (!error.Try("Play session update", [&] { updated = UpdateSession(scene, ts); }))
+        {
+            m_UpdateError = error.Message();
+            try
+            {
+                Stop(scene);
+            }
+            catch (...)
+            {
+                FatalError::ReportException(std::current_exception(), "Restoring edit scene after Play failure");
+            }
+        }
+        return updated;
+    }
+
+    bool ScenePlaySession::UpdateSession(Scene& scene, TimeStep ts)
     {
         if (!IsActive() || m_Scene != &scene || (m_State == State::Paused && !m_StepRequested))
             return false;

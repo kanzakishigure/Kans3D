@@ -34,6 +34,7 @@ namespace Kans
         void Stop(Scene& scene);
         void Discard(Scene& scene);
         bool Update(Scene& scene, TimeStep ts);
+        const std::string& GetLastUpdateError() const { return m_UpdateError; }
         // Feed once per application frame. Pointer is in application coordinates; viewport maps to pixels.
         void FeedUIInput(UIInputState input, UIViewport viewport)
         {
@@ -69,6 +70,7 @@ namespace Kans
 
     private:
         void Reset();
+        bool         UpdateSession(Scene& scene, TimeStep ts);
         void FeedScriptMouse();
         void LoadRequestedScene(Scene& scene);
         void         Start(Scene& scene, bool simulate);
@@ -84,6 +86,7 @@ namespace Kans
         uint64_t                    m_FrameCount = 0;
         std::filesystem::path       m_ProjectRoot;
         std::string                 m_LoadedScene, m_LoadError;
+        std::string                  m_UpdateError;
         uint64_t                    m_SceneLoads = 0;
         std::optional<glm::vec2>    m_LastPointer; // Game-view pixels, for the script mouse delta.
     };

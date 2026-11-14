@@ -652,6 +652,9 @@ namespace Kans
         }
         catch (...)
         {
+            result.Graph.ReleaseRecorders();
+            target.GetFrameProfiler().AbortFrame(statistics.Frame);
+            target.InvalidateTemporalHistory();
             if (m_Sprites)
                 m_Sprites->ClearTarget();
             m_Device->EndFrame();

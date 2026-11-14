@@ -1,5 +1,6 @@
 #pragma once
 #include <glm/glm.hpp>
+#include "Kans3D/Core/Debug/ErrorBoundary.h"
 #include "Kans3D/Renderer/Passes/AntiAliasingPass.h"
 #include "Graph/RenderGraph.h"
 #include "RenderFeature.h"
@@ -12,6 +13,16 @@ namespace Kans
     class ViewTarget
     {
     public:
+        // Covers view construction as well as graph compilation/recording. Retry on every call.
+        template<class F>
+        bool TryRender(const std::string& name, F&& render)
+        {
+            if (m_Error.Try(name, std::forward<F>(render)))
+                return true;
+            RecoverFailedFrame();
+            return false;
+        }
+        const ErrorBoundary& GetError() const { return m_Error; }
         explicit ViewTarget(std::shared_ptr<RenderHardware::Device> device,
                             uint32_t                                outputs      = 2,
                             bool                                    sampledDepth = true);
@@ -66,6 +77,8 @@ namespace Kans
         uintptr_t GetOutput(uint32_t index) const;
 
     private:
+        void                                                         RecoverFailedFrame();
+        ErrorBoundary                                                m_Error;
         std::shared_ptr<RenderHardware::Device>                      m_Device;
         uint32_t                                                     m_OutputCount;
         bool                                                         m_SampledDepth;

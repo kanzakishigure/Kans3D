@@ -47,7 +47,9 @@ namespace Kans
 
         void       Resize(glm::uvec2 size);
         glm::uvec2 GetSize() const { return m_Size; }
-        uintptr_t  GetOutput() const { return m_Target->GetOutput(0); }
+        uintptr_t  GetOutput() const { return m_Target->GetColors().empty() ? 0 : m_Target->GetOutput(0); }
+
+        const ErrorBoundary& GetRenderError() const { return m_Target->GetError(); }
 
         RenderFeatureSet& GetFeatures() { return m_Features; }
         void              SetViewMode(SceneViewMode mode) { m_ViewMode = mode; }
@@ -65,7 +67,7 @@ namespace Kans
 
         // Renders through the editor camera, or through the scene's primary camera
         // with no editor features (false when the scene has no camera).
-        void RenderEditor(const EditorCamera& camera);
+        void RenderEditor(const EditorCamera& camera, const std::string& name = "Editor viewport");
         bool RenderGame();
 
         // A copy of the image the viewport last rendered, read back without waiting: Request

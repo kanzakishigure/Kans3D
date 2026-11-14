@@ -69,7 +69,7 @@ namespace Kans
             scene->UpdateModelPoses();
         m_Client->Resize(size);
         m_Client->SetGizmo(gizmo);
-        m_Client->RenderEditor(camera);
+        m_Client->RenderEditor(camera, "Ragdoll preview");
         return m_Client->GetOutput();
     }
 

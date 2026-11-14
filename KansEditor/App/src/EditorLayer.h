@@ -326,6 +326,7 @@ namespace Kans
 
         SceneHistory     m_History;
         ScenePlaySession m_Play;
+        bool             m_PlayErrorNotification = false;
         // The script build runs on a worker thread; loading happens on the main thread.
         EditorProgress                   m_Progress;
         ScriptBuildProgress              m_ScriptBuildProgress;

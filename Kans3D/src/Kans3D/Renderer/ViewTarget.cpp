@@ -1,11 +1,36 @@
 #include "kspch.h"
 #include "ViewTarget.h"
+#include "Kans3D/Core/Debug/FatalError.h"
 #include "Features/BloomFeature.h"
 #include "Graph/GraphCapture.h"
 #include "Passes/Fsr3Upscaler.h"
 #include "Temporal.h"
 namespace Kans
 {
+    void ViewTarget::RecoverFailedFrame()
+    {
+        try
+        {
+            InvalidateTemporalHistory();
+            m_NormalRoughnessValid = m_VelocityValid = false;
+            m_Jitter                                 = {};
+            m_Profiler.AbortFrame(m_FrameNumber);
+            // Earlier passes may already be queued. A fresh list clears the outputs
+            // after them on the same queue; the failed recorder is never submitted.
+            if (!m_Colors.empty())
+            {
+                auto commands = m_Device->CreateCommandList();
+                commands->BeginRendering(Target(RenderHardware::LoadOp::Clear));
+                commands->EndRendering();
+                m_Device->Submit(commands);
+            }
+        }
+        catch (...)
+        {
+            // A device that cannot even submit a clear cannot safely continue rendering.
+            FatalError::ReportException(std::current_exception(), "View recovery");
+        }
+    }
     ViewTarget::ViewTarget(std::shared_ptr<RenderHardware::Device> device, uint32_t outputs, bool sampledDepth) :
         m_Device(std::move(device)), m_OutputCount(outputs), m_SampledDepth(sampledDepth)
     {

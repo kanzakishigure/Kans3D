@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "ImGuiLayer.h"
 #include "EditorFonts.h"
+#include "ImGuiRecovery.h"
 
 #include <imgui.h>
 
@@ -63,13 +64,27 @@ namespace Kans
         Application& app = Application::Get();
         io.DisplaySize   = ImVec2((float)app.GetWindow().GetWidth(), (float)app.GetWindow().GetHeight());
 
-        // Rendering
-        ImGui::Render();
-        m_Renderer->Render(ImGui::GetDrawData());
-
-        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+        const ImGuiRecovery recovery;
+        try
         {
-            m_Renderer->RenderPlatformWindows();
+            // Rendering
+            ImGui::Render();
+            m_Renderer->Render(ImGui::GetDrawData());
+
+            if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+            {
+                m_Renderer->RenderPlatformWindows();
+            }
+        }
+        catch (...)
+        {
+            if (GImGui->WithinFrameScope)
+            {
+                recovery.Recover();
+                ImGui::EndFrame();
+            }
+            m_Renderer->EndFrame();
+            throw;
         }
         m_Renderer->EndFrame();
     }

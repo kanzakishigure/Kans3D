@@ -184,8 +184,21 @@ namespace Kans
                                                                                GraphCaptureSettings {});
         }
         m_Panels.Draw();
+        if (m_PlayErrorNotification)
+        {
+            ImGui::OpenPopup("Play stopped after an error");
+            m_PlayErrorNotification = false;
+        }
+        if (ImGui::BeginPopupModal("Play stopped after an error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::TextColored(EditorTheme::Colors().Danger, "%s", m_Play.GetLastUpdateError().c_str());
+            ImGui::TextUnformatted("The edit scene has been restored.");
+            if (ImGui::Button("Dismiss"))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
         DrawClothInfo();
-        m_RagdollEditor.Draw();
+        m_Panels.DrawStandalone("RagdollEditor", "Ragdoll Editor", [this] { m_RagdollEditor.Draw(); });
         DrawVfxModuleEditors();
         // Bottom right of the editor window, above every panel, wherever the panels are docked.
         m_ProgressPopup.Draw(m_Progress, std::nullopt);

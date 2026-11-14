@@ -90,49 +90,55 @@ namespace Kans
     void ViewportClient::Resize(glm::uvec2 size)
     {
         m_Size = size;
-        m_Target->Resize(size);
+        // Allocate inside the render boundary so a resize failure is retried next frame.
     }
 
-    void ViewportClient::RenderEditor(const EditorCamera& camera)
+    void ViewportClient::RenderEditor(const EditorCamera& camera, const std::string& name)
     {
-        RenderView view;
-        if (m_Scene && !m_Scene->GetPhysicsWorld())
-            view.HiddenEntities = m_Visibility.Hidden();
-        view.Scene.sceneCamera.Position   = camera.GetPosition();
-        view.Scene.sceneCamera.viewMatrix = camera.GetViewMatrix();
-        view.Scene.sceneCamera.camera     = camera;
-        view.DebugMode                    = m_ViewMode;
-        view.Grid                         = m_Grid;
-        view.AntiAliasing                 = camera.GetAntiAliasing();
-        view.Debug                        = m_Debug;
-        // Orthographic front/back and side views get the grid plane they look at.
-        if (camera.IsOrthographic())
-        {
-            const glm::vec3 forward = glm::abs(camera.Forward());
-            const auto      plane   = forward.y >= forward.x && forward.y >= forward.z ? ViewGrid::Plane::XZ :
-                                      forward.z >= forward.x                         ? ViewGrid::Plane::XY :
-                                                                                       ViewGrid::Plane::YZ;
-            view.Grids = {{plane, glm::vec3(0.0f)}};
-        }
-        Render(std::move(view), true);
+        m_Target->TryRender(name, [&] {
+            RenderView view;
+            if (m_Scene && !m_Scene->GetPhysicsWorld())
+                view.HiddenEntities = m_Visibility.Hidden();
+            view.Scene.sceneCamera.Position   = camera.GetPosition();
+            view.Scene.sceneCamera.viewMatrix = camera.GetViewMatrix();
+            view.Scene.sceneCamera.camera     = camera;
+            view.DebugMode                    = m_ViewMode;
+            view.Grid                         = m_Grid;
+            view.AntiAliasing                 = camera.GetAntiAliasing();
+            view.Debug                        = m_Debug;
+            // Orthographic front/back and side views get the grid plane they look at.
+            if (camera.IsOrthographic())
+            {
+                const glm::vec3 forward = glm::abs(camera.Forward());
+                const auto      plane   = forward.y >= forward.x && forward.y >= forward.z ? ViewGrid::Plane::XZ :
+                                          forward.z >= forward.x                           ? ViewGrid::Plane::XY :
+                                                                                             ViewGrid::Plane::YZ;
+                view.Grids              = {{plane, glm::vec3(0.0f)}};
+            }
+            Render(std::move(view), true);
+        });
     }
 
     bool ViewportClient::RenderGame()
     {
-        if (!m_Scene)
-            return false;
-        auto runtime = MakeRuntimeView(*m_Scene, m_Size);
-        if (!runtime)
-            return false;
-        RenderView view;
-        view.Scene     = runtime->Scene;
-        view.DebugMode = SceneViewMode::Lit;
-        m_Highlights           = {}; // Editor intents never reach a game view.
-        m_LastEditorHighlights = {};
-        m_Preview.reset();
-        m_Gizmo.clear();
-        Render(std::move(view), false);
-        return true;
+        bool       hasCamera = false;
+        const bool rendered  = m_Target->TryRender("Game view / camera preview", [&] {
+            if (!m_Scene)
+                return;
+            auto runtime = MakeRuntimeView(*m_Scene, m_Size);
+            if (!runtime)
+                return;
+            RenderView view;
+            view.Scene             = runtime->Scene;
+            view.DebugMode         = SceneViewMode::Lit;
+            m_Highlights           = {}; // Editor intents never reach a game view.
+            m_LastEditorHighlights = {};
+            m_Preview.reset();
+            m_Gizmo.clear();
+            hasCamera = true;
+            Render(std::move(view), false);
+        });
+        return !rendered || hasCamera;
     }
 
     void ViewportClient::Render(RenderView view, bool editorFeatures)

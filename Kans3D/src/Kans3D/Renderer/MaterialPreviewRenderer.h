@@ -75,6 +75,10 @@ namespace Kans
         std::optional<MaterialThumbnail> RenderThumbnail(AssetID material, const MaterialPreviewOptions& options = {});
 
     private:
+        MaterialPreviewImageResult RenderImageUnchecked(const MaterialData&           material,
+                                                        const ShaderData*             source,
+                                                        const MaterialPreviewOptions& options);
+        MaterialPreviewImageResult RenderImageUnchecked(AssetID material, const MaterialPreviewOptions& options);
         MaterialPreviewImageResult                       Draw(const GpuShader&              shader,
                                                               const GpuMaterialBindings&    bindings,
                                                               const MaterialPreviewOptions& options,

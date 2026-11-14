@@ -1,9 +1,10 @@
 #pragma once
+#include <imgui.h>
 #include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <imgui.h>
+#include "Kans3D/Core/Debug/ErrorBoundary.h"
 #include "IniSection.h"
 
 namespace Kans
@@ -55,6 +56,7 @@ namespace Kans
         void Close(const std::string& id);
         void Toggle(const std::string& id);
         bool IsOpen(const std::string& id) const;
+        void Retry(const std::string& id);
 
         // Call inside the dock host window before ImGui::DockSpace. Builds the
         // default layout on first use or after ResetLayout().
@@ -62,6 +64,8 @@ namespace Kans
         void ResetLayout() { m_ResetLayout = true; }
 
         void Draw();
+        // Asset editors own their window/close lifecycle, but share the same recovery boundary.
+        void DrawStandalone(const std::string& id, const std::string& title, const std::function<void()>& draw);
         void DrawWindowMenu();
 
         // Saves which panels are open in imgui.ini. Install before the first
@@ -76,6 +80,7 @@ namespace Kans
             std::function<void()> Draw;
             bool                  Open         = true;
             bool                  FocusRequest = false;
+            ErrorBoundary         Error;
         };
         Panel*       Find(const std::string& id);
         const Panel* Find(const std::string& id) const;
@@ -85,5 +90,6 @@ namespace Kans
         std::unordered_map<std::string, bool> m_SavedOpen; // From imgui.ini, applied on registration.
         bool                                  m_ResetLayout = false;
         IniSection                            m_Settings;
+        std::unordered_map<std::string, ErrorBoundary> m_StandaloneErrors;
     };
 } // namespace Kans

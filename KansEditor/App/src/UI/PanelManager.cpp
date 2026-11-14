@@ -1,11 +1,37 @@
 #include "PanelManager.h"
+#include <imgui_internal.h>
+#include <cstring>
+#include "Kans3D/ImGui/EditorTheme.h"
+#include "Kans3D/ImGui/ImGuiRecovery.h"
 #include "EditorIcons.h"
 #include "Widgets.h"
-#include <cstring>
-#include <imgui_internal.h>
 
 namespace Kans
 {
+    void
+    PanelManager::DrawStandalone(const std::string& id, const std::string& title, const std::function<void()>& draw)
+    {
+        auto& error = m_StandaloneErrors[id];
+        if (error.Message().empty())
+        {
+            const ImGuiRecovery recovery;
+            if (!error.Try("Panel " + title, draw))
+                recovery.Recover();
+        }
+        if (!error.Message().empty())
+        {
+            ImGui::Begin((title + "###" + id + "Error").c_str());
+            ImGui::TextColored(EditorTheme::Colors().Danger, "%s", error.Message().c_str());
+            if (ImGui::Button("Retry"))
+                error.Recovered("Panel " + title);
+            ImGui::End();
+        }
+    }
+    void PanelManager::Retry(const std::string& id)
+    {
+        if (auto* panel = Find(id))
+            panel->Error.Recovered("Panel " + panel->Spec.Title);
+    }
     void PanelManager::Register(PanelSpec spec, std::function<void()> draw)
     {
         Panel panel;
@@ -123,7 +149,22 @@ namespace Kans
             if (panel.Spec.NoPadding)
                 ImGui::PopStyleVar();
             if (visible && panel.Draw)
-                panel.Draw();
+            {
+                if (panel.Error.Message().empty())
+                {
+                    const ImGuiRecovery recovery;
+                    if (!panel.Error.Try("Panel " + panel.Spec.Title, panel.Draw))
+                        recovery.Recover();
+                }
+                if (!panel.Error.Message().empty())
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().Danger);
+                    ImGui::TextWrapped("%s", panel.Error.Message().c_str());
+                    ImGui::PopStyleColor();
+                    if (ImGui::Button("Retry"))
+                        Retry(panel.Spec.ID);
+                }
+            }
             ImGui::End();
             if (!open)
                 panel.Open = false;

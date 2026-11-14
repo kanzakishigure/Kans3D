@@ -198,6 +198,18 @@ void main() {
                                                                     const ShaderData*             source,
                                                                     const MaterialPreviewOptions& options)
     {
+        MaterialPreviewImageResult result;
+        const bool rendered = m_Target->TryRender("Material / thumbnail preview",
+                                                  [&] { result = RenderImageUnchecked(material, source, options); });
+        if (!rendered && !m_Target->GetColors().empty())
+            return {m_Target->GetColors()[0], false};
+        return result;
+    }
+
+    MaterialPreviewImageResult MaterialPreviewRenderer::RenderImageUnchecked(const MaterialData&           material,
+                                                                             const ShaderData*             source,
+                                                                             const MaterialPreviewOptions& options)
+    {
         if (!m_Assets)
             return {};
         PreviewRetirement retirement {*m_Device};
@@ -242,7 +254,7 @@ void main() {
         {
             MaterialData fallback;
             fallback.Render = material.Render;
-            auto image      = RenderImage(fallback, nullptr, options);
+            auto image      = RenderImageUnchecked(fallback, nullptr, options);
             image.Complete  = false;
             return image;
         }
@@ -251,6 +263,17 @@ void main() {
 
     MaterialPreviewImageResult MaterialPreviewRenderer::RenderImage(AssetID                       material,
                                                                     const MaterialPreviewOptions& options)
+    {
+        MaterialPreviewImageResult result;
+        const bool rendered = m_Target->TryRender("Material / thumbnail preview",
+                                                  [&] { result = RenderImageUnchecked(material, options); });
+        if (!rendered && !m_Target->GetColors().empty())
+            return {m_Target->GetColors()[0], false};
+        return result;
+    }
+
+    MaterialPreviewImageResult MaterialPreviewRenderer::RenderImageUnchecked(AssetID                       material,
+                                                                             const MaterialPreviewOptions& options)
     {
         if (!m_Assets)
             return {};

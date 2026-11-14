@@ -1,13 +1,16 @@
 #include "kspch.h"
 #include "Kans3D/Physics/PhysicsWorld.h"
 
+#include <unordered_map>
 #include "Kans3D/Audio/AudioSystem.h"
 #include "Kans3D/Core/Application.h"
+#include "Kans3D/Core/Debug/ErrorBoundary.h"
 #include "Kans3D/Core/Debug/FatalError.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/Core/Input/Input.h"
 #include "Kans3D/Core/Input/KeyCodes.h"
 #include "Kans3D/Core/Log/Log.h"
+#include "Kans3D/ImGui/ImGuiRecovery.h"
 #include "Kans3D/Renderer/Renderer.h"
 #include "Kans3D/Script/ScriptEngine.h"
 
@@ -86,6 +89,7 @@ namespace Kans
             delete layer;
         }
 
+        m_LayerFailures.clear();
         KansFileSystem::ShutDown();
         AudioSystem::Shutdown();
         PhysicsWorld::Shutdown();
@@ -104,6 +108,8 @@ namespace Kans
 
             if (!m_Minimized)
             {
+                for (auto& [layer, state] : m_LayerFailures)
+                    state.Failure = {};
                 RenderHardware::BeginWindowFrame(*m_Window);
                 if (!m_CapturePath.empty() && ++m_CaptureFrame >= m_CaptureAfter)
                 {
@@ -114,15 +120,39 @@ namespace Kans
                     PROFILE_SCOPE("application_layerstark_update");
                     // 普通layer进行渲染
                     for (Layer* layer : m_LayerStack)
-                        layer->OnUpdate(m_TimeStep);
+                    {
+                        auto& state = m_LayerFailures[layer];
+                        if (!state.Update.Try("Layer " + layer->GetName() + " OnUpdate",
+                                              [&] { layer->OnUpdate(m_TimeStep); }))
+                            state.Failure = state.Update.Exception();
+                    }
                 }
                 {
                     PROFILE_SCOPE("application_imgui_layerstark_update");
                     // 处理 ImGuiLayer渲染
                     m_ImGuiLayer->Begin();
                     for (Layer* layer : m_LayerStack)
-                        layer->OnImGuiRender();
+                    {
+                        const ImGuiRecovery recovery;
+                        auto&               state = m_LayerFailures[layer];
+                        if (!state.UI.Try("Layer " + layer->GetName() + " OnImGuiRender",
+                                          [&] { layer->OnImGuiRender(); }))
+                        {
+                            state.Failure = state.UI.Exception();
+                            recovery.Recover();
+                        }
+                    }
+                    // All layer UI scopes have been recovered before native GUI submission.
+                    // Backend submission failures propagate to Main: swapchain acquisition or
+                    // a lost device cannot be repaired by ImGui stack recovery.
                     m_ImGuiLayer->End();
+                }
+                for (Layer* layer : m_LayerStack)
+                {
+                    auto& state = m_LayerFailures[layer];
+                    if (state.Consecutive.EndFrame(bool(state.Failure)))
+                        FatalError::ReportException(
+                            state.Failure, ("Layer " + layer->GetName() + " failed on 3 consecutive frames").c_str());
                 }
                 m_Window->SwapBuffers();
             }
@@ -162,6 +192,7 @@ namespace Kans
     }
     void Application::PopLayer(Layer* layer)
     {
+        m_LayerFailures.erase(layer);
         m_LayerStack.PopLayer(layer);
         delete layer;
     }
