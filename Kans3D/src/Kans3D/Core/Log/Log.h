@@ -4,6 +4,8 @@
 #include <glm/gtx/string_cast.hpp>
 
 #include <spdlog/spdlog.h>
+#include <filesystem>
+#include <vector>
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/fmt/ostr.h>
 
@@ -29,6 +31,13 @@ namespace Kans
 
         static void                                    Init();
         static void                                    ShutDown();
+        // Init stays console-only for library users/tests. Applications opt in at startup.
+        static bool                         StartFileLogging(const std::filesystem::path& directory = {});
+        static const std::filesystem::path& GetFilePath();
+        static void                         Flush();
+        // Timestamped names sort chronologically; unrelated files are never selected.
+        static std::vector<std::filesystem::path>      SelectFilesToDelete(std::vector<std::filesystem::path> files,
+                                                                           size_t                             keep = 10);
         inline static std::shared_ptr<spdlog::logger>& GetCoreLogger() { return s_CoreLogger; }
         inline static std::shared_ptr<spdlog::logger>& GetClientLogger() { return s_ClientLogger; }
 

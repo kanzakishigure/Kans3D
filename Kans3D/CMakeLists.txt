@@ -41,7 +41,8 @@ target_precompile_headers(Kans3D PRIVATE
 
 # ---- Compile definitions ----
 if(WIN32)
-    target_link_libraries(Kans3D PRIVATE dwmapi)
+    target_link_libraries(Kans3D PRIVATE dwmapi dbghelp user32)
+    target_compile_definitions(spdlog INTERFACE SPDLOG_WCHAR_FILENAMES)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         # /bigobj: large template-heavy units (serializers, VFX compiler, big test files) exceed
         # the default COFF section limit (C1128). PUBLIC so the editor and tests inherit it.
@@ -52,6 +53,7 @@ if(WIN32)
         NOMINMAX # Keep <Windows.h> min/max macros away from std::min/std::max.
         _CRT_SECURE_NO_WARNINGS)
 elseif(LINUX)
+    target_link_options(Kans3D INTERFACE -rdynamic)
     target_compile_definitions(Kans3D PUBLIC
         PLATFORM_LINUX)
 endif()

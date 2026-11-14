@@ -23,6 +23,7 @@ namespace Kans
     {
         std::string Name = "Kans3D";
         std::string ConfigPath;
+        bool        ShowFatalErrorDialog = true; // Disable for headless applications; stderr reporting remains enabled.
 
         // the Windows Specification
         uint32_t Width        = 1920;
