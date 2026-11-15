@@ -16,6 +16,8 @@ namespace Kans
             return e.HasComponent<CameraComponent>();
         if (name == "PointLightComponent")
             return e.HasComponent<PointLightComponent>();
+        if (name == "SpotLightComponent")
+            return e.HasComponent<SpotLightComponent>();
         if (name == "DirLightComponent")
             return e.HasComponent<DirLightComponent>();
         if (name == "TextComponent")
@@ -248,6 +250,12 @@ namespace Kans
     LIGHT_PROPERTY(TYPE, PREFIX, DiffuseScale) LIGHT_PROPERTY(TYPE, PREFIX, SpecularScale)
         EMISSION_PROPERTIES(PointLightComponent, "PointLight")
         EMISSION_PROPERTIES(DirLightComponent, "DirLight")
+        EMISSION_PROPERTIES(SpotLightComponent, "SpotLight")
+        LIGHT_PROPERTY(SpotLightComponent, "SpotLight", Range)
+        LIGHT_PROPERTY(SpotLightComponent, "SpotLight", InnerConeAngle)
+        LIGHT_PROPERTY(SpotLightComponent, "SpotLight", OuterConeAngle)
+        LIGHT_PROPERTY(SpotLightComponent, "SpotLight", CookieRotation)
+        LIGHT_PROPERTY(SpotLightComponent, "SpotLight", CookieScale)
         LIGHT_PROPERTY(PointLightComponent, "PointLight", Range)
         LIGHT_PROPERTY(DirLightComponent, "DirLight", Direction)
 #undef EMISSION_PROPERTIES

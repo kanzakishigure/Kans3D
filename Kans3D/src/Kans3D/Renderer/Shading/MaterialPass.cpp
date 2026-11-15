@@ -242,9 +242,13 @@ namespace Kans
             else if (binding.Binding >= uint32_t(EngineBinding::DirectionalShadow))
             {
                 auto shadows = data.Shadows ? data.Shadows : cache.GetShadowFallback();
-                entry.TextureResource =
-                    binding.Binding <= 6 ? shadows->Directional : shadows->Points.at(binding.Binding - 7);
-                entry.SamplerResource = binding.Binding == 6 ? shadows->Raw : shadows->Compare;
+                entry.TextureResource = binding.Binding == 16 ? shadows->Cookies :
+                                        binding.Binding >= 15 ? shadows->Spots :
+                                        binding.Binding <= 6  ? shadows->Directional :
+                                                                shadows->Points.at(binding.Binding - 7);
+                entry.SamplerResource = binding.Binding == 16                         ? shadows->CookieSampler :
+                                        binding.Binding == 6 || binding.Binding == 17 ? shadows->Raw :
+                                                                                        shadows->Compare;
             }
             else
             {

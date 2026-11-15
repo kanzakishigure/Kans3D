@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "RenderView.h"
 #include <algorithm>
+#include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 #include "Kans3D/Scene/Entity.h"
 
 namespace Kans
@@ -176,6 +177,13 @@ namespace Kans
                 glm::vec4(LightRadiance(spot, ToCandela(spot.Intensity, spot.Unit, SpotSolidAngle(inner, outer))),
                           std::cos(glm::radians(inner)));
             frame.SpotScales[i] = glm::vec4(spot.DiffuseScale, spot.SpecularScale, 0, 0);
+            frame.SpotViewProjection[i]  = SpotViewProjection(spot);
+            float angle                  = glm::radians(std::isfinite(spot.CookieRotation) ? spot.CookieRotation : 0.f);
+            auto  scale                  = glm::max(spot.CookieScale, glm::vec2(.001f));
+            frame.SpotCookieTransform[i] = {std::cos(angle) / scale.x,
+                                            std::sin(angle) / scale.x,
+                                            -std::sin(angle) / scale.y,
+                                            std::cos(angle) / scale.y};
         }
         frame.LightingInfo = {
             float(count), scene.sceneCamera.camera.ResolvePostProcess(scene.PostProcess).Exposure, float(spots), 0};

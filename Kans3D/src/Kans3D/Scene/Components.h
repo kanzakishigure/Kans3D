@@ -321,11 +321,15 @@ namespace Kans
         LightUnit      Unit           = LightUnit::Candela;
         float          Range          = 10;                      // Metres.
         float          InnerConeAngle = 20, OuterConeAngle = 30; // Half angles, degrees; local -Z aim.
-        ShadowSettings Shadows = ShadowSettings::SpotDefaults(); // Stored now; rendered in part 2.
+        ShadowSettings Shadows = ShadowSettings::SpotDefaults();
+        AssetID        Cookie;             // Optional linear RGB light multiplier, projected along local -Z.
+        float          CookieRotation = 0; // Degrees around the light axis.
+        glm::vec2      CookieScale {1};    // Projected pattern size, relative to the outer cone.
         bool           operator==(const SpotLightComponent& b) const
         {
             return static_cast<const LightEmission&>(*this) == b && Unit == b.Unit && Range == b.Range &&
-                   InnerConeAngle == b.InnerConeAngle && OuterConeAngle == b.OuterConeAngle && Shadows == b.Shadows;
+                   InnerConeAngle == b.InnerConeAngle && OuterConeAngle == b.OuterConeAngle && Shadows == b.Shadows &&
+                   Cookie == b.Cookie && CookieRotation == b.CookieRotation && CookieScale == b.CookieScale;
         }
     };
 

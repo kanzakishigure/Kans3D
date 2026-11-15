@@ -68,6 +68,11 @@ layout(set = 0, binding = 0, std140) uniform KansFrame
     vec4 PointDiffuseScales[4];
     vec4 DirectionalScales;
     vec4 PointRanges[4];
+    mat4 SpotViewProjection[KANS_SPOT_LIGHT_LIMIT];
+    vec4 SpotShadowRect[KANS_SPOT_LIGHT_LIMIT];
+    vec4 SpotShadowParams[KANS_SPOT_LIGHT_LIMIT];
+    vec4 SpotCookieTransform[KANS_SPOT_LIGHT_LIMIT];
+    vec4 SpotCookieRect[KANS_SPOT_LIGHT_LIMIT];
 
 } u_Frame;
 int KansPointLightCount() { return clamp(int(u_Frame.LightingInfo.x), 0, KANS_POINT_LIGHT_LIMIT); }
@@ -326,7 +331,7 @@ void KansEvaluateParticleLighting(vec3     worldPos,
     for (int i=0;i<KansSpotLightCount();++i) {
         vec3 delta=u_Frame.SpotPositionRange[i].xyz-worldPos;
         float attenuation=KansSpotAttenuation(i,delta);
-        if (attenuation>0.0) KansParticleAddLight(normalize(delta),u_Frame.SpotRadianceInner[i].rgb*u_Frame.SpotScales[i].x*attenuation,frame,diffuse,axes);
+        if (attenuation>0.0) KansParticleAddLight(normalize(delta),u_Frame.SpotRadianceInner[i].rgb*u_Frame.SpotScales[i].x*attenuation*KansSpotCookie(i,worldPos)*KansSpotShadow(i,worldPos,frame[2]),frame,diffuse,axes);
     }
 }
 #if !defined(KANS_FRAGMENT_STAGE) && !defined(KANS_PARTICLE_PIXEL_ONLY)
@@ -402,6 +407,9 @@ layout(set = 0, binding = 7) uniform samplerCubeShadow u_PointShadow0;
 layout(set = 0, binding = 8) uniform samplerCubeShadow u_PointShadow1;
 layout(set = 0, binding = 9) uniform samplerCubeShadow u_PointShadow2;
 layout(set = 0, binding = 10) uniform samplerCubeShadow u_PointShadow3;
+layout(set = 0, binding = 15) uniform sampler2DShadow u_SpotShadowAtlas;
+layout(set = 0, binding = 16) uniform sampler2D u_SpotCookieAtlas;
+layout(set = 0, binding = 17) uniform sampler2D u_SpotShadowRaw;
 
 float KansRangeWindow(float d2, float range) {
     if (range <= 0.0) return 1.0;
@@ -417,6 +425,21 @@ float KansSpotAttenuation(int i, vec3 toLight) {
     float inner=u_Frame.SpotRadianceInner[i].w, outer=u_Frame.SpotDirectionOuter[i].w;
     float t=inner==outer ? step(outer,c) : clamp((c-outer)/(inner-outer),0.0,1.0);
     return t*t*(3.0-2.0*t)*KansRangeWindow(d2,u_Frame.SpotPositionRange[i].w)/max(d2,1e-4);
+}
+
+vec3 KansSpotCookie(int light, vec3 worldPos)
+{
+    vec4 rect = u_Frame.SpotCookieRect[light];
+    if (rect.z == 0.0) return vec3(1);
+    vec4 clip = u_Frame.SpotViewProjection[light] * vec4(worldPos,1);
+    if (clip.w <= 0.0) return vec3(0);
+    vec2 p = clip.xy / clip.w * 0.5;
+    vec4 transform = u_Frame.SpotCookieTransform[light];
+    vec2 uv = vec2(dot(transform.xy,p), dot(transform.zw,p)) + 0.5;
+    if (any(lessThan(uv,vec2(0))) || any(greaterThan(uv,vec2(1)))) return vec3(0);
+    vec2 halfTexel = 0.5 / vec2(textureSize(u_SpotCookieAtlas,0));
+    uv = clamp(rect.xy + uv*rect.zw,rect.xy+halfTexel,rect.xy+rect.zw-halfTexel);
+    return textureLod(u_SpotCookieAtlas,uv,0).rgb;
 }
 
 // Inverse world rotation: the same lookup transform is used by the skybox.
@@ -495,6 +518,80 @@ const vec2 KANS_POISSON[32] = vec2[](
     vec2(.903,.405),vec2(-.091,-.182),vec2(-.501,-.587),vec2(.282,-.453),
     vec2(-.737,.411),vec2(.002,.012),vec2(.655,-.718),vec2(-.350,.499),
     vec2(.131,.606),vec2(-.236,-.967),vec2(.974,-.030),vec2(-.018,-.570));
+vec2 KansSpotAtlasUV(int light, vec2 localUV)
+{
+    vec4 rect = u_Frame.SpotShadowRect[light];
+    vec2 halfTexel = 0.5 / vec2(textureSize(u_SpotShadowAtlas,0));
+    return clamp(rect.xy + localUV * rect.zw, rect.xy+halfTexel, rect.xy+rect.zw-halfTexel);
+}
+float KansSpotCompare(int light, vec3 p, vec2 offset, vec2 gradient)
+{
+    vec4 rect = u_Frame.SpotShadowRect[light];
+    vec2 uv = KansSpotAtlasUV(light,p.xy+offset);
+    vec2 actual = (uv-rect.xy)/rect.zw-p.xy;
+    float footprint = 0.5 * dot(abs(gradient),vec2(u_Frame.SpotShadowParams[light].y));
+    float depth = clamp(p.z+dot(gradient,actual)-footprint-2e-7,0.0,1.0);
+    return texture(u_SpotShadowAtlas,vec3(uv,depth));
+}
+float KansSpotLinearDepth(int light, float depth)
+{
+    // Perspective depth = A + B/distance. Derive A/B from the world-space
+    // matrix so legacy unbounded Range=0 also uses the actual shadow far plane.
+    mat4 matrix = u_Frame.SpotViewProjection[light];
+    float a = (matrix*vec4(u_Frame.SpotDirectionOuter[light].xyz,0)).z;
+    float b = (matrix*vec4(u_Frame.SpotPositionRange[light].xyz,1)).z;
+    return b/min(depth-a,-1e-8);
+}
+float KansSpotShadow(int light, vec3 worldPos, vec3 normal)
+{
+    if (u_Frame.SpotShadowRect[light].z == 0.0 || u_Object.MaterialRender.w != 0.0) return 1.0;
+    vec4 params = u_Frame.SpotShadowParams[light];
+    vec3 L = normalize(u_Frame.SpotPositionRange[light].xyz-worldPos);
+    vec3 q = worldPos + normal * params.x * (1.0-clamp(dot(normal,L),0.0,1.0));
+    vec4 clip = u_Frame.SpotViewProjection[light] * vec4(q,1);
+    if (clip.w <= 0.0) return 1.0;
+    vec3 p = clip.xyz/clip.w;
+    p.xy = p.xy*0.5+0.5;
+    if (any(lessThan(p,vec3(0))) || any(greaterThan(p,vec3(1)))) return 1.0;
+    vec2 gradient = vec2(0);
+    #ifdef KANS_FRAGMENT_STAGE
+    vec3 dx = dFdx(p), dy = dFdy(p);
+    float determinant = dx.x*dy.y-dx.y*dy.x;
+    if (abs(determinant)>1e-12)
+        gradient = vec2(dx.z*dy.y-dy.z*dx.y,dx.x*dy.z-dy.x*dx.z)/determinant;
+    #endif
+    float sum = 0.0, total = 0.0;
+    int filterMode = int(params.z);
+    if (filterMode < 2) {
+        int radius = filterMode == 0 ? 1 : 2;
+        for (int y=-radius;y<=radius;++y) for (int x=-radius;x<=radius;++x) {
+            float weight = radius == 1 ? 1.0 : float((3-abs(x))*(3-abs(y)));
+            sum += weight*KansSpotCompare(light,p,vec2(x,y)*params.y,gradient);
+            total += weight;
+        }
+        return sum/total;
+    }
+    float outer = u_Frame.SpotDirectionOuter[light].w;
+    float tangent = sqrt(max(0.0,1.0-outer*outer))/max(outer,1e-4);
+    float receiverDistance = KansSpotLinearDepth(light,p.z);
+    float sourceUV = params.w / max(2.0*tangent*receiverDistance,1e-5);
+    float searchRadius = clamp(sourceUV,params.y,64.0*params.y);
+    float blockers = 0.0, distanceSum = 0.0;
+    vec4 rect = u_Frame.SpotShadowRect[light];
+    for (int i=0;i<32;++i) {
+        vec2 uv = KansSpotAtlasUV(light,p.xy+KANS_POISSON[i]*searchRadius);
+        vec2 size = vec2(textureSize(u_SpotShadowRaw,0));
+        uv = (floor(uv*size)+0.5)/size;
+        float d = textureLod(u_SpotShadowRaw,uv,0).r;
+        float receiver = p.z+dot(gradient,(uv-rect.xy)/rect.zw-p.xy);
+        if (d < 1.0 && d < receiver-0.00001) { blockers += 1.0; distanceSum += KansSpotLinearDepth(light,d); }
+    }
+    if (blockers == 0.0) return 1.0;
+    float blockerDistance = distanceSum/blockers;
+    float radius = clamp(sourceUV*(receiverDistance-blockerDistance)/max(blockerDistance,1e-5),0.0,64.0*params.y);
+    for (int i=0;i<32;++i) sum += KansSpotCompare(light,p,KANS_POISSON[i]*radius,gradient);
+    return sum/32.0;
+}
 float KansCascadeShadow(int cascade, vec3 worldPos, vec3 normal)
 {
     vec2 gradient = KansReceiverGradient(cascade, KansReceiverNormal(worldPos, normal));
@@ -681,7 +778,7 @@ vec3 KansShadePbr(vec3 albedo, float metallic, float roughness, float ao, vec3 N
         vec3 toLight=u_Frame.SpotPositionRange[i].xyz-worldPos;
         float attenuation=KansSpotAttenuation(i,toLight);
         if (attenuation>0.0) Lo += KansDirectPbr(albedo,metallic,roughness,N,V,normalize(toLight),
-            u_Frame.SpotRadianceInner[i].rgb*attenuation,vec3(u_Frame.SpotScales[i].y),u_Frame.SpotScales[i].x);
+            u_Frame.SpotRadianceInner[i].rgb*attenuation*KansSpotCookie(i,worldPos),vec3(u_Frame.SpotScales[i].y),u_Frame.SpotScales[i].x)*KansSpotShadow(i,worldPos,N);
     }
     vec3 F = F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - NdotV, 0.0, 1.0), 5.0);
     vec3 kD = (1.0 - F) * (1.0 - metallic);
@@ -766,7 +863,12 @@ vec4 KansToneMap(vec3 color)
                   {"SpotScales", 5248, 4, 1, EngineSpotLightLimit},
                   {"PointDiffuseScales", 6272, 4, 1, 4},
                   {"DirectionalScales", 6336, 4, 1, 1},
-                  {"PointRanges", 6352, 4, 1, 4}}},
+                  {"PointRanges", 6352, 4, 1, 4},
+                  {"SpotViewProjection", 6416, 4, 4, EngineSpotLightLimit},
+                  {"SpotShadowRect", 10512, 4, 1, EngineSpotLightLimit},
+                  {"SpotShadowParams", 11536, 4, 1, EngineSpotLightLimit},
+                  {"SpotCookieTransform", 12560, 4, 1, EngineSpotLightLimit},
+                  {"SpotCookieRect", 13584, 4, 1, EngineSpotLightLimit}}},
                 {ShaderBindingKind::UniformBuffer,
                  ShaderImageDimension::Texture2D,
                  sizeof(EngineObjectUniforms),
@@ -780,6 +882,13 @@ vec4 KansToneMap(vec3 color)
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Cube, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Cube, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Cube, 0, {}},
+                {},
+                {},
+                {},
+                {}, // Reserved post-process bindings 11..14.
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
             };
             return table[static_cast<uint32_t>(binding)];
         }
@@ -795,7 +904,7 @@ vec4 KansToneMap(vec3 color)
 
         std::optional<AssetError> CheckEngineBinding(const ShaderResourceBinding& binding)
         {
-            if (binding.Binding >= EngineBindingCount)
+            if (binding.Binding >= EngineBindingCount || (binding.Binding >= 11 && binding.Binding <= 14))
                 return Contract("set 0 binding " + std::to_string(binding.Binding) +
                                 " is not engine data; declare engine data with #include <Kans3D/Engine.glsl>");
             const auto& expected = Expected(static_cast<EngineBinding>(binding.Binding));
@@ -806,7 +915,8 @@ vec4 KansToneMap(vec3 color)
                 (binding.Members.size() == expected.Members.size() ||
                  (binding.Binding == uint32_t(EngineBinding::Frame) &&
                   (binding.Members.size() == LegacyFrameMemberCount || binding.Members.size() == 7 ||
-                   binding.Members.size() == 17 || binding.Members.size() == 28 || binding.Members.size() == 29)) ||
+                   binding.Members.size() == 17 || binding.Members.size() == 28 || binding.Members.size() == 29 ||
+                   binding.Members.size() == 43)) ||
                  (binding.Binding == uint32_t(EngineBinding::Object) &&
                   binding.Members.size() == LegacyObjectMemberCount));
             for (size_t i = 0; matches && i < binding.Members.size(); ++i)

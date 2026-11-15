@@ -187,6 +187,8 @@ namespace Kans
                 for (const auto& image : data.Environment)
                     sampled(image);
                 sampled(data.Shadows->Directional);
+                sampled(data.Shadows->Spots);
+                sampled(data.Shadows->Cookies);
                 for (const auto& image : data.Shadows->Points)
                     sampled(image);
             }

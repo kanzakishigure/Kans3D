@@ -104,6 +104,7 @@ namespace Kans
             std::optional<CameraComponent>                                                Camera;
             std::optional<PointLightComponent>                                            Point;
             std::optional<DirLightComponent>                                              Directional;
+            std::optional<SpotLightComponent>                                             Spot;
             std::optional<TextComponent>                                                  Text;
             std::optional<SpriteRendererComponent>                                        Sprite;
             std::optional<PrefabInstanceComponent>                                        Prefab;
@@ -191,6 +192,7 @@ namespace Kans
         Save(e, s.Camera);
         Save(e, s.Point);
         Save(e, s.Directional);
+        Save(e, s.Spot);
         Save(e, s.Text);
         Save(e, s.Sprite);
         Save(e, s.Prefab);
@@ -321,6 +323,7 @@ namespace Kans
                 Restore(e, s.Camera);
                 Restore(e, s.Point);
                 Restore(e, s.Directional);
+                Restore(e, s.Spot);
                 Restore(e, s.Text);
                 Restore(e, s.Sprite);
                 Restore(e, s.Prefab);
@@ -874,7 +877,8 @@ namespace Kans
         // Start light tracks from the captured component and capture every property base
         // before writing any track, so seeks and forward playback give identical values.
         auto lightPath = [](const std::string& path) {
-            return path.rfind("Light.", 0) == 0 || path.rfind("PointLight.", 0) == 0 || path.rfind("DirLight.", 0) == 0;
+            return path.rfind("Light.", 0) == 0 || path.rfind("PointLight.", 0) == 0 ||
+                   path.rfind("DirLight.", 0) == 0 || path.rfind("SpotLight.", 0) == 0;
         };
         std::set<UUID> restoredLights;
         for (const auto& tr : data.Properties)
@@ -886,6 +890,8 @@ namespace Kans
                             e.SetComponent<PointLightComponent>(*captured->second.Point);
                         if (captured->second.Directional)
                             e.SetComponent<DirLightComponent>(*captured->second.Directional);
+                        if (captured->second.Spot)
+                            e.SetComponent<SpotLightComponent>(*captured->second.Spot);
                     }
         for (const auto& tr : data.Properties)
             if (lightPath(tr.Path))

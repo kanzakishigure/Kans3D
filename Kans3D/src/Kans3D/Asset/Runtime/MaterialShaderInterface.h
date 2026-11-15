@@ -32,8 +32,11 @@ namespace Kans
         PointShadow1         = 8,
         PointShadow2         = 9,
         PointShadow3         = 10,
+        SpotShadowAtlas      = 15,
+        SpotCookieAtlas      = 16,
+        SpotShadowRaw        = 17,
     };
-    constexpr uint32_t EngineBindingCount = 11;
+    constexpr uint32_t EngineBindingCount = 18;
 
     // std140 images of the engine uniform blocks.
     struct EngineFrameUniforms
@@ -84,12 +87,17 @@ namespace Kans
         glm::vec4 PointDiffuseScales[4] {glm::vec4(1), glm::vec4(1), glm::vec4(1), glm::vec4(1)};
         glm::vec4 DirectionalScales {1};
         glm::vec4 PointRanges[4] {};
+        glm::mat4 SpotViewProjection[EngineSpotLightLimit] {};
+        glm::vec4 SpotShadowRect[EngineSpotLightLimit] {};      // UV offset, size; zero size means unshadowed.
+        glm::vec4 SpotShadowParams[EngineSpotLightLimit] {};    // Normal offset, 1/resolution, filter, source radius.
+        glm::vec4 SpotCookieTransform[EngineSpotLightLimit] {}; // Inverse 2D rotation/scale rows.
+        glm::vec4 SpotCookieRect[EngineSpotLightLimit] {};
     };
     static_assert(offsetof(EngineFrameUniforms, ViewProjectionNoJitter) == 2032, "Temporal tail");
     static_assert(offsetof(EngineFrameUniforms, PreviousViewProjectionNoJitter) == 2096, "Temporal history");
     static_assert(offsetof(EngineFrameUniforms, Jitter) == 2160, "Temporal jitter");
     static_assert(offsetof(EngineFrameUniforms, View) == 1776, "Published environment prefix");
-    static_assert(sizeof(EngineFrameUniforms) == 6416, "KansFrame std140 layout");
+    static_assert(sizeof(EngineFrameUniforms) == 14608, "KansFrame std140 layout");
     static_assert(offsetof(EngineFrameUniforms, EnvironmentInfo) == 1760, "Published shadow prefix");
     static_assert(offsetof(EngineFrameUniforms, CascadeViewProjection) == 1136, "Published lighting prefix");
     static_assert(offsetof(EngineFrameUniforms, DebugView) == 276, "KansFrame debug uses existing tail padding");

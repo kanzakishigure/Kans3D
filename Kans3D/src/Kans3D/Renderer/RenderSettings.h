@@ -23,7 +23,7 @@ namespace Kans
     };
     struct SpotLight : SpotLightComponent
     {
-        glm::vec3 Position {0}, Direction {0, 0, -1};
+        glm::vec3 Position {0}, Direction {0, 0, -1}, Up {0, 1, 0};
         UUID      EntityID = 0;
     };
 

@@ -1433,6 +1433,12 @@ namespace Kans
                 value["Unit"]           = light.Unit == LightUnit::Lumens ? "Lumens" : "Candela";
                 value["InnerConeAngle"] = light.InnerConeAngle;
                 value["OuterConeAngle"] = light.OuterConeAngle;
+                Require(std::isfinite(light.CookieRotation) && std::isfinite(light.CookieScale.x) &&
+                            std::isfinite(light.CookieScale.y) && light.CookieScale.x > 0 && light.CookieScale.y > 0,
+                        "Invalid spot cookie transform");
+                value["Cookie"]         = IdentityText(light.Cookie);
+                value["CookieRotation"] = light.CookieRotation;
+                value["CookieScale"]    = Vector(light.CookieScale, 2);
                 value["Shadows"]        = EncodeShadows(light.Shadows);
             }
             if (entity.HasComponent<ScriptComponent>())
@@ -2095,6 +2101,9 @@ namespace Kans
                           "Range",
                           "InnerConeAngle",
                           "OuterConeAngle",
+                          "Cookie",
+                          "CookieRotation",
+                          "CookieScale",
                           "Shadows"});
                     auto& light = entity.AddComponent<SpotLightComponent>();
                     DecodeEmission(value, light);
@@ -2106,6 +2115,17 @@ namespace Kans
                     Require(light.InnerConeAngle >= 0 && light.InnerConeAngle <= light.OuterConeAngle &&
                                 light.OuterConeAngle > 0 && light.OuterConeAngle <= 89,
                             "Invalid spot cone angles");
+                    if (value["Cookie"])
+                        light.Cookie = Identity(value["Cookie"]);
+                    if (value["CookieRotation"])
+                        light.CookieRotation = Number(value["CookieRotation"]);
+                    if (value["CookieScale"])
+                    {
+                        const auto scale = value["CookieScale"];
+                        Require(scale.IsSequence() && scale.size() == 2, "Invalid spot cookie scale");
+                        light.CookieScale = {Number(scale[0]), Number(scale[1])};
+                    }
+                    Require(light.CookieScale.x > 0 && light.CookieScale.y > 0, "Invalid spot cookie scale");
                     light.Shadows = DecodeShadows(value["Shadows"], ShadowSettings::SpotDefaults());
                 }
                 if (node["ScriptComponent"])

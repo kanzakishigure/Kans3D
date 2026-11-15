@@ -534,6 +534,8 @@ namespace Kans
             if (view.Shadows)
             {
                 sampled(materialUses, view.Shadows->Directional, "DirectionalShadowAtlas");
+                sampled(materialUses, view.Shadows->Spots, "SpotShadowAtlas");
+                sampled(materialUses, view.Shadows->Cookies, "SpotCookieAtlas");
                 for (const auto& image : view.Shadows->Points)
                     sampled(materialUses, image, "PointShadowCube");
             }
@@ -595,6 +597,8 @@ namespace Kans
             if (view.Shadows)
             {
                 sampled(uses, view.Shadows->Directional, "DirectionalShadowAtlas");
+                sampled(uses, view.Shadows->Spots, "SpotShadowAtlas");
+                sampled(uses, view.Shadows->Cookies, "SpotCookieAtlas");
                 for (const auto& point : view.Shadows->Points)
                     sampled(uses, point, "PointShadowCube");
             }
@@ -1017,6 +1021,8 @@ namespace Kans
             if (view.Shadows)
             {
                 sampled(view.Shadows->Directional);
+                sampled(view.Shadows->Spots);
+                sampled(view.Shadows->Cookies);
                 for (const auto& image : view.Shadows->Points)
                     sampled(image);
             }

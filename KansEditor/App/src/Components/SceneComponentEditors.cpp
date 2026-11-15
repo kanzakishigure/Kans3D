@@ -185,10 +185,10 @@ namespace Kans::ComponentEditors
         });
     }
 
-    void DrawSpotLight(Entity entity, ComponentUI&)
+    void DrawSpotLight(Entity entity, ComponentUI& ui)
     {
         static const SpotLightComponent defaults;
-        entity.PatchComponent<SpotLightComponent>([](auto& c) {
+        entity.PatchComponent<SpotLightComponent>([&](auto& c) {
             if (PropertyGrid::BeginGroup("Light"))
             {
                 DrawPunctual(c, defaults, SpotSolidAngle(c.InnerConeAngle, c.OuterConeAngle));
@@ -205,13 +205,18 @@ namespace Kans::ComponentEditors
                 PropertyGrid::Text("Aim", "Transform local -Z", true);
                 PropertyGrid::EndGroup();
             }
-            if (PropertyGrid::BeginGroup("Shadows"))
+            if (PropertyGrid::BeginGroup("Cookie"))
             {
-                PropertyGrid::Text("Status", "Spot shadows are not rendered yet", true);
+                ui.AssetPicker("Texture", AssetType::Texture, c.Cookie);
                 PropertyGrid::Float(
-                    "Source radius (m)", c.Shadows.SourceRadius, .01f, 0, 10, "%.3f", &defaults.Shadows.SourceRadius);
+                    "Rotation (degrees)", c.CookieRotation, .5f, 0, 0, "%.1f", &defaults.CookieRotation);
+                PropertyGrid::Float("Scale X", c.CookieScale.x, .01f, .001f, 100, "%.3f", &defaults.CookieScale.x);
+                PropertyGrid::Float("Scale Y", c.CookieScale.y, .01f, .001f, 100, "%.3f", &defaults.CookieScale.y);
                 PropertyGrid::EndGroup();
             }
+            auto shadows = c.Shadows;
+            if (DrawShadowSettings(shadows, false))
+                c.Shadows = shadows.Validated();
         });
     }
     void DrawScript(Entity entity, ComponentUI&)

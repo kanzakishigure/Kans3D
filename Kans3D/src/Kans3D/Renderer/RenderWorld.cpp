@@ -156,6 +156,8 @@ namespace Kans
             // Aim follows the full parent transform, but scale never changes range.
             auto direction  = -glm::vec3(world[2]);
             light.Direction = glm::length(direction) > 1e-6f ? glm::normalize(direction) : glm::vec3(0, 0, -1);
+            light.Up =
+                glm::length(glm::vec3(world[1])) > 1e-6f ? glm::normalize(glm::vec3(world[1])) : glm::vec3(0, 1, 0);
             light.EntityID  = id;
             record.Spot     = light;
         }
@@ -872,9 +874,10 @@ namespace Kans
             if (expected.Point && (actual.Point->Position != expected.Point->Position ||
                                    !(static_cast<const PointLightComponent&>(*actual.Point) == *expected.Point)))
                 stale(expected.Sort.EntityID);
-            if (expected.Spot && (actual.Spot->Position != expected.Spot->Position ||
-                                  actual.Spot->Direction != expected.Spot->Direction ||
-                                  !(static_cast<const SpotLightComponent&>(*actual.Spot) == *expected.Spot)))
+            if (expected.Spot &&
+                (actual.Spot->Position != expected.Spot->Position ||
+                 actual.Spot->Direction != expected.Spot->Direction || actual.Spot->Up != expected.Spot->Up ||
+                 !(static_cast<const SpotLightComponent&>(*actual.Spot) == *expected.Spot)))
                 stale(expected.Sort.EntityID);
             if (expected.Directional &&
                 (actual.Directional->Dirction != expected.Directional->Dirction ||

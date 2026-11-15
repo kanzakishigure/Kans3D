@@ -112,6 +112,115 @@ namespace Kans
         result.resize(std::min(result.size(), size_t(std::min(cap, 4u))));
         return result;
     }
+    glm::mat4 SpotViewProjection(const SpotLight& light)
+    {
+        auto direction = glm::length(light.Direction) > 1e-6f ? glm::normalize(light.Direction) : glm::vec3(0, 0, -1);
+        auto up        = light.Up;
+        if (glm::length(glm::cross(direction, up)) < 1e-5f)
+            up = std::abs(direction.y) < .99f ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, 1);
+        float range = light.Range > 0 ? light.Range : light.Shadows.Validated().MaxDistance;
+        if (light.Shadows.Enabled)
+            range = std::min(range, light.Shadows.Validated().MaxDistance);
+        auto projection = glm::perspective(glm::radians(2 * std::clamp(light.OuterConeAngle, .01f, 89.f)),
+                                           1.f,
+                                           std::min(.01f, range * .01f),
+                                           std::max(range, .001f));
+        return DeviceProjection(projection,
+                                {RenderHardware::ClipYDirection::Down,
+                                 RenderHardware::DepthRange::ZeroToOne,
+                                 RenderHardware::FramebufferOrigin::UpperLeft}) *
+               glm::lookAt(light.Position, light.Position + direction, up);
+    }
+    std::vector<SpotShadowTile> AllocateSpotShadows(const SceneInfo& scene, uint32_t size, uint32_t cap)
+    {
+        auto power = [](uint32_t v) {
+            uint32_t p = 1;
+            while (p <= v / 2)
+                p *= 2;
+            return p;
+        };
+        size = power(std::clamp(size, 64u, 4096u));
+        struct Candidate
+        {
+            uint32_t Index, Resolution;
+            float    Coverage, Distance;
+        };
+        std::vector<Candidate> candidates;
+        for (uint32_t i = 0; i < std::min(scene.spotLights.size(), size_t(EngineSpotLightLimit)); ++i)
+        {
+            const auto& light = scene.spotLights[i];
+            if (!light.Shadows.Enabled)
+                continue;
+            auto  delta    = light.Position - scene.sceneCamera.Position;
+            float distance = glm::dot(delta, delta);
+            float radius   = (light.Range > 0 ? light.Range : light.Shadows.Validated().MaxDistance) *
+                             std::tan(glm::radians(std::clamp(light.OuterConeAngle, .01f, 89.f)));
+            float coverage = radius * radius / std::max(distance, .01f);
+            if (!std::isfinite(distance) || !std::isfinite(coverage))
+                continue;
+            candidates.push_back({i, power(std::min(size, light.Shadows.Validated().Resolution)), coverage, distance});
+        }
+        std::sort(candidates.begin(), candidates.end(), [&](auto a, auto b) {
+            if (a.Coverage != b.Coverage)
+                return a.Coverage > b.Coverage;
+            if (a.Distance != b.Distance)
+                return a.Distance < b.Distance;
+            auto x = uint64_t(scene.spotLights[a.Index].EntityID), y = uint64_t(scene.spotLights[b.Index].EntityID);
+            return x != y ? x < y : a.Index < b.Index;
+        });
+        candidates.resize(std::min(candidates.size(), size_t(std::min(cap, 8u))));
+        auto area = [&] {
+            uint64_t sum = 0;
+            for (auto c : candidates)
+                sum += uint64_t(c.Resolution) * c.Resolution;
+            return sum;
+        };
+        while (area() > uint64_t(size) * size)
+        {
+            // Reduce the largest tile, with reverse priority breaking ties. Power-of-two
+            // squares fit exactly when their total area fits this quadtree.
+            size_t largest = 0;
+            for (size_t i = 0; i < candidates.size(); ++i)
+                if (candidates[i].Resolution >= candidates[largest].Resolution)
+                    largest = i;
+            if (candidates[largest].Resolution <= 64)
+            {
+                candidates.pop_back();
+                continue;
+            }
+            candidates[largest].Resolution /= 2;
+        }
+        struct Square
+        {
+            uint32_t X, Y, Size;
+        };
+        std::vector<Square>   free {{0, 0, size}};
+        std::vector<uint32_t> order;
+        for (uint32_t i = 0; i < candidates.size(); ++i)
+            order.push_back(i);
+        std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) {
+            return candidates[a].Resolution > candidates[b].Resolution;
+        });
+        std::vector<SpotShadowTile> result(candidates.size());
+        for (auto index : order)
+        {
+            const auto c      = candidates[index];
+            auto       it     = std::min_element(free.begin(), free.end(), [](auto a, auto b) {
+                return std::tie(a.Size, a.Y, a.X) < std::tie(b.Size, b.Y, b.X);
+            });
+            auto       square = *it;
+            free.erase(it);
+            while (square.Size > c.Resolution)
+            {
+                square.Size /= 2;
+                free.push_back({square.X + square.Size, square.Y, square.Size});
+                free.push_back({square.X, square.Y + square.Size, square.Size});
+                free.push_back({square.X + square.Size, square.Y + square.Size, square.Size});
+            }
+            result[index] = {c.Index, square.X, square.Y, c.Resolution};
+        }
+        return result;
+    }
     namespace
     {
         using namespace RenderHardware;
@@ -166,7 +275,14 @@ void main() {
         sampler.CompareEnabled            = false;
         sampler.Min = sampler.Mag = Filter::Nearest;
         result->Raw               = device.CreateSampler(sampler);
+        sampler.Min = sampler.Mag = Filter::Linear;
+        result->CookieSampler     = device.CreateSampler(sampler);
         result->Directional       = DepthTexture(device, 1, false);
+        result->Spots             = result->Directional;
+        // Inactive cookie rectangles return white without sampling. Alias the
+        // initialized raw depth fallback instead of adding an unused image to
+        // every ordinary scene's graph; active cookies allocate a color atlas.
+        result->Cookies = result->Directional;
         result->Points.fill(DepthTexture(device, 1, true));
         float lit    = 1;
         auto  buffer = device.CreateBuffer({sizeof(lit), BufferUsage::CopySource, MemoryUsage::Upload});
@@ -303,6 +419,8 @@ namespace Kans
             if (data.Shadows)
             {
                 sampled(data.Shadows->Directional);
+                sampled(data.Shadows->Spots);
+                sampled(data.Shadows->Cookies);
                 for (const auto& image : data.Shadows->Points)
                     sampled(image);
             }
@@ -339,6 +457,97 @@ namespace Kans
             graph.OrderAfter(pass, pass - 1);
         return target;
     }
+    static void
+    BuildSpotCookies(RenderGraph& graph, RenderFrame& frame, ShadowResources& resources, EngineFrameUniforms& uniforms)
+    {
+        using namespace RenderHardware;
+        std::vector<Handle<RenderHardware::Texture>> images;
+        std::map<AssetID, uint32_t>                  slots;
+        for (size_t i = 0; i < std::min(frame.View.Scene.spotLights.size(), size_t(EngineSpotLightLimit)); ++i)
+        {
+            auto id = frame.View.Scene.spotLights[i].Cookie;
+            if (!id.IsValid() || !frame.Assets())
+                continue;
+            auto image = frame.Assets()->GetTextureResource(id);
+            if (!image)
+            {
+                frame.Complete = false;
+                continue;
+            }
+            if (image->GetDesc().Dimension != TextureDimension::Texture2D || image->GetDesc().ArrayLayers != 1)
+                continue;
+            auto [it, inserted] = slots.emplace(id, uint32_t(images.size()));
+            if (inserted)
+                images.push_back(image);
+            // 64 independent 128px tiles in a 1024px atlas; sampling clamps to the
+            // half-texel interior, so no adjacent cookie can bleed through.
+            const auto slot            = it->second;
+            uniforms.SpotCookieRect[i] = glm::vec4(float(slot % 8) / 8, float(slot / 8) / 8, 1.f / 8, 1.f / 8);
+        }
+        if (images.empty())
+            return;
+        auto device = frame.GetDevice();
+        if (resources.Cookies->GetDesc().Width != 1024)
+        {
+            TextureDesc desc;
+            desc.Width = desc.Height = 1024;
+            desc.Usage        = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled;
+            resources.Cookies = device->CreateTexture(desc);
+        }
+        const auto            target = graph.ImportTexture("Spot cookie atlas", resources.Cookies);
+        std::vector<GraphUse> uses {{target, GraphAccess::ColorWrite}};
+        for (auto image : images)
+            uses.push_back({graph.ImportTexture("Spot cookie source", image), GraphAccess::SampledRead});
+        auto         program = frame.Services.GetInternalProgram("SpotCookieAtlas",
+                                                                 R"(#version 450
+void main() {
+    vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
+    gl_Position = vec4(p*2-1,0,1);
+})",
+                                                                 R"(#version 450
+layout(set=0,binding=0) uniform sampler2D Cookie;
+layout(push_constant) uniform Tile { vec2 Origin; } tile;
+layout(location=0) out vec4 Color;
+void main() {
+    vec2 uv = (gl_FragCoord.xy-tile.Origin)/128.0;
+    // Imported textures use bottom-origin material UVs; the projection atlas
+    // stores top-origin image rows, matching the light's device projection.
+    uv.y = 1.0-uv.y;
+    Color = vec4(textureLod(Cookie,uv,0).rgb,1);
+}
+)");
+        auto         layout  = device->CreateBindGroupLayout({0, {{0, BindingType::CombinedTextureSampler}}});
+        PipelineDesc desc;
+        desc.Program           = program;
+        desc.GroupLayouts      = {layout};
+        desc.PushConstantBytes = 8;
+        desc.ColorFormats      = {Format::RGBA8Unorm};
+        desc.Rasterizer.Cull   = CullMode::None;
+        desc.Blends.resize(1);
+        auto pipeline = frame.Services.CachedPipeline(desc);
+        graph.AddPass("Spot cookie projection atlas",
+                      std::move(uses),
+                      [target, images, layout, pipeline, sampler = resources.CookieSampler](auto& c) {
+                          RenderingDesc render;
+                          render.Colors.push_back({c.Texture(target)});
+                          c.Commands.BeginRendering(render);
+                          c.Commands.BindPipeline(pipeline);
+                          for (uint32_t slot = 0; slot < images.size(); ++slot)
+                          {
+                              uint32_t x = slot % 8 * 128, y = slot / 8 * 128;
+                              c.Commands.SetViewport({float(x), float(y), 128, 128});
+                              c.Commands.SetScissor({int32_t(x), int32_t(y), 128, 128});
+                              glm::vec2 origin(x, y);
+                              c.Commands.PushConstants(0, &origin, sizeof(origin));
+                              BindGroupDesc group;
+                              group.Layout = layout;
+                              group.Entries.push_back({0, {}, 0, 0, images[slot], sampler});
+                              c.Commands.BindGroup(c.Device.CreateBindGroup(group));
+                              c.Commands.Draw(3);
+                          }
+                          c.Commands.EndRendering();
+                      });
+    }
     void BuildShadowPasses(RenderGraph& graph, RenderFrame& frame)
     {
         auto& view = frame.View;
@@ -346,6 +555,10 @@ namespace Kans
             view.Scene.pointLights.push_back(view.Scene.pointLight);
         const auto directional = view.Scene.dirLight.Shadows.Validated();
         const auto selected    = SelectPointShadows(view.Scene, view.MaxShadowedPointLights);
+        const auto spots       = AllocateSpotShadows(view.Scene, view.SpotShadowAtlasSize, view.MaxShadowedSpotLights);
+        const bool cookies = std::any_of(view.Scene.spotLights.begin(), view.Scene.spotLights.end(), [](const auto& l) {
+            return l.Cookie.IsValid();
+        });
         const bool dirEnabled  = directional.Enabled && glm::length(view.Scene.dirLight.Dirction) > 1e-6f;
         view.Shadows.reset();
         view.ShadowStats = {};
@@ -353,10 +566,14 @@ namespace Kans
         {
             view.LightingUniforms->ShadowInfo = glm::vec4(0);
             view.LightingUniforms->ShadowPass = glm::vec4(0);
+            for (auto& rect : view.LightingUniforms->SpotShadowRect)
+                rect = glm::vec4(0);
+            for (auto& rect : view.LightingUniforms->SpotCookieRect)
+                rect = glm::vec4(0);
             for (auto& index : view.LightingUniforms->PointShadowIndices)
                 index = glm::vec4(-1);
         }
-        if (!dirEnabled && selected.empty())
+        if (!dirEnabled && selected.empty() && spots.empty() && !cookies)
         {
             // Drop full-size maps when no light uses them; submitted frames retain their own handles.
             frame.Output.GetShadowStorage().reset();
@@ -371,12 +588,24 @@ namespace Kans
             storage->Directional = fallback->Directional;
         for (size_t slot = selected.size(); slot < storage->Points.size(); ++slot)
             storage->Points[slot] = fallback->Points[slot];
+        if (spots.empty())
+            storage->Spots = fallback->Spots;
+        if (!cookies)
+            storage->Cookies = fallback->Cookies;
         auto shadows               = storage;
         view.Shadows               = shadows;
         auto       uniforms        = view.LightingUniforms.value_or(MakeLightingUniforms(view.Scene));
         const auto row             = glm::transpose(view.Scene.sceneCamera.viewMatrix);
         uniforms.ShadowCameraDepth = -row[2];
         uniforms.ShadowInfo        = glm::vec4(0);
+        for (auto& rect : uniforms.SpotShadowRect)
+            rect = glm::vec4(0);
+        for (auto& rect : uniforms.SpotCookieRect)
+            rect = glm::vec4(0);
+        BuildSpotCookies(graph, frame, *shadows, uniforms);
+        if (std::none_of(
+                std::begin(uniforms.SpotCookieRect), std::end(uniforms.SpotCookieRect), [](auto r) { return r.z > 0; }))
+            shadows->Cookies = fallback->Cookies;
         for (auto& indices : uniforms.PointShadowIndices)
             indices = glm::vec4(-1);
         const auto proxies     = frame.World.CollectDraws(0, view.HiddenHierarchy);
@@ -388,7 +617,8 @@ namespace Kans
                                      const glm::mat4&                       matrix,
                                      ShadowSettings                         settings,
                                      glm::vec4                              position,
-                                     bool                                   point) {
+                                     bool                                   point,
+                                     const SpotShadowTile*                  spot = nullptr) {
             const auto           recordStart = RenderClockMilliseconds();
             ShadowPassStatistics stats {name, point, cascade, face};
             const Frustum frustum(matrix);
@@ -398,8 +628,8 @@ namespace Kans
             rendering.Depth.Subresource.Face = face;
             rendering.Depth.Load             = point || cascade == 0 ? LoadOp::Clear : LoadOp::Load;
             commands->BeginRendering(rendering);
-            uint32_t x = point ? 0 : (cascade & 1) * settings.Resolution;
-            uint32_t y = point ? 0 : (cascade >> 1) * settings.Resolution;
+            uint32_t x = spot ? spot->X : point ? 0 : (cascade & 1) * settings.Resolution;
+            uint32_t y = spot ? spot->Y : point ? 0 : (cascade >> 1) * settings.Resolution;
             commands->SetViewport({float(x), float(y), float(settings.Resolution), float(settings.Resolution)});
             commands->SetScissor({int32_t(x), int32_t(y), settings.Resolution, settings.Resolution});
             auto data               = MakeLightingUniforms(view.Scene);
@@ -599,6 +829,36 @@ namespace Kans
                        settings,
                        {light.Position, settings.MaxDistance},
                        true);
+        }
+        if (!spots.empty())
+        {
+            uint32_t   atlasSize = 1;
+            const auto requested = std::clamp(view.SpotShadowAtlasSize, 64u, 4096u);
+            while (atlasSize <= requested / 2)
+                atlasSize *= 2;
+            if (shadows->Spots->GetDesc().Width != atlasSize)
+                shadows->Spots = DepthTexture(*device, atlasSize, false);
+            for (uint32_t slot = 0; slot < spots.size(); ++slot)
+            {
+                const auto  tile     = spots[slot];
+                const auto& light    = view.Scene.spotLights[tile.Light];
+                auto        settings = light.Shadows.Validated();
+                settings.Resolution  = tile.Resolution;
+                uniforms.SpotShadowRect[tile.Light] =
+                    glm::vec4(tile.X, tile.Y, tile.Resolution, tile.Resolution) / float(atlasSize);
+                uniforms.SpotShadowParams[tile.Light] = {
+                    settings.NormalOffset, 1.f / tile.Resolution, float(settings.Filter), settings.SourceRadius};
+                ++view.ShadowStats.ShadowedLights;
+                record("Spot shadow " + std::to_string(tile.Light),
+                       shadows->Spots,
+                       0,
+                       slot,
+                       uniforms.SpotViewProjection[tile.Light],
+                       settings,
+                       {},
+                       false,
+                       &tile);
+            }
         }
         view.LightingUniforms = uniforms;
     }

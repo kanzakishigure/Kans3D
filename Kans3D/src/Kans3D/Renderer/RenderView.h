@@ -278,6 +278,8 @@ namespace Kans
         float                                             Time         = 0;
         TimeStep                                          FrameTimeDelta {1.f / 60.f};
         uint32_t                                          MaxShadowedPointLights = 4;
+        uint32_t                                          MaxShadowedSpotLights  = 8;
+        uint32_t                                          SpotShadowAtlasSize = 2048; // Pixels per side, at most 4096.
         std::shared_ptr<ShadowResources>                  Shadows;
         ShadowStatistics                                  ShadowStats;
         bool                                              ExtractWorld = true;

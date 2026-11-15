@@ -654,6 +654,8 @@ namespace Kans
                 }
                 if (pass.Shadows)
                 {
+                    use({graph.ImportTexture("VFX spot shadows", pass.Shadows->Spots), GraphAccess::SampledRead});
+                    use({graph.ImportTexture("VFX spot cookies", pass.Shadows->Cookies), GraphAccess::SampledRead});
                     use({graph.ImportTexture("VFX directional shadows", pass.Shadows->Directional),
                          GraphAccess::SampledRead});
                     for (const auto& image : pass.Shadows->Points)
