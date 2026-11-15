@@ -22,6 +22,7 @@ namespace Kans
 #define KANS_LIGHT_COUNT 4
 #define KANS_POINT_LIGHT_LIMIT 16
 #define KANS_SPOT_LIGHT_LIMIT 64
+#define KANS_AREA_LIGHT_LIMIT 16
 // Engine data (descriptor set 0). Lighting positions and directions are in world space.
 layout(set = 0, binding = 0, std140) uniform KansFrame
 {
@@ -73,6 +74,13 @@ layout(set = 0, binding = 0, std140) uniform KansFrame
     vec4 SpotShadowParams[KANS_SPOT_LIGHT_LIMIT];
     vec4 SpotCookieTransform[KANS_SPOT_LIGHT_LIMIT];
     vec4 SpotCookieRect[KANS_SPOT_LIGHT_LIMIT];
+    vec4 AreaPositionRange[KANS_AREA_LIGHT_LIMIT];
+    vec4 AreaRightWidth[KANS_AREA_LIGHT_LIMIT];
+    vec4 AreaUpHeight[KANS_AREA_LIGHT_LIMIT];
+    vec4 AreaRadiance[KANS_AREA_LIGHT_LIMIT];
+    vec4 AreaScales[KANS_AREA_LIGHT_LIMIT];
+    vec4 AreaSourceSize[KANS_AREA_LIGHT_LIMIT];
+
 
 } u_Frame;
 int KansPointLightCount() { return clamp(int(u_Frame.LightingInfo.x), 0, KANS_POINT_LIGHT_LIMIT); }
@@ -328,6 +336,12 @@ void KansEvaluateParticleLighting(vec3     worldPos,
         KansParticleAddLight(
             delta * inversesqrt(d2), KansPointLightRadiance(i) * u_Frame.PointDiffuseScales[i/4][i%4] * shadow * KansPointAttenuation(i,d2), frame, diffuse, axes);
     }
+    // Particles/VFX: untextured centre direction and finite solid-angle diffuse only, no specular or shadows.
+    for (int i=0; i<KansAreaLightCount(); ++i) {
+        vec3 delta = u_Frame.AreaPositionRange[i].xyz-worldPos;
+        if (dot(delta,delta)>1e-8)
+            KansParticleAddLight(normalize(delta),KansAreaApproxRadiance(i,worldPos),frame,diffuse,axes);
+    }
     for (int i=0;i<KansSpotLightCount();++i) {
         vec3 delta=u_Frame.SpotPositionRange[i].xyz-worldPos;
         float attenuation=KansSpotAttenuation(i,delta);
@@ -398,6 +412,10 @@ vec3 KansSixWayLighting(vec4 positiveAxes,
 #endif
 #endif
 )"},
+                {
+                    "Kans3D/AreaLighting.glsl",
+#include "KansAreaLightingInclude.h"
+                },
                 {"Kans3D/Lighting.glsl", R"(#ifndef KANS3D_LIGHTING_GLSL
 #define KANS3D_LIGHTING_GLSL
 #include <Kans3D/Engine.glsl>
@@ -417,6 +435,7 @@ float KansRangeWindow(float d2, float range) {
     float w = max(0.0, 1.0 - x2*x2); return w*w;
 }
 float KansPointAttenuation(int i, float d2) { return KansRangeWindow(d2,u_Frame.PointRanges[i/4][i%4])/max(d2,1e-4); }
+#include <Kans3D/AreaLighting.glsl>
 int KansSpotLightCount() { return clamp(int(u_Frame.LightingInfo.z),0,KANS_SPOT_LIGHT_LIMIT); }
 float KansSpotAttenuation(int i, vec3 toLight) {
     float d2=dot(toLight,toLight);
@@ -780,6 +799,16 @@ vec3 KansShadePbr(vec3 albedo, float metallic, float roughness, float ao, vec3 N
         if (attenuation>0.0) Lo += KansDirectPbr(albedo,metallic,roughness,N,V,normalize(toLight),
             u_Frame.SpotRadianceInner[i].rgb*attenuation*KansSpotCookie(i,worldPos),vec3(u_Frame.SpotScales[i].y),u_Frame.SpotScales[i].x)*KansSpotShadow(i,worldPos,N);
     }
+    for (int i=0; i<KansAreaLightCount(); ++i) {
+#ifdef KANS_PARTICLE_DIFFUSE_ONLY
+        // Standard particle pixel mode uses the same diffuse approximation as its vertex mode.
+        vec3 delta=u_Frame.AreaPositionRange[i].xyz-worldPos;
+        if(dot(delta,delta)>1e-8)
+            Lo += albedo*KansAreaApproxRadiance(i,worldPos)*max(dot(N,normalize(delta)),0.0);
+#else
+        Lo += KansAreaPbr(i, albedo, metallic, roughness, N, V, worldPos);
+#endif
+    }
     vec3 F = F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - NdotV, 0.0, 1.0), 5.0);
     vec3 kD = (1.0 - F) * (1.0 - metallic);
     vec3 diffuse = KansEnvironmentDiffuse(N) * albedo;
@@ -868,7 +897,13 @@ vec4 KansToneMap(vec3 color)
                   {"SpotShadowRect", 10512, 4, 1, EngineSpotLightLimit},
                   {"SpotShadowParams", 11536, 4, 1, EngineSpotLightLimit},
                   {"SpotCookieTransform", 12560, 4, 1, EngineSpotLightLimit},
-                  {"SpotCookieRect", 13584, 4, 1, EngineSpotLightLimit}}},
+                  {"SpotCookieRect", 13584, 4, 1, EngineSpotLightLimit},
+                  {"AreaPositionRange", 14608, 4, 1, EngineAreaLightLimit},
+                  {"AreaRightWidth", 14864, 4, 1, EngineAreaLightLimit},
+                  {"AreaUpHeight", 15120, 4, 1, EngineAreaLightLimit},
+                  {"AreaRadiance", 15376, 4, 1, EngineAreaLightLimit},
+                  {"AreaScales", 15632, 4, 1, EngineAreaLightLimit},
+                  {"AreaSourceSize", 15888, 4, 1, EngineAreaLightLimit}}},
                 {ShaderBindingKind::UniformBuffer,
                  ShaderImageDimension::Texture2D,
                  sizeof(EngineObjectUniforms),
@@ -886,6 +921,24 @@ vec4 KansToneMap(vec3 color)
                 {},
                 {},
                 {}, // Reserved post-process bindings 11..14.
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},

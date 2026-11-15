@@ -1441,6 +1441,25 @@ namespace Kans
                 value["CookieScale"]    = Vector(light.CookieScale, 2);
                 value["Shadows"]        = EncodeShadows(light.Shadows);
             }
+            if (entity.HasComponent<AreaLightComponent>())
+            {
+                const auto& light = entity.GetComponent<AreaLightComponent>();
+                value.reset(node["AreaLightComponent"]);
+                Require(uint32_t(light.Shape) <= uint32_t(AreaLightShape::Disc) &&
+                            uint32_t(light.Unit) <= uint32_t(AreaLightUnit::Lumens) && std::isfinite(light.Width) &&
+                            std::isfinite(light.Height) && std::isfinite(light.Radius) && std::isfinite(light.Range) &&
+                            light.Width > 0 && light.Height > 0 && light.Radius > 0 && light.Range >= 0,
+                        "Invalid area light size, range, shape or unit");
+                EncodeEmission(value, light);
+                value["Shape"]         = light.Shape == AreaLightShape::Disc ? "Disc" : "Rectangle";
+                value["Unit"]          = light.Unit == AreaLightUnit::Lumens ? "Lumens" : "Nits";
+                value["Width"]         = light.Width;
+                value["Height"]        = light.Height;
+                value["Radius"]        = light.Radius;
+                value["Range"]         = light.Range;
+                value["TwoSided"]      = light.TwoSided;
+                value["SourceTexture"] = IdentityText(light.SourceTexture);
+            }
             if (entity.HasComponent<ScriptComponent>())
             {
                 const auto& name = entity.GetComponent<ScriptComponent>().ClassName;
@@ -1701,6 +1720,7 @@ namespace Kans
                       "DirLightComponent",
                       "PointLightComponent",
                       "SpotLightComponent",
+                      "AreaLightComponent",
                       "ScriptComponent",
                       "SpriteRendererComponent"});
                 auto id = UInt(node["Entity"]);
@@ -2127,6 +2147,53 @@ namespace Kans
                     }
                     Require(light.CookieScale.x > 0 && light.CookieScale.y > 0, "Invalid spot cookie scale");
                     light.Shadows = DecodeShadows(value["Shadows"], ShadowSettings::SpotDefaults());
+                }
+                if (node["AreaLightComponent"])
+                {
+                    value.reset(node["AreaLightComponent"]);
+                    Keys(value,
+                         {"Color",
+                          "Intensity",
+                          "UseTemperature",
+                          "Temperature",
+                          "DiffuseScale",
+                          "SpecularScale",
+                          "Shape",
+                          "Unit",
+                          "Width",
+                          "Height",
+                          "Radius",
+                          "Range",
+                          "TwoSided",
+                          "SourceTexture"});
+                    auto& light = entity.AddComponent<AreaLightComponent>();
+                    DecodeEmission(value, light);
+                    if (value["Shape"])
+                    {
+                        auto shape = Text(value["Shape"]);
+                        Require(shape == "Rectangle" || shape == "Disc", "Invalid area light shape");
+                        light.Shape = shape == "Disc" ? AreaLightShape::Disc : AreaLightShape::Rectangle;
+                    }
+                    if (value["Unit"])
+                    {
+                        auto unit = Text(value["Unit"]);
+                        Require(unit == "Nits" || unit == "Lumens", "Invalid area light unit");
+                        light.Unit = unit == "Lumens" ? AreaLightUnit::Lumens : AreaLightUnit::Nits;
+                    }
+                    if (value["Width"])
+                        light.Width = Number(value["Width"]);
+                    if (value["Height"])
+                        light.Height = Number(value["Height"]);
+                    if (value["Radius"])
+                        light.Radius = Number(value["Radius"]);
+                    if (value["Range"])
+                        light.Range = Number(value["Range"]);
+                    if (value["TwoSided"])
+                        light.TwoSided = value["TwoSided"].as<bool>();
+                    if (value["SourceTexture"])
+                        light.SourceTexture = Identity(value["SourceTexture"]);
+                    Require(light.Width > 0 && light.Height > 0 && light.Radius > 0 && light.Range >= 0,
+                            "Invalid area light size or range");
                 }
                 if (node["ScriptComponent"])
                 {

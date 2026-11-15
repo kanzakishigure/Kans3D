@@ -6,6 +6,7 @@
 #include "Kans3D/Renderer/2D/TextRenderer.h"
 #include "Kans3D/Renderer/2D/UIRenderer.h"
 #include "Kans3D/Renderer/Features/DebugDrawFeature.h"
+#include "Kans3D/Renderer/Lighting/AreaLights.h"
 #include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Features/ParticleRenderFeature.h"
@@ -339,6 +340,7 @@ namespace Kans
         }
         ParticleRenderFeature::Simulate(graph, renderer);
         BuildShadowPasses(graph, renderer);
+        PrepareAreaLights(renderer);
         std::vector<GraphUse> target;
         for (size_t i = 0; i < renderer.Output.GetColors().size(); ++i)
             target.push_back({graph.ImportTexture("SceneColor" + std::to_string(i), renderer.Output.GetColors()[i]),
@@ -531,6 +533,9 @@ namespace Kans
                 sampled(materialUses, image, "FontAtlas");
             for (const auto& image : renderer.GetMaterialEnvironment())
                 sampled(materialUses, image, "MaterialEnvironment");
+            if (view.AreaLighting && !view.Scene.areaLights.empty())
+                for (const auto& image : AreaLightImages(*view.AreaLighting))
+                    sampled(materialUses, image, "AreaLighting");
             if (view.Shadows)
             {
                 sampled(materialUses, view.Shadows->Directional, "DirectionalShadowAtlas");
@@ -594,6 +599,9 @@ namespace Kans
                 sampled(uses, image, "FontAtlas");
             for (const auto& image : renderer.GetMaterialEnvironment())
                 sampled(uses, image, "MaterialEnvironment");
+            if (view.AreaLighting && !view.Scene.areaLights.empty())
+                for (const auto& image : AreaLightImages(*view.AreaLighting))
+                    sampled(uses, image, "AreaLighting");
             if (view.Shadows)
             {
                 sampled(uses, view.Shadows->Directional, "DirectionalShadowAtlas");
@@ -937,6 +945,7 @@ namespace Kans
         });
         ParticleRenderFeature::Simulate(graph, frame);
         BuildShadowPasses(graph, frame);
+        PrepareAreaLights(frame);
         RenderFeatureContext features {graph, view, scene, &frame};
         for (const auto& immediate : view.ImmediateOrder)
         {
@@ -1018,6 +1027,9 @@ namespace Kans
                 sampled(image);
             for (const auto& image : frame.GetMaterialEnvironment())
                 sampled(image);
+            if (view.AreaLighting && !view.Scene.areaLights.empty())
+                for (const auto& image : AreaLightImages(*view.AreaLighting))
+                    sampled(image);
             if (view.Shadows)
             {
                 sampled(view.Shadows->Directional);

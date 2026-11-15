@@ -33,6 +33,7 @@ namespace Kans::ComponentEditors
     void DrawDirectionalLight(Entity entity, ComponentUI& ui);
     void DrawPointLight(Entity entity, ComponentUI& ui);
     void DrawSpotLight(Entity entity, ComponentUI& ui);
+    void DrawAreaLight(Entity entity, ComponentUI& ui);
     void DrawScript(Entity entity, ComponentUI& ui);
     void DrawPrefabInstance(Entity root, ComponentUI& ui);
     void DrawMesh(Entity entity, ComponentUI& ui);

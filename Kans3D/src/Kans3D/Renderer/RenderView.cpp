@@ -185,8 +185,29 @@ namespace Kans
                                             -std::sin(angle) / scale.y,
                                             std::cos(angle) / scale.y};
         }
-        frame.LightingInfo = {
-            float(count), scene.sceneCamera.camera.ResolvePostProcess(scene.PostProcess).Exposure, float(spots), 0};
+        const size_t areas = std::min(scene.areaLights.size(), size_t(EngineAreaLightLimit));
+        for (size_t i = 0; i < areas; ++i)
+        {
+            const auto& a = scene.areaLights[i];
+            const float width =
+                a.Shape == AreaLightShape::Disc ? 2 * std::max(.001f, a.Radius) : std::max(.001f, a.Width);
+            const float height         = a.Shape == AreaLightShape::Disc ? width : std::max(.001f, a.Height);
+            frame.AreaPositionRange[i] = glm::vec4(a.Position, std::max(0.f, a.Range));
+            frame.AreaRightWidth[i]    = glm::vec4(a.Right, width);
+            frame.AreaUpHeight[i]      = glm::vec4(a.Up, height);
+            const float area = a.Shape == AreaLightShape::Disc ? LightPi * width * width * .25f : width * height;
+            frame.AreaRadiance[i] =
+                glm::vec4(LightRadiance(a, AreaLightRadiance(a.Intensity, a.Unit, area, a.TwoSided)),
+                          a.Shape == AreaLightShape::Disc ? 1 : 0);
+            frame.AreaScales[i] = {a.DiffuseScale,
+                                   a.SpecularScale,
+                                   a.TwoSided ? 1 : 0,
+                                   a.SourceTexture.IsValid() || a.SourceTextureHandle ? 1 : 0};
+        }
+        frame.LightingInfo = {float(count),
+                              scene.sceneCamera.camera.ResolvePostProcess(scene.PostProcess).Exposure,
+                              float(spots),
+                              float(areas)};
         return frame;
     }
 } // namespace Kans

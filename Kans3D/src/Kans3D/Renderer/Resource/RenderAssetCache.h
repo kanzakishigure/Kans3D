@@ -16,6 +16,7 @@
 namespace Kans
 {
     struct ShadowResources;
+    struct AreaLightResources;
     struct GpuMesh
     {
         std::shared_ptr<RenderHardware::Device> Device;
@@ -138,6 +139,7 @@ namespace Kans
         void BeginFrame(uint64_t unusedFrames = 600);
         void Clear();
         std::shared_ptr<ShadowResources> GetShadowFallback();
+        std::shared_ptr<AreaLightResources> GetAreaLightFallback();
 
         const ModelInstances* GetModel(AssetID id);
         const GpuMesh*        GetMesh(const MeshKey& id);
@@ -203,6 +205,7 @@ namespace Kans
         std::array<Ref<Texture2D>, 3>                                      m_FallbackTextures;
         AssetManager&                                                      m_Assets;
         std::shared_ptr<ShadowResources>                                             m_ShadowFallback;
+        std::shared_ptr<AreaLightResources>                                          m_AreaLightFallback;
         struct EditableEntry
         {
             std::weak_ptr<const RuntimeMesh> Source;

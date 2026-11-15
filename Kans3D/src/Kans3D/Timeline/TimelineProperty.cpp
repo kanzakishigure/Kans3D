@@ -18,6 +18,8 @@ namespace Kans
             return e.HasComponent<PointLightComponent>();
         if (name == "SpotLightComponent")
             return e.HasComponent<SpotLightComponent>();
+        if (name == "AreaLightComponent")
+            return e.HasComponent<AreaLightComponent>();
         if (name == "DirLightComponent")
             return e.HasComponent<DirLightComponent>();
         if (name == "TextComponent")
@@ -150,10 +152,21 @@ namespace Kans
             if (!e.HasComponent<T>())
                 return false;
             bool ok = false;
+            auto apply = [&](auto& c) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(c.*member)>, bool>)
+                {
+                    float scalar = c.*member ? 1.f : 0.f;
+                    ok           = access(scalar);
+                    if (write && ok)
+                        c.*member = scalar >= .5f;
+                }
+                else
+                    ok = access(c.*member);
+            };
             if (write)
-                e.PatchComponent<T>([&](auto& c) { ok = access(c.*member); });
+                e.PatchComponent<T>(apply);
             else
-                ok = access(e.GetComponent<T>().*member);
+                apply(e.GetComponent<T>());
             return ok;
         };
         if (field == "Transform.Position")
@@ -251,6 +264,13 @@ namespace Kans
         EMISSION_PROPERTIES(PointLightComponent, "PointLight")
         EMISSION_PROPERTIES(DirLightComponent, "DirLight")
         EMISSION_PROPERTIES(SpotLightComponent, "SpotLight")
+        EMISSION_PROPERTIES(AreaLightComponent, "AreaLight")
+        LIGHT_PROPERTY(AreaLightComponent, "AreaLight", Width)
+        LIGHT_PROPERTY(AreaLightComponent, "AreaLight", Height)
+        LIGHT_PROPERTY(AreaLightComponent, "AreaLight", Radius)
+        LIGHT_PROPERTY(AreaLightComponent, "AreaLight", Range)
+        LIGHT_PROPERTY(AreaLightComponent, "AreaLight", TwoSided)
+        LIGHT_PROPERTY(AreaLightComponent, "AreaLight", UseTemperature)
         LIGHT_PROPERTY(SpotLightComponent, "SpotLight", Range)
         LIGHT_PROPERTY(SpotLightComponent, "SpotLight", InnerConeAngle)
         LIGHT_PROPERTY(SpotLightComponent, "SpotLight", OuterConeAngle)

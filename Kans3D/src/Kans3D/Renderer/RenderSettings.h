@@ -1,6 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include "Kans3D/Core/UUID.h"
+#include "Kans3D/RHI/RHI.h"
 #include "Kans3D/Renderer/Lighting/ShadowSettings.h"
 #include "Kans3D/Scene/Components.h"
 namespace Kans
@@ -25,6 +26,15 @@ namespace Kans
     {
         glm::vec3 Position {0}, Direction {0, 0, -1}, Up {0, 1, 0};
         UUID      EntityID = 0;
+    };
+
+    struct AreaLight : AreaLightComponent
+    {
+        glm::vec3 Position {0}, Right {1, 0, 0}, Up {0, 1, 0};
+        UUID      EntityID = 0;
+        // Takes any sampled 2D RHI texture, including a per-frame render target with mips.
+        // Overrides SourceTexture; caller owns mip generation before the lighting pass.
+        RenderHardware::Handle<RenderHardware::Texture> SourceTextureHandle;
     };
 
     struct PipLineState

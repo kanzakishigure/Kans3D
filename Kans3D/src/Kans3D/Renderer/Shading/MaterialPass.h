@@ -25,6 +25,7 @@ namespace Kans
         Ref<const InstanceMaterialParameters>                          Parameters;
         uint32_t                                                       Section = 0;
         std::shared_ptr<ShadowResources>                               Shadows;
+        std::shared_ptr<AreaLightResources>                            AreaLighting;
         bool                                                           ShadowDepth = false, CustomDepth = false;
         bool                                                           DepthPrepass = false, PrepassCovered = false;
         bool                                                           InvalidatePrepassNormals = false;

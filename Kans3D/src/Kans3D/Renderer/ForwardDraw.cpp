@@ -332,6 +332,7 @@ namespace Kans
             pass.Shadows            = View.Shadows;
             pass.Environment        = environment;
             pass.EnvironmentSampler = Services.GetMaterialEnvironmentSampler();
+            pass.AreaLighting       = View.AreaLighting;
             // Debug views, including wireframe's lit shading, retain display output.
             const bool nextHDR =
                 shader->OutputSpace == ShaderOutputSpace::LinearHDR && draw.ViewMode == SceneViewMode::Lit;

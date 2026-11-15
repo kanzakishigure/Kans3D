@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include "Kans3D/Asset/Runtime/StandardShader.h"
+#include "Kans3D/Renderer/Lighting/AreaLights.h"
 #include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Kans3D/Renderer/Shading/MaterialPass.h"
@@ -119,6 +120,7 @@ namespace Kans
                 data.Parameters         = draw.Parameters;
                 data.Environment        = environment;
                 data.EnvironmentSampler = Services.GetMaterialEnvironmentSampler();
+                data.AreaLighting       = Assets()->GetAreaLightFallback();
                 data.Shadows            = Assets()->GetShadowFallback();
                 data.Palette =
                     mesh->Skin ? Assets()->GetSkinningPalette(draw.SkinPose, mesh) : Handle<RenderHardware::Buffer>();
@@ -189,6 +191,9 @@ namespace Kans
                 sampled(data.Shadows->Directional);
                 sampled(data.Shadows->Spots);
                 sampled(data.Shadows->Cookies);
+                if (!View.Scene.areaLights.empty())
+                    for (const auto& image : AreaLightImages(*data.AreaLighting))
+                        sampled(image);
                 for (const auto& image : data.Shadows->Points)
                     sampled(image);
             }

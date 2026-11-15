@@ -211,6 +211,13 @@ namespace Kans
         spot.CreateOrder = 4;
         spot.Create      = spot.Add;
 
+        auto& area       = registry.Register<AreaLightComponent>("Area Light", ICON_FA_LIGHTBULB, "Lighting");
+        area.IconRank    = 5;
+        area.Draw        = DrawAreaLight;
+        area.CreateName  = "Area Light";
+        area.CreateOrder = 5;
+        area.Create      = area.Add;
+
         // Physics: bodies, colliders, characters, joints and fields.
         auto& body    = registry.Register<RigidBodyComponent>("Rigid Body", ICON_FA_WEIGHT_HANGING, "Physics");
         body.IconRank = 10;

@@ -333,6 +333,24 @@ namespace Kans
         }
     };
 
+    // Metres in the transform's oriented XY plane; emits along local -Z, like spots.
+    // Area lights intentionally have no shadows in R3b; no ShadowSettings are exposed.
+    struct AreaLightComponent : LightEmission
+    {
+        AreaLightShape Shape = AreaLightShape::Rectangle;
+        AreaLightUnit  Unit  = AreaLightUnit::Nits;
+        float          Width = 1, Height = 1, Radius = .5f;
+        float          Range    = 10;
+        bool           TwoSided = false;
+        AssetID        SourceTexture; // Optional rectangle colour; runtime sampled handles live in AreaLight.
+        bool           operator==(const AreaLightComponent& b) const
+        {
+            return static_cast<const LightEmission&>(*this) == b && Shape == b.Shape && Unit == b.Unit &&
+                   Width == b.Width && Height == b.Height && Radius == b.Radius && Range == b.Range &&
+                   TwoSided == b.TwoSided && SourceTexture == b.SourceTexture;
+        }
+    };
+
     struct ScriptComponent
     {
         ScriptComponent()                       = default;
@@ -388,5 +406,6 @@ namespace Kans
                                          DirLightComponent,
                                          PointLightComponent,
                                          SpotLightComponent,
+                                         AreaLightComponent,
                                          ScriptComponent>;
 } // namespace Kans

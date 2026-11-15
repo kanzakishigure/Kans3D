@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include "ParticleRenderFeature.h"
+#include "Kans3D/Renderer/Lighting/AreaLights.h"
 #include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 #include "Kans3D/Renderer/Particles/ParticleSprite.h"
 #include "Kans3D/Renderer/RenderFrame.h"
@@ -140,6 +141,7 @@ namespace Kans
                             pass.SlopeBias          = slopeBias;
                             pass.Environment        = frame.GetMaterialEnvironment();
                             pass.EnvironmentSampler = frame.Services.GetMaterialEnvironmentSampler();
+                            pass.AreaLighting       = frame.View.AreaLighting;
                             BindGroupDesc group;
                             group.Layout  = pass.VertexLayout;
                             group.Entries = {{0, ribbon.Vertices, 0, ribbon.Vertices->GetDesc().Bytes},
@@ -271,6 +273,7 @@ namespace Kans
                                 pass.SlopeBias          = slopeBias;
                                 pass.Environment        = frame.GetMaterialEnvironment();
                                 pass.EnvironmentSampler = frame.Services.GetMaterialEnvironmentSampler();
+                                pass.AreaLighting       = frame.View.AreaLighting;
                                 BindGroupDesc group;
                                 group.Layout  = pass.VertexLayout;
                                 group.Entries = {{0, gpu->Attributes, 0, gpu->Attributes->GetDesc().Bytes},
@@ -614,6 +617,7 @@ namespace Kans
                 auto drawIndices        = draw.Mesh ? bins.at({draw.Emitter, &r, draw.Entry}).Indices : indices;
                 pass.Environment        = frame->GetMaterialEnvironment();
                 pass.EnvironmentSampler = frame->Services.GetMaterialEnvironmentSampler();
+                pass.AreaLighting       = frame->View.AreaLighting;
                 pass.Samples            = frame->Samples;
                 pass.Shadows            = context.View.Shadows;
                 pass.ColorFormats.clear();
@@ -652,6 +656,9 @@ namespace Kans
                     use({graph.ImportBuffer("VFX mesh vertices", draw.Mesh->Vertices), GraphAccess::VertexRead});
                     use({graph.ImportBuffer("VFX mesh indices", draw.Mesh->Indices), GraphAccess::IndexRead});
                 }
+                if (pass.AreaLighting && !frame->View.Scene.areaLights.empty())
+                    for (const auto& image : AreaLightImages(*pass.AreaLighting))
+                        use({graph.ImportTexture("VFX area lighting", image), GraphAccess::SampledRead});
                 if (pass.Shadows)
                 {
                     use({graph.ImportTexture("VFX spot shadows", pass.Shadows->Spots), GraphAccess::SampledRead});

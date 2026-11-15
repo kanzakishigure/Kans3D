@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "Kans3D/Renderer/Shading/MaterialPass.h"
 #include "Kans3D/RHI/PipelineKey.h"
+#include "Kans3D/Renderer/Lighting/AreaLights.h"
 #include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 
 namespace Kans
@@ -238,6 +239,14 @@ namespace Kans
                 entry.BufferResource = data.Object;
                 entry.Offset         = data.ObjectOffset;
                 entry.Bytes          = sizeof(EngineObjectUniforms);
+            }
+            else if (binding.Binding >= uint32_t(EngineBinding::LtcMatrix))
+            {
+                auto area             = data.AreaLighting ? data.AreaLighting : cache.GetAreaLightFallback();
+                entry.TextureResource = binding.Binding == 18 ? area->Matrix :
+                                        binding.Binding == 19 ? area->Amplitude :
+                                                                area->Sources.at(binding.Binding - 20);
+                entry.SamplerResource = area->Sampler;
             }
             else if (binding.Binding >= uint32_t(EngineBinding::DirectionalShadow))
             {

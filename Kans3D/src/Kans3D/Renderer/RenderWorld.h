@@ -41,11 +41,13 @@ namespace Kans
         void SetProceduralDraws(std::vector<DrawProxy> draws) { m_ProceduralDraws = std::move(draws); }
         void SetProceduralLights(std::vector<PointLight> points,
                                  std::optional<DirLight> directional = {},
-                                 std::vector<SpotLight>  spots       = {})
+                                 std::vector<SpotLight>  spots       = {},
+                                 std::vector<AreaLight>  areas       = {})
         {
             m_ProceduralPointLights = std::move(points);
             m_ProceduralDirectional = std::move(directional);
             m_ProceduralSpotLights  = std::move(spots);
+            m_ProceduralAreaLights  = std::move(areas);
         }
         Vfx::VfxWorld*                   GetVfxWorld() const;
         AssetManager*                 GetAssetManager() const;
@@ -98,6 +100,7 @@ namespace Kans
             std::optional<DirLight>           Directional;
             std::optional<PointLight>         Point;
             std::optional<SpotLight>          Spot;
+            std::optional<AreaLight>          Area;
             std::optional<ViewSprite>         Sprite;
             size_t                            SpriteIndex = SIZE_MAX;
             std::vector<UUID>                 Ancestors;
@@ -109,6 +112,7 @@ namespace Kans
         std::vector<DrawProxy>                                        m_ProceduralDraws;
         std::vector<PointLight>                                       m_ProceduralPointLights;
         std::vector<SpotLight>                                        m_ProceduralSpotLights;
+        std::vector<AreaLight>                                        m_ProceduralAreaLights;
         std::optional<DirLight>                                       m_ProceduralDirectional;
         std::unordered_set<entt::entity>         m_Dirty;
         std::unordered_map<entt::entity, Record> m_Records;

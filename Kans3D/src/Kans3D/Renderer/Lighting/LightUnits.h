@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <glm/glm.hpp>
 
 namespace Kans
@@ -10,8 +11,23 @@ namespace Kans
         Candela,
         Lumens
     };
+    enum class AreaLightShape
+    {
+        Rectangle,
+        Disc
+    };
+    enum class AreaLightUnit
+    {
+        Nits,
+        Lumens
+    };
     constexpr float LightPi = 3.14159265358979323846f;
     inline float    PointSolidAngle() { return 4.0f * LightPi; }
+    float           AreaLightArea(AreaLightShape shape, float width, float height, float radius);
+    // Lambert emitter: flux = pi * area * luminance per emitting side.
+    // Radiance follows the engine's photometric convention (no 683 lm/W conversion).
+    float AreaLightRadiance(float intensity, AreaLightUnit unit, float area, bool twoSided = false);
+
     // Cone angles are half angles in degrees. Integrating smoothstep in cosine
     // gives half the transition band, so lumen output stays constant as the cone changes.
     float        SpotSolidAngle(float inner, float outer);
@@ -49,6 +65,7 @@ namespace Kans
             c[i] = c[i] <= .04045f ? c[i] / 12.92f : std::pow((c[i] + .055f) / 1.055f, 2.4f);
         return c;
     }
+    std::pair<glm::vec3, glm::vec3> AreaLightAxes(const glm::mat4& world);
     struct LightEmission
     {
         glm::vec3 Color {1};          // Linear RGB.

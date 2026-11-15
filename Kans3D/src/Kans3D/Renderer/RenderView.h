@@ -16,6 +16,7 @@
 
 namespace Kans
 {
+    struct AreaLightResources;
     class Scene;
     class RenderFeatureSet;
     class RenderWorld;
@@ -75,6 +76,7 @@ namespace Kans
         RenderCamera            sceneCamera;
         std::vector<PointLight> pointLights;
         std::vector<SpotLight>  spotLights;
+        std::vector<AreaLight>  areaLights;
         bool                    HasDirectionalLight = false;
     };
     enum class ModelStencilMode
@@ -281,6 +283,9 @@ namespace Kans
         uint32_t                                          MaxShadowedSpotLights  = 8;
         uint32_t                                          SpotShadowAtlasSize = 2048; // Pixels per side, at most 4096.
         std::shared_ptr<ShadowResources>                  Shadows;
+        std::shared_ptr<AreaLightResources>               AreaLighting;
+        // Per-view runtime source override by entity UUID; accepts sampled 2D render targets with mips.
+        std::unordered_map<UUID, RenderHardware::Handle<RenderHardware::Texture>> AreaLightSources;
         ShadowStatistics                                  ShadowStats;
         bool                                              ExtractWorld = true;
         EnvironmentSettings Environment; // Effective settings; independent when UseWorldEnvironment is false.

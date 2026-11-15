@@ -597,6 +597,7 @@ namespace Kans
                                entity.HasComponent<DirLightComponent>()   ? ICON_FA_SUN :
                                entity.HasComponent<PointLightComponent>() ? ICON_FA_LIGHTBULB :
                                entity.HasComponent<SpotLightComponent>()  ? ICON_FA_LIGHTBULB :
+                               entity.HasComponent<AreaLightComponent>()  ? ICON_FA_LIGHTBULB :
                                                                             nullptr;
             if (!icon)
                 return;
@@ -662,6 +663,37 @@ namespace Kans
                         if (i % 8 == 0)
                             segment(origin, p, color);
                     }
+                }
+            }
+            if (entity.HasComponent<AreaLightComponent>())
+            {
+                const auto& light = entity.GetComponent<AreaLightComponent>();
+                auto [right, up]  = AreaLightAxes(world);
+                auto  aim         = -glm::cross(right, up);
+                float range       = std::max(0.f, light.Range);
+                segment(origin, origin + aim * std::min(range, 1.5f), color);
+                if (light.TwoSided)
+                    segment(origin, origin - aim * std::min(range, 1.5f), color);
+                if (light.Shape == AreaLightShape::Rectangle)
+                {
+                    glm::vec3 x = right * light.Width * .5f, y = up * light.Height * .5f;
+                    glm::vec3 p[] = {origin - x - y, origin + x - y, origin + x + y, origin - x + y};
+                    for (int i = 0; i < 4; ++i)
+                        segment(p[i], p[(i + 1) % 4], color);
+                }
+                for (int i = 0; i < 64; ++i)
+                {
+                    float a = i * 2 * LightPi / 64, b = (i + 1) * 2 * LightPi / 64;
+                    auto  ring = [&](glm::vec3 x, glm::vec3 y, float r) {
+                        segment(origin + r * (x * std::cos(a) + y * std::sin(a)),
+                                origin + r * (x * std::cos(b) + y * std::sin(b)),
+                                color);
+                    };
+                    if (light.Shape == AreaLightShape::Disc)
+                        ring(right, up, light.Radius);
+                    ring(right, up, range);
+                    ring(right, aim, range);
+                    ring(up, aim, range);
                 }
             }
             ImVec2 center;

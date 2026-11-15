@@ -2,6 +2,27 @@
 #include "LightUnits.h"
 namespace Kans
 {
+    float AreaLightArea(AreaLightShape shape, float width, float height, float radius)
+    {
+        return shape == AreaLightShape::Disc ? LightPi * radius * radius : width * height;
+    }
+    float AreaLightRadiance(float intensity, AreaLightUnit unit, float area, bool twoSided)
+    {
+        return unit == AreaLightUnit::Nits ?
+                   std::max(0.f, intensity) :
+                   std::max(0.f, intensity) / std::max(1e-8f, LightPi * area * (twoSided ? 2.f : 1.f));
+    }
+    std::pair<glm::vec3, glm::vec3> AreaLightAxes(const glm::mat4& world)
+    {
+        auto z = glm::vec3(world[2]);
+        z      = glm::length(z) > 1e-6f ? glm::normalize(z) : glm::vec3(0, 0, 1);
+        auto x = glm::vec3(world[0]);
+        x -= z * glm::dot(z, x);
+        if (glm::length(x) <= 1e-6f)
+            x = glm::cross(std::abs(z.y) < .99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0), z);
+        x = glm::normalize(x);
+        return {x, glm::cross(z, x)};
+    }
     float SpotSolidAngle(float inner, float outer)
     {
         outer = std::clamp(outer, 0.01f, 89.0f);

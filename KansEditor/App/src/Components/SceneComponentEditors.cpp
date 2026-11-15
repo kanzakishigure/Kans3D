@@ -219,6 +219,47 @@ namespace Kans::ComponentEditors
                 c.Shadows = shadows.Validated();
         });
     }
+    void DrawAreaLight(Entity entity, ComponentUI& ui)
+    {
+        static const AreaLightComponent defaults;
+        entity.PatchComponent<AreaLightComponent>([&](auto& c) {
+            // ComponentUI and PropertyGrid provide the shared EditorTheme tokens.
+            if (PropertyGrid::BeginGroup("Light"))
+            {
+                int         shape = int(c.Shape), unit = int(c.Unit);
+                const char* shapes[] = {"Rectangle", "Disc"};
+                const char* units[]  = {"Nits (cd/m²)", "Lumens"};
+                if (PropertyGrid::Combo("Shape", shapes, 2, shape))
+                    c.Shape = AreaLightShape(shape);
+                const float area = AreaLightArea(c.Shape, c.Width, c.Height, c.Radius);
+                if (PropertyGrid::Combo("Intensity unit", units, 2, unit))
+                {
+                    float radiance = AreaLightRadiance(c.Intensity, c.Unit, area, c.TwoSided);
+                    c.Unit         = AreaLightUnit(unit);
+                    c.Intensity =
+                        c.Unit == AreaLightUnit::Nits ? radiance : radiance * LightPi * area * (c.TwoSided ? 2 : 1);
+                }
+                DrawEmission(c, defaults, c.Unit == AreaLightUnit::Nits ? "Intensity (cd/m²)" : "Intensity (lm)");
+                PropertyGrid::Float("Range (m)", c.Range, .1f, 0, 10000, "%.2f", &defaults.Range);
+                PropertyGrid::Checkbox("Two sided", c.TwoSided, &defaults.TwoSided);
+                PropertyGrid::EndGroup();
+            }
+            if (PropertyGrid::BeginGroup("Shape"))
+            {
+                if (c.Shape == AreaLightShape::Rectangle)
+                {
+                    PropertyGrid::Float("Width (m)", c.Width, .01f, .001f, 10000, "%.3f", &defaults.Width);
+                    PropertyGrid::Float("Height (m)", c.Height, .01f, .001f, 10000, "%.3f", &defaults.Height);
+                    ui.AssetPicker("Source texture", AssetType::Texture, c.SourceTexture);
+                }
+                else
+                    PropertyGrid::Float("Radius (m)", c.Radius, .01f, .001f, 10000, "%.3f", &defaults.Radius);
+                PropertyGrid::Text("Facing", "Transform local -Z", true);
+                PropertyGrid::EndGroup();
+            }
+        });
+    }
+
     void DrawScript(Entity entity, ComponentUI&)
     {
         if (!PropertyGrid::Begin("##Script"))

@@ -1018,6 +1018,7 @@ namespace Kans
         m_ProductSamplers.clear();
         m_BiasedSamplers.clear();
         m_ShadowFallback.reset();
+        m_AreaLightFallback.reset();
     }
 } // namespace Kans
 

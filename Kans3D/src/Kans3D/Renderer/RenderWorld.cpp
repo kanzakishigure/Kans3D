@@ -161,6 +161,18 @@ namespace Kans
             light.EntityID  = id;
             record.Spot     = light;
         }
+        if (entity.HasComponent<AreaLightComponent>())
+        {
+            AreaLight light;
+            static_cast<AreaLightComponent&>(light) = entity.GetComponent<AreaLightComponent>();
+            light.Position                          = glm::vec3(world[3]);
+            // Match spot local -Z, including mirrored transforms; metric size ignores scale/shear.
+            auto [right, up] = AreaLightAxes(world);
+            light.Right      = right;
+            light.Up         = up;
+            light.EntityID   = id;
+            record.Area      = light;
+        }
         if (entity.HasComponent<SpriteRendererComponent>())
         {
             const auto& sprite = entity.GetComponent<SpriteRendererComponent>();
@@ -459,7 +471,8 @@ namespace Kans
             Record       next;
             if (valid)
                 next = ExtractEntity({handle, m_Scene});
-            const bool   renderable = next.Mesh || next.Point || next.Spot || next.Directional || next.Sprite;
+            const bool renderable =
+                next.Mesh || next.Point || next.Spot || next.Area || next.Directional || next.Sprite;
             const size_t nextCount  = next.Draws.size();
             auto         countProxy = [&](bool before, bool after) {
                 m_Stats.Created += !before && after;
@@ -468,6 +481,7 @@ namespace Kans
             };
             countProxy(old != m_Records.end() && old->second.Point.has_value(), next.Point.has_value());
             countProxy(old != m_Records.end() && old->second.Spot.has_value(), next.Spot.has_value());
+            countProxy(old != m_Records.end() && old->second.Area.has_value(), next.Area.has_value());
             countProxy(old != m_Records.end() && old->second.Directional.has_value(), next.Directional.has_value());
             countProxy(old != m_Records.end() && old->second.Sprite.has_value(), next.Sprite.has_value());
             // Section identity survives material/transform/mesh-data changes.
@@ -527,7 +541,7 @@ namespace Kans
                     m_Order.emplace(next.Sort, handle);
                     m_MeshUsers[next.Mesh->Mesh.Mesh].insert(handle);
                 }
-                if (next.Point || next.Spot || next.Directional)
+                if (next.Point || next.Spot || next.Area || next.Directional)
                     m_Lights.insert(handle);
                 m_Records.emplace(handle, std::move(next));
             }
@@ -566,6 +580,18 @@ namespace Kans
             info.HasDirectionalLight = m_ProceduralDirectional.has_value();
             info.pointLights         = m_ProceduralPointLights;
             info.spotLights          = m_ProceduralSpotLights;
+            info.areaLights          = m_ProceduralAreaLights;
+            std::stable_sort(info.areaLights.begin(), info.areaLights.end(), [&](const auto& a, const auto& b) {
+                auto distance = [&](const auto& light) {
+                    auto  d  = light.Position - info.sceneCamera.Position;
+                    float d2 = glm::dot(d, d);
+                    return std::isfinite(d2) ? d2 : std::numeric_limits<float>::max();
+                };
+                float da = distance(a), db = distance(b);
+                return da != db ? da < db : uint64_t(a.EntityID) < uint64_t(b.EntityID);
+            });
+            if (info.areaLights.size() > EngineAreaLightLimit)
+                info.areaLights.resize(EngineAreaLightLimit);
             info.pointLight          = info.pointLights.empty() ? PointLight {} : info.pointLights.front();
             return;
         }
@@ -573,6 +599,7 @@ namespace Kans
         info.pointLight = {};
         info.pointLights.clear();
         info.spotLights.clear();
+        info.areaLights.clear();
         info.HasDirectionalLight = false;
         uint64_t directionalID   = UINT64_MAX;
         struct Candidate
@@ -589,6 +616,13 @@ namespace Kans
             uint64_t  ID;
         };
         std::vector<SpotCandidate> spots;
+        struct AreaCandidate
+        {
+            AreaLight Light;
+            float     Distance;
+            uint64_t  ID;
+        };
+        std::vector<AreaCandidate> areas;
         for (auto handle : m_Lights)
         {
             const auto& record = m_Records.at(handle);
@@ -600,6 +634,12 @@ namespace Kans
                 info.dirLight            = *record.Directional;
                 info.HasDirectionalLight = true;
                 directionalID            = id;
+            }
+            if (record.Area)
+            {
+                auto  delta = record.Area->Position - info.sceneCamera.Position;
+                float d     = glm::dot(delta, delta);
+                areas.push_back({*record.Area, std::isfinite(d) ? d : std::numeric_limits<float>::max(), id});
             }
             if (record.Spot)
             {
@@ -625,6 +665,11 @@ namespace Kans
         });
         for (size_t i = 0; i < std::min(spots.size(), size_t(EngineSpotLightLimit)); ++i)
             info.spotLights.push_back(spots[i].Light);
+        std::sort(areas.begin(), areas.end(), [](const auto& a, const auto& b) {
+            return a.Distance != b.Distance ? a.Distance < b.Distance : a.ID < b.ID;
+        });
+        for (size_t i = 0; i < std::min(areas.size(), size_t(EngineAreaLightLimit)); ++i)
+            info.areaLights.push_back(areas[i].Light);
         if (!info.pointLights.empty())
             info.pointLight = info.pointLights.front();
         // Simulation may precede light collection, in which case it uses the previous frame's light.
@@ -819,7 +864,8 @@ namespace Kans
         for (auto handle : m_Scene->m_Registry.view<TransformComponent, IDComponent>())
         {
             const auto expected = ExtractEntity({handle, m_Scene});
-            if (!expected.Mesh && !expected.Point && !expected.Spot && !expected.Directional && !expected.Sprite)
+            if (!expected.Mesh && !expected.Point && !expected.Spot && !expected.Area && !expected.Directional &&
+                !expected.Sprite)
                 continue;
             ++count;
             const auto found = m_Records.find(handle);
@@ -830,6 +876,7 @@ namespace Kans
                 expected.Sprite.has_value() != actual.Sprite.has_value() ||
                 expected.Point.has_value() != actual.Point.has_value() ||
                 expected.Spot.has_value() != actual.Spot.has_value() ||
+                expected.Area.has_value() != actual.Area.has_value() ||
                 expected.Directional.has_value() != actual.Directional.has_value() || expected.Sort < actual.Sort ||
                 actual.Sort < expected.Sort || expected.Ancestors != actual.Ancestors ||
                 expected.Draws.size() != actual.Draws.size())
@@ -879,6 +926,10 @@ namespace Kans
                  actual.Spot->Direction != expected.Spot->Direction || actual.Spot->Up != expected.Spot->Up ||
                  !(static_cast<const SpotLightComponent&>(*actual.Spot) == *expected.Spot)))
                 stale(expected.Sort.EntityID);
+            if (expected.Area && (actual.Area->Position != expected.Area->Position ||
+                                  actual.Area->Right != expected.Area->Right || actual.Area->Up != expected.Area->Up ||
+                                  !(static_cast<const AreaLightComponent&>(*actual.Area) == *expected.Area)))
+                stale(expected.Sort.EntityID);
             if (expected.Directional &&
                 (actual.Directional->Dirction != expected.Directional->Dirction ||
                  !(static_cast<const DirLightComponent&>(*actual.Directional) == *expected.Directional)))
@@ -905,6 +956,7 @@ namespace Kans
                                                 EditableMeshComponent,
                                                 PointLightComponent,
                                                 SpotLightComponent,
+                                                AreaLightComponent,
                                                 DirLightComponent,
                                                 SpriteRendererComponent>(handle))
                     stale(record.Sort.EntityID);

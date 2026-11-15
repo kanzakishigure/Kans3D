@@ -18,6 +18,7 @@ namespace Kans
     constexpr uint32_t EngineLightCount      = 4; // Published prefix; never change.
     constexpr uint32_t EnginePointLightLimit = 16;
     constexpr uint32_t EngineSpotLightLimit  = 64; // Forward per view, nearest first with UUID ties.
+    constexpr uint32_t EngineAreaLightLimit  = 16; // Forward per view, distance then UUID.
 
     enum class EngineBinding : uint32_t
     {
@@ -35,8 +36,11 @@ namespace Kans
         SpotShadowAtlas      = 15,
         SpotCookieAtlas      = 16,
         SpotShadowRaw        = 17,
+        LtcMatrix            = 18,
+        LtcAmplitude         = 19,
+        AreaSource0          = 20, // One sampled 2D texture per selected area light (20..35).
     };
-    constexpr uint32_t EngineBindingCount = 18;
+    constexpr uint32_t EngineBindingCount = 36;
 
     // std140 images of the engine uniform blocks.
     struct EngineFrameUniforms
@@ -92,12 +96,18 @@ namespace Kans
         glm::vec4 SpotShadowParams[EngineSpotLightLimit] {};    // Normal offset, 1/resolution, filter, source radius.
         glm::vec4 SpotCookieTransform[EngineSpotLightLimit] {}; // Inverse 2D rotation/scale rows.
         glm::vec4 SpotCookieRect[EngineSpotLightLimit] {};
+        glm::vec4 AreaPositionRange[EngineAreaLightLimit] {};
+        glm::vec4 AreaRightWidth[EngineAreaLightLimit] {};
+        glm::vec4 AreaUpHeight[EngineAreaLightLimit] {};
+        glm::vec4 AreaRadiance[EngineAreaLightLimit] {};
+        glm::vec4 AreaScales[EngineAreaLightLimit] {};
+        glm::vec4 AreaSourceSize[EngineAreaLightLimit] {};
     };
     static_assert(offsetof(EngineFrameUniforms, ViewProjectionNoJitter) == 2032, "Temporal tail");
     static_assert(offsetof(EngineFrameUniforms, PreviousViewProjectionNoJitter) == 2096, "Temporal history");
     static_assert(offsetof(EngineFrameUniforms, Jitter) == 2160, "Temporal jitter");
     static_assert(offsetof(EngineFrameUniforms, View) == 1776, "Published environment prefix");
-    static_assert(sizeof(EngineFrameUniforms) == 14608, "KansFrame std140 layout");
+    static_assert(sizeof(EngineFrameUniforms) == 16144, "KansFrame std140 layout");
     static_assert(offsetof(EngineFrameUniforms, EnvironmentInfo) == 1760, "Published shadow prefix");
     static_assert(offsetof(EngineFrameUniforms, CascadeViewProjection) == 1136, "Published lighting prefix");
     static_assert(offsetof(EngineFrameUniforms, DebugView) == 276, "KansFrame debug uses existing tail padding");
