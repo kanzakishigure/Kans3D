@@ -17,6 +17,7 @@ namespace Kans
     constexpr uint32_t MaterialDescriptorSet = 1;
     constexpr uint32_t EngineLightCount      = 4; // Published prefix; never change.
     constexpr uint32_t EnginePointLightLimit = 16;
+    constexpr uint32_t EngineSpotLightLimit  = 64; // Forward per view, nearest first with UUID ties.
 
     enum class EngineBinding : uint32_t
     {
@@ -75,12 +76,20 @@ namespace Kans
         glm::mat4 ViewProjectionNoJitter {1.0f};
         glm::mat4 PreviousViewProjectionNoJitter {1.0f};
         glm::vec4 Jitter {0}; // xy: pixels, zw: device clip translation.
+        // Append-only: published point, shadow and temporal prefixes keep their offsets.
+        glm::vec4 SpotPositionRange[EngineSpotLightLimit] {};
+        glm::vec4 SpotDirectionOuter[EngineSpotLightLimit] {};
+        glm::vec4 SpotRadianceInner[EngineSpotLightLimit] {};
+        glm::vec4 SpotScales[EngineSpotLightLimit] {};
+        glm::vec4 PointDiffuseScales[4] {glm::vec4(1), glm::vec4(1), glm::vec4(1), glm::vec4(1)};
+        glm::vec4 DirectionalScales {1};
+        glm::vec4 PointRanges[4] {};
     };
     static_assert(offsetof(EngineFrameUniforms, ViewProjectionNoJitter) == 2032, "Temporal tail");
     static_assert(offsetof(EngineFrameUniforms, PreviousViewProjectionNoJitter) == 2096, "Temporal history");
     static_assert(offsetof(EngineFrameUniforms, Jitter) == 2160, "Temporal jitter");
     static_assert(offsetof(EngineFrameUniforms, View) == 1776, "Published environment prefix");
-    static_assert(sizeof(EngineFrameUniforms) == 2176, "KansFrame std140 layout");
+    static_assert(sizeof(EngineFrameUniforms) == 6416, "KansFrame std140 layout");
     static_assert(offsetof(EngineFrameUniforms, EnvironmentInfo) == 1760, "Published shadow prefix");
     static_assert(offsetof(EngineFrameUniforms, CascadeViewProjection) == 1136, "Published lighting prefix");
     static_assert(offsetof(EngineFrameUniforms, DebugView) == 276, "KansFrame debug uses existing tail padding");

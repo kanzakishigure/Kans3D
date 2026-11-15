@@ -74,6 +74,7 @@ namespace Kans
         PointLight          pointLight;
         RenderCamera            sceneCamera;
         std::vector<PointLight> pointLights;
+        std::vector<SpotLight>  spotLights;
         bool                    HasDirectionalLight = false;
     };
     enum class ModelStencilMode

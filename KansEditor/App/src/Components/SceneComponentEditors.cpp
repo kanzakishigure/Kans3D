@@ -119,6 +119,32 @@ namespace Kans::ComponentEditors
         });
     }
 
+    namespace
+    {
+        void DrawEmission(LightEmission& c, const LightEmission& defaults, const char* unit)
+        {
+            PropertyGrid::Color3("Color (linear)", c.Color, &defaults.Color);
+            PropertyGrid::Checkbox("Use temperature", c.UseTemperature, &defaults.UseTemperature);
+            if (c.UseTemperature)
+                PropertyGrid::Float("Temperature (K)", c.Temperature, 10, 1000, 40000, "%.0f", &defaults.Temperature);
+            PropertyGrid::Float(unit, c.Intensity, .1f, 0, 100000000, "%.3f", &defaults.Intensity);
+            PropertyGrid::Float("Diffuse scale", c.DiffuseScale, .01f, 0, 1, "%.3f", &defaults.DiffuseScale);
+            PropertyGrid::Float("Specular scale", c.SpecularScale, .01f, 0, 1, "%.3f", &defaults.SpecularScale);
+        }
+        template<class T>
+        void DrawPunctual(T& c, const T& defaults, float solidAngle)
+        {
+            int         unit    = int(c.Unit);
+            const char* names[] = {"Candela", "Lumens"};
+            if (PropertyGrid::Combo("Intensity unit", names, 2, unit))
+            {
+                c.Intensity = FromCandela(ToCandela(c.Intensity, c.Unit, solidAngle), LightUnit(unit), solidAngle);
+                c.Unit      = LightUnit(unit);
+            }
+            DrawEmission(c, defaults, c.Unit == LightUnit::Candela ? "Intensity (cd)" : "Intensity (lm)");
+            PropertyGrid::Float("Range (m)", c.Range, .1f, 0, 10000, "%.2f", &defaults.Range);
+        }
+    } // namespace
     void DrawDirectionalLight(Entity entity, ComponentUI&)
     {
         static const DirLightComponent defaults = [] {
@@ -130,9 +156,7 @@ namespace Kans::ComponentEditors
             if (PropertyGrid::BeginGroup("Light"))
             {
                 PropertyGrid::Vec3("Direction", c.Direction, defaults.Direction, 0.01f);
-                PropertyGrid::Color3("Diffuse", c.Diffuse_Intensity, &defaults.Diffuse_Intensity);
-                PropertyGrid::Color3("Specular", c.Specular_Intensity, &defaults.Specular_Intensity);
-                PropertyGrid::Color3("Ambient", c.Ambient_Intensity, &defaults.Ambient_Intensity);
+                DrawEmission(c, defaults, "Intensity (lux)");
                 PropertyGrid::EndGroup();
             }
             auto shadows = c.Shadows;
@@ -151,9 +175,7 @@ namespace Kans::ComponentEditors
         entity.PatchComponent<PointLightComponent>([](PointLightComponent& c) {
             if (PropertyGrid::BeginGroup("Light"))
             {
-                PropertyGrid::Color3("Diffuse", c.Diffuse_Intensity, &defaults.Diffuse_Intensity);
-                PropertyGrid::Color3("Specular", c.Specular_Intensity, &defaults.Specular_Intensity);
-                PropertyGrid::Color3("Ambient", c.Ambient_Intensity, &defaults.Ambient_Intensity);
+                DrawPunctual(c, defaults, PointSolidAngle());
                 PropertyGrid::Text("Position", "From the Transform", true);
                 PropertyGrid::EndGroup();
             }
@@ -163,6 +185,35 @@ namespace Kans::ComponentEditors
         });
     }
 
+    void DrawSpotLight(Entity entity, ComponentUI&)
+    {
+        static const SpotLightComponent defaults;
+        entity.PatchComponent<SpotLightComponent>([](auto& c) {
+            if (PropertyGrid::BeginGroup("Light"))
+            {
+                DrawPunctual(c, defaults, SpotSolidAngle(c.InnerConeAngle, c.OuterConeAngle));
+                PropertyGrid::Float("Inner cone (degrees)",
+                                    c.InnerConeAngle,
+                                    .1f,
+                                    0,
+                                    c.OuterConeAngle,
+                                    "%.1f",
+                                    &defaults.InnerConeAngle);
+                PropertyGrid::Float(
+                    "Outer cone (degrees)", c.OuterConeAngle, .1f, .01f, 89, "%.1f", &defaults.OuterConeAngle);
+                c.InnerConeAngle = std::min(c.InnerConeAngle, c.OuterConeAngle);
+                PropertyGrid::Text("Aim", "Transform local -Z", true);
+                PropertyGrid::EndGroup();
+            }
+            if (PropertyGrid::BeginGroup("Shadows"))
+            {
+                PropertyGrid::Text("Status", "Spot shadows are not rendered yet", true);
+                PropertyGrid::Float(
+                    "Source radius (m)", c.Shadows.SourceRadius, .01f, 0, 10, "%.3f", &defaults.Shadows.SourceRadius);
+                PropertyGrid::EndGroup();
+            }
+        });
+    }
     void DrawScript(Entity entity, ComponentUI&)
     {
         if (!PropertyGrid::Begin("##Script"))

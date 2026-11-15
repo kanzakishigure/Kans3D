@@ -178,28 +178,80 @@ namespace Kans
             return component(SpriteRendererComponent {}, &SpriteRendererComponent::TilingFactor);
         if (field == "Sprite.UVRect")
             return component(SpriteRendererComponent {}, &SpriteRendererComponent::UVRect);
+        // Published Light.Intensity is vector radiance; typed PointLight/DirLight.Intensity paths use physical units.
+        auto legacyLight = [&](auto type, bool specular, bool ambient) {
+            using T = decltype(type);
+            if (!e.HasComponent<T>())
+                return false;
+            auto apply = [&](auto& light) {
+                float intensity = light.Intensity;
+                if constexpr (std::is_same_v<T, PointLightComponent>)
+                    intensity = ToCandela(intensity, light.Unit);
+                auto      radiance = LightRadiance(light, intensity);
+                glm::vec3 diffuse  = radiance * light.DiffuseScale;
+                glm::vec3 legacy   = ambient ? glm::vec3(0) : specular ? radiance * light.SpecularScale : diffuse;
+                bool      ok       = access(legacy);
+                if (write && ok && !ambient)
+                {
+                    if (specular)
+                    {
+                        float magnitude     = glm::length(radiance);
+                        light.SpecularScale = magnitude > 0 ? glm::length(legacy) / magnitude : 0;
+                    }
+                    else
+                    {
+                        auto spec = radiance * light.SpecularScale;
+                        MigrateLightEmission(light, legacy, spec);
+                        if constexpr (std::is_same_v<T, PointLightComponent>)
+                            light.Intensity = FromCandela(light.Intensity, light.Unit);
+                    }
+                }
+                return ok;
+            };
+            bool ok = false;
+            if (write)
+                e.PatchComponent<T>([&](auto& light) { ok = apply(light); });
+            else
+            {
+                auto copy = e.GetComponent<T>();
+                ok        = apply(copy);
+            }
+            return ok;
+        };
         if (field == "PointLight.Diffuse_Intensity")
-            return component(PointLightComponent {}, &PointLightComponent::Diffuse_Intensity);
+            return legacyLight(PointLightComponent {}, false, false);
         if (field == "PointLight.Specular_Intensity")
-            return component(PointLightComponent {}, &PointLightComponent::Specular_Intensity);
+            return legacyLight(PointLightComponent {}, true, false);
         if (field == "PointLight.Ambient_Intensity")
-            return component(PointLightComponent {}, &PointLightComponent::Ambient_Intensity);
+            return legacyLight(PointLightComponent {}, false, true);
         if (field == "DirLight.Diffuse_Intensity")
-            return component(DirLightComponent {}, &DirLightComponent::Diffuse_Intensity);
+            return legacyLight(DirLightComponent {}, false, false);
         if (field == "DirLight.Specular_Intensity")
-            return component(DirLightComponent {}, &DirLightComponent::Specular_Intensity);
+            return legacyLight(DirLightComponent {}, true, false);
         if (field == "DirLight.Ambient_Intensity")
-            return component(DirLightComponent {}, &DirLightComponent::Ambient_Intensity);
-        if (field == "DirLight.Direction")
-            return component(DirLightComponent {}, &DirLightComponent::Direction);
+            return legacyLight(DirLightComponent {}, false, true);
         if (field == "Light.Intensity" || field == "Light.DiffuseIntensity")
         {
             if (e.HasComponent<PointLightComponent>())
-                return component(PointLightComponent {}, &PointLightComponent::Diffuse_Intensity);
+                return legacyLight(PointLightComponent {}, false, false);
             if (e.HasComponent<DirLightComponent>())
-                return component(DirLightComponent {}, &DirLightComponent::Diffuse_Intensity);
+                return legacyLight(DirLightComponent {}, false, false);
             return false;
         }
+#define LIGHT_PROPERTY(TYPE, PREFIX, FIELD) \
+    if (field == PREFIX "." #FIELD) \
+        return component(TYPE {}, &TYPE::FIELD);
+#define EMISSION_PROPERTIES(TYPE, PREFIX) \
+    LIGHT_PROPERTY(TYPE, PREFIX, Color) \
+    LIGHT_PROPERTY(TYPE, PREFIX, Intensity) \
+    LIGHT_PROPERTY(TYPE, PREFIX, Temperature) \
+    LIGHT_PROPERTY(TYPE, PREFIX, DiffuseScale) LIGHT_PROPERTY(TYPE, PREFIX, SpecularScale)
+        EMISSION_PROPERTIES(PointLightComponent, "PointLight")
+        EMISSION_PROPERTIES(DirLightComponent, "DirLight")
+        LIGHT_PROPERTY(PointLightComponent, "PointLight", Range)
+        LIGHT_PROPERTY(DirLightComponent, "DirLight", Direction)
+#undef EMISSION_PROPERTIES
+#undef LIGHT_PROPERTY
         if (field.rfind("Camera.", 0) == 0 && e.HasComponent<CameraComponent>())
         {
             auto& c = e.GetComponent<CameraComponent>().SceneCamera;

@@ -760,8 +760,7 @@ namespace Kans::VfxPreview
             m_Sun = m_Scene->CreateEntity("Sun");
         DirLightComponent light;
         light.Direction         = glm::length(direction) > 1e-6f ? glm::normalize(direction) : glm::vec3(0, -1, 0);
-        light.Diffuse_Intensity = light.Specular_Intensity = glm::vec3(2.0f);
-        light.Ambient_Intensity = glm::vec3(0.3f);
+        light.Intensity         = 2;
         if (m_Sun.HasComponent<DirLightComponent>())
             m_Sun.SetComponent<DirLightComponent>(light);
         else

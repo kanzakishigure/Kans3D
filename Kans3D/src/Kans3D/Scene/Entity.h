@@ -44,7 +44,7 @@ namespace Kans
                           std::is_same_v<T, UIScreenComponent> || std::is_same_v<T, UIWorldComponent> ||
                           std::is_same_v<T, TextComponent> || std::is_same_v<T, EditableMeshComponent> ||
                           std::is_same_v<T, SpriteRendererComponent> || std::is_same_v<T, DirLightComponent> ||
-                          std::is_same_v<T, PointLightComponent>)
+                          std::is_same_v<T, PointLightComponent> || std::is_same_v<T, SpotLightComponent>)
             {
                 auto&   component = GetComponent<T>();
                 const T before    = component;
@@ -114,17 +114,9 @@ namespace Kans
         {
             return a == b;
         }
-        static bool SameRenderValue(const PointLightComponent& a, const PointLightComponent& b)
-        {
-            return a.Diffuse_Intensity == b.Diffuse_Intensity && a.Specular_Intensity == b.Specular_Intensity &&
-                   a.Ambient_Intensity == b.Ambient_Intensity && a.Shadows == b.Shadows;
-        }
-        static bool SameRenderValue(const DirLightComponent& a, const DirLightComponent& b)
-        {
-            return a.Direction == b.Direction && a.Diffuse_Intensity == b.Diffuse_Intensity &&
-                   a.Specular_Intensity == b.Specular_Intensity && a.Ambient_Intensity == b.Ambient_Intensity &&
-                   a.Shadows == b.Shadows;
-        }
+        static bool SameRenderValue(const PointLightComponent& a, const PointLightComponent& b) { return a == b; }
+        static bool SameRenderValue(const DirLightComponent& a, const DirLightComponent& b) { return a == b; }
+        static bool SameRenderValue(const SpotLightComponent& a, const SpotLightComponent& b) { return a == b; }
         friend class Scene;
         friend struct SceneClipboardAccess;
         entt::entity m_EntityHandle {entt::null};

@@ -32,15 +32,8 @@ namespace Kans
 
     } // namespace
 
-    void ComponentEditors::DefaultDirectionalLight(DirLightComponent& light)
-    {
-        light.Direction         = {0.0f, -1.0f, 0.0f};
-        light.Diffuse_Intensity = light.Specular_Intensity = light.Ambient_Intensity = glm::vec3(1.0f);
-    }
-    void ComponentEditors::DefaultPointLight(PointLightComponent& light)
-    {
-        light.Diffuse_Intensity = light.Specular_Intensity = light.Ambient_Intensity = glm::vec3(1.0f);
-    }
+    void ComponentEditors::DefaultDirectionalLight(DirLightComponent& light) { light = DirLightComponent {}; }
+    void ComponentEditors::DefaultPointLight(PointLightComponent& light) { light = PointLightComponent {}; }
 
     void RegisterBuiltinComponents(ComponentRegistry& registry)
     {
@@ -210,6 +203,13 @@ namespace Kans
         point.CreateName = "Point Light";
         point.CreateOrder = 3;
         point.Create     = point.Add;
+
+        auto& spot       = registry.Register<SpotLightComponent>("Spot Light", ICON_FA_LIGHTBULB, "Lighting");
+        spot.IconRank    = 4;
+        spot.Draw        = DrawSpotLight;
+        spot.CreateName  = "Spot Light";
+        spot.CreateOrder = 4;
+        spot.Create      = spot.Add;
 
         // Physics: bodies, colliders, characters, joints and fields.
         auto& body    = registry.Register<RigidBodyComponent>("Rigid Body", ICON_FA_WEIGHT_HANGING, "Physics");

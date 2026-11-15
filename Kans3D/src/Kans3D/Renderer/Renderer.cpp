@@ -722,13 +722,10 @@ namespace Kans
         statistics.Culling               = view.Culling;
         statistics.Shadows               = view.ShadowStats.PerPass;
         statistics.ShadowedLights        = view.ShadowStats.ShadowedLights;
-        statistics.DirectionalLights     = view.Scene.HasDirectionalLight ||
-                                                   view.Scene.dirLight.Diffuse_Intensity != glm::vec3(0) ||
-                                                   view.Scene.dirLight.Ambient_Intensity != glm::vec3(0) ?
-                                               1 :
-                                               0;
+        statistics.DirectionalLights =
+            view.Scene.HasDirectionalLight || LightRadiance(view.Scene.dirLight) != glm::vec3(0) ? 1 : 0;
         statistics.PointLights           = view.Scene.pointLights.empty() ?
-                                               (view.Scene.pointLight.Diffuse_Intensity != glm::vec3(0) ? 1 : 0) :
+                                               (LightRadiance(view.Scene.pointLight) != glm::vec3(0) ? 1 : 0) :
                                                uint32_t(view.Scene.pointLights.size());
         statistics.BloomMipCount         = view.BloomMipCount;
         statistics.TransientTextureSlots = target.GetTransientPool().Size();

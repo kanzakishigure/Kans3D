@@ -21,6 +21,7 @@ namespace Kans
 #define KANS_TEMPORAL_RESPONSE layout(location=3) out vec2 kans_TemporalResponse
 #define KANS_LIGHT_COUNT 4
 #define KANS_POINT_LIGHT_LIMIT 16
+#define KANS_SPOT_LIGHT_LIMIT 64
 // Engine data (descriptor set 0). Lighting positions and directions are in world space.
 layout(set = 0, binding = 0, std140) uniform KansFrame
 {
@@ -60,6 +61,13 @@ layout(set = 0, binding = 0, std140) uniform KansFrame
     mat4 ViewProjectionNoJitter;
     mat4 PreviousViewProjectionNoJitter;
     vec4 Jitter;
+    vec4 SpotPositionRange[KANS_SPOT_LIGHT_LIMIT];
+    vec4 SpotDirectionOuter[KANS_SPOT_LIGHT_LIMIT];
+    vec4 SpotRadianceInner[KANS_SPOT_LIGHT_LIMIT];
+    vec4 SpotScales[KANS_SPOT_LIGHT_LIMIT];
+    vec4 PointDiffuseScales[4];
+    vec4 DirectionalScales;
+    vec4 PointRanges[4];
 
 } u_Frame;
 int KansPointLightCount() { return clamp(int(u_Frame.LightingInfo.x), 0, KANS_POINT_LIGHT_LIMIT); }
@@ -296,7 +304,7 @@ void KansEvaluateParticleLighting(vec3     worldPos,
         axes[i] = vec3(0);
     if (u_Frame.DirectionalDirection.w != 0.0)
         KansParticleAddLight(
-            KansDirectionalToLight(), KansDirectionalRadiance() * KansShadow(worldPos, frame[2])
+            KansDirectionalToLight(), KansDirectionalRadiance() * u_Frame.DirectionalScales.x * KansShadow(worldPos, frame[2])
 #ifdef KANS_DIRECTIONAL_TRANSMITTANCE
             * KANS_DIRECTIONAL_TRANSMITTANCE
 #endif
@@ -313,7 +321,12 @@ void KansEvaluateParticleLighting(vec3     worldPos,
 #endif
         // Vertex mode omits point PCF: each cube receiver requires 9 or 25 taps.
         KansParticleAddLight(
-            delta * inversesqrt(d2), KansPointLightRadiance(i) * shadow / max(d2, 1e-4), frame, diffuse, axes);
+            delta * inversesqrt(d2), KansPointLightRadiance(i) * u_Frame.PointDiffuseScales[i/4][i%4] * shadow * KansPointAttenuation(i,d2), frame, diffuse, axes);
+    }
+    for (int i=0;i<KansSpotLightCount();++i) {
+        vec3 delta=u_Frame.SpotPositionRange[i].xyz-worldPos;
+        float attenuation=KansSpotAttenuation(i,delta);
+        if (attenuation>0.0) KansParticleAddLight(normalize(delta),u_Frame.SpotRadianceInner[i].rgb*u_Frame.SpotScales[i].x*attenuation,frame,diffuse,axes);
     }
 }
 #if !defined(KANS_FRAGMENT_STAGE) && !defined(KANS_PARTICLE_PIXEL_ONLY)
@@ -389,6 +402,22 @@ layout(set = 0, binding = 7) uniform samplerCubeShadow u_PointShadow0;
 layout(set = 0, binding = 8) uniform samplerCubeShadow u_PointShadow1;
 layout(set = 0, binding = 9) uniform samplerCubeShadow u_PointShadow2;
 layout(set = 0, binding = 10) uniform samplerCubeShadow u_PointShadow3;
+
+float KansRangeWindow(float d2, float range) {
+    if (range <= 0.0) return 1.0;
+    float x2 = d2 / (range * range);
+    float w = max(0.0, 1.0 - x2*x2); return w*w;
+}
+float KansPointAttenuation(int i, float d2) { return KansRangeWindow(d2,u_Frame.PointRanges[i/4][i%4])/max(d2,1e-4); }
+int KansSpotLightCount() { return clamp(int(u_Frame.LightingInfo.z),0,KANS_SPOT_LIGHT_LIMIT); }
+float KansSpotAttenuation(int i, vec3 toLight) {
+    float d2=dot(toLight,toLight);
+    if (d2<=1e-8) return 0.0;
+    float c=dot(-toLight*inversesqrt(d2),u_Frame.SpotDirectionOuter[i].xyz);
+    float inner=u_Frame.SpotRadianceInner[i].w, outer=u_Frame.SpotDirectionOuter[i].w;
+    float t=inner==outer ? step(outer,c) : clamp((c-outer)/(inner-outer),0.0,1.0);
+    return t*t*(3.0-2.0*t)*KansRangeWindow(d2,u_Frame.SpotPositionRange[i].w)/max(d2,1e-4);
+}
 
 // Inverse world rotation: the same lookup transform is used by the skybox.
 vec3 KansEnvironmentDirection(vec3 direction)
@@ -606,7 +635,7 @@ float KansGeometrySchlickGGX(float NdotV, float roughness)
 }
 
 vec3 KansDirectPbr(vec3 albedo, float metallic, float roughness, vec3 N, vec3 V,
-                   vec3 L, vec3 radiance, vec3 specularScale)
+                   vec3 L, vec3 radiance, vec3 specularScale, float diffuseScale)
 {
     if (dot(N, L) <= 0.0) return vec3(0);
     vec3 H = normalize(V + L);
@@ -616,7 +645,11 @@ vec3 KansDirectPbr(vec3 albedo, float metallic, float roughness, vec3 N, vec3 V,
     vec3 F = F0 + (1.0 - F0) * pow(clamp(1.0 - max(dot(H, V), 0.0), 0.0, 1.0), 5.0);
     vec3 specular = KansDistributionGGX(N, H, roughness) * G * F / (4.0 * NdotV * NdotL + 0.001);
     vec3 kD = (1.0 - F) * (1.0 - metallic);
-    return (kD * albedo / KANS_PI + specular * specularScale) * radiance * NdotL;
+    return (kD * albedo / KANS_PI * diffuseScale + specular * specularScale) * radiance * NdotL;
+}
+vec3 KansDirectPbr(vec3 albedo, float metallic, float roughness, vec3 N, vec3 V,
+                   vec3 L, vec3 radiance, vec3 specularScale) {
+    return KansDirectPbr(albedo,metallic,roughness,N,V,L,radiance,specularScale,1.0);
 }
 vec3 KansShadePbr(vec3 albedo, float metallic, float roughness, float ao, vec3 N, vec3 worldPos)
 {
@@ -629,21 +662,27 @@ vec3 KansShadePbr(vec3 albedo, float metallic, float roughness, float ao, vec3 N
     vec3 Lo = vec3(0.0);
     for (int i = 0; i < KansPointLightCount(); ++i)
     {
-        if (all(lessThanEqual(KansPointLightRadiance(i), vec3(0)))) continue;
+        if (all(lessThanEqual(u_Frame.PointRadiance[i].rgb, vec3(0)))) continue;
         vec3 toLight = KansPointLightPosition(i) - worldPos;
         if (dot(toLight, toLight) <= 1e-8) continue;
-        float distanceSquared = max(dot(toLight, toLight), 1e-4);
+        float distanceSquared = dot(toLight, toLight);
         vec3 L = normalize(toLight);
         Lo += KansDirectPbr(albedo, metallic, roughness, N, V, L,
-                            KansPointLightRadiance(i) / distanceSquared, KansPointLightSpecular(i)) * KansPointShadow(i, worldPos, N);
+                            u_Frame.PointRadiance[i].rgb * KansPointAttenuation(i,distanceSquared), KansPointLightSpecular(i), u_Frame.PointDiffuseScales[i/4][i%4]) * KansPointShadow(i, worldPos, N);
     }
     if (u_Frame.DirectionalDirection.w != 0.0)
         Lo += KansDirectPbr(albedo, metallic, roughness, N, V, KansDirectionalToLight(),
-                            KansDirectionalRadiance(), u_Frame.DirectionalSpecular.rgb) * KansShadow(worldPos, N)
+                            u_Frame.DirectionalRadiance.rgb, u_Frame.DirectionalSpecular.rgb, u_Frame.DirectionalScales.x) * KansShadow(worldPos, N)
 #ifdef KANS_DIRECTIONAL_TRANSMITTANCE
             * KANS_DIRECTIONAL_TRANSMITTANCE
 #endif
             ;
+    for (int i=0; i<KansSpotLightCount(); ++i) {
+        vec3 toLight=u_Frame.SpotPositionRange[i].xyz-worldPos;
+        float attenuation=KansSpotAttenuation(i,toLight);
+        if (attenuation>0.0) Lo += KansDirectPbr(albedo,metallic,roughness,N,V,normalize(toLight),
+            u_Frame.SpotRadianceInner[i].rgb*attenuation,vec3(u_Frame.SpotScales[i].y),u_Frame.SpotScales[i].x);
+    }
     vec3 F = F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - NdotV, 0.0, 1.0), 5.0);
     vec3 kD = (1.0 - F) * (1.0 - metallic);
     vec3 diffuse = KansEnvironmentDiffuse(N) * albedo;
@@ -720,7 +759,14 @@ vec4 KansToneMap(vec3 color)
                   {"InverseProjection", 1968, 4, 4, 1},
                   {"ViewProjectionNoJitter", 2032, 4, 4, 1},
                   {"PreviousViewProjectionNoJitter", 2096, 4, 4, 1},
-                  {"Jitter", 2160, 4, 1, 1}}},
+                  {"Jitter", 2160, 4, 1, 1},
+                  {"SpotPositionRange", 2176, 4, 1, EngineSpotLightLimit},
+                  {"SpotDirectionOuter", 3200, 4, 1, EngineSpotLightLimit},
+                  {"SpotRadianceInner", 4224, 4, 1, EngineSpotLightLimit},
+                  {"SpotScales", 5248, 4, 1, EngineSpotLightLimit},
+                  {"PointDiffuseScales", 6272, 4, 1, 4},
+                  {"DirectionalScales", 6336, 4, 1, 1},
+                  {"PointRanges", 6352, 4, 1, 4}}},
                 {ShaderBindingKind::UniformBuffer,
                  ShaderImageDimension::Texture2D,
                  sizeof(EngineObjectUniforms),

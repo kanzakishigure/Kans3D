@@ -120,6 +120,7 @@ namespace Kans
         connect(static_cast<ParticleSystemComponent*>(nullptr));
         connect(static_cast<DirLightComponent*>(nullptr));
         connect(static_cast<PointLightComponent*>(nullptr));
+        connect(static_cast<SpotLightComponent*>(nullptr));
         connect(static_cast<PrefabOwnedComponent*>(nullptr));
         m_Registry.on_construct<TransformComponent>().connect<&Scene::OnTransformChanged>(this);
         m_Registry.on_update<TransformComponent>().connect<&Scene::OnTransformChanged>(this);
@@ -724,6 +725,7 @@ namespace Kans
         }
         CopyComponent<DirLightComponent>(source, copy);
         CopyComponent<PointLightComponent>(source, copy);
+        CopyComponent<SpotLightComponent>(source, copy);
         CopyComponent<ScriptComponent>(source, copy);
         SetParent(copy, parent, before, false);
         if (copy.HasComponent<PrefabInstanceComponent>())
@@ -1084,6 +1086,9 @@ namespace Kans
     {}
     template<>
     void Scene::OnComponentAdd<PointLightComponent>(Entity entity, PointLightComponent& component)
+    {}
+    template<>
+    void Scene::OnComponentAdd<SpotLightComponent>(Entity entity, SpotLightComponent& component)
     {}
     template<>
     void Scene::OnComponentAdd<IDComponent>(Entity entity, IDComponent& component)

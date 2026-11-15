@@ -39,10 +39,13 @@ namespace Kans
         explicit RenderWorld(Scene& scene) : m_Scene(&scene) {}
         RenderWorld() = default; // Dedicated procedural worlds (e.g. material preview).
         void SetProceduralDraws(std::vector<DrawProxy> draws) { m_ProceduralDraws = std::move(draws); }
-        void SetProceduralLights(std::vector<PointLight> points, std::optional<DirLight> directional = {})
+        void SetProceduralLights(std::vector<PointLight> points,
+                                 std::optional<DirLight> directional = {},
+                                 std::vector<SpotLight>  spots       = {})
         {
             m_ProceduralPointLights = std::move(points);
             m_ProceduralDirectional = std::move(directional);
+            m_ProceduralSpotLights  = std::move(spots);
         }
         Vfx::VfxWorld*                   GetVfxWorld() const;
         AssetManager*                 GetAssetManager() const;
@@ -94,6 +97,7 @@ namespace Kans
             std::vector<DrawProxy>            Draws;
             std::optional<DirLight>           Directional;
             std::optional<PointLight>         Point;
+            std::optional<SpotLight>          Spot;
             std::optional<ViewSprite>         Sprite;
             size_t                            SpriteIndex = SIZE_MAX;
             std::vector<UUID>                 Ancestors;
@@ -104,6 +108,7 @@ namespace Kans
         Scene*                                                        m_Scene = nullptr;
         std::vector<DrawProxy>                                        m_ProceduralDraws;
         std::vector<PointLight>                                       m_ProceduralPointLights;
+        std::vector<SpotLight>                                        m_ProceduralSpotLights;
         std::optional<DirLight>                                       m_ProceduralDirectional;
         std::unordered_set<entt::entity>         m_Dirty;
         std::unordered_map<entt::entity, Record> m_Records;

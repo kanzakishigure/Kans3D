@@ -869,6 +869,37 @@ namespace Kans
                     std::any_of(tr.Ranges.begin(), tr.Ranges.end(), [&](const auto& r) { return r.Contains(t); });
                 m_Scene.SetEntityActive(e, active);
             }
+        // Legacy RGB channel tracks decompose radiance into colour and magnitude.
+        // Reusing last frame's decomposition accumulates rounding in untouched channels.
+        // Start light tracks from the captured component and capture every property base
+        // before writing any track, so seeks and forward playback give identical values.
+        auto lightPath = [](const std::string& path) {
+            return path.rfind("Light.", 0) == 0 || path.rfind("PointLight.", 0) == 0 || path.rfind("DirLight.", 0) == 0;
+        };
+        std::set<UUID> restoredLights;
+        for (const auto& tr : data.Properties)
+            if (lightPath(tr.Path))
+                if (auto e = entity(tr.Binding); e && restoredLights.insert(e.GetUUID()).second)
+                    if (auto captured = m_State->Entities.find(e.GetUUID()); captured != m_State->Entities.end())
+                    {
+                        if (captured->second.Point)
+                            e.SetComponent<PointLightComponent>(*captured->second.Point);
+                        if (captured->second.Directional)
+                            e.SetComponent<DirLightComponent>(*captured->second.Directional);
+                    }
+        for (const auto& tr : data.Properties)
+            if (lightPath(tr.Path))
+                if (auto e = entity(tr.Binding))
+                {
+                    auto key = std::make_pair(e.GetUUID(), tr.Path);
+                    if (!m_State->Properties.count(key))
+                    {
+                        glm::vec4 base;
+                        if (!TimelineProperty(m_Scene, e, tr.Path, base, false))
+                            return Fail("unknown property " + tr.Path);
+                        m_State->Properties[key] = base;
+                    }
+                }
         for (const auto& tr : data.Properties)
             if (auto e = entity(tr.Binding))
             {

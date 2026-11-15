@@ -15,6 +15,7 @@
 #include "Kans3D/Physics/PhysicsEquality.h"
 #include "Kans3D/Physics/RagdollComponent.h"
 #include "Kans3D/Physics/VehicleComponent.h"
+#include "Kans3D/Renderer/Lighting/LightUnits.h"
 #include "Kans3D/Timeline/Timeline.h"
 #include "Kans3D/VFX/ParticleSystemComponent.h"
 
@@ -295,25 +296,37 @@ namespace Kans
         }
     };
 
-    struct DirLightComponent
+    struct DirLightComponent : LightEmission
     {
         glm::vec3      Direction {0, -1, 0};
-        glm::vec3      Diffuse_Intensity {1};
-        glm::vec3      Specular_Intensity {1};
-        glm::vec3      Ambient_Intensity {0};
         ShadowSettings Shadows;
-        DirLightComponent()                         = default;
-        DirLightComponent(const DirLightComponent&) = default;
+        bool           operator==(const DirLightComponent& b) const
+        {
+            return static_cast<const LightEmission&>(*this) == b && Direction == b.Direction && Shadows == b.Shadows;
+        }
     };
-
-    struct PointLightComponent
+    struct PointLightComponent : LightEmission
     {
-        glm::vec3      Diffuse_Intensity {1};
-        glm::vec3      Specular_Intensity {1};
-        glm::vec3      Ambient_Intensity {0};
-        ShadowSettings Shadows                          = ShadowSettings::PointDefaults();
-        PointLightComponent()                           = default;
-        PointLightComponent(const PointLightComponent&) = default;
+        LightUnit      Unit    = LightUnit::Candela;
+        float          Range   = 10; // Metres; zero preserves legacy unbounded attenuation.
+        ShadowSettings Shadows = ShadowSettings::PointDefaults();
+        bool           operator==(const PointLightComponent& b) const
+        {
+            return static_cast<const LightEmission&>(*this) == b && Unit == b.Unit && Range == b.Range &&
+                   Shadows == b.Shadows;
+        }
+    };
+    struct SpotLightComponent : LightEmission
+    {
+        LightUnit      Unit           = LightUnit::Candela;
+        float          Range          = 10;                      // Metres.
+        float          InnerConeAngle = 20, OuterConeAngle = 30; // Half angles, degrees; local -Z aim.
+        ShadowSettings Shadows = ShadowSettings::SpotDefaults(); // Stored now; rendered in part 2.
+        bool           operator==(const SpotLightComponent& b) const
+        {
+            return static_cast<const LightEmission&>(*this) == b && Unit == b.Unit && Range == b.Range &&
+                   InnerConeAngle == b.InnerConeAngle && OuterConeAngle == b.OuterConeAngle && Shadows == b.Shadows;
+        }
     };
 
     struct ScriptComponent
@@ -370,5 +383,6 @@ namespace Kans
                                          BoundsComponent,
                                          DirLightComponent,
                                          PointLightComponent,
+                                         SpotLightComponent,
                                          ScriptComponent>;
 } // namespace Kans

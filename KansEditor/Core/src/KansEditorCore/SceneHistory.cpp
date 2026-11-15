@@ -128,13 +128,12 @@ namespace Kans
         const auto& old = *before.Find(now.ID);
         if (old.Tag != now.Tag)
             return "Rename " + old.Tag + " to " + now.Tag;
-        const bool components = old.Camera.has_value() != now.Camera.has_value() ||
-                                old.Sprite.has_value() != now.Sprite.has_value() ||
-                                old.Model.has_value() != now.Model.has_value() ||
-                                old.Editable.has_value() != now.Editable.has_value() ||
-                                old.DirLight.has_value() != now.DirLight.has_value() ||
-                                old.PointLight.has_value() != now.PointLight.has_value() ||
-                                old.Script.has_value() != now.Script.has_value();
+        const bool components =
+            old.Camera.has_value() != now.Camera.has_value() || old.Sprite.has_value() != now.Sprite.has_value() ||
+            old.Model.has_value() != now.Model.has_value() || old.Editable.has_value() != now.Editable.has_value() ||
+            old.DirLight.has_value() != now.DirLight.has_value() ||
+            old.PointLight.has_value() != now.PointLight.has_value() ||
+            old.SpotLight.has_value() != now.SpotLight.has_value() || old.Script.has_value() != now.Script.has_value();
         if (components)
             return "Change components of " + now.Tag;
         EntitySnapshot onlyTransform = old;

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <set>
 #include <yaml-cpp/yaml.h>
 #include "Kans3D/Animation/AnimationProduct.h"
@@ -244,6 +245,73 @@ namespace Kans
                 result.ImportedScale    = result.Scale;
             }
             return result;
+        }
+        void EncodeEmission(YAML::Node& n, const LightEmission& light)
+        {
+            Require(std::isfinite(light.Intensity) && light.Intensity >= 0 && std::isfinite(light.SpecularScale) &&
+                        light.SpecularScale >= 0 && std::isfinite(light.DiffuseScale) && light.DiffuseScale >= 0 &&
+                        light.DiffuseScale <= 1 && std::isfinite(light.Temperature) && light.Temperature >= 1000 &&
+                        light.Temperature <= 40000,
+                    "Invalid light emission");
+            n["Color"]          = Vector(light.Color, 3);
+            n["Intensity"]      = light.Intensity;
+            n["UseTemperature"] = light.UseTemperature;
+            n["Temperature"]    = light.Temperature;
+            n["DiffuseScale"]   = light.DiffuseScale;
+            n["SpecularScale"]  = light.SpecularScale;
+        }
+        bool DecodeEmission(const YAML::Node& n, LightEmission& light)
+        {
+            bool legacy = bool(n["Diffuse_Intensity"]);
+            if (legacy)
+            {
+                Require(!n["Color"] && !n["Intensity"] && !n["DiffuseScale"] && !n["SpecularScale"] &&
+                            !n["UseTemperature"] && !n["Temperature"],
+                        "Mixed legacy and physical light fields");
+                MigrateLightEmission(light, Vec3(n["Diffuse_Intensity"]), Vec3(n["Specular_Intensity"]));
+                auto ambient = n["Ambient_Intensity"] ? Vec3(n["Ambient_Intensity"]) : glm::vec3(0);
+                if (ambient != glm::vec3(0))
+                {
+                    static std::once_flag warning;
+                    std::call_once(warning, [] {
+                        CORE_WARN("Legacy light ambient was dropped; ambient lighting comes from the environment");
+                    });
+                }
+            }
+            else
+            {
+                light.Color     = Vec3(n["Color"]);
+                light.Intensity = Number(n["Intensity"]);
+                if (n["UseTemperature"])
+                    light.UseTemperature = n["UseTemperature"].as<bool>();
+                if (n["Temperature"])
+                    light.Temperature = Number(n["Temperature"]);
+                if (n["DiffuseScale"])
+                    light.DiffuseScale = Number(n["DiffuseScale"]);
+                if (n["SpecularScale"])
+                    light.SpecularScale = Number(n["SpecularScale"]);
+            }
+            Require(light.Color.x >= 0 && light.Color.y >= 0 && light.Color.z >= 0 && std::isfinite(light.Intensity) &&
+                        light.Intensity >= 0 && std::isfinite(light.SpecularScale) && light.Temperature >= 1000 &&
+                        light.Temperature <= 40000 && light.DiffuseScale >= 0 && light.DiffuseScale <= 1 &&
+                        light.SpecularScale >= 0,
+                    "Invalid light emission");
+            return legacy;
+        }
+        template<class T>
+        void DecodePunctual(const YAML::Node& n, T& light, bool legacy)
+        {
+            if (n["Unit"])
+            {
+                auto unit = Text(n["Unit"]);
+                Require(unit == "Candela" || unit == "Lumens", "Invalid light unit");
+                light.Unit = unit == "Lumens" ? LightUnit::Lumens : LightUnit::Candela;
+            }
+            if (n["Range"])
+                light.Range = Number(n["Range"]);
+            else if (legacy)
+                light.Range = 0;
+            Require(light.Range >= 0, "Invalid light range");
         }
         YAML::Node EncodeShadows(const ShadowSettings& settings)
         {
@@ -1344,19 +1412,28 @@ namespace Kans
                 const auto& light = entity.GetComponent<DirLightComponent>();
                 value.reset(node["DirLightComponent"]);
                 value["Direction"]          = Vector(light.Direction, 3);
-                value["Diffuse_Intensity"]  = Vector(light.Diffuse_Intensity, 3);
-                value["Specular_Intensity"] = Vector(light.Specular_Intensity, 3);
-                value["Ambient_Intensity"]  = Vector(light.Ambient_Intensity, 3);
+                EncodeEmission(value, light);
                 value["Shadows"]            = EncodeShadows(light.Shadows);
             }
             if (entity.HasComponent<PointLightComponent>())
             {
                 const auto& light = entity.GetComponent<PointLightComponent>();
                 value.reset(node["PointLightComponent"]);
-                value["Diffuse_Intensity"]  = Vector(light.Diffuse_Intensity, 3);
-                value["Specular_Intensity"] = Vector(light.Specular_Intensity, 3);
-                value["Ambient_Intensity"]  = Vector(light.Ambient_Intensity, 3);
+                value["Range"] = light.Range;
+                value["Unit"]  = light.Unit == LightUnit::Lumens ? "Lumens" : "Candela";
+                EncodeEmission(value, light);
                 value["Shadows"]            = EncodeShadows(light.Shadows);
+            }
+            if (entity.HasComponent<SpotLightComponent>())
+            {
+                const auto& light = entity.GetComponent<SpotLightComponent>();
+                value.reset(node["SpotLightComponent"]);
+                EncodeEmission(value, light);
+                value["Range"]          = light.Range;
+                value["Unit"]           = light.Unit == LightUnit::Lumens ? "Lumens" : "Candela";
+                value["InnerConeAngle"] = light.InnerConeAngle;
+                value["OuterConeAngle"] = light.OuterConeAngle;
+                value["Shadows"]        = EncodeShadows(light.Shadows);
             }
             if (entity.HasComponent<ScriptComponent>())
             {
@@ -1617,6 +1694,7 @@ namespace Kans
                       "CameraComponent",
                       "DirLightComponent",
                       "PointLightComponent",
+                      "SpotLightComponent",
                       "ScriptComponent",
                       "SpriteRendererComponent"});
                 auto id = UInt(node["Entity"]);
@@ -1966,23 +2044,69 @@ namespace Kans
                 {
                     value.reset(node["DirLightComponent"]);
                     Keys(value,
-                         {"Direction", "Diffuse_Intensity", "Specular_Intensity", "Ambient_Intensity", "Shadows"});
-                    auto& light              = entity.AddComponent<DirLightComponent>();
-                    light.Direction          = Vec3(value["Direction"]);
-                    light.Diffuse_Intensity  = Vec3(value["Diffuse_Intensity"]);
-                    light.Specular_Intensity = Vec3(value["Specular_Intensity"]);
-                    light.Ambient_Intensity  = Vec3(value["Ambient_Intensity"]);
-                    light.Shadows            = DecodeShadows(value["Shadows"]);
+                         {"Direction",
+                          "Color",
+                          "Intensity",
+                          "UseTemperature",
+                          "Temperature",
+                          "DiffuseScale",
+                          "SpecularScale",
+                          "Diffuse_Intensity",
+                          "Specular_Intensity",
+                          "Ambient_Intensity",
+                          "Shadows"});
+                    auto& light     = entity.AddComponent<DirLightComponent>();
+                    light.Direction = Vec3(value["Direction"]);
+                    DecodeEmission(value, light);
+                    light.Shadows = DecodeShadows(value["Shadows"]);
                 }
                 if (node["PointLightComponent"])
                 {
                     value.reset(node["PointLightComponent"]);
-                    Keys(value, {"Diffuse_Intensity", "Specular_Intensity", "Ambient_Intensity", "Shadows"});
-                    auto& light              = entity.AddComponent<PointLightComponent>();
-                    light.Diffuse_Intensity  = Vec3(value["Diffuse_Intensity"]);
-                    light.Specular_Intensity = Vec3(value["Specular_Intensity"]);
-                    light.Ambient_Intensity  = Vec3(value["Ambient_Intensity"]);
-                    light.Shadows            = DecodeShadows(value["Shadows"], ShadowSettings::PointDefaults());
+                    Keys(value,
+                         {"Color",
+                          "Intensity",
+                          "UseTemperature",
+                          "Temperature",
+                          "DiffuseScale",
+                          "SpecularScale",
+                          "Unit",
+                          "Range",
+                          "Diffuse_Intensity",
+                          "Specular_Intensity",
+                          "Ambient_Intensity",
+                          "Shadows"});
+                    auto& light  = entity.AddComponent<PointLightComponent>();
+                    bool  legacy = DecodeEmission(value, light);
+                    DecodePunctual(value, light, legacy);
+                    light.Shadows = DecodeShadows(value["Shadows"], ShadowSettings::PointDefaults());
+                }
+                if (node["SpotLightComponent"])
+                {
+                    value.reset(node["SpotLightComponent"]);
+                    Keys(value,
+                         {"Color",
+                          "Intensity",
+                          "UseTemperature",
+                          "Temperature",
+                          "DiffuseScale",
+                          "SpecularScale",
+                          "Unit",
+                          "Range",
+                          "InnerConeAngle",
+                          "OuterConeAngle",
+                          "Shadows"});
+                    auto& light = entity.AddComponent<SpotLightComponent>();
+                    DecodeEmission(value, light);
+                    DecodePunctual(value, light, false);
+                    if (value["InnerConeAngle"])
+                        light.InnerConeAngle = Number(value["InnerConeAngle"]);
+                    if (value["OuterConeAngle"])
+                        light.OuterConeAngle = Number(value["OuterConeAngle"]);
+                    Require(light.InnerConeAngle >= 0 && light.InnerConeAngle <= light.OuterConeAngle &&
+                                light.OuterConeAngle > 0 && light.OuterConeAngle <= 89,
+                            "Invalid spot cone angles");
+                    light.Shadows = DecodeShadows(value["Shadows"], ShadowSettings::SpotDefaults());
                 }
                 if (node["ScriptComponent"])
                 {

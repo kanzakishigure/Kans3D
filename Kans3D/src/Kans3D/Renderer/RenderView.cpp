@@ -136,34 +136,49 @@ namespace Kans
         EngineFrameUniforms frame;
         frame.CameraPosition = glm::vec4(scene.sceneCamera.Position, 1);
         const size_t count   = scene.pointLights.empty() ?
-                                   (scene.pointLight.Diffuse_Intensity != glm::vec3(0) ? 1 : 0) :
+                                   (LightRadiance(scene.pointLight) != glm::vec3(0) ? 1 : 0) :
                                    std::min(scene.pointLights.size(), size_t(EnginePointLightLimit));
         for (size_t i = 0; i < count; ++i)
         {
             const auto& light       = scene.pointLights.empty() ? scene.pointLight : scene.pointLights[i];
+            auto        radiance                   = LightRadiance(light, ToCandela(light.Intensity, light.Unit));
             frame.PointPositions[i] = glm::vec4(light.Position, 1);
-            frame.PointRadiance[i]  = glm::vec4(light.Diffuse_Intensity, 0);
-            frame.PointSpecular[i]  = glm::vec4(light.Specular_Intensity, 0);
+            frame.PointRadiance[i]                 = glm::vec4(radiance, 0);
+            frame.PointSpecular[i]                 = glm::vec4(glm::vec3(light.SpecularScale), 0);
+            frame.PointDiffuseScales[i / 4][i % 4] = light.DiffuseScale;
+            frame.PointRanges[i / 4][i % 4]        = std::max(0.0f, light.Range);
             if (i < EngineLightCount)
             {
-                frame.LightPositions[i] = frame.PointPositions[i];
-                frame.LightColors[i]    = frame.PointRadiance[i];
-                frame.LightDiffuse[i]   = frame.PointRadiance[i];
+                frame.LightPositions[i] = glm::vec4(light.Position, 1);
+                frame.LightColors[i]    = glm::vec4(radiance * light.DiffuseScale, 0);
+                frame.LightDiffuse[i]   = frame.LightColors[i];
             }
         }
         const auto& light           = scene.dirLight;
         const float directionLength = glm::length(light.Dirction);
-        if ((scene.HasDirectionalLight || light.Diffuse_Intensity != glm::vec3(0) ||
-             light.Ambient_Intensity != glm::vec3(0)) &&
-            directionLength > 1e-6f)
+        if ((scene.HasDirectionalLight || LightRadiance(light) != glm::vec3(0)) && directionLength > 1e-6f)
         {
             frame.DirectionalDirection = glm::vec4(light.Dirction / directionLength, 1);
-            frame.DirectionalRadiance  = glm::vec4(light.Diffuse_Intensity, 0);
-            frame.DirectionalSpecular  = glm::vec4(light.Specular_Intensity, 0);
+            frame.DirectionalRadiance  = glm::vec4(LightRadiance(light), 0);
+            frame.DirectionalSpecular  = glm::vec4(glm::vec3(light.SpecularScale), 0);
+            frame.DirectionalScales.x  = light.DiffuseScale;
         }
-        frame.DirectionalAmbient = glm::vec4(light.Ambient_Intensity, 0);
-        frame.LightingInfo       = {
-            float(count), scene.sceneCamera.camera.ResolvePostProcess(scene.PostProcess).Exposure, 0, 0};
+        size_t spots = std::min(scene.spotLights.size(), size_t(EngineSpotLightLimit));
+        for (size_t i = 0; i < spots; ++i)
+        {
+            const auto& spot           = scene.spotLights[i];
+            float       outer          = std::clamp(spot.OuterConeAngle, .01f, 89.0f),
+                        inner          = std::clamp(spot.InnerConeAngle, 0.0f, outer);
+            frame.SpotPositionRange[i] = glm::vec4(spot.Position, std::max(0.0f, spot.Range));
+            auto direction = glm::length(spot.Direction) > 1e-6f ? glm::normalize(spot.Direction) : glm::vec3(0, 0, -1);
+            frame.SpotDirectionOuter[i] = glm::vec4(direction, std::cos(glm::radians(outer)));
+            frame.SpotRadianceInner[i] =
+                glm::vec4(LightRadiance(spot, ToCandela(spot.Intensity, spot.Unit, SpotSolidAngle(inner, outer))),
+                          std::cos(glm::radians(inner)));
+            frame.SpotScales[i] = glm::vec4(spot.DiffuseScale, spot.SpecularScale, 0, 0);
+        }
+        frame.LightingInfo = {
+            float(count), scene.sceneCamera.camera.ResolvePostProcess(scene.PostProcess).Exposure, float(spots), 0};
         return frame;
     }
 } // namespace Kans

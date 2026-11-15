@@ -323,8 +323,8 @@ void main() {
             glm::lookAt(view.Scene.sceneCamera.Position, glm::vec3(0), glm::vec3(0, 1, 0));
         SceneInfo lights {};
         lights.pointLight.Position           = {-3, 4, 5};
-        lights.pointLight.Diffuse_Intensity  = {40, 40, 40};
-        lights.pointLight.Specular_Intensity = {1, 1, 1};
+        lights.pointLight.Color              = {40, 40, 40};
+        lights.pointLight.SpecularScale      = 1;
         m_World.SetProceduralLights({lights.pointLight});
         // Preserve the historical preview's legacy shader uniforms as well as its physical light.
         EngineFrameUniforms lighting;

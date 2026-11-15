@@ -134,23 +134,30 @@ namespace Kans
         }
         if (entity.HasComponent<DirLightComponent>())
         {
-            const auto& light  = entity.GetComponent<DirLightComponent>();
-            record.Directional = {light.Direction,
-                                  light.Diffuse_Intensity,
-                                  light.Specular_Intensity,
-                                  light.Ambient_Intensity,
-                                  light.Shadows,
-                                  id};
+            DirLight light;
+            static_cast<DirLightComponent&>(light) = entity.GetComponent<DirLightComponent>();
+            light.Dirction                         = light.Direction;
+            light.EntityID                         = id;
+            record.Directional                     = light;
         }
         if (entity.HasComponent<PointLightComponent>())
         {
-            const auto& light = entity.GetComponent<PointLightComponent>();
-            record.Point      = {glm::vec3(world[3]),
-                                 light.Diffuse_Intensity,
-                                 light.Specular_Intensity,
-                                 light.Ambient_Intensity,
-                                 light.Shadows,
-                                 id};
+            PointLight light;
+            static_cast<PointLightComponent&>(light) = entity.GetComponent<PointLightComponent>();
+            light.Position                           = glm::vec3(world[3]);
+            light.EntityID                           = id;
+            record.Point                             = light;
+        }
+        if (entity.HasComponent<SpotLightComponent>())
+        {
+            SpotLight light;
+            static_cast<SpotLightComponent&>(light) = entity.GetComponent<SpotLightComponent>();
+            light.Position                          = glm::vec3(world[3]);
+            // Aim follows the full parent transform, but scale never changes range.
+            auto direction  = -glm::vec3(world[2]);
+            light.Direction = glm::length(direction) > 1e-6f ? glm::normalize(direction) : glm::vec3(0, 0, -1);
+            light.EntityID  = id;
+            record.Spot     = light;
         }
         if (entity.HasComponent<SpriteRendererComponent>())
         {
@@ -450,7 +457,7 @@ namespace Kans
             Record       next;
             if (valid)
                 next = ExtractEntity({handle, m_Scene});
-            const bool   renderable = next.Mesh || next.Point || next.Directional || next.Sprite;
+            const bool   renderable = next.Mesh || next.Point || next.Spot || next.Directional || next.Sprite;
             const size_t nextCount  = next.Draws.size();
             auto         countProxy = [&](bool before, bool after) {
                 m_Stats.Created += !before && after;
@@ -458,6 +465,7 @@ namespace Kans
                 m_Stats.Removed += before && !after;
             };
             countProxy(old != m_Records.end() && old->second.Point.has_value(), next.Point.has_value());
+            countProxy(old != m_Records.end() && old->second.Spot.has_value(), next.Spot.has_value());
             countProxy(old != m_Records.end() && old->second.Directional.has_value(), next.Directional.has_value());
             countProxy(old != m_Records.end() && old->second.Sprite.has_value(), next.Sprite.has_value());
             // Section identity survives material/transform/mesh-data changes.
@@ -517,7 +525,7 @@ namespace Kans
                     m_Order.emplace(next.Sort, handle);
                     m_MeshUsers[next.Mesh->Mesh.Mesh].insert(handle);
                 }
-                if (next.Point || next.Directional)
+                if (next.Point || next.Spot || next.Directional)
                     m_Lights.insert(handle);
                 m_Records.emplace(handle, std::move(next));
             }
@@ -555,12 +563,14 @@ namespace Kans
             info.dirLight            = m_ProceduralDirectional.value_or(DirLight {});
             info.HasDirectionalLight = m_ProceduralDirectional.has_value();
             info.pointLights         = m_ProceduralPointLights;
+            info.spotLights          = m_ProceduralSpotLights;
             info.pointLight          = info.pointLights.empty() ? PointLight {} : info.pointLights.front();
             return;
         }
         info.dirLight   = {};
         info.pointLight = {};
         info.pointLights.clear();
+        info.spotLights.clear();
         info.HasDirectionalLight = false;
         uint64_t directionalID   = UINT64_MAX;
         struct Candidate
@@ -570,6 +580,13 @@ namespace Kans
             uint64_t   ID;
         };
         std::vector<Candidate> candidates;
+        struct SpotCandidate
+        {
+            SpotLight Light;
+            float     Distance;
+            uint64_t  ID;
+        };
+        std::vector<SpotCandidate> spots;
         for (auto handle : m_Lights)
         {
             const auto& record = m_Records.at(handle);
@@ -581,6 +598,12 @@ namespace Kans
                 info.dirLight            = *record.Directional;
                 info.HasDirectionalLight = true;
                 directionalID            = id;
+            }
+            if (record.Spot)
+            {
+                auto  delta = record.Spot->Position - info.sceneCamera.Position;
+                float d     = glm::dot(delta, delta);
+                spots.push_back({*record.Spot, std::isfinite(d) ? d : std::numeric_limits<float>::max(), id});
             }
             if (record.Point)
             {
@@ -595,6 +618,11 @@ namespace Kans
         });
         for (size_t i = 0; i < std::min(candidates.size(), size_t(EnginePointLightLimit)); ++i)
             info.pointLights.push_back(candidates[i].Light);
+        std::sort(spots.begin(), spots.end(), [](const auto& a, const auto& b) {
+            return a.Distance != b.Distance ? a.Distance < b.Distance : a.ID < b.ID;
+        });
+        for (size_t i = 0; i < std::min(spots.size(), size_t(EngineSpotLightLimit)); ++i)
+            info.spotLights.push_back(spots[i].Light);
         if (!info.pointLights.empty())
             info.pointLight = info.pointLights.front();
         // Simulation may precede light collection, in which case it uses the previous frame's light.
@@ -789,7 +817,7 @@ namespace Kans
         for (auto handle : m_Scene->m_Registry.view<TransformComponent, IDComponent>())
         {
             const auto expected = ExtractEntity({handle, m_Scene});
-            if (!expected.Mesh && !expected.Point && !expected.Directional && !expected.Sprite)
+            if (!expected.Mesh && !expected.Point && !expected.Spot && !expected.Directional && !expected.Sprite)
                 continue;
             ++count;
             const auto found = m_Records.find(handle);
@@ -799,6 +827,7 @@ namespace Kans
             if (expected.Mesh.has_value() != actual.Mesh.has_value() ||
                 expected.Sprite.has_value() != actual.Sprite.has_value() ||
                 expected.Point.has_value() != actual.Point.has_value() ||
+                expected.Spot.has_value() != actual.Spot.has_value() ||
                 expected.Directional.has_value() != actual.Directional.has_value() || expected.Sort < actual.Sort ||
                 actual.Sort < expected.Sort || expected.Ancestors != actual.Ancestors ||
                 expected.Draws.size() != actual.Draws.size())
@@ -841,17 +870,15 @@ namespace Kans
                  actual.Sprite->SortingOrder != expected.Sprite->SortingOrder))
                 stale(expected.Sort.EntityID);
             if (expected.Point && (actual.Point->Position != expected.Point->Position ||
-                                   actual.Point->Diffuse_Intensity != expected.Point->Diffuse_Intensity ||
-                                   actual.Point->Specular_Intensity != expected.Point->Specular_Intensity ||
-                                   actual.Point->Ambient_Intensity != expected.Point->Ambient_Intensity ||
-                                   actual.Point->Shadows != expected.Point->Shadows))
+                                   !(static_cast<const PointLightComponent&>(*actual.Point) == *expected.Point)))
+                stale(expected.Sort.EntityID);
+            if (expected.Spot && (actual.Spot->Position != expected.Spot->Position ||
+                                  actual.Spot->Direction != expected.Spot->Direction ||
+                                  !(static_cast<const SpotLightComponent&>(*actual.Spot) == *expected.Spot)))
                 stale(expected.Sort.EntityID);
             if (expected.Directional &&
                 (actual.Directional->Dirction != expected.Directional->Dirction ||
-                 actual.Directional->Diffuse_Intensity != expected.Directional->Diffuse_Intensity ||
-                 actual.Directional->Specular_Intensity != expected.Directional->Specular_Intensity ||
-                 actual.Directional->Ambient_Intensity != expected.Directional->Ambient_Intensity ||
-                 actual.Directional->Shadows != expected.Directional->Shadows))
+                 !(static_cast<const DirLightComponent&>(*actual.Directional) == *expected.Directional)))
                 stale(expected.Sort.EntityID);
         }
         const auto sprites =
@@ -874,6 +901,7 @@ namespace Kans
                     !m_Scene->m_Registry.any_of<MeshComponent,
                                                 EditableMeshComponent,
                                                 PointLightComponent,
+                                                SpotLightComponent,
                                                 DirLightComponent,
                                                 SpriteRendererComponent>(handle))
                     stale(record.Sort.EntityID);

@@ -87,16 +87,12 @@ namespace Kans
         auto pointlight = m_ActiveScene->CreateEntity("PointLight");
 
         auto& plightCMP              = pointlight.AddComponent<PointLightComponent>();
-        plightCMP.Diffuse_Intensity  = glm::vec3(1.0);
-        plightCMP.Specular_Intensity = glm::vec3(1.0);
-        plightCMP.Ambient_Intensity  = glm::vec3(1.0);
+        plightCMP.Color              = glm::vec3(1.0);
         pointlight.PatchComponent<TransformComponent>([](auto& t) { t.Position = {20.0f, 20.0f, 1.0f}; });
 
         auto  DirLight            = m_ActiveScene->CreateEntity("DirLight");
         auto& dirCMP              = DirLight.AddComponent<DirLightComponent>();
-        dirCMP.Diffuse_Intensity  = glm::vec3(1.0);
-        dirCMP.Specular_Intensity = glm::vec3(1.0);
-        dirCMP.Ambient_Intensity  = glm::vec3(1.0);
+        dirCMP.Color              = glm::vec3(1.0);
 
         m_CameraEntity = m_ActiveScene->CreateEntity("mainCamera");
         m_CameraEntity.PatchComponent<TransformComponent>([](auto& t) { t.Position = {0.0f, 0.7f, 1.5f}; });

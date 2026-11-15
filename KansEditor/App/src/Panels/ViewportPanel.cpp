@@ -596,6 +596,7 @@ namespace Kans
             const char* icon = entity.HasComponent<CameraComponent>()     ? ICON_FA_VIDEO :
                                entity.HasComponent<DirLightComponent>()   ? ICON_FA_SUN :
                                entity.HasComponent<PointLightComponent>() ? ICON_FA_LIGHTBULB :
+                               entity.HasComponent<SpotLightComponent>()  ? ICON_FA_LIGHTBULB :
                                                                             nullptr;
             if (!icon)
                 return;
@@ -635,6 +636,33 @@ namespace Kans
                 glm::vec3 direction = entity.GetComponent<DirLightComponent>().Direction;
                 direction = glm::length(direction) > 1e-4f ? glm::normalize(glm::mat3(world) * direction) : glm::vec3(0, -1, 0);
                 segment(origin, origin + direction * 1.5f, color);
+            }
+            if (entity.HasComponent<SpotLightComponent>())
+            {
+                const auto& spot = entity.GetComponent<SpotLightComponent>();
+                glm::vec3   aim  = -glm::vec3(world[2]);
+                aim              = glm::length(aim) > 1e-6f ? glm::normalize(aim) : glm::vec3(0, 0, -1);
+                auto right =
+                    glm::normalize(glm::cross(aim, std::abs(aim.y) < .99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0)));
+                auto  up    = glm::cross(right, aim);
+                float range = std::max(0.0f, spot.Range);
+                auto  end   = origin + aim * range;
+                segment(origin, end, color);
+                for (float angle : {spot.InnerConeAngle, spot.OuterConeAngle})
+                {
+                    float radians = glm::radians(std::clamp(angle, 0.0f, 89.0f));
+                    end           = origin + aim * (range * std::cos(radians));
+                    float radius  = range * std::sin(radians);
+                    for (int i = 0; i < 32; ++i)
+                    {
+                        float a = i * 2 * LightPi / 32, b = (i + 1) * 2 * LightPi / 32;
+                        auto  p = end + radius * (right * std::cos(a) + up * std::sin(a));
+                        auto  q = end + radius * (right * std::cos(b) + up * std::sin(b));
+                        segment(p, q, color);
+                        if (i % 8 == 0)
+                            segment(origin, p, color);
+                    }
+                }
             }
             ImVec2 center;
             if (!ToScreen(origin, center))

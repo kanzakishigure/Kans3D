@@ -288,10 +288,16 @@ namespace Kans
             {
                 // The wireframe diagnostic intentionally retains its phase-one appearance.
                 frame.LightingInfo.x = EngineLightCount;
+                frame.LightingInfo.z = 0;
                 for (uint32_t i = 0; i < EngineLightCount; ++i)
                 {
                     frame.PointPositions[i] = glm::vec4(View.Scene.pointLight.Position, 1);
-                    frame.PointRadiance[i]  = glm::vec4(View.Scene.pointLight.Ambient_Intensity, 0);
+                    frame.PointRadiance[i] =
+                        glm::vec4(LightRadiance(View.Scene.pointLight,
+                                                ToCandela(View.Scene.pointLight.Intensity, View.Scene.pointLight.Unit)),
+                                  0);
+                    frame.PointRanges[i / 4][i % 4]        = 0;
+                    frame.PointDiffuseScales[i / 4][i % 4] = 1;
                     frame.PointSpecular[i]  = glm::vec4(1);
                 }
                 frame.DirectionalDirection = frame.DirectionalAmbient = glm::vec4(0);

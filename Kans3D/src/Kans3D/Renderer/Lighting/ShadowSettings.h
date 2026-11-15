@@ -18,7 +18,7 @@ namespace Kans
         float                 ConstantBias = 1.25f, SlopeBias = 1.75f, NormalOffset = 0.02f;
         ShadowFilter          Filter        = ShadowFilter::PCSS;
         float                 AngularRadius = 0.5f;  // Degrees (directional).
-        float                 SourceRadius  = 0.05f; // Metres (point).
+        float                 SourceRadius  = 0.05f; // Metres (point and spot).
         uint32_t              Cascades      = 4;
         float                 Lambda = 0.75f, MaxDistance = 80.0f, Blend = 0.1f;
         static ShadowSettings PointDefaults()
@@ -27,6 +27,7 @@ namespace Kans
             s.Resolution = 1024;
             return s;
         }
+        static ShadowSettings SpotDefaults() { return PointDefaults(); }
         bool operator==(const ShadowSettings& s) const
         {
             return Enabled == s.Enabled && Resolution == s.Resolution && ConstantBias == s.ConstantBias &&
