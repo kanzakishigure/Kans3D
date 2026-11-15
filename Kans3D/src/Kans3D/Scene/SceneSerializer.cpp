@@ -1517,6 +1517,17 @@ namespace Kans
                 value["Cookie"]         = IdentityText(light.Cookie);
                 value["CookieRotation"] = light.CookieRotation;
                 value["CookieScale"]    = Vector(light.CookieScale, 2);
+                const auto& beam        = light.Beam;
+                Require(beam == beam.Validated(), "Invalid spot beam settings");
+                auto b                  = value["Beam"];
+                b["Enabled"]            = beam.Enabled;
+                b["Intensity"]          = beam.Intensity;
+                b["Length"]             = beam.Length;
+                b["StartFade"]          = beam.StartFade;
+                b["EndFade"]            = beam.EndFade;
+                b["UseShadow"]          = beam.UseShadow;
+                b["UseCookie"]          = beam.UseCookie;
+                b["Samples"]            = beam.Samples;
                 value["Shadows"]        = EncodeShadows(light.Shadows);
             }
             if (entity.HasComponent<AreaLightComponent>())
@@ -2224,6 +2235,7 @@ namespace Kans
                           "Cookie",
                           "CookieRotation",
                           "CookieScale",
+                          "Beam",
                           "Shadows"});
                     auto& light = entity.AddComponent<SpotLightComponent>();
                     DecodeEmission(value, light);
@@ -2246,6 +2258,36 @@ namespace Kans
                         light.CookieScale = {Number(scale[0]), Number(scale[1])};
                     }
                     Require(light.CookieScale.x > 0 && light.CookieScale.y > 0, "Invalid spot cookie scale");
+                    if (auto b = value["Beam"])
+                    {
+                        Keys(b,
+                             {"Enabled",
+                              "Intensity",
+                              "Length",
+                              "StartFade",
+                              "EndFade",
+                              "UseShadow",
+                              "UseCookie",
+                              "Samples"});
+                        auto& beam = light.Beam;
+                        if (b["Enabled"])
+                            beam.Enabled = b["Enabled"].as<bool>();
+                        if (b["Intensity"])
+                            beam.Intensity = Number(b["Intensity"]);
+                        if (b["Length"])
+                            beam.Length = Number(b["Length"]);
+                        if (b["StartFade"])
+                            beam.StartFade = Number(b["StartFade"]);
+                        if (b["EndFade"])
+                            beam.EndFade = Number(b["EndFade"]);
+                        if (b["UseShadow"])
+                            beam.UseShadow = b["UseShadow"].as<bool>();
+                        if (b["UseCookie"])
+                            beam.UseCookie = b["UseCookie"].as<bool>();
+                        if (b["Samples"])
+                            beam.Samples = SceneIndex(b["Samples"]);
+                        Require(beam == beam.Validated(), "Invalid spot beam settings");
+                    }
                     light.Shadows = DecodeShadows(value["Shadows"], ShadowSettings::SpotDefaults());
                 }
                 if (auto fog = node["FogVolumeComponent"])

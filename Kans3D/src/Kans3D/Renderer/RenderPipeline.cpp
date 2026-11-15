@@ -88,6 +88,8 @@ namespace Kans
     }
     void ForwardPipeline::Begin(RenderGraph& graph, RenderFrame& renderer)
     {
+        if (HasSpotBeams(renderer))
+            renderer.Output.EnsureSampledDepth();
         const auto& view = renderer.View;
         using namespace RenderHardware;
         std::vector<GraphUse> clear;
@@ -310,6 +312,8 @@ namespace Kans
     void ForwardPipeline::Build(RenderGraph& graph, RenderFrame& renderer)
     {
         PreparePostMaterials(renderer);
+        if (HasSpotBeams(renderer))
+            renderer.Output.EnsureSampledDepth();
         const auto& view = renderer.View;
         using namespace RenderHardware;
         const bool reconstruct = renderer.ReconstructsHDR() || renderer.View.Environment.Fog.Enabled;
@@ -320,7 +324,7 @@ namespace Kans
             BuildMSAA(graph, renderer);
             return;
         }
-        if (view.DepthPrepass || renderer.VelocityActive ||
+        if (HasSpotBeams(renderer) || view.DepthPrepass || renderer.VelocityActive ||
             view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
             renderer.Output.EnsureSampledDepth();
         if (!graph.PassCount())
@@ -521,14 +525,15 @@ namespace Kans
             }
         }
         Inject(RenderExtensionPoint::BeforeOpaque, featureContext);
-        if (view.EffectiveAA == AntiAliasing::TAA)
+        if (view.EffectiveAA == AntiAliasing::TAA || HasSpotBeams(renderer))
         {
             auto       materialUses = target;
             if (renderer.Fog)
                 sampled(materialUses, renderer.Fog->Integrated, "Fog integrated scattering transmittance");
             const auto hdr          = graph.ImportTexture("SceneHDR", renderer.Output.GetHDR());
             materialUses.push_back({hdr, GraphAccess::ColorReadWrite});
-            materialUses.push_back({renderer.TemporalMasks, GraphAccess::ColorReadWrite});
+            if (renderer.TemporalMasks != uint32_t(-1))
+                materialUses.push_back({renderer.TemporalMasks, GraphAccess::ColorReadWrite});
             if (auto normal = renderer.Output.GetNormalRoughness())
                 materialUses.push_back(
                     {graph.ImportTexture("SceneNormalRoughness", normal), GraphAccess::ColorReadWrite});
@@ -578,6 +583,7 @@ namespace Kans
                     renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, false);
                 });
             Inject(RenderExtensionPoint::AfterOpaque, featureContext);
+            BuildSpotBeamPasses(graph, renderer);
             auto opaqueDesc  = renderer.Output.GetHDR()->GetDesc();
             opaqueDesc.Usage = RenderHardware::TextureUsage::CopyDestination |
                                RenderHardware::TextureUsage::CopySource | RenderHardware::TextureUsage::Sampled;
@@ -1053,10 +1059,23 @@ namespace Kans
                 if (const auto* bindings = frame.GetBindings(draw.Material, draw.ViewMode != SceneViewMode::Lit))
                     for (const auto& image : bindings->Images)
                         sampled(image);
-            append("Materials MSAA (opaque/mask, blend)", uses, [&frame](auto& c) {
-                frame.DrawShaderMaterials(c.Commands);
-            });
+            if (HasSpotBeams(frame))
+            {
+                append("Materials MSAA (opaque/mask)", uses, [&frame](auto& c) {
+                    frame.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, false);
+                });
+                BuildSpotBeamPasses(graph, frame);
+                append("Materials MSAA (blend)", uses, [&frame](auto& c) {
+                    frame.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, true);
+                });
+            }
+            else
+                append("Materials MSAA (opaque/mask, blend)", uses, [&frame](auto& c) {
+                    frame.DrawShaderMaterials(c.Commands);
+                });
         }
+        if (view.MaterialOrder.empty())
+            BuildSpotBeamPasses(graph, frame);
         Inject(RenderExtensionPoint::AfterTransparent, features);
         const auto hdr         = graph.ImportTexture("SceneHDR (Karis resolved)", frame.Output.GetHDR());
         auto       resolveUses = scene;

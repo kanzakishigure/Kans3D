@@ -6,6 +6,7 @@
 #include "Kans3D/Renderer/RenderFrame.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "AreaLights.h"
+#include "BeamShaders.h"
 #include "FogShaders.h"
 #include "ShadowMaps.h"
 
@@ -33,6 +34,35 @@ namespace Kans
         if (volumes.size() > FogVolumeLimit)
             volumes.resize(FogVolumeLimit);
         return volumes;
+    }
+    std::vector<uint32_t> SelectSpotBeams(const std::vector<SpotLight>& lights, glm::vec3 camera)
+    {
+        std::vector<uint32_t> result;
+        for (uint32_t i = 0; i < std::min(lights.size(), size_t(EngineSpotLightLimit)); ++i)
+        {
+            const auto& l = lights[i];
+            const auto  b = l.Beam.Validated();
+            if (b.Enabled && b.EffectiveLength(l.Range) > 0 &&
+                std::isfinite(glm::dot(l.Position - camera, l.Position - camera)))
+                result.push_back(i);
+        }
+        std::sort(result.begin(), result.end(), [&](uint32_t a, uint32_t b) {
+            auto da = glm::dot(lights[a].Position - camera, lights[a].Position - camera);
+            auto db = glm::dot(lights[b].Position - camera, lights[b].Position - camera);
+            if (da != db)
+                return da < db;
+            if (lights[a].EntityID != lights[b].EntityID)
+                return uint64_t(lights[a].EntityID) < uint64_t(lights[b].EntityID);
+            return a < b;
+        });
+        if (result.size() > SpotBeamLimit)
+            result.resize(SpotBeamLimit);
+        return result;
+    }
+    bool HasSpotBeams(const RenderFrame& frame)
+    {
+        return frame.View.Environment.Fog.Enabled &&
+               !SelectSpotBeams(frame.View.Scene.spotLights, frame.View.Scene.sceneCamera.Position).empty();
     }
     namespace
     {
@@ -101,6 +131,10 @@ namespace Kans
                 if (i == 1)
                     source += "#include <Kans3D/Lighting.glsl>\n";
                 source += FogShaders::Parameters;
+                if (i == 0)
+                    source += FogShaders::MediumSampling;
+                if (i == 1)
+                    source += FogShaders::LightSampling;
                 source += stages[i];
                 const auto& data =
                     GetInternalComputeShaderData("Froxel fog " + std::to_string(i), source, GetEngineShaderIncludes());
@@ -144,7 +178,43 @@ namespace Kans
             commands->CopyBufferToTexture(upload, 0, state.Noise, {});
             device.Submit(commands);
         }
-        Handle<BindGroup> LightingGroup(RenderFrame& frame, FogState& state, const Parameters& p)
+        Handle<BindGroupLayout> BeamLightingLayout(Device& device)
+        {
+            static std::map<const Device*, std::weak_ptr<BindGroupLayout>> cache;
+            if (auto layout = cache[&device].lock())
+                return layout;
+            auto layout    = device.CreateBindGroupLayout({0,
+                                                           {{0, BindingType::UniformBuffer},
+                                                            {15, BindingType::CombinedTextureSampler},
+                                                            {16, BindingType::CombinedTextureSampler}}});
+            cache[&device] = layout;
+            return layout;
+        }
+        Handle<Shader> BeamMarchShader(Device& device, const std::string& source)
+        {
+            const auto& product = GetInternalShaderData("Spot beam march", BeamShaders::Vertex, source);
+            if (auto error = std::get_if<AssetError>(&product))
+                throw std::runtime_error(error->Message);
+            for (const auto& module : std::get<ShaderData>(product).Code.Modules)
+                if (module.Stage == ShaderProductStage::Fragment)
+                {
+                    spirv_cross::CompilerGLSL cross(module.Words);
+                    auto                      options = cross.get_common_options();
+                    options.version                   = 450;
+                    options.vulkan_semantics          = true;
+                    cross.set_common_options(options);
+                    // Retain the shared spot functions, but omit unused environment/area/point descriptors.
+                    // The full lighting set plus three beam inputs would exceed a 32-sampler stage budget.
+                    cross.set_enabled_interface_variables(cross.get_active_interface_variables());
+                    auto result = CreateInternalShader(
+                        device, "Spot beam march active bindings", BeamShaders::Vertex, cross.compile());
+                    if (auto error = std::get_if<AssetError>(&result))
+                        throw std::runtime_error(error->Message);
+                    return std::get<Handle<Shader>>(result);
+                }
+            throw std::runtime_error("Spot beam march has no fragment stage");
+        }
+        Handle<BindGroup> LightingGroup(RenderFrame& frame, FogState& state, const Parameters& p, bool beam = false)
         {
             auto device           = frame.GetDevice();
             auto ef               = frame.View.LightingUniforms.value_or(MakeLightingUniforms(frame.View.Scene));
@@ -161,6 +231,11 @@ namespace Kans
             auto          shadows = frame.View.Shadows ? frame.View.Shadows :
                                     frame.Assets()     ? frame.Assets()->GetShadowFallback() :
                                                          CreateShadowFallback(*device);
+            if (beam)
+                return device->CreateBindGroup({BeamLightingLayout(*device),
+                                                {{0, Upload(*device, ef)},
+                                                 {15, {}, 0, 0, shadows->Spots, shadows->Compare},
+                                                 {16, {}, 0, 0, shadows->Cookies, shadows->CookieSampler}}});
             auto          env     = frame.GetMaterialEnvironment();
             BindGroupDesc group;
             group.Layout  = state.EngineLayout;
@@ -262,9 +337,39 @@ namespace Kans
             scales.Spots[i / 4][i % 4] = positive(scene.spotLights[i].VolumetricScattering);
         for (size_t i = 0; i < std::min(scene.areaLights.size(), size_t(EngineAreaLightLimit)); ++i)
             scales.Areas[i / 4][i % 4] = positive(scene.areaLights[i].VolumetricScattering);
+        // Selected spots are replaced completely, including Intensity=0; overflow stays in froxels.
+        // Extinction is never removed. Beam intensity scales only the replacement in-scattering.
+        for (auto i : SelectSpotBeams(scene.spotLights, frame.View.Scene.sceneCamera.Position))
+            scales.Spots[i / 4][i % 4] = 0;
         scales.Directional.x   = positive(scene.dirLight.VolumetricScattering);
         auto       lightBuffer = Upload(*device, scales);
         auto       engine      = LightingGroup(frame, *state, p);
+        if (HasSpotBeams(frame))
+        {
+            auto beamParameters              = p;
+            beamParameters.InverseProjection = glm::inverse(frame.SceneProjection());
+            const auto jitter                = frame.Output.GetJitter() / glm::vec2(frame.View.Viewport);
+            beamParameters.PreviousDepth.y   = jitter.x;
+            beamParameters.PreviousDepth.z   = jitter.y;
+            state->BeamMediumSignature.clear();
+            auto signature = [&](const auto& value) {
+                state->BeamMediumSignature.append(reinterpret_cast<const char*>(&value), sizeof(value));
+            };
+            signature(p.Grid);
+            signature(p.Medium);
+            signature(p.AlbedoG);
+            signature(p.Noise);
+            signature(p.Scroll);
+            signature(packed);
+            signature(settings.VolumetricFogDistance);
+            const void* world = &frame.World;
+            signature(world);
+            state->BeamParameters = Upload(*device, beamParameters);
+            state->VolumeUniforms = volumeBuffer;
+            state->BeamLighting   = LightingGroup(frame, *state, p, true);
+        }
+        else if (state->Beams)
+            state->Beams->Valid = false;
         const auto media       = graph.CreateTexture("Fog media sigma_s sigma_t", desc),
                    raw         = graph.CreateTexture("Fog lit scattering", desc);
         unsigned   parity      = unsigned(frame.Output.GetFrameNumber() & 1);
@@ -379,6 +484,281 @@ namespace Kans
         state->RenderSize         = frame.View.Viewport;
         state->LastFrame          = frame.Output.GetFrameNumber();
         state->Valid              = true;
+    }
+    void BuildSpotBeamPasses(RenderGraph& graph, RenderFrame& frame)
+    {
+        if (!frame.Fog || !HasSpotBeams(frame))
+            return;
+        auto fog    = frame.Fog;
+        auto device = frame.GetDevice();
+        if (!fog->Beams)
+            fog->Beams = std::make_shared<BeamState>();
+        auto       state    = fog->Beams;
+        const auto selected = SelectSpotBeams(frame.View.Scene.spotLights, frame.View.Scene.sceneCamera.Position);
+        const auto full     = frame.View.Viewport;
+        const auto size     = frame.View.BeamHalfResolution ? glm::max((full + 1u) / 2u, glm::uvec2(1)) : full;
+        struct PackedBeam
+        {
+            glm::vec4 IndexLengthScaleSamples {0}, FadesFlags {0};
+        };
+        struct BeamParameters
+        {
+            std::array<PackedBeam, SpotBeamLimit> Lights;
+            glm::vec4                             RenderSize;
+        };
+        BeamParameters                     packed {};
+        std::array<Scissor, SpotBeamLimit> bounds;
+        auto       lighting = frame.View.LightingUniforms.value_or(MakeLightingUniforms(frame.View.Scene));
+        const auto vp       = frame.SceneProjection() * frame.View.Scene.sceneCamera.viewMatrix;
+        packed.RenderSize   = {glm::vec2(size), glm::vec2(full)};
+        for (size_t n = 0; n < selected.size(); ++n)
+        {
+            const auto  i     = selected[n];
+            const auto& l     = frame.View.Scene.spotLights[i];
+            const auto  b     = l.Beam.Validated();
+            const float scale = std::isfinite(l.VolumetricScattering) ? std::max(0.f, l.VolumetricScattering) : 0;
+            packed.Lights[n].IndexLengthScaleSamples = {
+                float(i), b.EffectiveLength(l.Range), b.Intensity * scale, float(b.Samples)};
+            packed.Lights[n].FadesFlags = {b.StartFade, b.EndFade, b.UseShadow ? 1 : 0, b.UseCookie ? 1 : 0};
+            bounds[n]                   = {0, 0, size.x, size.y};
+            if (n > 0)
+            {
+                const float length = b.EffectiveLength(l.Range);
+                const auto  axis   = glm::vec3(lighting.SpotDirectionOuter[i]);
+                const float radius = length * std::tan(std::acos(lighting.SpotDirectionOuter[i].w));
+                const auto  end    = l.Position + axis * length;
+                const auto  lower  = glm::min(l.Position, end - glm::vec3(radius));
+                const auto  upper  = glm::max(l.Position, end + glm::vec3(radius));
+                glm::vec2   lo(1), hi(0);
+                bool        crossesCamera = false;
+                for (unsigned corner = 0; corner < 8; ++corner)
+                {
+                    const glm::vec3 p(
+                        corner & 1 ? upper.x : lower.x, corner & 2 ? upper.y : lower.y, corner & 4 ? upper.z : lower.z);
+                    const auto clip = vp * glm::vec4(p, 1);
+                    if (clip.w <= 1e-5f)
+                    {
+                        crossesCamera = true;
+                        break;
+                    }
+                    const auto uv = glm::vec2(clip) / clip.w * .5f + .5f;
+                    lo            = glm::min(lo, uv);
+                    hi            = glm::max(hi, uv);
+                }
+                if (!crossesCamera)
+                {
+                    const auto first = glm::clamp(glm::floor(lo * glm::vec2(size)), glm::vec2(0), glm::vec2(size));
+                    const auto last  = glm::clamp(glm::ceil(hi * glm::vec2(size)), glm::vec2(0), glm::vec2(size));
+                    bounds[n]        = {
+                        int32_t(first.x), int32_t(first.y), uint32_t(last.x - first.x), uint32_t(last.y - first.y)};
+                }
+            }
+        }
+        const unsigned ms           = frame.Samples > 1 ? 1 : 0;
+        const auto     shadows      = frame.View.Shadows ? frame.View.Shadows :
+                                      frame.Assets()     ? frame.Assets()->GetShadowFallback() :
+                                                           CreateShadowFallback(*device);
+        const auto     depthSampler = shadows->Raw;
+        if (!state->MarchLayout)
+        {
+            state->MarchLayout   = device->CreateBindGroupLayout({1,
+                                                                  {{0, BindingType::UniformBuffer},
+                                                                   {2, BindingType::CombinedTextureSampler},
+                                                                   {3, BindingType::UniformBuffer},
+                                                                   {4, BindingType::UniformBuffer},
+                                                                   {5, BindingType::CombinedTextureSampler},
+                                                                   {6, BindingType::CombinedTextureSampler}}});
+            state->ResolveLayout = device->CreateBindGroupLayout({1,
+                                                                  {{0, BindingType::UniformBuffer},
+                                                                   {1, BindingType::CombinedTextureSampler},
+                                                                   {2, BindingType::CombinedTextureSampler},
+                                                                   {3, BindingType::CombinedTextureSampler}}});
+        }
+        auto shader = [&](const char* name, const std::string& source) {
+            auto result = CreateInternalShader(*device, name, BeamShaders::Vertex, source);
+            if (auto e = std::get_if<AssetError>(&result))
+                throw std::runtime_error(e->Message);
+            return std::get<Handle<Shader>>(result);
+        };
+        if (!state->MarchShader[ms])
+            state->MarchShader[ms] =
+                BeamMarchShader(*device,
+                                std::string("#version 450\n") + (ms ? "#define MULTISAMPLE_DEPTH\n" : "") +
+                                    "#include <Kans3D/Lighting.glsl>\n" + FogShaders::Parameters +
+                                    FogShaders::MediumSampling + FogShaders::LightSampling + BeamShaders::March);
+        if (!state->TemporalShader)
+            state->TemporalShader =
+                shader("Spot beam temporal",
+                       std::string("#version 450\n") + BeamShaders::ResolveParameters + BeamShaders::Temporal);
+        if (!state->CompositeShader[ms])
+            state->CompositeShader[ms] =
+                shader("Spot beam bilateral composite",
+                       std::string("#version 450\n") + (ms ? "#define MULTISAMPLE_DEPTH\n" : "") +
+                           BeamShaders::ResolveParameters + BeamShaders::Composite);
+        TextureDesc desc;
+        desc.Width       = size.x;
+        desc.Height      = size.y;
+        desc.PixelFormat = Format::RGBA16Float;
+        desc.Usage       = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled |
+                           RenderHardware::TextureUsage::CopySource;
+        if (state->Size != size)
+        {
+            state->Valid = false;
+            for (auto& h : state->History)
+                h = device->CreateTexture(desc);
+            state->Size = size;
+        }
+        // Stationary-view accumulation when TAA is off. Camera, lights, settings and media edits reset it.
+        // Per-pixel depth rejection and tight current bounds also reject moving occluders and shadows.
+        std::string signature       = fog->BeamMediumSignature;
+        auto        appendSignature = [&](const auto& value) {
+            signature.append(reinterpret_cast<const char*>(&value), sizeof(value));
+        };
+        appendSignature(packed);
+        appendSignature(frame.View.Scene.sceneCamera.viewMatrix);
+        appendSignature(frame.View.Scene.sceneCamera.camera.GetProjectionMatrix());
+
+        for (auto i : selected)
+        {
+            appendSignature(lighting.SpotPositionRange[i]);
+            appendSignature(lighting.SpotDirectionOuter[i]);
+            appendSignature(lighting.SpotRadianceInner[i]);
+            appendSignature(lighting.SpotViewProjection[i]);
+            appendSignature(lighting.SpotCookieRect[i]);
+            appendSignature(lighting.SpotShadowRect[i]);
+            const auto& l = frame.View.Scene.spotLights[i];
+            signature += l.Cookie.ToString();
+            appendSignature(l.CookieRotation);
+            appendSignature(l.CookieScale);
+        }
+        struct ResolveParameters
+        {
+            glm::mat4 InverseProjection;
+            glm::vec4 Sizes, Temporal;
+        };
+        const bool        valid = state->Valid && state->LastFrame + 1 == frame.Output.GetFrameNumber() &&
+                                  state->Signature == signature && !frame.View.CameraCut &&
+                                  frame.View.EffectiveAA != AntiAliasing::TAA;
+        ResolveParameters resolve {glm::inverse(frame.SceneProjection()),
+                                   {glm::vec2(size), glm::vec2(full)},
+                                   {valid ? 1 : 0, .85f, fog->Settings.VolumetricFogDistance, 0}};
+        auto              beamBuffer = Upload(*device, packed), resolveBuffer = Upload(*device, resolve);
+        const auto        current  = graph.CreateTexture("Beam current scattering depth", desc);
+        const unsigned    parity   = unsigned(frame.Output.GetFrameNumber() & 1);
+        const auto        filtered = graph.ImportTexture("Beam temporal scattering depth", state->History[parity]);
+        const auto        history =
+            valid ? graph.ImportTexture("Beam previous scattering depth", state->History[1 - parity]) : current;
+        const auto depth      = ms ? frame.MSDepth : graph.ImportTexture("SceneDepthStencil", frame.Output.GetDepth());
+        const auto hdr        = ms ? frame.MSHDR : graph.ImportTexture("SceneHDR", frame.Output.GetHDR());
+        const auto noise      = graph.ImportTexture("Fog tiled density noise", fog->Noise);
+        const auto integrated = graph.ImportTexture("Fog integrated scattering transmittance", fog->Integrated);
+        auto       add        = [&](const char* name, std::vector<GraphUse> uses, RenderGraph::Record record) {
+            auto pass = graph.AddPass(name, std::move(uses), std::move(record));
+            if (pass)
+                graph.OrderAfter(pass, pass - 1);
+        };
+        std::vector<GraphUse> uses {
+            {current, GraphAccess::ColorWrite},
+            {depth, GraphAccess::SampledRead},
+            {noise, GraphAccess::SampledRead},
+            {integrated, GraphAccess::SampledRead},
+            {graph.ImportBuffer("Beam lights", beamBuffer), GraphAccess::UniformRead},
+            {graph.ImportBuffer("Beam fog parameters", fog->BeamParameters), GraphAccess::UniformRead},
+            {graph.ImportBuffer("Beam volumes", fog->VolumeUniforms), GraphAccess::UniformRead}};
+        if (frame.View.Shadows)
+            for (auto image : {frame.View.Shadows->Spots, frame.View.Shadows->Cookies})
+                if (image)
+                    uses.push_back({graph.ImportTexture("Beam lighting input", image), GraphAccess::SampledRead});
+        add("Beam march", std::move(uses), [=, &frame](auto& c) {
+            PipelineDesc pipeline;
+            pipeline.Program           = state->MarchShader[ms];
+            pipeline.GroupLayouts      = {BeamLightingLayout(c.Device), state->MarchLayout};
+            pipeline.ColorFormats      = {Format::RGBA16Float};
+            pipeline.Rasterizer.Cull   = CullMode::None;
+            pipeline.PushConstantBytes = 4;
+            pipeline.Blends.resize(1);
+            auto& blend            = pipeline.Blends[0];
+            blend.Enabled          = true;
+            blend.SourceColor      = BlendFactor::One;
+            blend.DestinationColor = BlendFactor::One;
+            blend.SourceAlpha      = BlendFactor::One;
+            blend.DestinationAlpha = BlendFactor::Zero;
+            BindGroupDesc group {state->MarchLayout,
+                                 {{0, fog->BeamParameters},
+                                  {2, {}, 0, 0, c.Texture(noise), fog->NoiseSampler},
+                                  {3, fog->VolumeUniforms},
+                                  {4, beamBuffer},
+                                  {5, {}, 0, 0, c.Texture(depth), depthSampler},
+                                  {6, {}, 0, 0, c.Texture(integrated), fog->Linear}}};
+            RenderingDesc render;
+            render.Colors.push_back({c.Texture(current), {}, LoadOp::Clear});
+            c.Commands.BeginRendering(render);
+            c.Commands.SetViewport({0, 0, float(size.x), float(size.y)});
+            c.Commands.SetScissor({0, 0, size.x, size.y});
+            c.Commands.BindPipeline(frame.Services.CachedPipeline(pipeline));
+            c.Commands.BindGroup(fog->BeamLighting);
+            c.Commands.BindGroup(c.Device.CreateBindGroup(group));
+            for (uint32_t i = 0; i < selected.size(); ++i)
+            {
+                if (!bounds[i].Width || !bounds[i].Height)
+                    continue;
+                c.Commands.SetScissor(bounds[i]);
+                c.Commands.PushConstants(0, &i, sizeof(i));
+                c.Commands.Draw(3);
+            }
+            c.Commands.EndRendering();
+        });
+        std::vector<GraphUse> temporalUses {
+            {current, GraphAccess::SampledRead},
+            {filtered, GraphAccess::ColorWrite},
+            {graph.ImportBuffer("Beam resolve parameters", resolveBuffer), GraphAccess::UniformRead}};
+        if (valid)
+            temporalUses.push_back({history, GraphAccess::SampledRead});
+        auto recordResolve = [=, &frame](bool composite, auto& c) {
+            PipelineDesc pipeline;
+            pipeline.Program         = composite ? state->CompositeShader[ms] : state->TemporalShader;
+            pipeline.GroupLayouts    = {state->ResolveLayout};
+            pipeline.ColorFormats    = {Format::RGBA16Float};
+            pipeline.Rasterizer.Cull = CullMode::None;
+            pipeline.Samples         = composite ? frame.Samples : 1;
+            pipeline.Blends.resize(1);
+            if (composite)
+            {
+                auto& blend            = pipeline.Blends[0];
+                blend.Enabled          = true;
+                blend.SourceColor      = BlendFactor::One;
+                blend.DestinationColor = BlendFactor::One;
+                blend.WriteMask        = 7;
+            }
+            BindGroupDesc group {state->ResolveLayout,
+                                 {{0, resolveBuffer},
+                                  {1, {}, 0, 0, c.Texture(composite ? filtered : current), fog->Linear},
+                                  {2, {}, 0, 0, c.Texture(composite ? filtered : history), fog->Linear},
+                                  {3, {}, 0, 0, c.Texture(depth), depthSampler}}};
+            RenderingDesc render;
+            render.Colors.push_back(
+                {c.Texture(composite ? hdr : filtered), {}, composite ? LoadOp::Load : LoadOp::Clear});
+            c.Commands.BeginRendering(render);
+            auto extent = composite ? full : size;
+            c.Commands.SetViewport({0, 0, float(extent.x), float(extent.y)});
+            c.Commands.SetScissor({0, 0, extent.x, extent.y});
+            c.Commands.BindPipeline(frame.Services.CachedPipeline(pipeline));
+            c.Commands.BindGroup(c.Device.CreateBindGroup(group));
+            c.Commands.Draw(3);
+            c.Commands.EndRendering();
+        };
+        add("Beam temporal", std::move(temporalUses), [recordResolve](auto& c) { recordResolve(false, c); });
+        add("Beam bilateral composite",
+            {{filtered, GraphAccess::SampledRead},
+             {depth, GraphAccess::SampledRead},
+             {hdr, GraphAccess::ColorReadWrite},
+             {graph.ImportBuffer("Beam resolve parameters", resolveBuffer), GraphAccess::UniformRead}},
+            [recordResolve](auto& c) { recordResolve(true, c); });
+        graph.ExportTexture(filtered);
+        state->Signature       = std::move(signature);
+        state->Valid           = true;
+        state->LastFrame       = frame.Output.GetFrameNumber();
+        frame.DeferToneMapping = frame.PostProcessHDR = true;
     }
     void AddFogBackground(RenderGraph& graph, RenderFrame& frame)
     {

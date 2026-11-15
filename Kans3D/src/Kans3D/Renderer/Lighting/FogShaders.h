@@ -25,15 +25,11 @@ vec3 sampleWorld(ivec3 cell) {
     return worldAt((vec2(cell.xy)+j.xy)/f.grid.xy,mix(a,b,j.z));
 }
 )";
-    inline constexpr const char* Media      = R"(
-layout(local_size_x=4,local_size_y=4,local_size_z=4) in;
-layout(set=1,binding=1,rgba16f) writeonly uniform image3D media;
+    inline constexpr const char* MediumSampling = R"(
 layout(set=1,binding=2) uniform sampler3D densityNoise;
 struct Volume { mat4 worldToLocal; vec4 albedoDensity; vec4 shapeFalloff; };
 layout(set=1,binding=3,std140) uniform FogVolumes { Volume volumes[32]; };
-void main() {
-    ivec3 cell=ivec3(gl_GlobalInvocationID); if(any(greaterThanEqual(cell,ivec3(f.grid.xyz))))return;
-    vec3 p=sampleWorld(cell);
+vec4 mediumAt(vec3 p) {
     float density=f.medium.x*exp(clamp(-f.medium.y*(p.y-f.medium.z),-40,12));
     vec3 scattering=f.albedoG.rgb*density;
     for(int i=0;i<int(f.noise.w);++i) {
@@ -44,14 +40,18 @@ void main() {
         density+=d; scattering+=d*volumes[i].albedoDensity.rgb;
     }
     float n=f.noise.z>0 ? mix(1.0,textureLod(densityNoise,p*f.noise.x+f.scroll.xyz*f.temporal.z,0).r*2,f.noise.y) : 1;
-    imageStore(media,cell,min(vec4(scattering,density)*f.medium.w*n,vec4(60000)));
+    return min(vec4(scattering,density)*f.medium.w*n,vec4(60000));
 }
 )";
-    inline constexpr const char* Lighting   = R"(
+    inline constexpr const char* Media          = R"(
 layout(local_size_x=4,local_size_y=4,local_size_z=4) in;
-layout(set=1,binding=1) uniform sampler3D media;
-layout(set=1,binding=2,rgba16f) writeonly uniform image3D scattering;
-layout(set=1,binding=3,std140) uniform FogLights { vec4 pointScale[4]; vec4 spotScale[16]; vec4 areaScale[4]; vec4 directionalScale; };
+layout(set=1,binding=1,rgba16f) writeonly uniform image3D media;
+void main() {
+    ivec3 cell=ivec3(gl_GlobalInvocationID); if(any(greaterThanEqual(cell,ivec3(f.grid.xyz))))return;
+    imageStore(media,cell,mediumAt(sampleWorld(cell)));
+}
+)";
+    inline constexpr const char* LightSampling  = R"(
 float phase(float c) { float g=f.albedoG.w,d=1+g*g-2*g*c; return (1-g*g)/(12.566370614359*d*sqrt(d)); }
 float directionalShadow(vec3 p) {
     int c=KansShadowCascade(p); if(c<0)return 1;
@@ -88,6 +88,12 @@ float spotShadow(int i,vec3 p) {
     vec2 h=.5/vec2(textureSize(u_SpotShadowAtlas,0));
     return textureLod(u_SpotShadowAtlas,vec3(clamp(r.xy+q.xy*r.zw,r.xy+h,r.xy+r.zw-h),q.z-0.00001),0);
 }
+)";
+    inline constexpr const char* Lighting       = R"(
+layout(local_size_x=4,local_size_y=4,local_size_z=4) in;
+layout(set=1,binding=1) uniform sampler3D media;
+layout(set=1,binding=2,rgba16f) writeonly uniform image3D scattering;
+layout(set=1,binding=3,std140) uniform FogLights { vec4 pointScale[4]; vec4 spotScale[16]; vec4 areaScale[4]; vec4 directionalScale; };
 void main() {
     ivec3 cell=ivec3(gl_GlobalInvocationID); if(any(greaterThanEqual(cell,ivec3(f.grid.xyz))))return;
     vec4 m=texelFetch(media,cell,0); if(m.a<=0){imageStore(scattering,cell,vec4(0));return;}

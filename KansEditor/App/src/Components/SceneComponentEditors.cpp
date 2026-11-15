@@ -233,6 +233,23 @@ namespace Kans::ComponentEditors
                 PropertyGrid::Float("Scale Y", c.CookieScale.y, .01f, .001f, 100, "%.3f", &defaults.CookieScale.y);
                 PropertyGrid::EndGroup();
             }
+            if (PropertyGrid::BeginGroup("Beam"))
+            {
+                auto&       b = c.Beam;
+                const auto& d = defaults.Beam;
+                PropertyGrid::Checkbox("Enabled", b.Enabled, &d.Enabled);
+                PropertyGrid::Float("Intensity", b.Intensity, .01f, 0, 1000, "%.3f", &d.Intensity);
+                PropertyGrid::Float("Length (0 = Range)", b.Length, .1f, 0, 10000, "%.2f", &d.Length);
+                PropertyGrid::Float("Start fade (m)", b.StartFade, .01f, 0, 10000, "%.2f", &d.StartFade);
+                PropertyGrid::Float("End fade (m)", b.EndFade, .01f, 0, 10000, "%.2f", &d.EndFade);
+                PropertyGrid::Checkbox("Use shadow", b.UseShadow, &d.UseShadow);
+                PropertyGrid::Checkbox("Use cookie", b.UseCookie, &d.UseCookie);
+                int samples = int(b.Samples), reset = int(d.Samples);
+                if (PropertyGrid::Int("Samples", samples, 16, 64, &reset))
+                    b.Samples = uint32_t(samples);
+                b = b.Validated();
+                PropertyGrid::EndGroup();
+            }
             auto shadows = c.Shadows;
             if (DrawShadowSettings(shadows, false))
                 c.Shadows = shadows.Validated();

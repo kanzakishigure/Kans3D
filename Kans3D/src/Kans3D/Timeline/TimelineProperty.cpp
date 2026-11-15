@@ -271,6 +271,34 @@ namespace Kans
         LIGHT_PROPERTY(AreaLightComponent, "AreaLight", Range)
         LIGHT_PROPERTY(AreaLightComponent, "AreaLight", TwoSided)
         LIGHT_PROPERTY(AreaLightComponent, "AreaLight", UseTemperature)
+        if (field == "SpotLight.Beam.Intensity" || field == "SpotLight.Beam.Length" ||
+            field == "SpotLight.Beam.Enabled")
+        {
+            if (!e.HasComponent<SpotLightComponent>())
+                return false;
+            bool ok    = false;
+            auto apply = [&](auto& c) {
+                if (field == "SpotLight.Beam.Enabled")
+                {
+                    float enabled = c.Beam.Enabled ? 1.f : 0.f;
+                    ok            = access(enabled);
+                    if (write && ok)
+                        c.Beam.Enabled = enabled >= .5f;
+                }
+                else
+                {
+                    ok = access(field == "SpotLight.Beam.Intensity" ? c.Beam.Intensity : c.Beam.Length);
+                }
+            };
+            if (write)
+                e.PatchComponent<SpotLightComponent>(apply);
+            else
+            {
+                auto c = e.GetComponent<SpotLightComponent>();
+                apply(c);
+            }
+            return ok;
+        }
         LIGHT_PROPERTY(SpotLightComponent, "SpotLight", Range)
         LIGHT_PROPERTY(SpotLightComponent, "SpotLight", InnerConeAngle)
         LIGHT_PROPERTY(SpotLightComponent, "SpotLight", OuterConeAngle)

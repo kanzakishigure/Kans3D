@@ -18,8 +18,27 @@ namespace Kans
     };
     // Nearest centre, then UUID: stable under registry insertion/removal order.
     std::vector<ViewFogVolume> SelectFogVolumes(std::vector<ViewFogVolume> volumes, glm::vec3 camera);
+    struct SpotLight;
+    constexpr uint32_t    SpotBeamLimit = 16;
+    std::vector<uint32_t> SelectSpotBeams(const std::vector<SpotLight>& lights, glm::vec3 camera);
+    bool                  HasSpotBeams(const RenderFrame& frame);
+    void                  BuildSpotBeamPasses(RenderGraph& graph, RenderFrame& frame);
+    struct BeamState
+    {
+        glm::uvec2                                              Size {0};
+        uint64_t                                                LastFrame = 0;
+        bool                                                    Valid     = false;
+        std::string                                             Signature;
+        RenderHardware::Handle<RenderHardware::Texture>         History[2];
+        RenderHardware::Handle<RenderHardware::BindGroupLayout> MarchLayout, ResolveLayout;
+        RenderHardware::Handle<RenderHardware::Shader>          MarchShader[2], TemporalShader, CompositeShader[2];
+    };
     struct FogState
     {
+        std::shared_ptr<BeamState>                                             Beams;
+        std::string                                                            BeamMediumSignature;
+        RenderHardware::Handle<RenderHardware::Buffer>                         BeamParameters, VolumeUniforms;
+        RenderHardware::Handle<RenderHardware::BindGroup>                      BeamLighting;
         glm::uvec3                                                             Size {0};
         glm::uvec2                                                             RenderSize {0};
         FogSettings                                                            Settings;

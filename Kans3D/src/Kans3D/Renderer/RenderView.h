@@ -286,6 +286,7 @@ namespace Kans
         std::shared_ptr<ShadowResources>                  Shadows;
         std::vector<ViewFogVolume>                        FogVolumes;
         FogDensityInjector                                InjectFogDensity;
+        bool                                              BeamHalfResolution = false;
         std::shared_ptr<AreaLightResources>               AreaLighting;
         // Per-view runtime source override by entity UUID; accepts sampled 2D render targets with mips.
         std::unordered_map<UUID, RenderHardware::Handle<RenderHardware::Texture>> AreaLightSources;

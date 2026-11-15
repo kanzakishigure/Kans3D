@@ -15,6 +15,7 @@
 #include "Kans3D/Physics/PhysicsEquality.h"
 #include "Kans3D/Physics/RagdollComponent.h"
 #include "Kans3D/Physics/VehicleComponent.h"
+#include "Kans3D/Renderer/Lighting/BeamSettings.h"
 #include "Kans3D/Renderer/Lighting/FogSettings.h"
 #include "Kans3D/Renderer/Lighting/LightUnits.h"
 #include "Kans3D/Timeline/Timeline.h"
@@ -319,6 +320,7 @@ namespace Kans
     };
     struct SpotLightComponent : LightEmission
     {
+        BeamSettings   Beam;
         LightUnit      Unit           = LightUnit::Candela;
         float          Range          = 10;                      // Metres.
         float          InnerConeAngle = 20, OuterConeAngle = 30; // Half angles, degrees; local -Z aim.
@@ -330,7 +332,8 @@ namespace Kans
         {
             return static_cast<const LightEmission&>(*this) == b && Unit == b.Unit && Range == b.Range &&
                    InnerConeAngle == b.InnerConeAngle && OuterConeAngle == b.OuterConeAngle && Shadows == b.Shadows &&
-                   Cookie == b.Cookie && CookieRotation == b.CookieRotation && CookieScale == b.CookieScale;
+                   Cookie == b.Cookie && CookieRotation == b.CookieRotation && CookieScale == b.CookieScale &&
+                   Beam == b.Beam;
         }
     };
 
