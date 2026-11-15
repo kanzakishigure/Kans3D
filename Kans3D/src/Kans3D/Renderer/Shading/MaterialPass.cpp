@@ -2,6 +2,7 @@
 #include "Kans3D/Renderer/Shading/MaterialPass.h"
 #include "Kans3D/RHI/PipelineKey.h"
 #include "Kans3D/Renderer/Lighting/AreaLights.h"
+#include "Kans3D/Renderer/Lighting/Fog.h"
 #include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 
 namespace Kans
@@ -61,6 +62,8 @@ namespace Kans
             throw std::logic_error("Material pipeline key supports at most four colour attachments");
         for (size_t i = 0; i < data.ColorFormats.size(); ++i)
             key |= uint64_t(data.ColorFormats[i]) << (38 + i * 6);
+        const bool fog = data.Fog && !data.ShadowDepth && !data.CustomDepth && !data.DepthPrepass;
+        key |= uint64_t(fog) << 62;
         Handle<Pipeline> shadowPipeline;
         auto&            pipeline = (data.ShadowDepth || data.CustomDepth) ? shadowPipeline :
                                     extraPass                              ? extraPass->Pipelines[key] :
@@ -91,6 +94,17 @@ namespace Kans
                     smoothFallback,
                     data.InvalidatePrepassNormals,
                     extraPass);
+            if (fog)
+                desc.Program = shader.PrepareFog(
+                    key ^ (uint64_t(extraPass ? size_t(extraPass - shader.Passes.data()) + 1 : 0) << 48),
+                    uint32_t(data.ColorFormats.size() - 1),
+                    data.Render,
+                    data.VertexSource,
+                    skinned,
+                    smoothFallback,
+                    data.InvalidatePrepassNormals,
+                    data.WriteTemporalMasks,
+                    extraPass);
             desc.DebugName =
                 data.DebugName.empty() ? desc.Program->DebugName : data.DebugName + "/" + desc.Program->DebugName;
             desc.GroupLayouts = {shader.EngineLayout, shader.MaterialLayout};
@@ -98,6 +112,10 @@ namespace Kans
                 desc.GroupLayouts.push_back(shader.SkinLayout);
             if (data.VertexLayout)
                 desc.GroupLayouts.push_back(data.VertexLayout);
+            if (fog)
+            {
+                desc.GroupLayouts.push_back(data.Fog->SampleLayout);
+            }
             desc.VertexBindings = mesh.VertexBindings;
             desc.Attributes     = mesh.Attributes;
             if (!skinned && mesh.Skin)
@@ -276,6 +294,8 @@ namespace Kans
         commands.BindPipeline(pipeline);
         commands.BindGroup(device->CreateBindGroup(engine));
         commands.BindGroup(material);
+        if (fog)
+            commands.BindGroup(data.Fog->SampleGroup);
         if (data.VertexSource)
         {
             commands.BindGroup(data.VertexGroup);

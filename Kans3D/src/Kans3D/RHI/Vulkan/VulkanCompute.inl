@@ -78,24 +78,27 @@ void PrepareCompute(const std::shared_ptr<VKBuffer>& indirect = {})
             const uint32_t firstMip = entry->Subresource ? entry->Subresource->Mip : 0;
             const uint32_t mipEnd   = storage ? firstMip + 1 : (entry->Subresource ? firstMip + 1 : t->Desc.MipLevels);
             const uint32_t face     = entry->Subresource ? entry->Subresource->Face : 0;
+            const uint32_t faceEnd =
+                !entry->Subresource && !storage && t->Desc.Dimension == TextureDimension::Cube ? 6 : face + 1;
             for (uint32_t mip = firstMip; mip < mipEnd; ++mip)
-            {
-                auto&        use = uses->StorageTextures[{t.get(), t->Index({mip, face})}];
-                const Access access {
-                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                    storage ? VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT :
-                              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                    storage ? VK_IMAGE_LAYOUT_GENERAL :
-                              (Info(t->Desc.PixelFormat).Depth() && Has(t->Desc.Usage, TextureUsage::DepthStencil) ?
-                                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL :
-                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)};
-                Require(!use.first || use.second.Layout == access.Layout,
-                        "Cannot bind a subresource as both sampled and storage in one dispatch");
-                use.first = t;
-                use.second.Stage |= access.Stage;
-                use.second.Mask |= access.Mask;
-                use.second.Layout = access.Layout;
-            }
+                for (uint32_t layer = face; layer < faceEnd; ++layer)
+                {
+                    auto&        use = uses->StorageTextures[{t.get(), t->Index({mip, layer})}];
+                    const Access access {
+                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                        storage ? VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT :
+                                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                        storage ? VK_IMAGE_LAYOUT_GENERAL :
+                                  (Info(t->Desc.PixelFormat).Depth() && Has(t->Desc.Usage, TextureUsage::DepthStencil) ?
+                                       VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL :
+                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)};
+                    Require(!use.first || use.second.Layout == access.Layout,
+                            "Cannot bind a subresource as both sampled and storage in one dispatch");
+                    use.first = t;
+                    use.second.Stage |= access.Stage;
+                    use.second.Mask |= access.Mask;
+                    use.second.Layout = access.Layout;
+                }
         }
     }
     if (indirect)

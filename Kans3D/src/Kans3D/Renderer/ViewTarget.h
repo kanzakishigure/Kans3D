@@ -8,6 +8,7 @@ namespace Kans
 {
     // Per-viewport allocations. Resources and pool release before the device lease.
     struct ShadowResources;
+    struct FogState;
     struct TemporalState;
     class Fsr3Upscaler;
     class ViewTarget
@@ -41,6 +42,7 @@ namespace Kans
         }
         glm::vec2      GetJitter() const { return m_Jitter; }
         void           SetJitter(glm::vec2 jitter) { m_Jitter = jitter; }
+        std::shared_ptr<FogState>&           GetFogStorage() { return m_Fog; }
         TemporalState& GetTemporalState();
         void           InvalidateTemporalHistory();
         Fsr3Upscaler&                        EnsureFsr3Upscaler();
@@ -96,6 +98,7 @@ namespace Kans
         glm::vec2                                                    m_Jitter {0};
         std::shared_ptr<Fsr3Upscaler>                                m_Fsr3Upscaler;
         std::shared_ptr<TemporalState>                               m_Temporal;
+        std::shared_ptr<FogState>                                    m_Fog;
         std::shared_ptr<ShadowResources>                             m_Shadows;
         TransientTexturePool                                         m_Pool;
         uint64_t                                                     m_FrameNumber = 0;

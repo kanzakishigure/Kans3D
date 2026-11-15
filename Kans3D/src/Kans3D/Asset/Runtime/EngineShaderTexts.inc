@@ -993,3 +993,27 @@ KANS_SHADER_TEXT(Vfx_if_3, "Vfx/if_3", "if(!")
 KANS_SHADER_TEXT(Vfx_flags_slot_u_uint,
                  "Vfx/flags_slot_u_uint_at",
                  "){flags[slot]=0u;uint at=atomicAdd(counters[0],1u);freeList[at]=slot;}\n}\n")
+KANS_SHADER_TEXT(FogSampling, "Fog/Sampling", R"(
+layout(set=3,binding=0,std140) uniform KansFogSampleParameters {
+    mat4 inverseProjection; vec4 renderSizeJitter; vec4 depth;
+} kans_Fog;
+layout(set=3,binding=1) uniform sampler3D kans_FogIntegrated;
+// Legacy display shaders enter the same scene-linear fog path as HDR materials.
+vec3 KansFogDecode(vec3 c) {
+    c=clamp(c,vec3(0),vec3(1));
+    vec3 y=mix(c/12.92,pow((c+.055)/1.055,vec3(2.4)),greaterThan(c,vec3(.04045)));
+    if(kans_Fog.depth.w==1.0)return y/kans_Fog.depth.z;
+    vec3 b=.59*y-.03,a=2.43*y-2.51,d=.14*y;
+    return 2*d/max(sqrt(b*b-4*a*d)-b,vec3(1e-8))/kans_Fog.depth.z;
+}
+vec4 KansFogAt(float deviceDepth) {
+    vec2 uv=gl_FragCoord.xy/kans_Fog.renderSizeJitter.xy;
+    vec4 p=kans_Fog.inverseProjection*vec4(uv*2-1,deviceDepth,1);
+    float depth=max(0,-p.z/p.w);
+    float slice=log(1+min(depth,kans_Fog.depth.x)/.1)/log(1+kans_Fog.depth.x/.1)*kans_Fog.depth.y;
+    uv-=kans_Fog.renderSizeJitter.zw/kans_Fog.renderSizeJitter.xy;
+    vec4 fog=texture(kans_FogIntegrated,vec3(uv,(slice-.5)/kans_Fog.depth.y));
+    // Integrated texels are far cell boundaries, with an identity boundary at the camera.
+    return mix(vec4(0,0,0,1),fog,clamp(slice,0,1));
+}
+)")

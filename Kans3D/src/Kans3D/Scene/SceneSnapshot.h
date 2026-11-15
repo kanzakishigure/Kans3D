@@ -37,6 +37,7 @@ namespace Kans
         std::optional<PointLightComponent>               PointLight;
         std::optional<SpotLightComponent>                SpotLight;
         std::optional<AreaLightComponent>                AreaLight;
+        std::optional<FogVolumeComponent>                FogVolume;
         std::optional<ScriptComponent>                   Script;
         std::optional<RigidBodyComponent>                RigidBody;
         std::optional<BoxColliderComponent>              BoxCollider;

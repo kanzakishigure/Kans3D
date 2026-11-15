@@ -3,6 +3,7 @@
 
 namespace Kans
 {
+    struct FogState;
     struct MaterialPassData
     {
         RenderHardware::Handle<RenderHardware::Buffer>                 Frame, Object;
@@ -26,6 +27,7 @@ namespace Kans
         uint32_t                                                       Section = 0;
         std::shared_ptr<ShadowResources>                               Shadows;
         std::shared_ptr<AreaLightResources>                            AreaLighting;
+        std::shared_ptr<FogState>                                      Fog;
         bool                                                           ShadowDepth = false, CustomDepth = false;
         bool                                                           DepthPrepass = false, PrepassCovered = false;
         bool                                                           InvalidatePrepassNormals = false;

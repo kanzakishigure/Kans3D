@@ -574,6 +574,7 @@ namespace Kans
                     return gpu->UploadUniform(graph, data, bytes);
                 };
                 MaterialPassData pass;
+                pass.Fog       = frame->Fog;
                 pass.DebugName = "VFX/" + draw.System->Asset()->assetID.ToString() + "/" +
                                  emitter.Compiled->Settings.Name + "/Renderer/" + r.Guid;
                 pass.Frame     = upload(&ef, sizeof(ef));
@@ -621,7 +622,7 @@ namespace Kans
                 pass.Samples            = frame->Samples;
                 pass.Shadows            = context.View.Shadows;
                 pass.ColorFormats.clear();
-                const bool materialHDR = shader->OutputSpace == ShaderOutputSpace::LinearHDR;
+                const bool materialHDR  = shader->OutputSpace == ShaderOutputSpace::LinearHDR || frame->Fog;
                 const bool previousHDR = workingHDR;
                 auto       target      = frame->Output.Target(LoadOp::Load, materialHDR);
                 pass.WriteTemporalMasks = frame->TemporalMasks != uint32_t(-1);
@@ -668,6 +669,9 @@ namespace Kans
                     for (const auto& image : pass.Shadows->Points)
                         use({graph.ImportTexture("VFX point shadows", image), GraphAccess::SampledRead});
                 }
+                if (frame->Fog)
+                    use({graph.ImportTexture("Fog integrated scattering transmittance", frame->Fog->Integrated),
+                         GraphAccess::SampledRead});
                 use({depth, GraphAccess::SampledRead});
                 auto material = frame->Assets()->GetMaterialGroup(*shader, *bindings, nullptr, frame->MaterialMipBias);
                 if (!material)

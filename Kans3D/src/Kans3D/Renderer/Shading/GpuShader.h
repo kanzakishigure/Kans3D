@@ -81,6 +81,16 @@ namespace Kans
                              bool                                           smoothFallback,
                              bool                                           invalidateNormals,
                              const GpuShaderPass*                           extraPass) const;
+        RenderHardware::Handle<RenderHardware::Shader>
+        PrepareFog(uint64_t                                       key,
+                   uint32_t                                       location,
+                   const MaterialRenderState&                     render,
+                   RenderHardware::Handle<RenderHardware::Shader> vertexSource,
+                   bool                                           skinned,
+                   bool                                           smoothFallback,
+                   bool                                           invalidateNormals,
+                   bool                                           temporal,
+                   const GpuShaderPass*                           extraPass) const;
         ~GpuShader();
         GpuShader(GpuShader&& other) noexcept;
         GpuShader& operator=(GpuShader&& other) noexcept;
@@ -104,6 +114,7 @@ namespace Kans
         const std::map<uint32_t, ShaderTextureFallback>& MaterialSamplerFallbacks() const { return m_SamplerFallbacks; }
 
     private:
+        mutable std::map<uint64_t, RenderHardware::Handle<RenderHardware::Shader>> m_FogPrograms;
         GpuShader() = default;
         mutable std::map<uint64_t, RenderHardware::Handle<RenderHardware::Shader>> m_TemporalMaskPrograms;
         std::shared_ptr<const ShaderData> m_Source;

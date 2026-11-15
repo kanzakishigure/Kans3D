@@ -130,6 +130,8 @@ namespace Kans::ComponentEditors
             PropertyGrid::Float(unit, c.Intensity, .1f, 0, 100000000, "%.3f", &defaults.Intensity);
             PropertyGrid::Float("Diffuse scale", c.DiffuseScale, .01f, 0, 1, "%.3f", &defaults.DiffuseScale);
             PropertyGrid::Float("Specular scale", c.SpecularScale, .01f, 0, 1, "%.3f", &defaults.SpecularScale);
+            PropertyGrid::Float(
+                "Volumetric scattering", c.VolumetricScattering, .01f, 0, 1000, "%.3f", &defaults.VolumetricScattering);
         }
         template<class T>
         void DrawPunctual(T& c, const T& defaults, float solidAngle)
@@ -145,6 +147,23 @@ namespace Kans::ComponentEditors
             PropertyGrid::Float("Range (m)", c.Range, .1f, 0, 10000, "%.2f", &defaults.Range);
         }
     } // namespace
+    void DrawFogVolume(Entity entity, ComponentUI&)
+    {
+        static const FogVolumeComponent defaults;
+        entity.PatchComponent<FogVolumeComponent>([](auto& c) {
+            if (PropertyGrid::BeginGroup("Medium"))
+            {
+                const char* shapes[] = {"Box", "Sphere"};
+                int         shape    = int(c.Shape);
+                if (PropertyGrid::Combo("Shape", shapes, 2, shape))
+                    c.Shape = FogVolumeShape(shape);
+                PropertyGrid::Float("Density", c.Density, .001f, 0, 100, "%.4f", &defaults.Density);
+                PropertyGrid::Color3("Albedo", c.Albedo, &defaults.Albedo);
+                PropertyGrid::Float("Edge falloff", c.EdgeFalloff, .01f, 0, 1, "%.3f", &defaults.EdgeFalloff);
+                PropertyGrid::EndGroup();
+            }
+        });
+    }
     void DrawDirectionalLight(Entity entity, ComponentUI&)
     {
         static const DirLightComponent defaults = [] {

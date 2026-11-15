@@ -246,6 +246,78 @@ namespace Kans
             }
             return result;
         }
+        YAML::Node EncodeFog(const FogSettings& authored)
+        {
+            const auto f = authored.Validated();
+            YAML::Node n;
+            n["Enabled"]               = f.Enabled;
+            n["Density"]               = f.Density;
+            n["HeightFalloff"]         = f.HeightFalloff;
+            n["BaseHeight"]            = f.BaseHeight;
+            n["Albedo"]                = Vector(f.Albedo, 3);
+            n["Extinction"]            = f.Extinction;
+            n["Anisotropy"]            = f.Anisotropy;
+            n["VolumetricFogDistance"] = f.VolumetricFogDistance;
+            n["GridPixelSize"]         = f.GridPixelSize;
+            n["DepthSlices"]           = f.DepthSlices;
+            n["HistoryWeight"]         = f.HistoryWeight;
+            n["Noise"]                 = f.Noise;
+            n["NoiseScale"]            = f.NoiseScale;
+            n["NoiseAmount"]           = f.NoiseAmount;
+            n["NoiseScroll"]           = Vector(f.NoiseScroll, 3);
+            return n;
+        }
+        FogSettings DecodeFog(const YAML::Node& n)
+        {
+            Keys(n,
+                 {"Enabled",
+                  "Density",
+                  "HeightFalloff",
+                  "BaseHeight",
+                  "Albedo",
+                  "Extinction",
+                  "Anisotropy",
+                  "VolumetricFogDistance",
+                  "GridPixelSize",
+                  "DepthSlices",
+                  "HistoryWeight",
+                  "Noise",
+                  "NoiseScale",
+                  "NoiseAmount",
+                  "NoiseScroll"});
+            FogSettings f;
+            if (n["Enabled"])
+                f.Enabled = n["Enabled"].as<bool>();
+            if (n["Density"])
+                f.Density = Number(n["Density"]);
+            if (n["HeightFalloff"])
+                f.HeightFalloff = Number(n["HeightFalloff"]);
+            if (n["BaseHeight"])
+                f.BaseHeight = Number(n["BaseHeight"]);
+            if (n["Albedo"])
+                f.Albedo = Vec3(n["Albedo"]);
+            if (n["Extinction"])
+                f.Extinction = Number(n["Extinction"]);
+            if (n["Anisotropy"])
+                f.Anisotropy = Number(n["Anisotropy"]);
+            if (n["VolumetricFogDistance"])
+                f.VolumetricFogDistance = Number(n["VolumetricFogDistance"]);
+            if (n["GridPixelSize"])
+                f.GridPixelSize = n["GridPixelSize"].as<uint32_t>();
+            if (n["DepthSlices"])
+                f.DepthSlices = n["DepthSlices"].as<uint32_t>();
+            if (n["HistoryWeight"])
+                f.HistoryWeight = Number(n["HistoryWeight"]);
+            if (n["Noise"])
+                f.Noise = n["Noise"].as<bool>();
+            if (n["NoiseScale"])
+                f.NoiseScale = Number(n["NoiseScale"]);
+            if (n["NoiseAmount"])
+                f.NoiseAmount = Number(n["NoiseAmount"]);
+            if (n["NoiseScroll"])
+                f.NoiseScroll = Vec3(n["NoiseScroll"]);
+            return f.Validated();
+        }
         void EncodeEmission(YAML::Node& n, const LightEmission& light)
         {
             Require(std::isfinite(light.Intensity) && light.Intensity >= 0 && std::isfinite(light.SpecularScale) &&
@@ -259,9 +331,15 @@ namespace Kans
             n["Temperature"]    = light.Temperature;
             n["DiffuseScale"]   = light.DiffuseScale;
             n["SpecularScale"]  = light.SpecularScale;
+            Require(std::isfinite(light.VolumetricScattering) && light.VolumetricScattering >= 0,
+                    "Invalid volumetric scattering");
+            n["VolumetricScattering"] = light.VolumetricScattering;
         }
         bool DecodeEmission(const YAML::Node& n, LightEmission& light)
         {
+            if (n["VolumetricScattering"])
+                light.VolumetricScattering = Number(n["VolumetricScattering"]);
+            Require(light.VolumetricScattering >= 0, "Invalid volumetric scattering");
             bool legacy = bool(n["Diffuse_Intensity"]);
             if (legacy)
             {
@@ -1460,6 +1538,20 @@ namespace Kans
                 value["TwoSided"]      = light.TwoSided;
                 value["SourceTexture"] = IdentityText(light.SourceTexture);
             }
+            if (entity.HasComponent<FogVolumeComponent>())
+            {
+                const auto& fog = entity.GetComponent<FogVolumeComponent>();
+                Require(uint32_t(fog.Shape) <= uint32_t(FogVolumeShape::Sphere) && std::isfinite(fog.Density) &&
+                            fog.Density >= 0 && std::isfinite(fog.EdgeFalloff) && fog.EdgeFalloff >= 0 &&
+                            fog.EdgeFalloff <= 1 && glm::all(glm::greaterThanEqual(fog.Albedo, glm::vec3(0))) &&
+                            glm::all(glm::lessThanEqual(fog.Albedo, glm::vec3(1))),
+                        "Invalid fog volume medium");
+                value.reset(node["FogVolumeComponent"]);
+                value["Shape"]       = fog.Shape == FogVolumeShape::Sphere ? "Sphere" : "Box";
+                value["Density"]     = fog.Density;
+                value["Albedo"]      = Vector(fog.Albedo, 3);
+                value["EdgeFalloff"] = fog.EdgeFalloff;
+            }
             if (entity.HasComponent<ScriptComponent>())
             {
                 const auto& name = entity.GetComponent<ScriptComponent>().ClassName;
@@ -1496,6 +1588,7 @@ namespace Kans
         {
             const auto& settings    = scene.GetEnvironmentSettings();
             auto        environment = root["Environment"];
+            environment["Fog"]      = EncodeFog(settings.Fog);
             environment["Map"]      = settings.Map.generic_string(); // Empty explicitly disables IBL.
             if (settings.DiffuseIntensity != 1)
                 environment["DiffuseIntensity"] = settings.DiffuseIntensity;
@@ -1654,8 +1747,11 @@ namespace Kans
                       "Rotation",
                       "SkyboxIntensity",
                       "ShowSkybox",
-                      "BackgroundColor"});
+                      "BackgroundColor",
+                      "Fog"});
                 EnvironmentSettings settings;
+                if (environment["Fog"])
+                    settings.Fog = DecodeFog(environment["Fog"]);
                 if (environment["Map"])
                     settings.Map = Text(environment["Map"]);
                 if (environment["DiffuseIntensity"])
@@ -1721,6 +1817,7 @@ namespace Kans
                       "PointLightComponent",
                       "SpotLightComponent",
                       "AreaLightComponent",
+                      "FogVolumeComponent",
                       "ScriptComponent",
                       "SpriteRendererComponent"});
                 auto id = UInt(node["Entity"]);
@@ -2077,6 +2174,7 @@ namespace Kans
                           "Temperature",
                           "DiffuseScale",
                           "SpecularScale",
+                          "VolumetricScattering",
                           "Diffuse_Intensity",
                           "Specular_Intensity",
                           "Ambient_Intensity",
@@ -2096,6 +2194,7 @@ namespace Kans
                           "Temperature",
                           "DiffuseScale",
                           "SpecularScale",
+                          "VolumetricScattering",
                           "Unit",
                           "Range",
                           "Diffuse_Intensity",
@@ -2117,6 +2216,7 @@ namespace Kans
                           "Temperature",
                           "DiffuseScale",
                           "SpecularScale",
+                          "VolumetricScattering",
                           "Unit",
                           "Range",
                           "InnerConeAngle",
@@ -2148,6 +2248,27 @@ namespace Kans
                     Require(light.CookieScale.x > 0 && light.CookieScale.y > 0, "Invalid spot cookie scale");
                     light.Shadows = DecodeShadows(value["Shadows"], ShadowSettings::SpotDefaults());
                 }
+                if (auto fog = node["FogVolumeComponent"])
+                {
+                    Keys(fog, {"Shape", "Density", "Albedo", "EdgeFalloff"});
+                    auto& c = entity.AddComponent<FogVolumeComponent>();
+                    if (fog["Shape"])
+                    {
+                        auto shape = Text(fog["Shape"]);
+                        Require(shape == "Box" || shape == "Sphere", "Invalid fog volume shape");
+                        c.Shape = shape == "Sphere" ? FogVolumeShape::Sphere : FogVolumeShape::Box;
+                    }
+                    if (fog["Density"])
+                        c.Density = Number(fog["Density"]);
+                    if (fog["Albedo"])
+                        c.Albedo = Vec3(fog["Albedo"]);
+                    if (fog["EdgeFalloff"])
+                        c.EdgeFalloff = Number(fog["EdgeFalloff"]);
+                    Require(c.Density >= 0 && c.EdgeFalloff >= 0 && c.EdgeFalloff <= 1 &&
+                                glm::all(glm::greaterThanEqual(c.Albedo, glm::vec3(0))) &&
+                                glm::all(glm::lessThanEqual(c.Albedo, glm::vec3(1))),
+                            "Invalid fog volume medium");
+                }
                 if (node["AreaLightComponent"])
                 {
                     value.reset(node["AreaLightComponent"]);
@@ -2158,6 +2279,7 @@ namespace Kans
                           "Temperature",
                           "DiffuseScale",
                           "SpecularScale",
+                          "VolumetricScattering",
                           "Shape",
                           "Unit",
                           "Width",

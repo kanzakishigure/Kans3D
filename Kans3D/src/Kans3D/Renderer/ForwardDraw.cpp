@@ -333,9 +333,10 @@ namespace Kans
             pass.Environment        = environment;
             pass.EnvironmentSampler = Services.GetMaterialEnvironmentSampler();
             pass.AreaLighting       = View.AreaLighting;
+            pass.Fog                = draw.ViewMode == SceneViewMode::Lit ? Fog : nullptr;
             // Debug views, including wireframe's lit shading, retain display output.
-            const bool nextHDR =
-                shader->OutputSpace == ShaderOutputSpace::LinearHDR && draw.ViewMode == SceneViewMode::Lit;
+            const bool nextHDR = (shader->OutputSpace == ShaderOutputSpace::LinearHDR || pass.Fog) &&
+                                 draw.ViewMode == SceneViewMode::Lit;
             // An uncovered custom surface may replace a covered surface's depth.
             // Invalidate that older normal in the same draw, after its original
             // fragment/discard logic, without changing its color or depth state.

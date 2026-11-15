@@ -12,6 +12,7 @@
 #include "GizmoDraw.h"
 #include "Graph/GraphCapture.h"
 #include "ImmediatePassState.h"
+#include "Lighting/Fog.h"
 #include "RenderSettings.h"
 
 namespace Kans
@@ -283,6 +284,8 @@ namespace Kans
         uint32_t                                          MaxShadowedSpotLights  = 8;
         uint32_t                                          SpotShadowAtlasSize = 2048; // Pixels per side, at most 4096.
         std::shared_ptr<ShadowResources>                  Shadows;
+        std::vector<ViewFogVolume>                        FogVolumes;
+        FogDensityInjector                                InjectFogDensity;
         std::shared_ptr<AreaLightResources>               AreaLighting;
         // Per-view runtime source override by entity UUID; accepts sampled 2D render targets with mips.
         std::unordered_map<UUID, RenderHardware::Handle<RenderHardware::Texture>> AreaLightSources;

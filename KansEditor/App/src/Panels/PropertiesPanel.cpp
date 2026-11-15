@@ -206,6 +206,37 @@ namespace Kans
                                            &defaults.SpecularIntensity);
             PropertyGrid::EndGroup();
         }
+        if (PropertyGrid::BeginGroup("Volumetric fog"))
+        {
+            auto&       f = settings.Fog;
+            const auto& d = defaults.Fog;
+            changed |= PropertyGrid::Checkbox("Enabled", f.Enabled, &d.Enabled);
+            changed |= PropertyGrid::Float("Density", f.Density, .001f, 0, 100, "%.4f", &d.Density);
+            changed |= PropertyGrid::Float("Height falloff", f.HeightFalloff, .01f, 0, 100, "%.3f", &d.HeightFalloff);
+            changed |= PropertyGrid::Float("Base height (m)", f.BaseHeight, .1f, -10000, 10000, "%.2f", &d.BaseHeight);
+            changed |= PropertyGrid::Color3("Albedo", f.Albedo, &d.Albedo);
+            changed |= PropertyGrid::Float("Extinction", f.Extinction, .01f, 0, 100, "%.3f", &d.Extinction);
+            changed |= PropertyGrid::Float("Anisotropy", f.Anisotropy, .01f, -.95f, .95f, "%.3f", &d.Anisotropy);
+            changed |= PropertyGrid::Float(
+                "Distance (m)", f.VolumetricFogDistance, 1, .1f, 10000, "%.1f", &d.VolumetricFogDistance);
+            int pixel = int(f.GridPixelSize), slices = int(f.DepthSlices);
+            if (PropertyGrid::Int("Grid pixel size", pixel, 2, 64))
+            {
+                f.GridPixelSize = uint32_t(pixel);
+                changed         = true;
+            }
+            if (PropertyGrid::Int("Depth slices", slices, 8, 128))
+            {
+                f.DepthSlices = uint32_t(slices);
+                changed       = true;
+            }
+            changed |= PropertyGrid::Float("History weight", f.HistoryWeight, .01f, 0, .99f, "%.2f", &d.HistoryWeight);
+            changed |= PropertyGrid::Checkbox("Density noise", f.Noise, &d.Noise);
+            changed |= PropertyGrid::Float("Noise scale", f.NoiseScale, .01f, .0001f, 100, "%.3f", &d.NoiseScale);
+            changed |= PropertyGrid::Float("Noise amount", f.NoiseAmount, .01f, 0, 1, "%.3f", &d.NoiseAmount);
+            changed |= PropertyGrid::Vec3("Noise scroll", f.NoiseScroll, d.NoiseScroll, .01f);
+            PropertyGrid::EndGroup();
+        }
         if (changed)
         {
             // The first edit of a scene without settings keeps the map it was showing.
@@ -213,10 +244,8 @@ namespace Kans
             {
                 auto map = AuthoredEnvironmentMap(m_DefaultEnvironment);
                 if (map)
-                {
                     settings.Map = *map;
-                    scene.SetEnvironmentSettings(settings);
-                }
+                scene.SetEnvironmentSettings(settings);
             }
             else
                 scene.SetEnvironmentSettings(settings);

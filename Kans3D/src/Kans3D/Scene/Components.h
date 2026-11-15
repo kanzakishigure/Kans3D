@@ -15,6 +15,7 @@
 #include "Kans3D/Physics/PhysicsEquality.h"
 #include "Kans3D/Physics/RagdollComponent.h"
 #include "Kans3D/Physics/VehicleComponent.h"
+#include "Kans3D/Renderer/Lighting/FogSettings.h"
 #include "Kans3D/Renderer/Lighting/LightUnits.h"
 #include "Kans3D/Timeline/Timeline.h"
 #include "Kans3D/VFX/ParticleSystemComponent.h"
@@ -407,5 +408,6 @@ namespace Kans
                                          PointLightComponent,
                                          SpotLightComponent,
                                          AreaLightComponent,
+                                         FogVolumeComponent,
                                          ScriptComponent>;
 } // namespace Kans

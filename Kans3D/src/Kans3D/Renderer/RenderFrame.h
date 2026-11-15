@@ -37,6 +37,8 @@ namespace Kans
         };
         std::unordered_map<size_t, PrepassDraw>         PrepassDraws, VelocitySurfaceDraws;
         void                                            BuildDepthPrepass(RenderGraph& graph);
+        std::shared_ptr<FogState>                       Fog;
+        FogFrameResources                               FogGrid;
         bool                                            TemporalActive = false, VelocityActive = false;
         void                                            PrepareTemporal();
         void                                            ApplyTemporalUniforms(EngineFrameUniforms& frame) const;

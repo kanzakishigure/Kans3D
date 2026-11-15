@@ -45,7 +45,7 @@ namespace Kans
                           std::is_same_v<T, TextComponent> || std::is_same_v<T, EditableMeshComponent> ||
                           std::is_same_v<T, SpriteRendererComponent> || std::is_same_v<T, DirLightComponent> ||
                           std::is_same_v<T, PointLightComponent> || std::is_same_v<T, SpotLightComponent> ||
-                          std::is_same_v<T, AreaLightComponent>)
+                          std::is_same_v<T, AreaLightComponent> || std::is_same_v<T, FogVolumeComponent>)
             {
                 auto&   component = GetComponent<T>();
                 const T before    = component;
@@ -118,6 +118,7 @@ namespace Kans
         static bool SameRenderValue(const PointLightComponent& a, const PointLightComponent& b) { return a == b; }
         static bool SameRenderValue(const DirLightComponent& a, const DirLightComponent& b) { return a == b; }
         static bool SameRenderValue(const SpotLightComponent& a, const SpotLightComponent& b) { return a == b; }
+        static bool SameRenderValue(const FogVolumeComponent& a, const FogVolumeComponent& b) { return a == b; }
         static bool SameRenderValue(const AreaLightComponent& a, const AreaLightComponent& b) { return a == b; }
         friend class Scene;
         friend struct SceneClipboardAccess;

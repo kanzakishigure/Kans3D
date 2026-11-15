@@ -73,10 +73,12 @@ namespace Kans
         bool      UseTemperature = false;
         float     Temperature    = 6500;               // Kelvin; replaces Color when enabled.
         float     DiffuseScale = 1, SpecularScale = 1; // Authored controls [0,1].
+        float     VolumetricScattering = 1;
         bool      operator==(const LightEmission& b) const
         {
             return Color == b.Color && Intensity == b.Intensity && UseTemperature == b.UseTemperature &&
-                   Temperature == b.Temperature && DiffuseScale == b.DiffuseScale && SpecularScale == b.SpecularScale;
+                   Temperature == b.Temperature && DiffuseScale == b.DiffuseScale && SpecularScale == b.SpecularScale &&
+                   VolumetricScattering == b.VolumetricScattering;
         }
         bool operator!=(const LightEmission& b) const { return !(*this == b); }
     };

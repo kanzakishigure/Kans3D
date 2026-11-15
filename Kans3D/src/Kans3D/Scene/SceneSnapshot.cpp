@@ -88,6 +88,7 @@ namespace Kans
         bool Same(const DirLightComponent& a, const DirLightComponent& b) { return a == b; }
         bool Same(const PointLightComponent& a, const PointLightComponent& b) { return a == b; }
         bool Same(const SpotLightComponent& a, const SpotLightComponent& b) { return a == b; }
+        bool Same(const FogVolumeComponent& a, const FogVolumeComponent& b) { return a == b; }
         bool Same(const AreaLightComponent& a, const AreaLightComponent& b) { return a == b; }
         bool Same(const AudioSourceComponent& a, const AudioSourceComponent& b) { return a == b; }
         bool Same(const AudioListenerComponent& a, const AudioListenerComponent& b) { return a == b; }
@@ -159,8 +160,8 @@ namespace Kans
                Same(a.PrefabParent, b.PrefabParent) && Same(a.Animator, b.Animator) && Same(a.IK, b.IK) &&
                Same(a.Timeline, b.Timeline) && Same(a.Active, b.Active) && Same(a.ShapeKeys, b.ShapeKeys) &&
                Same(a.MaterialDrivers, b.MaterialDrivers) && Same(a.DirLight, b.DirLight) &&
-               Same(a.AreaLight, b.AreaLight) && Same(a.SpotLight, b.SpotLight) && Same(a.PointLight, b.PointLight) &&
-               Same(a.Script, b.Script) && Same(a.AudioSource, b.AudioSource) &&
+               Same(a.AreaLight, b.AreaLight) && Same(a.FogVolume, b.FogVolume) && Same(a.SpotLight, b.SpotLight) &&
+               Same(a.PointLight, b.PointLight) && Same(a.Script, b.Script) && Same(a.AudioSource, b.AudioSource) &&
                Same(a.AudioListener, b.AudioListener) && Same(a.RigidBody, b.RigidBody) &&
                Same(a.BoxCollider, b.BoxCollider) && Same(a.SphereCollider, b.SphereCollider) &&
                Same(a.CapsuleCollider, b.CapsuleCollider) && Same(a.MeshCollider, b.MeshCollider) &&
@@ -244,6 +245,7 @@ namespace Kans
             Kans::Capture(entity, item.PointLight);
             Kans::Capture(entity, item.SpotLight);
             Kans::Capture(entity, item.AreaLight);
+            Kans::Capture(entity, item.FogVolume);
             Kans::Capture(entity, item.Script);
             Kans::Capture(entity, item.RigidBody);
             Kans::Capture(entity, item.BoxCollider);
@@ -326,6 +328,7 @@ namespace Kans
             Kans::Restore(entity, item.PointLight);
             Kans::Restore(entity, item.SpotLight);
             Kans::Restore(entity, item.AreaLight);
+            Kans::Restore(entity, item.FogVolume);
             Kans::Restore(entity, item.Script);
             Kans::Restore(entity, item.RigidBody);
             Kans::Restore(entity, item.BoxCollider);

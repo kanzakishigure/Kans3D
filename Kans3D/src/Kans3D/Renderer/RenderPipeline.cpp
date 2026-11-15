@@ -312,7 +312,7 @@ namespace Kans
         PreparePostMaterials(renderer);
         const auto& view = renderer.View;
         using namespace RenderHardware;
-        const bool reconstruct = renderer.ReconstructsHDR();
+        const bool reconstruct = renderer.ReconstructsHDR() || renderer.View.Environment.Fog.Enabled;
         if (reconstruct)
             renderer.DeferToneMapping = true;
         if (renderer.Samples > 1)
@@ -476,6 +476,9 @@ namespace Kans
                     });
             }
         }
+        BuildFogPasses(graph, renderer);
+        AddFogBackground(graph, renderer);
+
         featureContext.Immediate = nullptr;
         // Immediates retain their original cleared-depth behavior. Test camera
         // geometry against their depth before the opaque lighting pass.
@@ -521,6 +524,8 @@ namespace Kans
         if (view.EffectiveAA == AntiAliasing::TAA)
         {
             auto       materialUses = target;
+            if (renderer.Fog)
+                sampled(materialUses, renderer.Fog->Integrated, "Fog integrated scattering transmittance");
             const auto hdr          = graph.ImportTexture("SceneHDR", renderer.Output.GetHDR());
             materialUses.push_back({hdr, GraphAccess::ColorReadWrite});
             materialUses.push_back({renderer.TemporalMasks, GraphAccess::ColorReadWrite});
@@ -591,6 +596,8 @@ namespace Kans
         else if (!view.MaterialOrder.empty())
         {
             auto uses = target;
+            if (renderer.Fog)
+                sampled(uses, renderer.Fog->Integrated, "Fog integrated scattering transmittance");
             if (auto normal = renderer.Output.GetNormalRoughness())
                 uses.push_back({graph.ImportTexture("SceneNormalRoughness", normal), GraphAccess::ColorReadWrite});
             for (const auto& image : renderer.Services.GetUIRenderer().Textures())
@@ -1009,6 +1016,8 @@ namespace Kans
                     "MSAA views require sprite submissions, not pre-recorded single-sample batches");
             }
         }
+        BuildFogPasses(graph, frame);
+        AddFogBackground(graph, frame);
         features.Immediate = nullptr;
         Inject(RenderExtensionPoint::BeforeOpaque, features);
         if (!view.MaterialOrder.empty())
@@ -1021,6 +1030,8 @@ namespace Kans
                 if (std::none_of(uses.begin(), uses.end(), [&](auto u) { return u.Texture == id; }))
                     uses.push_back({id, GraphAccess::SampledRead});
             };
+            if (frame.Fog)
+                sampled(frame.Fog->Integrated);
             for (const auto& image : frame.Services.GetUIRenderer().Textures())
                 sampled(image);
             for (const auto& image : frame.Services.GetTextRenderer().Textures())

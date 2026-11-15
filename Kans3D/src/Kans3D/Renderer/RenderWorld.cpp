@@ -696,6 +696,21 @@ namespace Kans
             output.Scene.PostProcess = m_Scene->GetPostProcessSettings();
         output.HiddenHierarchy = hidden;
         CollectLights(output.Scene, hidden);
+        if (m_Scene)
+        {
+            std::vector<ViewFogVolume> volumes;
+            for (auto handle : m_Scene->m_Registry.view<FogVolumeComponent, TransformComponent, IDComponent>())
+            {
+                Entity entity {handle, m_Scene};
+                if (m_Scene->IsEntityActive(entity) && !hidden.count(entity.GetUUID()))
+                    volumes.push_back({entity.GetUUID(),
+                                       m_Scene->GetWorldTransform(entity),
+                                       entity.GetComponent<FogVolumeComponent>()});
+            }
+            output.FogVolumes = SelectFogVolumes(std::move(volumes), output.Scene.sceneCamera.Position);
+        }
+        else
+            output.FogVolumes = SelectFogVolumes(std::move(output.FogVolumes), output.Scene.sceneCamera.Position);
         output.Texts = CollectTexts(hidden);
         output.Draws.clear();
         output.Meshes.clear();

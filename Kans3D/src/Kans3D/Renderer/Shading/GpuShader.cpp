@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "Kans3D/Renderer/Shading/GpuShader.h"
 #include "Kans3D/RHI/Backend.h"
+#include "Kans3D/Renderer/Lighting/Fog.h"
 #include "Kans3D/Renderer/Particles/ParticleSprite.h"
 #include "Kans3D/Renderer/Shading/DepthNormals.h"
 #include "Kans3D/Renderer/Shading/Skinning.h"
@@ -296,6 +297,51 @@ namespace Kans
         program = m_Device->CreateShader(source);
         return program;
     }
+    RenderHardware::Handle<RenderHardware::Shader>
+    GpuShader::PrepareFog(uint64_t                                       key,
+                          uint32_t                                       location,
+                          const MaterialRenderState&                     render,
+                          RenderHardware::Handle<RenderHardware::Shader> vertexSource,
+                          bool                                           skinned,
+                          bool                                           smoothFallback,
+                          bool                                           invalidateNormals,
+                          bool                                           temporal,
+                          const GpuShaderPass*                           extraPass) const
+    {
+        auto& program = m_FogPrograms[key];
+        if (program)
+            return program;
+        auto source = *m_Source;
+        source.Passes.clear();
+        if (extraPass)
+            source.Code = m_Source->Passes.at(size_t(extraPass - Passes.data())).Code;
+        auto checked = [](std::variant<ShaderData, AssetError> result) {
+            if (auto e = std::get_if<AssetError>(&result))
+                throw std::runtime_error(e->Message);
+            return std::get<ShaderData>(std::move(result));
+        };
+        if (vertexSource)
+            source =
+                checked(MakeParticleSpriteShader(source, vertexSource == MeshProgram, vertexSource == RibbonProgram));
+        else if (skinned)
+            source = checked(MakeSkinnedShader(source, smoothFallback));
+        if (temporal)
+            source = checked(MakeTemporalMaskShader(source.Code, location, render));
+        if (invalidateNormals && !extraPass)
+            source = checked(MakePrepassInvalidationShader(source.Code, location - (temporal ? 1 : 0)));
+        auto fogAlpha = render.AlphaMode;
+        if (extraPass && extraPass->State.Blend)
+        {
+            if (extraPass->State.DestinationColor == ShaderBlendFactor::One)
+                fogAlpha = MaterialAlphaMode::Additive;
+            else if (extraPass->State.SourceColor == ShaderBlendFactor::One)
+                fogAlpha = MaterialAlphaMode::Premultiplied;
+        }
+        source = checked(
+            MakeFogShader(source.Code, uint32_t(fogAlpha) | (OutputSpace == ShaderOutputSpace::Display ? 256u : 0u)));
+        program = m_Device->CreateShader(source);
+        return program;
+    }
     GpuShader::~GpuShader()                               = default;
     GpuShader::GpuShader(GpuShader&&) noexcept            = default;
     GpuShader& GpuShader::operator=(GpuShader&&) noexcept = default;
@@ -334,6 +380,7 @@ namespace Kans
         copy.m_SamplerFallbacks           = m_SamplerFallbacks;
         copy.m_PrepassInvalidationPrograms  = m_PrepassInvalidationPrograms;
         copy.m_TemporalMaskPrograms         = m_TemporalMaskPrograms;
+        copy.m_FogPrograms                  = m_FogPrograms;
         return copy;
     }
 } // namespace Kans

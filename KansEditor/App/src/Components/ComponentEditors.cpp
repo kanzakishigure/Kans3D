@@ -218,6 +218,12 @@ namespace Kans
         area.CreateOrder = 5;
         area.Create      = area.Add;
 
+        auto& fog       = registry.Register<FogVolumeComponent>("Fog Volume", ICON_FA_GLOBE, "Lighting");
+        fog.Draw        = DrawFogVolume;
+        fog.CreateName  = "Fog Volume";
+        fog.CreateOrder = 6;
+        fog.Create      = fog.Add;
+
         // Physics: bodies, colliders, characters, joints and fields.
         auto& body    = registry.Register<RigidBodyComponent>("Rigid Body", ICON_FA_WEIGHT_HANGING, "Physics");
         body.IconRank = 10;

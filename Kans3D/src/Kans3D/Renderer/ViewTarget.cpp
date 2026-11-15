@@ -3,6 +3,7 @@
 #include "Kans3D/Core/Debug/FatalError.h"
 #include "Features/BloomFeature.h"
 #include "Graph/GraphCapture.h"
+#include "Lighting/Fog.h"
 #include "Passes/Fsr3Upscaler.h"
 #include "Temporal.h"
 namespace Kans
@@ -12,6 +13,8 @@ namespace Kans
         try
         {
             InvalidateTemporalHistory();
+            if (m_Fog)
+                m_Fog->Valid = false;
             m_NormalRoughnessValid = m_VelocityValid = false;
             m_Jitter                                 = {};
             m_Profiler.AbortFrame(m_FrameNumber);
@@ -57,6 +60,8 @@ namespace Kans
             m_RenderTarget.reset();
             ReleaseFsr3Upscaler();
             InvalidateTemporalHistory();
+            if (m_Fog)
+                m_Fog->Valid = false;
             m_Pool = {};
         }
         m_RenderRatio = ratio;
