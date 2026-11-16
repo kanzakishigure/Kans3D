@@ -100,11 +100,12 @@ namespace Kans
             return changed;
         }
     } // namespace
-    bool DrawPostProcessSettings(PostProcessSettings&                 settings,
-                                 const std::function<bool(AssetID&)>& dirtPicker,
-                                 const AssetRowPicker&                materialPicker,
-                                 bool                                 temporal,
-                                 const AssetRowPicker&                lutPicker)
+    bool DrawPostProcessSettings(PostProcessSettings&                  settings,
+                                 const std::function<bool(AssetID&)>&  dirtPicker,
+                                 const AssetRowPicker&                 materialPicker,
+                                 bool                                  temporal,
+                                 const AssetRowPicker&                 lutPicker,
+                                 const std::function<bool(uint64_t&)>& focusPicker)
     {
         static const PostProcessSettings defaults;
         bool changed = false;
@@ -169,6 +170,55 @@ namespace Kans
             // Blackman-Harris reconstruction radius (Blender Film > Filter Size); 0 keeps the sharp resolve.
             changed |= PropertyGrid::Float("Pixel filter", settings.FilterSize, 0.05f, 0.0f, 4.0f, "%.2f px",
                                            &defaults.FilterSize);
+            PropertyGrid::EndGroup();
+        }
+        if (PropertyGrid::BeginGroup("Depth of Field"))
+        {
+            auto&       d       = settings.DepthOfField;
+            const auto& def     = defaults.DepthOfField;
+            const char* modes[] = {"Off", "Physical", "Manual"};
+            int         mode    = int(d.Mode);
+            if (PropertyGrid::Combo("Mode", modes, 3, mode))
+            {
+                d.Mode  = DepthOfFieldMode(mode);
+                changed = true;
+            }
+            if (d.Mode != DepthOfFieldMode::Off)
+            {
+                if (d.Mode == DepthOfFieldMode::Physical)
+                {
+                    changed |= PropertyGrid::Float(
+                        "Focus distance", d.FocusDistance, .01f, .001f, 1e6f, "%.3f m", &def.FocusDistance);
+                    if (focusPicker)
+                        changed |= focusPicker(d.FocusTarget);
+                    auto&       lens = settings.Exposure.Camera;
+                    const auto& l    = defaults.Exposure.Camera;
+                    changed |= PropertyGrid::Float(
+                        "Focal length", lens.FocalLengthMm, .1f, 1, 1000, "%.1f mm", &l.FocalLengthMm);
+                    changed |= PropertyGrid::Float(
+                        "Sensor height", lens.SensorHeightMm, .1f, 1, 100, "%.1f mm", &l.SensorHeightMm);
+                    changed |= PropertyGrid::Float("Aperture", lens.Aperture, .1f, .1f, 128, "f/%.2f", &l.Aperture);
+                }
+                else
+                {
+                    changed |= PropertyGrid::Float("Near focus", d.NearFocus, .01f, 0, 1e6f, "%.3f m", &def.NearFocus);
+                    changed |= PropertyGrid::Float("Far focus", d.FarFocus, .01f, 0, 1e6f, "%.3f m", &def.FarFocus);
+                    changed |=
+                        PropertyGrid::Float("Near blend", d.NearBlend, .01f, .001f, 1e6f, "%.3f m", &def.NearBlend);
+                    changed |= PropertyGrid::Float("Far blend", d.FarBlend, .01f, .001f, 1e6f, "%.3f m", &def.FarBlend);
+                }
+                changed |= PropertyGrid::Float(
+                    "Maximum CoC", d.MaxCoCPercent, .05f, 0, 10, "%.2f %% height", &def.MaxCoCPercent);
+                changed |=
+                    PropertyGrid::Float("Bokeh highlights", d.BokehStrength, .01f, 0, 4, "%.2f", &def.BokehStrength);
+                const char* counts[] = {"32", "64"};
+                int         count    = d.Samples == 64 ? 1 : 0;
+                if (PropertyGrid::Combo("Samples", counts, 2, count))
+                {
+                    d.Samples = count ? 64 : 32;
+                    changed   = true;
+                }
+            }
             PropertyGrid::EndGroup();
         }
         if (PropertyGrid::BeginGroup("Color Grading"))

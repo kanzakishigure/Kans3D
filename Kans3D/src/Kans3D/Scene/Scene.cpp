@@ -814,6 +814,17 @@ namespace Kans
                         for (auto* id : {&change.Joint->BodyA, &change.Joint->BodyB})
                             if (auto found = remap.find(*id); found != remap.end())
                                 *id = found->second;
+        for (const auto& [source, target] : remap)
+            if (auto copied = GetEntityByUUID(target); copied.HasComponent<CameraComponent>())
+            {
+                auto& camera = copied.GetComponent<CameraComponent>().SceneCamera;
+                if (auto post = camera.GetPostProcessOverride())
+                    if (auto found = remap.find(UUID(post->DepthOfField.FocusTarget)); found != remap.end())
+                    {
+                        post->DepthOfField.FocusTarget = found->second;
+                        camera.SetPostProcessOverride(post);
+                    }
+            }
         const auto springRemap = [&](uint64_t id) {
             const auto found = remap.find(UUID(id));
             return found == remap.end() ? id : uint64_t(found->second);

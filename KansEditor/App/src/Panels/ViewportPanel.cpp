@@ -626,6 +626,32 @@ namespace Kans
                     const glm::vec4 point = inverse * glm::vec4((i & 1) ? 1 : -1, (i & 2) ? 1 : -1, (i & 4) ? 1 : -1, 1);
                     corners[i]            = glm::vec3(point) / point.w;
                 }
+                if (chosen)
+                {
+                    const auto  post  = camera.ResolvePostProcess(m_Scene->GetPostProcessSettings());
+                    const auto& d     = post.DepthOfField;
+                    auto        plane = [&](float distance) {
+                        const float h =
+                            camera.GetProjectionType() == SceneCamera::ProjectionType::Perspective ?
+                                std::tan(glm::radians(camera.GetPerspectiveVerticalFOV()) * .5f) * distance :
+                                camera.GetOrthographicSize() * .5f;
+                        glm::vec3 points[4];
+                        for (int i = 0; i < 4; ++i)
+                            points[i] = glm::vec3(
+                                world * glm::vec4((i & 1) ? h * aspect : -h * aspect, (i & 2) ? h : -h, -distance, 1));
+                        segment(points[0], points[1], accent);
+                        segment(points[1], points[3], accent);
+                        segment(points[3], points[2], accent);
+                        segment(points[2], points[0], accent);
+                    };
+                    if (d.Mode == DepthOfFieldMode::Physical)
+                        plane(d.ResolveFocusDistance(*m_Scene, glm::inverse(world)));
+                    if (d.Mode == DepthOfFieldMode::Manual)
+                    {
+                        plane(d.NearFocus);
+                        plane(d.FarFocus);
+                    }
+                }
                 const int edges[12][2] = {{0, 1}, {1, 3}, {3, 2}, {2, 0}, {4, 5}, {5, 7},
                                           {7, 6}, {6, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
                 for (const auto& edge : edges)

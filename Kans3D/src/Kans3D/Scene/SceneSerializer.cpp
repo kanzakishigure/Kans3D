@@ -1217,6 +1217,25 @@ namespace Kans
             node["Exposure"]["ManualEV100"]    = settings.Exposure.ManualEV100;
             node["Exposure"]["Compensation"]   = settings.Exposure.Compensation;
             node["Exposure"]["Aperture"]       = settings.Exposure.Camera.Aperture;
+            node["Exposure"]["FocalLengthMm"]  = settings.Exposure.Camera.FocalLengthMm;
+            node["Exposure"]["SensorHeightMm"] = settings.Exposure.Camera.SensorHeightMm;
+            if (!(settings.DepthOfField == DepthOfFieldSettings {}))
+            {
+                const auto& d      = settings.DepthOfField;
+                auto        n      = node["DepthOfField"];
+                n["Mode"]          = d.Mode == DepthOfFieldMode::Off      ? "Off" :
+                                     d.Mode == DepthOfFieldMode::Physical ? "Physical" :
+                                                                            "Manual";
+                n["FocusTarget"]   = d.FocusTarget;
+                n["FocusDistance"] = d.FocusDistance;
+                n["NearFocus"]     = d.NearFocus;
+                n["FarFocus"]      = d.FarFocus;
+                n["NearBlend"]     = d.NearBlend;
+                n["FarBlend"]      = d.FarBlend;
+                n["MaxCoCPercent"] = d.MaxCoCPercent;
+                n["BokehStrength"] = d.BokehStrength;
+                n["Samples"]       = d.Samples;
+            }
             node["Exposure"]["ShutterSeconds"] = settings.Exposure.Camera.ShutterSeconds;
             node["Exposure"]["ISO"]            = settings.Exposure.Camera.ISO;
             if (settings.Exposure.Mode == ExposureMode::Automatic ||
@@ -1274,8 +1293,60 @@ namespace Kans
         }
         PostProcessSettings DecodePostProcess(const YAML::Node& node)
         {
-            Keys(node, {"Exposure", "Bloom", "Tonemapping", "FilterSize", "Materials", "Temporal", "ColorGrading"});
+            Keys(node,
+                 {"Exposure",
+                  "Bloom",
+                  "Tonemapping",
+                  "FilterSize",
+                  "Materials",
+                  "Temporal",
+                  "ColorGrading",
+                  "DepthOfField"});
             PostProcessSettings settings;
+            if (auto n = node["DepthOfField"])
+            {
+                Keys(n,
+                     {"Mode",
+                      "FocusTarget",
+                      "FocusDistance",
+                      "NearFocus",
+                      "FarFocus",
+                      "NearBlend",
+                      "FarBlend",
+                      "MaxCoCPercent",
+                      "BokehStrength",
+                      "Samples"});
+                auto& d = settings.DepthOfField;
+                if (n["Mode"])
+                {
+                    auto mode = n["Mode"].as<std::string>();
+                    Require(mode == "Off" || mode == "Physical" || mode == "Manual", "Invalid DoF mode");
+                    d.Mode = mode == "Off"      ? DepthOfFieldMode::Off :
+                             mode == "Physical" ? DepthOfFieldMode::Physical :
+                                                  DepthOfFieldMode::Manual;
+                }
+                if (n["FocusTarget"])
+                    d.FocusTarget = n["FocusTarget"].as<uint64_t>();
+                if (n["Samples"])
+                {
+                    d.Samples = n["Samples"].as<uint32_t>();
+                    Require(d.Samples == 32 || d.Samples == 64, "Invalid DoF samples");
+                }
+                if (n["FocusDistance"])
+                    d.FocusDistance = Number(n["FocusDistance"]);
+                if (n["NearFocus"])
+                    d.NearFocus = Number(n["NearFocus"]);
+                if (n["FarFocus"])
+                    d.FarFocus = Number(n["FarFocus"]);
+                if (n["NearBlend"])
+                    d.NearBlend = Number(n["NearBlend"]);
+                if (n["FarBlend"])
+                    d.FarBlend = Number(n["FarBlend"]);
+                if (n["MaxCoCPercent"])
+                    d.MaxCoCPercent = Number(n["MaxCoCPercent"]);
+                if (n["BokehStrength"])
+                    d.BokehStrength = Number(n["BokehStrength"]);
+            }
             if (node["Materials"])
             {
                 const auto entries = node["Materials"];
@@ -1337,7 +1408,15 @@ namespace Kans
                 else
                 {
                     Keys(exposure,
-                         {"Mode", "ManualEV100", "Compensation", "Aperture", "ShutterSeconds", "ISO", "Automatic"});
+                         {"Mode",
+                          "ManualEV100",
+                          "Compensation",
+                          "Aperture",
+                          "ShutterSeconds",
+                          "ISO",
+                          "Automatic",
+                          "FocalLengthMm",
+                          "SensorHeightMm"});
                     if (exposure["Mode"])
                     {
                         const auto mode = Text(exposure["Mode"]);
@@ -1382,6 +1461,10 @@ namespace Kans
                         settings.Exposure.ManualEV100 = Number(exposure["ManualEV100"]);
                     if (exposure["Compensation"])
                         settings.Exposure.Compensation = Number(exposure["Compensation"]);
+                    if (exposure["FocalLengthMm"])
+                        settings.Exposure.Camera.FocalLengthMm = Number(exposure["FocalLengthMm"]);
+                    if (exposure["SensorHeightMm"])
+                        settings.Exposure.Camera.SensorHeightMm = Number(exposure["SensorHeightMm"]);
                     if (exposure["Aperture"])
                         settings.Exposure.Camera.Aperture = Number(exposure["Aperture"]);
                     if (exposure["ShutterSeconds"])

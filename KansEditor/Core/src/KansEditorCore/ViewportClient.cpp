@@ -1,8 +1,9 @@
 #include "KansEditorCore/ViewportClient.h"
 #include "Kans3D/Renderer/Features/BloomFeature.h"
-#include "KansEditorCore/Renderer/EditorRenderFeatures.h"
+#include "Kans3D/Renderer/Features/DepthOfFieldFeature.h"
 #include "Kans3D/Renderer/Features/MaterialPassFeature.h"
 #include "Kans3D/Renderer/RenderWorld.h"
+#include "KansEditorCore/Renderer/EditorRenderFeatures.h"
 
 namespace Kans
 {
@@ -21,6 +22,7 @@ namespace Kans
                             std::make_unique<MaterialPassFeature>("Outline", RenderExtensionPoint::AfterTransparent));
         RegisterDefaultEditorFeatures(m_Features);
         // Post-processing reads the camera's settings (the editor or the scene camera).
+        m_Features.Register("Depth of Field", std::make_unique<DepthOfFieldFeature>());
         m_Features.Register("Bloom", std::make_unique<BloomFeature>());
     }
 

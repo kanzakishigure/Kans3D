@@ -3,6 +3,7 @@
 #include "Kans3D/Core/Debug/FatalError.h"
 #include "Kans3D/Renderer/Passes/AutoExposurePass.h"
 #include "Features/BloomFeature.h"
+#include "Features/DepthOfFieldFeature.h"
 #include "Graph/GraphCapture.h"
 #include "Lighting/Fog.h"
 #include "Passes/Fsr3Upscaler.h"
@@ -39,6 +40,7 @@ namespace Kans
     ViewTarget::ViewTarget(std::shared_ptr<RenderHardware::Device> device, uint32_t outputs, bool sampledDepth) :
         m_Device(std::move(device)), m_OutputCount(outputs), m_SampledDepth(sampledDepth)
     {
+        m_DefaultFeatures.Register("Depth of Field", std::make_unique<DepthOfFieldFeature>());
         m_DefaultFeatures.Register("Bloom", std::make_unique<BloomFeature>());
         if (!m_Device || !outputs)
             throw std::invalid_argument("ViewTarget needs a device and at least one output");

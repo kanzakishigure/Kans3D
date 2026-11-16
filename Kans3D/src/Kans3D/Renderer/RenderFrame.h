@@ -48,7 +48,8 @@ namespace Kans
         void                                            BuildDebugBuffer(RenderGraph& graph);
         bool                                            ReconstructsHDR() const
         {
-            return View.GetPostProcessSettings().Exposure.Mode == ExposureMode::Automatic ||
+            return View.GetPostProcessSettings().DepthOfField.Active() ||
+                   View.GetPostProcessSettings().Exposure.Mode == ExposureMode::Automatic ||
                    View.GetPostProcessSettings().ColorGrading.Active() ||
                    View.GetPostProcessSettings().FilterSize >= 1 || View.EffectiveAA == AntiAliasing::TAA ||
                    View.GetPostProcessSettings().ToneMapping == ToneMappingMode::AgX ||

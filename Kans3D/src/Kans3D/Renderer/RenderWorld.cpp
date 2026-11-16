@@ -694,6 +694,10 @@ namespace Kans
     {
         if (m_Scene)
             output.Scene.PostProcess = m_Scene->GetPostProcessSettings();
+        output.ResolvedFocusDistance.reset();
+        if (m_Scene)
+            output.ResolvedFocusDistance = output.GetPostProcessSettings().DepthOfField.ResolveFocusDistance(
+                *m_Scene, output.Scene.sceneCamera.viewMatrix);
         output.HiddenHierarchy = hidden;
         CollectLights(output.Scene, hidden);
         if (m_Scene)

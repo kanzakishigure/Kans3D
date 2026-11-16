@@ -253,10 +253,13 @@ namespace Kans
         PostProcessSettings GetPostProcessSettings() const
         {
             auto settings = Scene.sceneCamera.camera.ResolvePostProcess(Scene.PostProcess);
+            if (ResolvedFocusDistance)
+                settings.DepthOfField.FocusDistance = *ResolvedFocusDistance;
             if (Exposure)
                 settings.Exposure = *Exposure;
             return settings.Validated();
         }
+        std::optional<float>               ResolvedFocusDistance;
         SceneInfo                          Scene {};
         GraphCaptureSettings               Debug;
         CullingStatistics                  Culling;

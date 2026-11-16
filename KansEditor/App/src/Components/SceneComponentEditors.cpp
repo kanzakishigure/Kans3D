@@ -114,7 +114,8 @@ namespace Kans::ComponentEditors
                             false,
                             [&](const char* label, AssetID& id) {
                                 return ui.AssetPicker(label, AssetType::Texture, id);
-                            }))
+                            },
+                            [&](uint64_t& id) { return EntityField("Focus target", id, ui.GetScene()); }))
                         camera.SetPostProcessOverride(settings);
                 }
                 PropertyGrid::EndGroup();

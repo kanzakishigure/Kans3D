@@ -25,7 +25,7 @@ namespace Kans
     {
         view.BloomMipCount     = 0;
         const auto b           = view.GetPostProcessSettings().Bloom;
-        frame.DeferToneMapping = b.Enabled && b.Intensity > 0;
+        frame.DeferToneMapping |= b.Enabled && b.Intensity > 0;
     }
     void BloomFeature::AddPasses(RenderExtensionPoint, const RenderFeatureContext& context)
     {

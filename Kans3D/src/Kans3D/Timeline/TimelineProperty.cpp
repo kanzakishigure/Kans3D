@@ -332,6 +332,20 @@ namespace Kans
                     value = {static_cast<const Camera&>(c).GetExposure(), 0, 0, 0};
                 return true;
             }
+            if (field == "Camera.DepthOfField.FocusDistance" || field == "Camera.Aperture")
+            {
+                auto  post = c.ResolvePostProcess(scene.GetPostProcessSettings());
+                auto& target =
+                    field == "Camera.Aperture" ? post.Exposure.Camera.Aperture : post.DepthOfField.FocusDistance;
+                if (write)
+                {
+                    target = value.x;
+                    c.SetPostProcessOverride(post);
+                }
+                else
+                    value = {target, 0, 0, 0};
+                return true;
+            }
             if (field.rfind("Camera.ColorGrading.", 0) == 0)
             {
                 auto settings =

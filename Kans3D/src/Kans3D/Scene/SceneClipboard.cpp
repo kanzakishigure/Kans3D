@@ -305,6 +305,10 @@ namespace Kans::SceneClipboard
                     if (!attachment["Instance"].as<uint64_t>())
                         node.remove("PrefabParent");
                 }
+                if (auto camera = node["CameraComponent"])
+                    if (auto post = camera["PostProcessOverride"])
+                        if (auto dof = post["DepthOfField"])
+                            reference(dof["FocusTarget"]);
                 auto jointReferences = [&](YAML::Node joint) {
                     if (joint)
                     {
@@ -380,6 +384,8 @@ namespace Kans::SceneClipboard
             document["Version"]  = 1;
             document["Scene"]    = root["Scene"];
             document["Entities"] = nodes;
+            // A clipboard is a forest, not a legacy scene: retain camera overrides on its components.
+            document["PostProcess"] = YAML::Node(YAML::NodeType::Map);
             auto decoded         = SceneSerializer::DeserializeNodeChecked(document, true);
             if (auto error = std::get_if<AssetError>(&decoded))
                 return *error;

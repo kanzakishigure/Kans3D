@@ -20,11 +20,12 @@ namespace Kans
     // `materialPicker` adds the ordered post-process material list (omitted without it).
     // `temporal` adds the TAA sharpness and reactive settings; a camera card leaves them out because its
     // Anti-aliasing group edits the same values.
-    bool DrawPostProcessSettings(PostProcessSettings&                 settings,
-                                 const std::function<bool(AssetID&)>& dirtPicker     = {},
-                                 const AssetRowPicker&                materialPicker = {},
-                                 bool                                 temporal       = true,
-                                 const AssetRowPicker&                lutPicker      = {});
+    bool DrawPostProcessSettings(PostProcessSettings&                  settings,
+                                 const std::function<bool(AssetID&)>&  dirtPicker     = {},
+                                 const AssetRowPicker&                 materialPicker = {},
+                                 bool                                  temporal       = true,
+                                 const AssetRowPicker&                 lutPicker      = {},
+                                 const std::function<bool(uint64_t&)>& focusPicker    = {});
 
     // ---- Anti-aliasing (one group wherever a camera's mode is edited) ----
 

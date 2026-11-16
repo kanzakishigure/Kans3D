@@ -263,7 +263,8 @@ namespace Kans
                     [&](AssetID& dirt) { return AssetPicker("Lens dirt", AssetType::Texture, dirt); },
                     [&](const char* label, AssetID& id) { return AssetPicker(label, AssetType::Material, id); },
                     true,
-                    [&](const char* label, AssetID& id) { return AssetPicker(label, AssetType::Texture, id); }))
+                    [&](const char* label, AssetID& id) { return AssetPicker(label, AssetType::Texture, id); },
+                    [&](uint64_t& id) { return ComponentEditors::EntityField("Focus target", id, &scene); }))
                 scene.SetPostProcessSettings(settings);
         }
         PropertyGrid::EndCard();

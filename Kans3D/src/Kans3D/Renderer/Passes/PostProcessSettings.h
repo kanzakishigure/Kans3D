@@ -6,6 +6,7 @@
 #include "Kans3D/Renderer/Passes/AutoExposureSettings.h"
 #include "Kans3D/Renderer/Passes/BloomSettings.h"
 #include "Kans3D/Renderer/Passes/ColorGradingSettings.h"
+#include "DepthOfFieldSettings.h"
 namespace Kans
 {
     enum class ToneMappingMode : uint32_t
@@ -26,11 +27,13 @@ namespace Kans
     struct PhysicalCameraSettings
     {
         float Aperture = 16.f, ShutterSeconds = 1.f / 125.f, ISO = 100.f;
+        float FocalLengthMm = 50, SensorHeightMm = 24;
         // Lagarde/de Rousiers, Moving Frostbite to PBR (2014), section 5.1.
         float EV100() const { return std::log2(Aperture * Aperture / ShutterSeconds * 100.f / ISO); }
         bool  operator==(const PhysicalCameraSettings& o) const
         {
-            return Aperture == o.Aperture && ShutterSeconds == o.ShutterSeconds && ISO == o.ISO;
+            return Aperture == o.Aperture && ShutterSeconds == o.ShutterSeconds && ISO == o.ISO &&
+                   FocalLengthMm == o.FocalLengthMm && SensorHeightMm == o.SensorHeightMm;
         }
     };
     struct ExposureSettings
@@ -70,6 +73,8 @@ namespace Kans
                 r.Mode = ExposureMode::Manual;
             r.ManualEV100           = finite(r.ManualEV100, -24, 32, ExposureSettings {}.ManualEV100);
             r.Compensation          = finite(r.Compensation, -24, 24, 0);
+            r.Camera.FocalLengthMm  = finite(r.Camera.FocalLengthMm, 1, 1000, 50);
+            r.Camera.SensorHeightMm = finite(r.Camera.SensorHeightMm, 1, 100, 24);
             r.Camera.Aperture       = finite(r.Camera.Aperture, .1f, 128, 16);
             r.Camera.ShutterSeconds = finite(r.Camera.ShutterSeconds, .000001f, 3600, 1.f / 125);
             r.Camera.ISO            = finite(r.Camera.ISO, 1, 1000000, 100);
@@ -115,6 +120,7 @@ namespace Kans
     struct PostProcessSettings
     {
         ExposureSettings                 Exposure;
+        DepthOfFieldSettings             DepthOfField;
         ColorGradingSettings             ColorGrading;
         BloomSettings       Bloom;
         TemporalReconstructionSettings   Temporal;
@@ -125,6 +131,7 @@ namespace Kans
         {
             auto result     = *this;
             result.Exposure     = Exposure.Validated();
+            result.DepthOfField = DepthOfField.Validated();
             result.Bloom    = Bloom.Validated();
             result.ColorGrading = ColorGrading.Validated();
             result.Temporal = Temporal.Validated();
@@ -139,9 +146,9 @@ namespace Kans
         }
         bool operator==(const PostProcessSettings& other) const
         {
-            return ColorGrading == other.ColorGrading && Exposure == other.Exposure && Temporal == other.Temporal &&
-                   Bloom == other.Bloom && ToneMapping == other.ToneMapping && FilterSize == other.FilterSize &&
-                   Materials == other.Materials;
+            return DepthOfField == other.DepthOfField && ColorGrading == other.ColorGrading &&
+                   Exposure == other.Exposure && Temporal == other.Temporal && Bloom == other.Bloom &&
+                   ToneMapping == other.ToneMapping && FilterSize == other.FilterSize && Materials == other.Materials;
         }
         bool operator!=(const PostProcessSettings& other) const { return !(*this == other); }
     };
