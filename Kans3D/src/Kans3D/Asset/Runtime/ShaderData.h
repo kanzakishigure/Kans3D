@@ -207,6 +207,9 @@ namespace Kans
         // Runtime diagnostics only; excluded from the serialized product.
         std::string                               DebugName {};
         std::map<ShaderProductStage, std::string> DebugSources {};
+        // Appended to preserve positional initializers. Fragment compiled with KANS_RENDER_TEXTURE;
+        // the renderer supplies full-screen geometry.
+        ShaderProgramCode RenderTextureCode;
     };
     std::variant<std::vector<ShaderStageReflection>, AssetError> InspectShaderProgram(const ShaderProgramCode& code);
     class ShaderDataAsset                                        final : public Asset

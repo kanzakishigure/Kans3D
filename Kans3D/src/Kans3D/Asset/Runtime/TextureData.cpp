@@ -220,6 +220,8 @@ namespace Kans
 
     std::variant<std::monostate, AssetError> ValidateTextureData(const TextureData& texture)
     {
+        if (texture.RenderTexture)
+            return ValidateRenderTexture(*texture.RenderTexture);
         if (!ValidLayout(texture) || texture.Mips.empty() || texture.Mips.size() > FullLevels(texture))
             return AssetError {AssetErrorCode::InvalidData, "Invalid Texture metadata/mip count"};
         uint64_t total = 0;
@@ -247,6 +249,8 @@ namespace Kans
 
     std::variant<TextureData, AssetError> GenerateTextureMips(const TextureData& texture)
     {
+        if (texture.RenderTexture)
+            return AssetError {AssetErrorCode::InvalidArgument, "RenderTexture mipmaps are generated on the GPU"};
         auto validated = ValidateTextureData(texture);
         if (const auto* error = std::get_if<AssetError>(&validated))
             return *error;
@@ -294,6 +298,8 @@ namespace Kans
 
     std::variant<TextureData, AssetError> ResizeTexture(const TextureData& texture, uint32_t maxSize)
     {
+        if (texture.RenderTexture)
+            return AssetError {AssetErrorCode::InvalidArgument, "Resize the RenderTexture specification instead"};
         auto validated = ValidateTextureData(texture);
         if (auto* error = std::get_if<AssetError>(&validated))
             return *error;

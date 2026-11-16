@@ -1,8 +1,11 @@
 #pragma once
+#include <atomic>
+#include <optional>
 #include <variant>
 #include <vector>
 #include "Kans3D/Asset/Asset.h"
 #include "Kans3D/Asset/AssetError.h"
+#include "RenderTexture.h"
 
 namespace Kans
 {
@@ -77,6 +80,7 @@ namespace Kans
         std::vector<TextureMipData> Mips;
         TextureFilter               Filter = TextureFilter::Linear;
         TextureWrap                 Wrap   = TextureWrap::Repeat;
+        std::optional<RenderTextureSpecification> RenderTexture;
     };
 
     [[nodiscard]] std::variant<uint64_t, AssetError> TextureMipByteSize(const TextureData& texture, uint32_t level);
@@ -95,8 +99,11 @@ namespace Kans
         static AssetType   GetStaticType() { return AssetType::Texture; }
         AssetType          GetAssetType() const override { return GetStaticType(); }
         const TextureData& GetData() const { return m_Data; }
+        void               RequestUpdate() const { m_Requests.fetch_add(1, std::memory_order_relaxed); }
+        uint64_t           UpdateRequests() const { return m_Requests.load(std::memory_order_relaxed); }
 
     private:
         TextureData m_Data;
+        mutable std::atomic<uint64_t> m_Requests {0};
     };
 } // namespace Kans

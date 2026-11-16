@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <glm/gtc/packing.hpp>
 #include "Kans3D/Asset/Importer/TextureSource.h"
+#include "Kans3D/Core/Application.h"
 #include "Kans3D/RHI/PipelineKey.h"
 #include "Kans3D/Renderer/2D/SpriteBatch.h"
 #include "Kans3D/Renderer/2D/TextRenderer.h"
@@ -698,6 +699,17 @@ namespace Kans
             }
             result.Graph.SetExecutionDebug(&target.GetFrameProfiler(), statistics.Frame, capture.get());
             pipeline->Build(result.Graph, *rendering);
+            // Graphs are per view. Shared material textures render once before this graph's views sample them.
+            if (view.Assets)
+            {
+                const auto* application = Application::TryGet();
+                const auto  token       = view.RenderTextureFrame.value_or(
+                    application ? application->GetFrameNumber() : uint64_t(std::hash<float> {}(view.Time)));
+                // A material preview can have a static view clock. Runtime textures share the application's
+                // clock across previews and scene cameras; headless callers provide their own frame time.
+                const double textureTime = application ? application->GetTime() : view.Time;
+                result.Complete &= view.Assets->UpdateRenderTextures(*this, token, textureTime);
+            }
             statistics.GraphBuildMilliseconds = RenderClockMilliseconds() - buildStart;
             const auto compileStart           = RenderClockMilliseconds();
             result.Graph.Compile();

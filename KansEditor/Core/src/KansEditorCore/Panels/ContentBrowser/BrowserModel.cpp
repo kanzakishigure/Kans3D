@@ -53,6 +53,7 @@ namespace Kans::Browser
             {".timeline", AssetKind::Timeline},
             {".action", AssetKind::Action},
             {".expression", AssetKind::Expression},
+            {".rendertexture", AssetKind::Texture},
             {".physmat", AssetKind::PhysicsMaterial},
             {".cloth", AssetKind::Cloth},
             {".ragdoll", AssetKind::Ragdoll},

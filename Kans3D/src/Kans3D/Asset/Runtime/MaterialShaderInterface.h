@@ -138,6 +138,9 @@ namespace Kans
     // Detects a cached engine ABI mismatch without imposing a material domain on raw RHI programs.
     [[nodiscard]] std::optional<AssetError> CheckEngineShaderContract(const ShaderData& shader);
 
+    // A full-screen fragment may omit material resources, but cannot change their names or layouts.
+    std::variant<std::monostate, AssetError> ValidateRenderTextureVariant(const ShaderProgramCode& main,
+                                                                          const ShaderProgramCode& variant);
     // Checks a reflected program against the material contract.
     [[nodiscard]] std::variant<std::monostate, AssetError>
     ValidateMaterialShaderInterface(const std::vector<ShaderStageReflection>& reflection,

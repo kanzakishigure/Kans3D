@@ -8,8 +8,9 @@ namespace Kans
     namespace
     {
         // v2 defaults, v3 hints, v4 fallbacks, v5 groups, v6 passes, v7 output space.
-        // Surface products retain v7 layout; v8 appends post-process domain/stage. Readers retain v1-v7.
-        constexpr uint32_t Magic = 0x4448534b, Version = 8, TargetVulkan12 = 1;
+        // v8 appends post-process domain/stage; v9 appends a nonrecursive render-texture fragment variant.
+        // Products without either feature retain the v7 layout. Readers retain v1-v8.
+        constexpr uint32_t Magic = 0x4448534b, Version = 9, TargetVulkan12 = 1;
         constexpr size_t   MaximumDefaults = 4096, MaximumDefaultValues = 4096;
         constexpr size_t   MaximumBytes = 16 * 1024 * 1024;
         void               Write(std::vector<std::byte>& bytes, uint32_t word)
@@ -61,12 +62,16 @@ namespace Kans
                         const std::vector<ShaderPass>&             passes,
                         ShaderOutputSpace                          outputSpace,
                         ShaderDomain                               domain,
-                        PostProcessStage                           postStage)
+                        PostProcessStage                           postStage,
+                        const ShaderProgramCode&                   renderTexture)
     {
         if (uint32_t(domain) > 1 || uint32_t(postStage) > 1 || (domain == ShaderDomain::PostProcess && !passes.empty()))
             return AssetError {AssetErrorCode::InvalidArgument, "Invalid Shader domain/stage"};
         if (uint32_t(outputSpace) > 1)
             return AssetError {AssetErrorCode::InvalidArgument, "Invalid Shader output space"};
+        auto variant = ValidateRenderTextureVariant(code, renderTexture);
+        if (auto* error = std::get_if<AssetError>(&variant))
+            return *error;
         auto validPasses = ValidateMaterialShaderPasses(code, passes);
         if (auto* error = std::get_if<AssetError>(&validPasses))
             return *error;
@@ -92,7 +97,7 @@ namespace Kans
                 return AssetError {AssetErrorCode::InvalidArgument, "Invalid Shader parameter default '" + name + "'"};
         std::vector<std::byte> bytes;
         Write(bytes, Magic);
-        Write(bytes, domain == ShaderDomain::PostProcess ? Version : 7);
+        Write(bytes, !renderTexture.Modules.empty() ? Version : domain == ShaderDomain::PostProcess ? 8 : 7);
         Write(bytes, uint32_t(AssetType::Shader));
         Write(bytes, TargetVulkan12);
         Write(bytes, uint32_t(code.Modules.size()));
@@ -186,10 +191,19 @@ namespace Kans
             bytes.insert(bytes.end(), payload.begin(), payload.end());
         }
         Write(bytes, uint32_t(outputSpace));
-        if (domain == ShaderDomain::PostProcess)
+        if (domain == ShaderDomain::PostProcess || !renderTexture.Modules.empty())
         {
             Write(bytes, uint32_t(domain));
             Write(bytes, uint32_t(postStage));
+        }
+        if (!renderTexture.Modules.empty())
+        {
+            auto encoded = EncodeShaderProduct(renderTexture);
+            if (auto* error = std::get_if<AssetError>(&encoded))
+                return *error;
+            const auto& payload = std::get<std::vector<std::byte>>(encoded);
+            Write(bytes, uint32_t(payload.size()));
+            bytes.insert(bytes.end(), payload.begin(), payload.end());
         }
         if (bytes.size() > MaximumBytes)
             return AssetError {AssetErrorCode::InvalidArgument, "Shader Product exceeds byte budget"};
@@ -203,6 +217,7 @@ namespace Kans
         if (Read(cursor) != Magic)
             return AssetError {AssetErrorCode::InvalidData, "Invalid Shader Product magic"};
         const auto version = Read(cursor);
+        // Nested variants cannot recurse: their record must be the ordinary v7 layout.
         if (version < 1 || version > Version)
             return AssetError {AssetErrorCode::UnsupportedVersion, "Unsupported Shader Product version"};
         if (Read(cursor) != uint32_t(AssetType::Shader) || Read(cursor) != TargetVulkan12)
@@ -411,6 +426,24 @@ namespace Kans
             result.Domain    = ShaderDomain(domain);
             result.PostStage = PostProcessStage(stage);
         }
+        if (version >= 9)
+        {
+            const auto remaining = size - size_t(cursor - bytes);
+            if (remaining < 12)
+                return AssetError {AssetErrorCode::InvalidData, "Truncated RenderTexture shader"};
+            const auto  length = Read(cursor);
+            const auto* header = cursor + 4;
+            if (length != remaining - 4 || Read(header) != 7)
+                return AssetError {AssetErrorCode::InvalidData, "Invalid RenderTexture shader record"};
+            auto decoded = DecodeShaderProduct(cursor, length);
+            if (auto* error = std::get_if<AssetError>(&decoded))
+                return *error;
+            result.RenderTextureCode = std::get<ShaderData>(decoded).Code;
+            if (result.RenderTextureCode.Modules.size() != 1 ||
+                result.RenderTextureCode.Modules[0].Stage != ShaderProductStage::Fragment)
+                return AssetError {AssetErrorCode::InvalidData, "RenderTexture variant must be a fragment"};
+            cursor += length;
+        }
         if (size_t(cursor - bytes) != size)
             return AssetError {AssetErrorCode::InvalidData, "Trailing Shader Product bytes"};
         auto reflected = InspectShaderProgram(result.Code);
@@ -425,6 +458,9 @@ namespace Kans
         }
         auto validGroups  = ValidateMaterialParameterGroups(result.Groups, result.Reflection);
         if (auto* error = std::get_if<AssetError>(&validGroups))
+            return *error;
+        auto variant = ValidateRenderTextureVariant(result.Code, result.RenderTextureCode);
+        if (auto* error = std::get_if<AssetError>(&variant))
             return *error;
         auto validPasses = ValidateMaterialShaderPasses(result.Code, result.Passes);
         if (auto* error = std::get_if<AssetError>(&validPasses))

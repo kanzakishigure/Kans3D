@@ -564,6 +564,9 @@ namespace Kans
         {
             if (ImGui::MenuItem(Label(ICON_FA_FOLDER_PLUS, "Folder").c_str()))
                 NewFolder(m_Current);
+            if (ImGui::MenuItem(
+                    Label(ICON_FA_IMAGE, "Render Texture").c_str(), nullptr, false, bool(m_CreateRenderTexture)))
+                m_CreateRenderTexture(m_Current), Refresh();
             if (ImGui::MenuItem(Label(ICON_FA_PALETTE, "Material").c_str(), nullptr, false, bool(m_CreateMaterial)))
                 m_CreateMaterial(m_Current);
             if (ImGui::MenuItem(Label(ICON_FA_DESKTOP, "UI").c_str(), nullptr, false, bool(m_CreateUI)))
@@ -1730,6 +1733,8 @@ namespace Kans
             {
                 if (ImGui::MenuItem(Label(ICON_FA_FOLDER_PLUS, "Folder").c_str()))
                     NewFolder(folder);
+                if (ImGui::MenuItem(Label(ICON_FA_IMAGE, "Render Texture").c_str()) && m_CreateRenderTexture)
+                    m_CreateRenderTexture(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_PALETTE, "Material").c_str()) && m_CreateMaterial)
                 {
                     m_CreateMaterial(folder);

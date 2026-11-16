@@ -20,6 +20,8 @@ namespace Kans
     std::variant<Ref<Texture2D>, AssetError>
     Texture2D::CreateFromProduct(const TextureData& data, std::shared_ptr<RenderHardware::Device> device)
     {
+        if (data.RenderTexture)
+            return AssetError {AssetErrorCode::InvalidArgument, "RenderTexture requires RenderAssetCache"};
         auto valid = ValidateTextureData(data);
         if (auto* error = std::get_if<AssetError>(&valid))
             return *error;

@@ -42,6 +42,8 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Shader> DepthProgram;
         float                                          ConstantBias = 0, SlopeBias = 0;
     };
+    RenderHardware::Handle<RenderHardware::BindGroup>
+    CreateMaterialEngineGroup(RenderAssetCache&, const GpuShader&, const MaterialPassData&);
     // Shared immutable pipeline/engine group/material group binding for scene and previews.
     // Returns false when assigned textures are unavailable; fallback textures still draw.
     // recorded distinguishes a submitted draw from a missing material group.

@@ -1026,3 +1026,10 @@ vec4 KansFogAt(float deviceDepth) {
     return mix(vec4(0,0,0,1),fog,clamp(slice,0,1));
 }
 )")
+
+KANS_SHADER_TEXT(RenderTextureVertexPrefix, "RenderTexture/VertexPrefix", R"(#version 450
+)")
+KANS_SHADER_TEXT(RenderTextureVertexMain, "RenderTexture/VertexMain", R"(void main(){ vec2 uv=vec2((gl_VertexIndex<<1)&2, gl_VertexIndex&2);
+)")
+KANS_SHADER_TEXT(RenderTextureVertexEnd, "RenderTexture/VertexEnd", R"(gl_Position=vec4(uv*2.0-1.0,0,1); }
+)")

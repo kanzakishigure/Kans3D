@@ -811,7 +811,15 @@ namespace Kans::RenderHardware
                     if (layout || Writes(last.Mask))
                         last = {0, 0, next.Layout};
                     if (layout)
+                    {
                         visible = {};
+                        // Layout transitions write memory too. A later reader at another stage must
+                        // depend on this transition (e.g. render -> mip BLIT -> COPY readback), not
+                        // just on the original colour writer whose scope did not include that reader.
+                        writer.Stage |= next.Stage;
+                        writer.Mask |= VK_ACCESS_2_MEMORY_WRITE_BIT;
+                        writer.Layout = next.Layout;
+                    }
                     last.Stage |= next.Stage;
                     last.Mask |= next.Mask;
                     visible.Stage |= next.Stage;

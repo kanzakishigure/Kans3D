@@ -59,6 +59,8 @@ namespace Kans
 
         const ApplicationSpecification& GetSpecification() const { return m_Specification; }
 
+        static Application* TryGet() { return s_Instance; }
+        uint64_t            GetFrameNumber() const { return m_FrameNumber; }
         float    GetTime() const;
         TimeStep GetTimestep() const { return m_TimeStep; }
         TimeStep GetFrametime() const { return m_Frametime; }
@@ -97,6 +99,7 @@ namespace Kans
         TimeStep m_TimeStep;
         TimeStep m_Frametime;
 
+        uint64_t m_FrameNumber   = 0;
         float m_LastFrameTime = 0.0f;
     };
 

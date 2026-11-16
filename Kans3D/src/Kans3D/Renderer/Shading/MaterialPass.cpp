@@ -7,6 +7,72 @@
 
 namespace Kans
 {
+    RenderHardware::Handle<RenderHardware::BindGroup>
+    CreateMaterialEngineGroup(RenderAssetCache& cache, const GpuShader& shader, const MaterialPassData& data)
+    {
+        using namespace RenderHardware;
+        auto          device = cache.GetDevice();
+        BindGroupDesc engine;
+        engine.Layout = shader.EngineLayout;
+        for (const auto& binding : shader.EngineResources)
+        {
+            BindGroupEntry entry;
+            entry.Slot = binding.Binding;
+            if (binding.Binding == uint32_t(EngineBinding::Frame))
+            {
+                entry.BufferResource = data.Frame;
+                entry.Offset         = data.FrameOffset;
+                entry.Bytes          = sizeof(EngineFrameUniforms);
+            }
+            else if (binding.Binding == uint32_t(EngineBinding::Object))
+            {
+                entry.BufferResource = data.Object;
+                entry.Offset         = data.ObjectOffset;
+                entry.Bytes          = sizeof(EngineObjectUniforms);
+            }
+            else if (binding.Binding == uint32_t(EngineBinding::ScreenSpaceReflections))
+            {
+                entry.TextureResource = data.Reflections ? data.Reflections : cache.GetWhiteAO();
+                entry.SamplerResource = data.EnvironmentSampler;
+            }
+            else if (binding.Binding == uint32_t(EngineBinding::ContactDepth))
+            {
+                entry.TextureResource = data.ContactDepth ? data.ContactDepth : cache.GetWhiteAO();
+                entry.SamplerResource = data.EnvironmentSampler;
+            }
+            else if (binding.Binding == uint32_t(EngineBinding::AmbientOcclusion))
+            {
+                entry.TextureResource = data.AmbientOcclusion ? data.AmbientOcclusion : cache.GetWhiteAO();
+                entry.SamplerResource = data.EnvironmentSampler;
+            }
+            else if (binding.Binding >= uint32_t(EngineBinding::LtcMatrix))
+            {
+                auto area             = data.AreaLighting ? data.AreaLighting : cache.GetAreaLightFallback();
+                entry.TextureResource = binding.Binding == 18 ? area->Matrix :
+                                        binding.Binding == 19 ? area->Amplitude :
+                                                                area->Sources.at(binding.Binding - 20);
+                entry.SamplerResource = area->Sampler;
+            }
+            else if (binding.Binding >= uint32_t(EngineBinding::DirectionalShadow))
+            {
+                auto shadows          = data.Shadows ? data.Shadows : cache.GetShadowFallback();
+                entry.TextureResource = binding.Binding == 16 ? shadows->Cookies :
+                                        binding.Binding >= 15 ? shadows->Spots :
+                                        binding.Binding <= 6  ? shadows->Directional :
+                                                                shadows->Points.at(binding.Binding - 7);
+                entry.SamplerResource = binding.Binding == 16                         ? shadows->CookieSampler :
+                                        binding.Binding == 6 || binding.Binding == 17 ? shadows->Raw :
+                                                                                        shadows->Compare;
+            }
+            else
+            {
+                entry.TextureResource = data.Environment.at(binding.Binding - 2);
+                entry.SamplerResource = data.EnvironmentSampler;
+            }
+            engine.Entries.push_back(std::move(entry));
+        }
+        return device->CreateBindGroup(engine);
+    }
     bool RecordMaterialDraw(RenderAssetCache&            cache,
                             RenderHardware::CommandList& commands,
                             const GpuShader&             shader,
@@ -243,65 +309,7 @@ namespace Kans
             else
                 pipeline = device->CreatePipeline(desc);
         }
-        BindGroupDesc engine;
-        engine.Layout = shader.EngineLayout;
-        for (const auto& binding : shader.EngineResources)
-        {
-            BindGroupEntry entry;
-            entry.Slot = binding.Binding;
-            if (binding.Binding == uint32_t(EngineBinding::Frame))
-            {
-                entry.BufferResource = data.Frame;
-                entry.Offset         = data.FrameOffset;
-                entry.Bytes          = sizeof(EngineFrameUniforms);
-            }
-            else if (binding.Binding == uint32_t(EngineBinding::Object))
-            {
-                entry.BufferResource = data.Object;
-                entry.Offset         = data.ObjectOffset;
-                entry.Bytes          = sizeof(EngineObjectUniforms);
-            }
-            else if (binding.Binding == uint32_t(EngineBinding::ScreenSpaceReflections))
-            {
-                entry.TextureResource = data.Reflections ? data.Reflections : cache.GetWhiteAO();
-                entry.SamplerResource = data.EnvironmentSampler;
-            }
-            else if (binding.Binding == uint32_t(EngineBinding::ContactDepth))
-            {
-                entry.TextureResource = data.ContactDepth ? data.ContactDepth : cache.GetWhiteAO();
-                entry.SamplerResource = data.EnvironmentSampler;
-            }
-            else if (binding.Binding == uint32_t(EngineBinding::AmbientOcclusion))
-            {
-                entry.TextureResource = data.AmbientOcclusion ? data.AmbientOcclusion : cache.GetWhiteAO();
-                entry.SamplerResource = data.EnvironmentSampler;
-            }
-            else if (binding.Binding >= uint32_t(EngineBinding::LtcMatrix))
-            {
-                auto area             = data.AreaLighting ? data.AreaLighting : cache.GetAreaLightFallback();
-                entry.TextureResource = binding.Binding == 18 ? area->Matrix :
-                                        binding.Binding == 19 ? area->Amplitude :
-                                                                area->Sources.at(binding.Binding - 20);
-                entry.SamplerResource = area->Sampler;
-            }
-            else if (binding.Binding >= uint32_t(EngineBinding::DirectionalShadow))
-            {
-                auto shadows = data.Shadows ? data.Shadows : cache.GetShadowFallback();
-                entry.TextureResource = binding.Binding == 16 ? shadows->Cookies :
-                                        binding.Binding >= 15 ? shadows->Spots :
-                                        binding.Binding <= 6  ? shadows->Directional :
-                                                                shadows->Points.at(binding.Binding - 7);
-                entry.SamplerResource = binding.Binding == 16                         ? shadows->CookieSampler :
-                                        binding.Binding == 6 || binding.Binding == 17 ? shadows->Raw :
-                                                                                        shadows->Compare;
-            }
-            else
-            {
-                entry.TextureResource = data.Environment.at(binding.Binding - 2);
-                entry.SamplerResource = data.EnvironmentSampler;
-            }
-            engine.Entries.push_back(std::move(entry));
-        }
+        auto        engine   = CreateMaterialEngineGroup(cache, shader, data);
         bool        complete = true;
         const auto* instance =
             data.MaterialGroup ? &bindings : cache.GetInstanceMaterialBindings(bindings, data.Parameters);
@@ -310,7 +318,7 @@ namespace Kans
         if (!material)
             return false;
         commands.BindPipeline(pipeline);
-        commands.BindGroup(device->CreateBindGroup(engine));
+        commands.BindGroup(engine);
         commands.BindGroup(material);
         if (fog)
             commands.BindGroup(data.Fog->SampleGroup);

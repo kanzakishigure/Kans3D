@@ -27,6 +27,15 @@ namespace Kans
         auto valid = ValidateTextureData(texture);
         if (const auto* error = std::get_if<AssetError>(&valid))
             return *error;
+        if (texture.RenderTexture)
+        {
+            auto text = SerializeRenderTexture(*texture.RenderTexture);
+            if (auto* error = std::get_if<AssetError>(&text))
+                return *error;
+            const auto  source = std::string("KRTX") + std::get<std::string>(text);
+            const auto* begin  = reinterpret_cast<const std::byte*>(source.data());
+            return std::vector<std::byte>(begin, begin + source.size());
+        }
         uint64_t payload = 0;
         for (const auto& mip : texture.Mips)
             payload += mip.Pixels.size();
@@ -57,6 +66,20 @@ namespace Kans
 
     std::variant<TextureData, AssetError> DecodeTextureProduct(const std::byte* bytes, size_t size)
     {
+        if (bytes && size > 4 && size <= 1024 * 1024 && std::memcmp(bytes, "KRTX", 4) == 0)
+        {
+            auto parsed = ParseRenderTexture(std::string(reinterpret_cast<const char*>(bytes + 4), size - 4));
+            if (auto* error = std::get_if<AssetError>(&parsed))
+                return *error;
+            TextureData out;
+            out.RenderTexture = std::get<RenderTextureSpecification>(parsed);
+            out.Width         = out.RenderTexture->Width;
+            out.Height        = out.RenderTexture->Height;
+            out.Wrap          = TextureWrap::Clamp;
+            out.ColorSpace    = out.RenderTexture->Format == RenderTextureFormat::RGBA8SRGB ? TextureColorSpace::SRGB :
+                                                                                              TextureColorSpace::Linear;
+            return out;
+        }
         if (!bytes || size < kHeader || size > kMaximumBytes)
             return AssetError {AssetErrorCode::InvalidData, "Invalid Texture Product byte length"};
         auto cursor = bytes;

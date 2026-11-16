@@ -13,6 +13,7 @@
 #include "Kans3D/VFX/Import/VfxImporter.h"
 #include "MaterialImporter.h"
 #include "ModelImporter.h"
+#include "RenderTextureImporter.h"
 #include "ShaderImporter.h"
 #include "TextureImporter.h"
 
@@ -113,6 +114,7 @@ namespace Kans
                 {"TextureImporter",
                  {{".png", ".jpg", ".jpeg", ".bmp", ".tga", ".hdr", ".cube"}, std::make_shared<TextureImporter>()}},
                 {"ShaderImporter", {{".vert", ".frag", ".comp", ".shaderprog"}, std::make_shared<ShaderImporter>()}},
+                {"RenderTextureImporter", {{".rendertexture"}, std::make_shared<RenderTextureImporter>()}},
                 {"MaterialImporter", {{".material"}, std::make_shared<MaterialImporter>()}},
                 {"ActionImporter", {{".action"}, std::make_shared<ActionImporter>()}},
                 {"VfxImporter",

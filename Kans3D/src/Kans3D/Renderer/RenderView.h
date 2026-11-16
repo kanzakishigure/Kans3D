@@ -286,6 +286,8 @@ namespace Kans
             ReflectionHitMask
         } DebugBuffer                                                            = DebugBuffer::None;
         Kans::AntiAliasing                                EffectiveAA            = Kans::AntiAliasing::None;
+        // Headless callers share this token across views; application rendering supplies its global frame number.
+        std::optional<uint64_t>                           RenderTextureFrame;
         float                                             Time         = 0;
         TimeStep                                          FrameTimeDelta {1.f / 60.f};
         uint32_t                                          MaxShadowedPointLights = 4;

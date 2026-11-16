@@ -84,6 +84,7 @@ namespace Kans
         m_MaterialEditorPanel.Bind(m_AssetImports.get());
         m_TimelinePanel.Bind(m_AssetImports.get());
         m_PhysicsMaterialPanel.Bind(m_AssetImports.get());
+        m_RenderTexturePanel.Bind(m_AssetImports.get());
         m_ProjectSettingsPanel.Bind(m_ProjectFile);
         m_UIDesignerPanel.Bind(m_AssetImports.get());
         ComponentEditors::SetMotionPresetDirectories(SecondaryMotionEditing::BuiltInPresetDirectory(),
@@ -93,6 +94,13 @@ namespace Kans
                 ConfirmDiscard("opening " + path.filename().u8string(), [this, path] { Record(OpenScene(path)); });
             else if (path.extension() == ".material")
                 OpenMaterial(path);
+            else if (path.extension() == ".rendertexture")
+            {
+                if (m_RenderTexturePanel.IsDirty())
+                    m_RenderTexturePanel.Save();
+                if (m_RenderTexturePanel.Open(path))
+                    m_Panels.Open(PanelID::RenderTexture);
+            }
             else if (path.extension() == ".physmat")
                 OpenPhysicsMaterial(path);
             else if (path.extension() == ".vfxmodule")
@@ -131,6 +139,18 @@ namespace Kans
             YAML::Emitter out;
             out << EncodeTimelineNode(data);
             std::ofstream(UniqueFile(directory, "NewTimeline", ".timeline"), std::ios::binary) << out.c_str() << '\n';
+        });
+        m_ContentBrowserPanel.SetCreateRenderTextureCallback([this](const std::filesystem::path& directory) {
+            const auto file = UniqueFile(directory, "NewRenderTexture", ".rendertexture");
+            const auto text = SerializeRenderTexture(RenderTextureSpecification {});
+            if (const auto* e = std::get_if<AssetError>(&text))
+                return Record(*e);
+            std::ofstream(file, std::ios::binary) << std::get<std::string>(text);
+            if (m_RenderTexturePanel.Open(file))
+            {
+                m_RenderTexturePanel.Save();
+                m_Panels.Open(PanelID::RenderTexture);
+            }
         });
         m_ContentBrowserPanel.SetCreatePhysicsMaterialCallback([this](const std::filesystem::path& directory) {
             auto created = PhysicsEditing::CreatePhysicsMaterialFile(directory);
@@ -204,6 +224,7 @@ namespace Kans
         m_Assets    = CreateScope<AssetManager>(
             std::get<Ref<LooseFileAssetProvider>>(std::move(provider)), std::move(snapshot), std::move(spec));
         m_Viewport->SetAssetManager(m_Assets.get());
+        m_RenderTexturePanel.SetResources(m_Viewport->GetAssetCache());
         m_MaterialPreview->SetResources(m_Viewport->GetAssetCache(), m_Viewport->GetEnvironment());
         m_ThumbnailRenderer->SetResources(m_Viewport->GetAssetCache(), m_Viewport->GetEnvironment());
         m_PropertiesPanel.SetAssetManager(m_Assets.get());

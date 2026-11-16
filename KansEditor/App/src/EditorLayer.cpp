@@ -188,6 +188,8 @@ namespace Kans
         m_TimelinePanel.StopPreview();
         m_TimelinePanel.Bind(nullptr);
         m_PhysicsMaterialPanel.Bind(nullptr);
+        m_RenderTexturePanel.SetResources({});
+        m_RenderTexturePanel.Bind(nullptr);
         m_ProjectSettingsPanel.Bind({});
         m_UIDesignerPanel.Bind(nullptr);
         m_MaterialEditorPanel.Bind(nullptr);

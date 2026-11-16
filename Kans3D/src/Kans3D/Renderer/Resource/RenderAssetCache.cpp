@@ -719,7 +719,40 @@ namespace Kans
     Ref<Texture2D> RenderAssetCache::GetTexture(AssetID id)
     {
         auto* texture = Resolve(m_Textures, id, [&](const TextureAsset& asset) {
-            auto uploaded = Texture2D::CreateFromProduct(asset.GetData(), GetDevice());
+            std::variant<Ref<Texture2D>, AssetError> uploaded;
+            if (asset.GetData().RenderTexture)
+            {
+                const auto& spec = *asset.GetData().RenderTexture;
+                using namespace RenderHardware;
+                TextureDesc desc;
+                desc.Width  = spec.Width;
+                desc.Height = spec.Height;
+                desc.PixelFormat =
+                    spec.Format == RenderTextureFormat::RGBA16F ? Format::RGBA16Float : Format::RGBA8Srgb;
+                desc.Usage = RenderHardware::TextureUsage::Sampled | RenderHardware::TextureUsage::RenderTarget |
+                             RenderHardware::TextureUsage::CopySource | RenderHardware::TextureUsage::CopyDestination;
+                if (spec.Mips)
+                    for (uint32_t size = std::max(desc.Width, desc.Height); size > 1; size >>= 1)
+                        ++desc.MipLevels;
+                auto        device = GetDevice();
+                auto        image  = device->CreateTexture(desc);
+                SamplerDesc sampling;
+                sampling.U = sampling.V = sampling.W = AddressMode::ClampToEdge;
+                auto texture                         = CreateRef<Texture2D>(device, image, sampling);
+                texture->assetID                     = asset.assetID;
+                auto          commands               = device->CreateCommandList();
+                RenderingDesc render;
+                render.Colors.push_back({image, {}, LoadOp::Clear, StoreOp::Store, spec.ClearColor});
+                commands->BeginRendering(render);
+                commands->EndRendering();
+                if (desc.MipLevels > 1)
+                    commands->GenerateMips(image);
+                device->Submit(commands);
+                m_RenderTextures.erase(id);
+                uploaded = texture;
+            }
+            else
+                uploaded = Texture2D::CreateFromProduct(asset.GetData(), GetDevice());
             if (std::holds_alternative<Ref<Texture2D>>(uploaded))
             {
                 // Drop obsolete cached descriptors. Recorded commands still retain their snapshots.
@@ -733,6 +766,8 @@ namespace Kans
             }
             return uploaded;
         });
+        if (texture && m_Textures.at(id).Source->GetData().RenderTexture)
+            m_PendingRenderTextures.insert(id);
         return texture ? *texture : nullptr;
     }
     RenderHardware::Handle<RenderHardware::Texture> RenderAssetCache::GetTextureResource(AssetID id)
@@ -982,6 +1017,7 @@ namespace Kans
             else
                 ++it;
 
+        m_PendingRenderTextures.clear();
         if (m_Device)
             m_Device->WaitIdle();
         ++m_Frame;
@@ -1011,6 +1047,8 @@ namespace Kans
         evict(m_Meshes);
         evict(m_Materials);
         evict(m_Textures);
+        for (auto it = m_RenderTextures.begin(); it != m_RenderTextures.end();)
+            it = !m_Textures.count(it->first) ? m_RenderTextures.erase(it) : std::next(it);
         evict(m_Shaders);
         evict(m_Bindings);
         evict(m_StandardBindings);
@@ -1028,6 +1066,8 @@ namespace Kans
         m_Streams.clear();
         m_Materials.clear();
         m_Textures.clear();
+        m_RenderTextures.clear();
+        m_PendingRenderTextures.clear();
         m_Shaders.clear();
         m_Bindings.clear();
         m_StandardBindings.clear();

@@ -83,6 +83,13 @@ layout(set = 0, binding = 0, std140) uniform KansFrame
 
 
 } u_Frame;
+// KANS_RENDER_TEXTURE is defined by the engine for the render-texture fragment variant.
+// Use #ifdef KANS_RENDER_TEXTURE to select KansRenderTextureUV() instead of mesh-space UVs.
+// UV origin is top-left; pixel centers cover (0,1). Material set-1 layouts must stay identical.
+// u_Frame.Time is the ordinary frame time. FramePadding carries inverse target size in this pass.
+#ifdef KANS_FRAGMENT_STAGE
+vec2 KansRenderTextureUV() { return gl_FragCoord.xy * u_Frame.FramePadding; }
+#endif
 int KansPointLightCount() { return clamp(int(u_Frame.LightingInfo.x), 0, KANS_POINT_LIGHT_LIMIT); }
 float KansExposure() { return u_Frame.LightingInfo.y; }
 vec3 KansPointLightPosition(int i) { return u_Frame.PointPositions[i].xyz; }
@@ -1222,6 +1229,29 @@ vec4 KansToneMap(vec3 color)
             return true;
         }
     } // namespace
+    std::variant<std::monostate, AssetError> ValidateRenderTextureVariant(const ShaderProgramCode& main,
+                                                                          const ShaderProgramCode& variant)
+    {
+        if (variant.Modules.empty())
+            return std::monostate {};
+        if (variant.Modules.size() != 1 || variant.Modules[0].Stage != ShaderProductStage::Fragment)
+            return Contract("RenderTexture variant must contain one fragment stage");
+        auto original = InspectShaderProgram(main), inspected = InspectShaderProgram(variant);
+        if (auto* e = std::get_if<AssetError>(&original))
+            return *e;
+        if (auto* e = std::get_if<AssetError>(&inspected))
+            return *e;
+        const auto bindings = MaterialShaderResources(std::get<std::vector<ShaderStageReflection>>(original));
+        for (const auto& binding : MaterialShaderResources(std::get<std::vector<ShaderStageReflection>>(inspected)))
+        {
+            const auto found = std::find_if(
+                bindings.begin(), bindings.end(), [&](const auto& b) { return b.Binding == binding.Binding; });
+            if (found == bindings.end() || !BindingSubset(binding, *found))
+                return Contract("RenderTexture variant changes material binding " + std::to_string(binding.Binding));
+        }
+        return std::monostate {};
+    }
+
     std::variant<std::monostate, AssetError> ValidateMaterialShaderPasses(const ShaderProgramCode&       main,
                                                                           const std::vector<ShaderPass>& passes)
     {

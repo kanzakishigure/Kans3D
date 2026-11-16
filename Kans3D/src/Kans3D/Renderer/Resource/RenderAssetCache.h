@@ -15,6 +15,7 @@
 
 namespace Kans
 {
+    class Renderer;
     struct ShadowResources;
     struct AreaLightResources;
     struct GpuMesh
@@ -125,6 +126,9 @@ namespace Kans
         {}
         std::shared_ptr<RenderHardware::Device>         GetDevice();
         RenderHardware::Handle<RenderHardware::Texture> GetTextureResource(AssetID id);
+        // Drain only textures reached by consumers in this view. The token is shared across views of a frame.
+        bool     UpdateRenderTextures(Renderer&, uint64_t frame, double time);
+        uint64_t GetRenderTextureUpdateCount(AssetID id) const;
         // Sampling belongs to an independent RHI sampler, never mutable native image state.
         void SetTextureSampler(AssetID id, const RenderHardware::SamplerDesc& desc);
         RenderHardware::Handle<RenderHardware::BindGroup> GetMaterialGroup(const GpuShader&           shader,
@@ -180,6 +184,15 @@ namespace Kans
         template<typename T, typename Resource, typename Build>
         Resource* Resolve(std::unordered_map<AssetID, Entry<T, Resource>>& entries, AssetID id, Build&& build);
 
+        struct RenderTextureState
+        {
+            RenderTextureSchedule                            Schedule;
+            std::shared_ptr<const ShaderData>                Source;
+            Scope<GpuShader>                                 Shader;
+            RenderHardware::Handle<RenderHardware::Pipeline> Pipeline;
+        };
+        std::unordered_map<AssetID, RenderTextureState> m_RenderTextures;
+        std::unordered_set<AssetID>                     m_PendingRenderTextures;
         std::unordered_set<AssetID> m_WarnedPost, m_WarnedMesh;
         struct BindingsEntry
         {

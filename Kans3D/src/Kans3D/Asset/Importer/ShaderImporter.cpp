@@ -257,6 +257,8 @@ namespace Kans
                 const auto kind     = stage == ShaderProductStage::Vertex   ? shaderc_vertex_shader :
                                       stage == ShaderProductStage::Fragment ? shaderc_fragment_shader :
                                                                               shaderc_compute_shader;
+                const bool renderTexture = stage == ShaderProductStage::Fragment && code == &shader.Code &&
+                                           shader.Domain == ShaderDomain::Surface;
                 // Discovery runs even on fingerprint hits. Resolve conditional and nested
                 // includes without generating SPIR-V that the cache check would discard.
                 if (discoverOnly)
@@ -266,6 +268,13 @@ namespace Kans
                         return AssetError {AssetErrorCode::InvalidData,
                                            "Shader preprocessing failed: " +
                                                preprocessed.GetErrorMessage().substr(0, 4096)};
+                    if (renderTexture)
+                    {
+                        options.AddMacroDefinition("KANS_RENDER_TEXTURE", "1");
+                        const auto variant = compiler.PreprocessGlsl(*text, kind, name.c_str(), options);
+                        if (variant.GetCompilationStatus() != shaderc_compilation_status_success)
+                            return AssetError {AssetErrorCode::InvalidData, variant.GetErrorMessage()};
+                    }
                     continue;
                 }
                 const auto compiled = compiler.CompileGlslToSpv(*text, kind, name.c_str(), options);
@@ -278,6 +287,15 @@ namespace Kans
                                        "Shader compilation failed: " + compiled.GetErrorMessage().substr(0, 4096)};
                 }
                 code->Modules.push_back({stage, "main", {compiled.cbegin(), compiled.cend()}});
+                if (renderTexture)
+                {
+                    options.AddMacroDefinition("KANS_RENDER_TEXTURE", "1");
+                    const auto variant = compiler.CompileGlslToSpv(*text, kind, name.c_str(), options);
+                    if (variant.GetCompilationStatus() != shaderc_compilation_status_success)
+                        return AssetError {AssetErrorCode::InvalidData,
+                                           "RenderTexture fragment: " + variant.GetErrorMessage()};
+                    shader.RenderTextureCode.Modules.push_back({stage, "main", {variant.cbegin(), variant.cend()}});
+                }
                 if (code == &shader.Code)
                     shader.DebugSources[stage] = *text;
                 else
@@ -322,7 +340,8 @@ namespace Kans
                                                   shader.Passes,
                                                   shader.OutputSpace,
                                                   shader.Domain,
-                                                  shader.PostStage);
+                                                  shader.PostStage,
+                                                  shader.RenderTextureCode);
         if (auto* error = std::get_if<AssetError>(&encoded))
             return *error;
         const auto& bytes = std::get<std::vector<std::byte>>(encoded);
@@ -363,7 +382,8 @@ namespace Kans
                                                       shader.Passes,
                                                       shader.OutputSpace,
                                                       shader.Domain,
-                                                      shader.PostStage);
+                                                      shader.PostStage,
+                                                      shader.RenderTextureCode);
             if (auto* error = std::get_if<AssetError>(&encoded))
                 return std::move(*error);
             auto allocated = AllocateLocalIDs(context.PreviousLocalIDs, {"shader:root"});

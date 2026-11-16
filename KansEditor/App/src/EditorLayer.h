@@ -12,11 +12,15 @@
 #include "KansEditorCore/ScriptBuildProgress.h"
 #include "UI/ProgressPopup.h"
 
-#include "KansEditorCore/EditorCamera.h"
-#include "KansEditorCore/EditorResources.h"
 #include "Kans3D/Renderer/MaterialPreviewRenderer.h"
 #include "Kans3D/Scene/ScenePlaySession.h"
 #include "Kans3D/Script/ScriptBuild.h"
+#include "KansEditorCore/EditorCamera.h"
+#include "KansEditorCore/EditorResources.h"
+#include "KansEditorCore/Launcher/WindowPlacementFlow.h"
+#include "KansEditorCore/SceneHistory.h"
+#include "KansEditorCore/UnsavedChanges.h"
+#include "KansEditorCore/ViewportClient.h"
 #include "Launcher/ProjectBrowser.h"
 #include "Panels/AnimatorGraphPanel.h"
 #include "Panels/ContentBrowserPanel.h"
@@ -24,24 +28,21 @@
 #include "Panels/HierarchyPanel.h"
 #include "Panels/MaterialEditorPanel.h"
 #include "Panels/PhysicsMaterialPanel.h"
-#include "Panels/VfxModuleEditorPanel.h"
-#include "Panels/VfxSystemEditorPanel.h"
 #include "Panels/ProductImportPanel.h"
 #include "Panels/ProjectSettingsPanel.h"
 #include "Panels/PropertiesPanel.h"
 #include "Panels/RagdollEditorPanel.h"
+#include "Panels/RenderTexturePanel.h"
 #include "Panels/TimelinePanel.h"
 #include "Panels/UIDesignerPanel.h"
+#include "Panels/VfxModuleEditorPanel.h"
+#include "Panels/VfxSystemEditorPanel.h"
 #include "Panels/ViewportPanel.h"
-#include "KansEditorCore/SceneHistory.h"
-#include "UndoRouting.h"
 #include "UI/ConsolePanel.h"
 #include "UI/PanelManager.h"
 #include "UI/SceneFileDialog.h"
-#include "KansEditorCore/Launcher/WindowPlacementFlow.h"
-#include "KansEditorCore/UnsavedChanges.h"
 #include "UI/Titlebar.h"
-#include "KansEditorCore/ViewportClient.h"
+#include "UndoRouting.h"
 namespace Kans
 {
     // Identities of the editor panels (see PanelManager).
@@ -60,6 +61,7 @@ namespace Kans
         inline constexpr const char* Timeline       = "Timeline";
         inline constexpr const char* UIDesigner     = "UIDesigner";
         inline constexpr const char* ProjectSettings = "ProjectSettings";
+        inline constexpr const char* RenderTexture   = "RenderTexture";
         inline constexpr const char* PhysicsMaterial = "PhysicsMaterial";
     } // namespace PanelID
 
@@ -360,6 +362,7 @@ namespace Kans
         UIDesignerPanel     m_UIDesignerPanel;
         ProjectSettingsPanel m_ProjectSettingsPanel;
         PhysicsMaterialPanel m_PhysicsMaterialPanel;
+        RenderTexturePanel   m_RenderTexturePanel;
         // Keys and text typed while playing with the viewport focused, for the game's UI.
         UIInputState m_UIInput;
         // Editor view frame times (ms) for the Stats panel's graph, oldest first.

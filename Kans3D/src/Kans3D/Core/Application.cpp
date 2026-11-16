@@ -95,12 +95,14 @@ namespace Kans
         PhysicsWorld::Shutdown();
         Renderer::Shutdown();
         ScriptEngine::ShutDown();
+        s_Instance = nullptr;
     }
     void Application::run()
     {
         PROFILE_FUCTION();
         while (m_Running)
         {
+            ++m_FrameNumber;
             float time      = GetTime();
             m_Frametime     = TimeStep(float(glfwGetTime() - m_LastFrameTime));
             m_TimeStep      = glm::min<float>(m_Frametime, 0.0333f);
