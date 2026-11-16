@@ -349,7 +349,8 @@ namespace Kans
                                           view.Scene.spotLights.begin() +
                                               std::min(view.Scene.spotLights.size(), size_t(EngineSpotLightLimit)),
                                           contactEnabled));
-        const bool reconstruct = renderer.ReconstructsHDR() || renderer.View.Environment.Fog.Enabled ||
+        const bool ssr         = renderer.Samples == 1 && view.Environment.ScreenSpaceReflections.Enabled;
+        const bool reconstruct = ssr || renderer.ReconstructsHDR() || renderer.View.Environment.Fog.Enabled ||
                                  view.Environment.AmbientOcclusion.Enabled || contact;
         if (reconstruct)
             renderer.DeferToneMapping = true;
@@ -358,8 +359,9 @@ namespace Kans
             BuildMSAA(graph, renderer);
             return;
         }
-        if (contact || HasSpotBeams(renderer) || view.DepthPrepass || view.Environment.AmbientOcclusion.Enabled ||
-            renderer.VelocityActive || view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
+        if (ssr || contact || HasSpotBeams(renderer) || view.DepthPrepass ||
+            view.Environment.AmbientOcclusion.Enabled || renderer.VelocityActive ||
+            view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
             renderer.Output.EnsureSampledDepth();
         if (!graph.PassCount())
             Begin(graph, renderer);
@@ -526,7 +528,7 @@ namespace Kans
         featureContext.Immediate = nullptr;
         // Immediates retain their original cleared-depth behavior. Test camera
         // geometry against their depth before the opaque lighting pass.
-        if (contact || view.DepthPrepass || view.Environment.AmbientOcclusion.Enabled ||
+        if (ssr || contact || view.DepthPrepass || view.Environment.AmbientOcclusion.Enabled ||
             view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
             renderer.BuildDepthPrepass(graph);
         if (contact)
@@ -592,7 +594,8 @@ namespace Kans
             }
         }
         Inject(RenderExtensionPoint::BeforeOpaque, featureContext);
-        if (view.EffectiveAA == AntiAliasing::TAA || HasSpotBeams(renderer) || renderer.AmbientOcclusion || contact)
+        if (view.EffectiveAA == AntiAliasing::TAA || HasSpotBeams(renderer) || renderer.AmbientOcclusion || contact ||
+            ssr)
         {
             auto       materialUses = target;
             if (renderer.ContactDepth)
@@ -653,6 +656,18 @@ namespace Kans
                     renderer.PostProcessHDR = true;
                     renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, false);
                 });
+            if (ssr)
+            {
+                renderer.BuildReflections(graph);
+                auto compositeUses = materialUses;
+                compositeUses.push_back({renderer.ReflectionTrace, GraphAccess::SampledRead});
+                append("SSR composite (opaque lighting)", compositeUses, [&renderer](auto& c) {
+                    renderer.PostProcessHDR       = true;
+                    renderer.CompositeReflections = true;
+                    renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, false);
+                    renderer.CompositeReflections = false;
+                });
+            }
             Inject(RenderExtensionPoint::AfterOpaque, featureContext);
             BuildSpotBeamPasses(graph, renderer);
             if (view.EffectiveAA == AntiAliasing::TAA)

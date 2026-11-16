@@ -11,6 +11,7 @@ namespace Kans
         size_t                                                         FrameOffset = 0, ObjectOffset = 0;
         RenderHardware::Handle<RenderHardware::Texture>                AmbientOcclusion;
         RenderHardware::Handle<RenderHardware::Texture>                ContactDepth;
+        RenderHardware::Handle<RenderHardware::Texture>                Reflections;
         std::array<RenderHardware::Handle<RenderHardware::Texture>, 3> Environment;
         RenderHardware::Handle<RenderHardware::Sampler>                EnvironmentSampler;
         std::vector<RenderHardware::Format> ColorFormats {RenderHardware::Format::RGBA8Unorm};
@@ -32,6 +33,7 @@ namespace Kans
         std::shared_ptr<FogState>                                      Fog;
         bool                                                           ShadowDepth = false, CustomDepth = false;
         bool                                                           DepthPrepass = false, PrepassCovered = false;
+        bool                                                           ReflectionSurface        = false;
         bool                                                           InvalidatePrepassNormals = false;
         bool                                                           WriteTemporalMasks       = false;
         uint8_t                                                        CustomStencil = 0;

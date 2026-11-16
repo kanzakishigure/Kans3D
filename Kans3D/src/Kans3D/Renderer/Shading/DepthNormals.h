@@ -9,7 +9,8 @@ namespace Kans
     // Decorate Surface position outputs in-place; retain every original instruction.
     void MakeSurfacePositionInvariant(ShaderData& data);
     // Only the fragment stage is replaced; the supplied vertex product is copied verbatim.
-    std::variant<ShaderData, AssetError> MakeStandardDepthNormalsShader(const ShaderData& surface);
+    std::variant<ShaderData, AssetError> MakeStandardDepthNormalsShader(const ShaderData& surface,
+                                                                        bool              reflections = false);
     // Preserve an authored DepthOnly vertex stage, discard and
     // gl_FragDepth, replacing its optional color with the reconstruct-normal flag.
     std::variant<ShaderData, AssetError> MakeDepthOnlyPrepassShader(const ShaderProgramCode& code);

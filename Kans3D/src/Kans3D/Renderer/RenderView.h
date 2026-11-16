@@ -281,7 +281,9 @@ namespace Kans
             None,
             Velocity,
             NormalRoughness,
-            AmbientOcclusion
+            AmbientOcclusion,
+            Reflections,
+            ReflectionHitMask
         } DebugBuffer                                                            = DebugBuffer::None;
         Kans::AntiAliasing                                EffectiveAA            = Kans::AntiAliasing::None;
         float                                             Time         = 0;

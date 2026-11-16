@@ -154,6 +154,9 @@ namespace Kans
         view.Viewport            = m_Size;
         view.Assets              = m_Assets;
         view.Features            = &m_Features;
+        if (editorFeatures && m_ReflectionDebug)
+            view.DebugBuffer = m_ReflectionDebug == 1 ? RenderView::DebugBuffer::Reflections :
+                                                        RenderView::DebugBuffer::ReflectionHitMask;
         if (editorFeatures && m_AmbientOcclusionDebug)
             view.DebugBuffer = RenderView::DebugBuffer::AmbientOcclusion;
         view.Time                = std::chrono::duration<float>(std::chrono::steady_clock::now() - m_StartTime).count();

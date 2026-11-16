@@ -52,6 +52,7 @@ namespace Kans
         // Ribbons and sprites both use procedural vertices, but have different storage contracts.
         key |= uint64_t(data.VertexSource && data.VertexSource == shader.RibbonProgram) << 32;
         key |= uint64_t(data.DepthPrepass) << 33;
+        key |= uint64_t(data.ReflectionSurface) << 62;
         key |= uint64_t(data.PrepassCovered && !extraPass) << 34;
         key |= uint64_t(data.InvalidatePrepassNormals) << 35;
         key |= uint64_t(data.WriteTemporalMasks) << 36;
@@ -213,6 +214,8 @@ namespace Kans
                 desc.DepthStencil.DepthCompare = CompareOp::LessEqual;
             }
             desc.Blends.resize(data.ColorFormats.size(), blend);
+            if (data.DepthPrepass && data.ColorFormats.size() == 2 && !data.ReflectionSurface)
+                desc.Blends[1].WriteMask = 0;
             if (data.InvalidatePrepassNormals)
             {
                 auto& normal     = desc.Blends.at(desc.Blends.size() - (data.WriteTemporalMasks ? 2 : 1));
@@ -257,6 +260,11 @@ namespace Kans
                 entry.BufferResource = data.Object;
                 entry.Offset         = data.ObjectOffset;
                 entry.Bytes          = sizeof(EngineObjectUniforms);
+            }
+            else if (binding.Binding == uint32_t(EngineBinding::ScreenSpaceReflections))
+            {
+                entry.TextureResource = data.Reflections ? data.Reflections : cache.GetWhiteAO();
+                entry.SamplerResource = data.EnvironmentSampler;
             }
             else if (binding.Binding == uint32_t(EngineBinding::ContactDepth))
             {

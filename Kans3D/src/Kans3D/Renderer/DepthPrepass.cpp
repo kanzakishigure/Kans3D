@@ -5,6 +5,7 @@
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Kans3D/Renderer/Shading/MaterialPass.h"
 #include "RenderFrame.h"
+#include "Temporal.h"
 
 namespace Kans
 {
@@ -13,9 +14,26 @@ namespace Kans
         using namespace RenderHardware;
         Output.EnsureNormalRoughness();
         const auto normal = graph.ImportTexture("SceneNormalRoughness", Output.GetNormalRoughness());
+        const bool reflections = View.Environment.ScreenSpaceReflections.Enabled;
+        if (reflections)
+        {
+            auto& surface = Output.GetTemporalState().ReflectionSurface;
+            if (!surface || surface->GetDesc().Width != View.Viewport.x || surface->GetDesc().Height != View.Viewport.y)
+            {
+                TextureDesc d;
+                d.Width       = View.Viewport.x;
+                d.Height      = View.Viewport.y;
+                d.PixelFormat = Format::RGBA16Float;
+                d.Usage       = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled;
+                surface       = GetDevice()->CreateTexture(d);
+            }
+            ReflectionSurface = surface;
+        }
         const auto depth  = graph.ImportTexture("SceneDepthStencil", Output.GetDepth());
         graph.ExportTexture(normal);
         std::vector<GraphUse> uses {{normal, GraphAccess::ColorWrite}, {depth, GraphAccess::DepthReadWrite}};
+        if (reflections)
+            uses.push_back({graph.ImportTexture("SSR receiver surface", ReflectionSurface), GraphAccess::ColorWrite});
         const auto            sampled = [&](const auto& image) {
             if (!image)
                 return;
@@ -28,6 +46,8 @@ namespace Kans
         auto          commands = device->CreateCommandList();
         RenderingDesc target;
         target.Colors.push_back({Output.GetNormalRoughness(), {}, LoadOp::Clear, StoreOp::Store, {0, 0, 0, 0}});
+        if (reflections)
+            target.Colors.push_back({ReflectionSurface, {}, LoadOp::Clear});
         target.Depth.Target = Output.GetDepth();
         target.Depth.Load   = LoadOp::Load;
         commands->BeginRendering(target);
@@ -115,6 +135,9 @@ namespace Kans
                 // surface hides this draw before Main runs (selection outlines use it).
                 data.WriteStencil       = draw.Stencil == ModelStencilMode::WriteReference;
                 data.ColorFormats       = {Format::RGBA16Float};
+                if (reflections)
+                    data.ColorFormats.push_back(Format::RGBA16Float);
+                data.ReflectionSurface  = reflections && standard;
                 data.Render             = item.Render;
                 data.Section            = draw.Section;
                 data.Parameters         = draw.Parameters;
@@ -133,7 +156,7 @@ namespace Kans
                 if (standard)
                 {
                     // Share Main's exact vertex product, including its patched skin/morph module.
-                    data.DepthProgram = shader->PrepareStandardDepthNormals(bool(data.Palette));
+                    data.DepthProgram = shader->PrepareStandardDepthNormals(bool(data.Palette), reflections);
                     if (!data.DepthProgram)
                     {
                         Complete = false;

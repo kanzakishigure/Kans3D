@@ -644,7 +644,12 @@ void main() {
             return;
         const bool velocity = View.DebugBuffer == RenderView::DebugBuffer::Velocity;
         const bool ao       = View.DebugBuffer == RenderView::DebugBuffer::AmbientOcclusion;
-        auto       input    = ao ? AmbientOcclusion : velocity ? Output.GetVelocity() : Output.GetNormalRoughness();
+        const bool ssr      = View.DebugBuffer == RenderView::DebugBuffer::Reflections ||
+                              View.DebugBuffer == RenderView::DebugBuffer::ReflectionHitMask;
+        auto       input    = ssr      ? Reflections :
+                              ao       ? AmbientOcclusion :
+                              velocity ? Output.GetVelocity() :
+                                         Output.GetNormalRoughness();
         if (!input)
             return;
         const auto  src = graph.ImportTexture(velocity ? "SceneVelocity" : "SceneNormalRoughness", input);
@@ -683,11 +688,20 @@ layout(set=0,binding=1) uniform sampler2D image;
 layout(location=0) out vec4 color;
 void main() { color=vec4(vec3(texture(image,gl_FragCoord.xy/u.size.xy).r),1); }
 )";
+        const char* reflections = R"(#version 450
+layout(set=0,binding=0,std140) uniform Settings { vec4 size; } u;
+layout(set=0,binding=1) uniform sampler2D image;
+layout(location=0) out vec4 color;
+void main() { vec4 v=texture(image,gl_FragCoord.xy/u.size.xy); color=vec4(u.size.z>0?vec3(v.a):v.rgb,1); }
+)";
+        size.z                  = View.DebugBuffer == RenderView::DebugBuffer::ReflectionHitMask ? 1 : 0;
         Fullscreen(*this,
                    graph,
+                   ssr      ? "Debug SSR" :
                    ao       ? "Debug ambient occlusion" :
                    velocity ? "Debug velocity" :
                               "Debug normal roughness",
+                   ssr      ? reflections :
                    ao       ? occlusion :
                    velocity ? fragment :
                               normals,

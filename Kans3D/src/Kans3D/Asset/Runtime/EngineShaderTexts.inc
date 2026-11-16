@@ -352,6 +352,9 @@ KANS_SHADER_TEXT(Skinning_kans_MaterialMain, "Skinning/kans_MaterialMain", "kans
 KANS_SHADER_TEXT(Main, "Common/Main", "main")
 KANS_SHADER_TEXT(Depth_include_Kans3D_DepthNormals_void, "Depth/include_Kans3D_DepthNormals_void_main", R"(
 #include <Kans3D/DepthNormals.glsl>
+#ifdef KANS_SSR_SURFACE
+layout(location=1) out vec4 o_ReflectionSurface;
+#endif
 void main()
 {
     vec2 uv = v_UV * p.UVTiling + p.UVOffset;
@@ -361,8 +364,14 @@ void main()
     if (u_Object.MaterialRender.z != 0.0 && !gl_FrontFacing)
         N = -N;
     o_Color = KansNormalRoughness(N, p.Roughness * texture(MetallicRoughnessMap, uv).g);
+#ifdef KANS_SSR_SURFACE
+    float metallic = clamp(p.Metallic * texture(MetallicRoughnessMap,uv).b,0,1);
+    vec3 f0 = mix(vec3(.04),baseColor.rgb,metallic);
+    o_ReflectionSurface = vec4(f0, max(max(f0.r,f0.g),f0.b) >= .02 ? 1 : 0);
+#endif
 }
 )")
+KANS_SHADER_TEXT(Depth_ReflectionDefine, "Depth/ReflectionDefine", "#define KANS_SSR_SURFACE\n")
 KANS_SHADER_TEXT(Depth_KANS_FRAGMENT_STAGE, "Depth/KANS_FRAGMENT_STAGE", "KANS_FRAGMENT_STAGE")
 KANS_SHADER_TEXT(Depth_kans_PrepassFlag, "Depth/kans_PrepassFlag", "kans_PrepassFlag")
 KANS_SHADER_TEXT(Depth_void_kans_DepthMain, "Depth/void_kans_DepthMain", "void kans_DepthMain()")

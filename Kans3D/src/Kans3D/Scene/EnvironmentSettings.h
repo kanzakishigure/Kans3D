@@ -6,6 +6,7 @@
 #include <glm/vec3.hpp>
 #include "Kans3D/Renderer/Lighting/FogSettings.h"
 #include "Kans3D/Renderer/Passes/GtaoSettings.h"
+#include "Kans3D/Renderer/Passes/ScreenSpaceReflections.h"
 
 namespace Kans
 {
@@ -21,12 +22,14 @@ namespace Kans
 
         FogSettings Fog;
         GtaoSettings AmbientOcclusion;
+        ScreenSpaceReflectionSettings ScreenSpaceReflections;
 
         // One normalization boundary for scene edits and deserialization.
         void Validate()
         {
             Fog               = Fog.Validated();
             AmbientOcclusion  = AmbientOcclusion.Validated();
+            ScreenSpaceReflections = ScreenSpaceReflections.Validated();
             auto intensity    = [](float value) { return std::isfinite(value) ? std::max(0.0f, value) : 1.0f; };
             DiffuseIntensity  = intensity(DiffuseIntensity);
             SpecularIntensity = intensity(SpecularIntensity);
@@ -51,7 +54,8 @@ namespace Kans
         return a.Map == b.Map && a.DiffuseIntensity == b.DiffuseIntensity &&
                a.SpecularIntensity == b.SpecularIntensity && a.Rotation == b.Rotation &&
                a.SkyboxIntensity == b.SkyboxIntensity && a.ShowSkybox == b.ShowSkybox &&
-               a.BackgroundColor == b.BackgroundColor && a.Fog == b.Fog && a.AmbientOcclusion == b.AmbientOcclusion;
+               a.BackgroundColor == b.BackgroundColor && a.Fog == b.Fog && a.AmbientOcclusion == b.AmbientOcclusion &&
+               a.ScreenSpaceReflections == b.ScreenSpaceReflections;
     }
     inline bool operator!=(const EnvironmentSettings& a, const EnvironmentSettings& b) { return !(a == b); }
 } // namespace Kans

@@ -230,6 +230,23 @@ namespace Kans
             changed |= PropertyGrid::Float("Thickness", a.Thickness, .01f, 0, 1, "%.2f", &d.Thickness);
             PropertyGrid::EndGroup();
         }
+        if (PropertyGrid::BeginGroup("Screen Space Reflections"))
+        {
+            auto&       s = settings.ScreenSpaceReflections;
+            const auto& d = defaults.ScreenSpaceReflections;
+            changed |= PropertyGrid::Checkbox("Enabled", s.Enabled, &d.Enabled);
+            changed |= PropertyGrid::Checkbox("Half resolution", s.HalfResolution, &d.HalfResolution);
+            int steps = int(s.MaxSteps);
+            if (PropertyGrid::Int("Max steps", steps, 8, 512))
+            {
+                s.MaxSteps = uint32_t(steps);
+                changed    = true;
+            }
+            changed |= PropertyGrid::Float("Max roughness", s.MaxRoughness, .01f, 0, 1, "%.2f", &d.MaxRoughness);
+            changed |= PropertyGrid::Float("Thickness (m)", s.Thickness, .01f, .001f, 10, "%.3f", &d.Thickness);
+            changed |= PropertyGrid::Float("Intensity", s.Intensity, .01f, 0, 4, "%.2f", &d.Intensity);
+            PropertyGrid::EndGroup();
+        }
         if (PropertyGrid::BeginGroup("Volumetric fog"))
         {
             auto&       f = settings.Fog;

@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include "DepthNormals.h"
+#include <mutex>
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
 #include "Kans3D/Asset/Runtime/EngineShaderText.h"
@@ -166,32 +167,39 @@ namespace Kans
             patch(pass.Code);
     }
 
-    std::variant<ShaderData, AssetError> MakeStandardDepthNormalsShader(const ShaderData& surface)
+    std::variant<ShaderData, AssetError> MakeStandardDepthNormalsShader(const ShaderData& surface, bool reflections)
     {
-        static const auto fragment = [] {
+        const auto fragment = [reflections] {
             // Reuse Standard's parameter ABI and exact tangent/derivative normal evaluation.
             auto text = GetStandardShader().DebugSources.at(ShaderProductStage::Fragment);
             text.resize(text.find("void main()"));
             text += ShaderText::Depth_include_Kans3D_DepthNormals_void;
+            if (reflections)
+                text.insert(text.find('\n') + 1, ShaderText::Depth_ReflectionDefine);
             return text;
         }();
         // Compile only the replacement fragment, once. Never recompile the vertex
         // source: serialized products and patched skin/morph modules are authoritative.
-        static const std::variant<ShaderModuleCode, AssetError> compiled =
-            []() -> std::variant<ShaderModuleCode, AssetError> {
-            shaderc::Compiler       compiler;
-            shaderc::CompileOptions options;
-            options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
-            options.SetWarningsAsErrors();
-            options.AddMacroDefinition(ShaderText::Depth_KANS_FRAGMENT_STAGE);
-            options.SetIncluder(std::make_unique<EngineIncludes>());
-            const auto product =
-                compiler.CompileGlslToSpv(fragment, shaderc_fragment_shader, "StandardDepthNormals.frag", options);
-            if (product.GetCompilationStatus() != shaderc_compilation_status_success)
-                return AssetError {AssetErrorCode::InvalidData, product.GetErrorMessage()};
-            return ShaderModuleCode {
-                ShaderProductStage::Fragment, ShaderText::Main, {product.cbegin(), product.cend()}};
-        }();
+        static std::mutex                                                               mutex;
+        const std::lock_guard<std::mutex>                                               lock(mutex);
+        static std::array<std::optional<std::variant<ShaderModuleCode, AssetError>>, 2> variants;
+        auto& cached = variants[reflections ? 1 : 0];
+        if (!cached)
+            cached = [&]() -> std::variant<ShaderModuleCode, AssetError> {
+                shaderc::Compiler       compiler;
+                shaderc::CompileOptions options;
+                options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
+                options.SetWarningsAsErrors();
+                options.AddMacroDefinition(ShaderText::Depth_KANS_FRAGMENT_STAGE);
+                options.SetIncluder(std::make_unique<EngineIncludes>());
+                const auto product =
+                    compiler.CompileGlslToSpv(fragment, shaderc_fragment_shader, "StandardDepthNormals.frag", options);
+                if (product.GetCompilationStatus() != shaderc_compilation_status_success)
+                    return AssetError {AssetErrorCode::InvalidData, product.GetErrorMessage()};
+                return ShaderModuleCode {
+                    ShaderProductStage::Fragment, ShaderText::Main, {product.cbegin(), product.cend()}};
+            }();
+        const auto& compiled = *cached;
         if (const auto* error = std::get_if<AssetError>(&compiled))
             return *error;
         auto result = surface;

@@ -2,6 +2,7 @@
 #include <map>
 #include <tuple>
 #include "Passes/GtaoSettings.h"
+#include "Passes/HiZ.h"
 #include "RenderView.h"
 
 namespace Kans
@@ -18,6 +19,12 @@ namespace Kans
     // Per-target history and cached temporal GPU state. Never shared between viewports.
     struct TemporalState
     {
+        HiZState                                                HiZ;
+        RenderHardware::Handle<RenderHardware::Texture>         ReflectionRaw, ReflectionSurface;
+        RenderHardware::Handle<RenderHardware::BindGroupLayout> ReflectionLayout;
+        RenderHardware::Handle<RenderHardware::ComputePipeline> ReflectionPipeline;
+        RenderHardware::Handle<RenderHardware::Sampler>         ReflectionSampler;
+        uint64_t                                                ReflectionFrame = 0;
         RenderHardware::Handle<RenderHardware::Texture>         AORaw, AOHistory[2];
         RenderHardware::Handle<RenderHardware::BindGroupLayout> AOLayout;
         RenderHardware::Handle<RenderHardware::ComputePipeline> AOPipeline[2];

@@ -219,15 +219,16 @@ namespace Kans
         m_SkinnedSources[smoothNormalFallback ? 1 : 0] = std::make_shared<const ShaderData>(std::move(data));
         return true;
     }
-    RenderHardware::Handle<RenderHardware::Shader> GpuShader::PrepareStandardDepthNormals(bool skinned) const
+    RenderHardware::Handle<RenderHardware::Shader> GpuShader::PrepareStandardDepthNormals(bool skinned,
+                                                                                          bool reflections) const
     {
-        auto& program = m_StandardDepthNormalsPrograms[skinned ? 1 : 0];
+        auto& program = m_StandardDepthNormalsPrograms[(skinned ? 1 : 0) + (reflections ? 2 : 0)];
         if (program)
             return program;
         if (skinned && !PrepareSkinning())
             return {};
         const auto& source    = skinned ? m_SkinnedSources[0] : m_Source;
-        auto        converted = MakeStandardDepthNormalsShader(*source);
+        auto        converted = MakeStandardDepthNormalsShader(*source, reflections);
         if (const auto* error = std::get_if<AssetError>(&converted))
             throw std::runtime_error("Standard depth normals: " + error->Message);
         program = m_Device->CreateShader(std::get<ShaderData>(converted));

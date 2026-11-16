@@ -1854,6 +1854,14 @@ namespace Kans
             node["Power"]           = ao.Power;
             node["Falloff"]         = ao.Falloff;
             node["Thickness"]       = ao.Thickness;
+            const auto& ssr              = settings.ScreenSpaceReflections;
+            auto        reflection       = environment["ScreenSpaceReflections"];
+            reflection["Enabled"]        = ssr.Enabled;
+            reflection["HalfResolution"] = ssr.HalfResolution;
+            reflection["MaxSteps"]       = ssr.MaxSteps;
+            reflection["MaxRoughness"]   = ssr.MaxRoughness;
+            reflection["Thickness"]      = ssr.Thickness;
+            reflection["Intensity"]      = ssr.Intensity;
             environment["Map"]      = settings.Map.generic_string(); // Empty explicitly disables IBL.
             if (settings.DiffuseIntensity != 1)
                 environment["DiffuseIntensity"] = settings.DiffuseIntensity;
@@ -2014,7 +2022,8 @@ namespace Kans
                       "ShowSkybox",
                       "BackgroundColor",
                       "Fog",
-                      "AmbientOcclusion"});
+                      "AmbientOcclusion",
+                      "ScreenSpaceReflections"});
                 EnvironmentSettings settings;
                 if (auto node = environment["AmbientOcclusion"])
                 {
@@ -2047,6 +2056,23 @@ namespace Kans
                         ao.Falloff = node["Falloff"].as<float>();
                     if (node["Thickness"])
                         ao.Thickness = node["Thickness"].as<float>();
+                }
+                if (auto node = environment["ScreenSpaceReflections"])
+                {
+                    Keys(node, {"Enabled", "HalfResolution", "MaxSteps", "MaxRoughness", "Thickness", "Intensity"});
+                    auto& ssr = settings.ScreenSpaceReflections;
+                    if (node["Enabled"])
+                        ssr.Enabled = node["Enabled"].as<bool>();
+                    if (node["HalfResolution"])
+                        ssr.HalfResolution = node["HalfResolution"].as<bool>();
+                    if (node["MaxSteps"])
+                        ssr.MaxSteps = node["MaxSteps"].as<uint32_t>();
+                    if (node["MaxRoughness"])
+                        ssr.MaxRoughness = node["MaxRoughness"].as<float>();
+                    if (node["Thickness"])
+                        ssr.Thickness = node["Thickness"].as<float>();
+                    if (node["Intensity"])
+                        ssr.Intensity = node["Intensity"].as<float>();
                 }
                 if (environment["Fog"])
                     settings.Fog = DecodeFog(environment["Fog"]);

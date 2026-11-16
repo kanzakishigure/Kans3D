@@ -7,7 +7,7 @@ namespace Kans
 {
     // Bump for changes to compile options, SPIR-V transforms, reflection/binding validation,
     // or source-generation logic that alter SPIR-V/contracts without changing registered text.
-    inline constexpr uint32_t EngineShaderContractVersion = 2;
+    inline constexpr uint32_t EngineShaderContractVersion = 3;
 
     // Binary-resident shader text only. Generators use the same registry as the fingerprint.
     [[nodiscard]] const std::map<std::string, std::string>& GetEngineShaderTexts();

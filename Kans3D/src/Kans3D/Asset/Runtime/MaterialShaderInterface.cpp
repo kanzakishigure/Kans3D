@@ -422,6 +422,7 @@ vec3 KansSixWayLighting(vec4 positiveAxes,
 #if defined(KANS_FRAGMENT_STAGE) && !defined(KANS_PARTICLE_DIFFUSE_ONLY)
 layout(set = 0, binding = 36) uniform sampler2D u_AmbientOcclusion;
 layout(set = 0, binding = 37) uniform sampler2D u_ContactDepth;
+layout(set = 0, binding = 38) uniform sampler2D u_ScreenSpaceReflections;
 #endif
 layout(set = 0, binding = 5) uniform sampler2DShadow u_DirectionalShadow;
 layout(set = 0, binding = 6) uniform sampler2D u_DirectionalShadowRaw;
@@ -865,7 +866,15 @@ vec3 KansShadePbr(vec3 albedo, float metallic, float roughness, float ao, vec3 N
         screenAO = textureLod(u_AmbientOcclusion, clip.xy / clip.w * .5 + .5, 0).r;
     }
 #endif
-    // Lagarde: roughness-dependent specular occlusion for IBL only.
+#if defined(KANS_FRAGMENT_STAGE) && !defined(KANS_PARTICLE_DIFFUSE_ONLY)
+    if (u_Object.MaterialRender.x != 2.0 && u_Object.MaterialRender.x < 6.0 &&
+        textureSize(u_ScreenSpaceReflections,0).x > 1) {
+        vec4 clip = u_Frame.ViewProjection * vec4(worldPos,1);
+        vec4 reflection = textureLod(u_ScreenSpaceReflections, clip.xy / clip.w * .5 + .5, 0);
+        prefiltered = mix(prefiltered, reflection.rgb, clamp(reflection.a,0.0,1.0));
+    }
+#endif
+    // Lagarde: roughness-dependent specular occlusion, applied once after the IBL/SSR mixture.
     float specularAO = clamp(pow(NdotV + screenAO, exp2(-16.0 * roughness - 1.0)) - 1.0 + screenAO, 0.0, 1.0);
     return ((kD * diffuse + KansDirectionalAmbient() * albedo) * screenAO
             + prefiltered * (F * brdf.x + brdf.y) * specularAO) * ao + Lo;
@@ -974,6 +983,7 @@ vec4 KansToneMap(vec3 color)
                 {},
                 {},
                 {}, // Reserved post-process bindings 11..14.
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},

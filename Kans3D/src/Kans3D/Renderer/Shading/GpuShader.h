@@ -67,7 +67,8 @@ namespace Kans
         mutable RenderHardware::Handle<RenderHardware::Shader>          SpriteProgram;
         mutable RenderHardware::Handle<RenderHardware::BindGroupLayout> SpriteLayout;
         bool PrepareSkinning(bool smoothNormalFallback = false) const;
-        RenderHardware::Handle<RenderHardware::Shader> PrepareStandardDepthNormals(bool skinned) const;
+        RenderHardware::Handle<RenderHardware::Shader> PrepareStandardDepthNormals(bool skinned,
+                                                                                   bool reflections = false) const;
         RenderHardware::Handle<RenderHardware::Shader>
         PrepareDepthOnlyPrepass(size_t pass, bool skinned, bool smoothNormalFallback = false) const;
         RenderHardware::Handle<RenderHardware::Shader>
@@ -119,7 +120,7 @@ namespace Kans
         mutable std::map<uint64_t, RenderHardware::Handle<RenderHardware::Shader>> m_TemporalMaskPrograms;
         std::shared_ptr<const ShaderData> m_Source;
         mutable std::array<std::shared_ptr<const ShaderData>, 2>              m_SkinnedSources;
-        mutable std::array<RenderHardware::Handle<RenderHardware::Shader>, 2> m_StandardDepthNormalsPrograms;
+        mutable std::array<RenderHardware::Handle<RenderHardware::Shader>, 4>      m_StandardDepthNormalsPrograms;
 
         std::map<uint32_t, ShaderTextureFallback> m_SamplerFallbacks;
         mutable std::map<uint32_t, std::array<RenderHardware::Handle<RenderHardware::Shader>, 3>>
