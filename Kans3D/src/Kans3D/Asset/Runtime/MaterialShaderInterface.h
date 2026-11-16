@@ -39,9 +39,10 @@ namespace Kans
         LtcMatrix            = 18,
         LtcAmplitude         = 19,
         AmbientOcclusion     = 36,
+        ContactDepth         = 37,
         AreaSource0          = 20, // One sampled 2D texture per selected area light (20..35).
     };
-    constexpr uint32_t EngineBindingCount = 37;
+    constexpr uint32_t EngineBindingCount = 38;
 
     // std140 images of the engine uniform blocks.
     struct EngineFrameUniforms
@@ -57,11 +58,11 @@ namespace Kans
         float     DebugView = 0.0f; // 0 lit, 1 base color, 2 world normals, 3 legacy wireframe.
         float     Padding[2] {};
         glm::vec4 PointPositions[EnginePointLightLimit] {};
-        glm::vec4 PointRadiance[EnginePointLightLimit] {};
-        glm::vec4 PointSpecular[EnginePointLightLimit] {};
+        glm::vec4 PointRadiance[EnginePointLightLimit] {}; // w: contact length (0 disables).
+        glm::vec4 PointSpecular[EnginePointLightLimit] {}; // w: contact thickness.
         glm::vec4 DirectionalDirection {0}; // Direction of light travel; w: present.
-        glm::vec4 DirectionalRadiance {0};
-        glm::vec4 DirectionalSpecular {0};
+        glm::vec4 DirectionalRadiance {0};  // w: contact length.
+        glm::vec4 DirectionalSpecular {0};  // w: contact thickness.
         glm::vec4 DirectionalAmbient {0};
         glm::vec4 LightingInfo {0, 0.8f, 0, 0}; // x: point count, y: exposure multiplier.
         glm::mat4 CascadeViewProjection[4] {glm::mat4(1), glm::mat4(1), glm::mat4(1), glm::mat4(1)};
@@ -88,7 +89,7 @@ namespace Kans
         glm::vec4 SpotPositionRange[EngineSpotLightLimit] {};
         glm::vec4 SpotDirectionOuter[EngineSpotLightLimit] {};
         glm::vec4 SpotRadianceInner[EngineSpotLightLimit] {};
-        glm::vec4 SpotScales[EngineSpotLightLimit] {};
+        glm::vec4 SpotScales[EngineSpotLightLimit] {}; // zw: contact length, thickness.
         glm::vec4 PointDiffuseScales[4] {glm::vec4(1), glm::vec4(1), glm::vec4(1), glm::vec4(1)};
         glm::vec4 DirectionalScales {1};
         glm::vec4 PointRanges[4] {};

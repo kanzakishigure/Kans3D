@@ -35,6 +35,7 @@ namespace Kans
         const std::shared_ptr<ViewTarget>& GetRenderTarget() const { return m_RenderTarget; }
         void                                                                EnsureSampledDepth();
         void                                                                EnsureNormalRoughness();
+        RenderHardware::Handle<RenderHardware::Texture>                     EnsureContactDepth();
         void                                                                EnsureVelocity();
         // previousUV - currentUV, unjittered [0,1] UV units, origin top-left; FSR scale (1,1).
         RenderHardware::Handle<RenderHardware::Texture> GetVelocity() const
@@ -94,6 +95,7 @@ namespace Kans
         std::vector<RenderHardware::Handle<RenderHardware::Texture>> m_Colors;
         RenderHardware::Handle<RenderHardware::Texture>              m_HDR, m_Depth;
         RenderHardware::Handle<RenderHardware::Texture>              m_NormalRoughness;
+        RenderHardware::Handle<RenderHardware::Texture>              m_ContactDepth;
         bool                                                         m_NormalRoughnessValid = false;
         RenderHardware::Handle<RenderHardware::Texture>              m_SceneVelocity;
         bool                                                         m_VelocityValid = false;

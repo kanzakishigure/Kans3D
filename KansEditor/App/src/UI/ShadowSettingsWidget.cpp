@@ -34,6 +34,19 @@ namespace Kans
         }
     } // namespace
 
+    bool DrawContactShadowSettings(ContactShadowSettings& settings)
+    {
+        const ContactShadowSettings defaults;
+        bool                        toggled = false;
+        if (!PropertyGrid::BeginGroup("Contact Shadows", &settings.Enabled, &toggled))
+            return toggled;
+        bool changed = toggled;
+        changed |= PropertyGrid::Float("Length", settings.Length, .01f, 0, 10, "%.3f m", &defaults.Length);
+        changed |= PropertyGrid::Float("Thickness", settings.Thickness, .001f, .001f, 1, "%.3f m", &defaults.Thickness);
+        PropertyGrid::EndGroup();
+        return changed;
+    }
+
     bool DrawShadowSettings(ShadowSettings& settings, bool directional)
     {
         const ShadowSettings defaults = directional ? ShadowSettings {} : ShadowSettings::PointDefaults();

@@ -301,21 +301,24 @@ namespace Kans
     struct DirLightComponent : LightEmission
     {
         glm::vec3      Direction {0, -1, 0};
+        ContactShadowSettings ContactShadows;
         ShadowSettings Shadows;
         bool           operator==(const DirLightComponent& b) const
         {
-            return static_cast<const LightEmission&>(*this) == b && Direction == b.Direction && Shadows == b.Shadows;
+            return static_cast<const LightEmission&>(*this) == b && Direction == b.Direction && Shadows == b.Shadows &&
+                   ContactShadows == b.ContactShadows;
         }
     };
     struct PointLightComponent : LightEmission
     {
         LightUnit      Unit    = LightUnit::Candela;
         float          Range   = 10; // Metres; zero preserves legacy unbounded attenuation.
+        ContactShadowSettings ContactShadows;
         ShadowSettings Shadows = ShadowSettings::PointDefaults();
         bool           operator==(const PointLightComponent& b) const
         {
             return static_cast<const LightEmission&>(*this) == b && Unit == b.Unit && Range == b.Range &&
-                   Shadows == b.Shadows;
+                   Shadows == b.Shadows && ContactShadows == b.ContactShadows;
         }
     };
     struct SpotLightComponent : LightEmission
@@ -324,6 +327,7 @@ namespace Kans
         LightUnit      Unit           = LightUnit::Candela;
         float          Range          = 10;                      // Metres.
         float          InnerConeAngle = 20, OuterConeAngle = 30; // Half angles, degrees; local -Z aim.
+        ContactShadowSettings ContactShadows;
         ShadowSettings Shadows = ShadowSettings::SpotDefaults();
         AssetID        Cookie;             // Optional linear RGB light multiplier, projected along local -Z.
         float          CookieRotation = 0; // Degrees around the light axis.
@@ -332,8 +336,8 @@ namespace Kans
         {
             return static_cast<const LightEmission&>(*this) == b && Unit == b.Unit && Range == b.Range &&
                    InnerConeAngle == b.InnerConeAngle && OuterConeAngle == b.OuterConeAngle && Shadows == b.Shadows &&
-                   Cookie == b.Cookie && CookieRotation == b.CookieRotation && CookieScale == b.CookieScale &&
-                   Beam == b.Beam;
+                   ContactShadows == b.ContactShadows && Cookie == b.Cookie && CookieRotation == b.CookieRotation &&
+                   CookieScale == b.CookieScale && Beam == b.Beam;
         }
     };
 

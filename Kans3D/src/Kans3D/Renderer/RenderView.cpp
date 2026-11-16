@@ -146,6 +146,9 @@ namespace Kans
             frame.PointPositions[i] = glm::vec4(light.Position, 1);
             frame.PointRadiance[i]                 = glm::vec4(radiance, 0);
             frame.PointSpecular[i]                 = glm::vec4(glm::vec3(light.SpecularScale), 0);
+            const auto contact                     = light.ContactShadows.Validated();
+            frame.PointRadiance[i].w               = contact.Enabled ? contact.Length : 0;
+            frame.PointSpecular[i].w               = contact.Enabled ? contact.Thickness : 0;
             frame.PointDiffuseScales[i / 4][i % 4] = light.DiffuseScale;
             frame.PointRanges[i / 4][i % 4]        = std::max(0.0f, light.Range);
             if (i < EngineLightCount)
@@ -162,6 +165,9 @@ namespace Kans
             frame.DirectionalDirection = glm::vec4(light.Dirction / directionLength, 1);
             frame.DirectionalRadiance  = glm::vec4(LightRadiance(light), 0);
             frame.DirectionalSpecular  = glm::vec4(glm::vec3(light.SpecularScale), 0);
+            const auto contact          = light.ContactShadows.Validated();
+            frame.DirectionalRadiance.w = contact.Enabled ? contact.Length : 0;
+            frame.DirectionalSpecular.w = contact.Enabled ? contact.Thickness : 0;
             frame.DirectionalScales.x  = light.DiffuseScale;
         }
         size_t spots = std::min(scene.spotLights.size(), size_t(EngineSpotLightLimit));
@@ -177,6 +183,9 @@ namespace Kans
                 glm::vec4(LightRadiance(spot, ToCandela(spot.Intensity, spot.Unit, SpotSolidAngle(inner, outer))),
                           std::cos(glm::radians(inner)));
             frame.SpotScales[i] = glm::vec4(spot.DiffuseScale, spot.SpecularScale, 0, 0);
+            const auto contact           = spot.ContactShadows.Validated();
+            frame.SpotScales[i].z        = contact.Enabled ? contact.Length : 0;
+            frame.SpotScales[i].w        = contact.Enabled ? contact.Thickness : 0;
             frame.SpotViewProjection[i]  = SpotViewProjection(spot);
             float angle                  = glm::radians(std::isfinite(spot.CookieRotation) ? spot.CookieRotation : 0.f);
             auto  scale                  = glm::max(spot.CookieScale, glm::vec2(.001f));

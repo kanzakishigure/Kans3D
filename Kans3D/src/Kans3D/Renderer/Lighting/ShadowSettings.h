@@ -5,6 +5,23 @@
 
 namespace Kans
 {
+    struct ContactShadowSettings
+    {
+        bool  Enabled   = false;
+        float Length    = .2f;  // World-space metres toward the light.
+        float Thickness = .05f; // View-space depth slab behind visible surfaces, in metres.
+        bool  operator==(const ContactShadowSettings& b) const
+        {
+            return Enabled == b.Enabled && Length == b.Length && Thickness == b.Thickness;
+        }
+        ContactShadowSettings Validated() const
+        {
+            auto s      = *this;
+            s.Length    = std::clamp(std::isfinite(s.Length) ? s.Length : .2f, 0.f, 10.f);
+            s.Thickness = std::clamp(std::isfinite(s.Thickness) ? s.Thickness : .05f, .001f, 1.f);
+            return s;
+        }
+    };
     enum class ShadowFilter
     {
         PCF3x3,

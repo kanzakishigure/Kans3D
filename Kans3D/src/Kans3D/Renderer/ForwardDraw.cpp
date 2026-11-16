@@ -153,6 +153,15 @@ namespace Kans
         const auto&         ready    = view.MaterialOrder;
         auto*               commands = &commandList;
         EngineFrameUniforms frame    = View.LightingUniforms.value_or(MakeLightingUniforms(View.Scene));
+        // Contact depth is available only for the opaque single-sample scene pass.
+        if (!ContactDepth)
+        {
+            frame.DirectionalRadiance.w = 0;
+            for (auto& light : frame.PointRadiance)
+                light.w = 0;
+            for (auto& light : frame.SpotScales)
+                light.z = 0;
+        }
         const auto coordinates = Services.GetDevice()->GetCoordinateConventions();
         frame.View                      = View.Scene.sceneCamera.viewMatrix;
         frame.Projection                = View.Scene.sceneCamera.camera.GetProjectionMatrix();
@@ -351,6 +360,8 @@ namespace Kans
                      return p.Tag == "DepthNormals" && bindings->PassEnabled(p.Name);
                  })))
                 pass.AmbientOcclusion = AmbientOcclusion;
+            if (!suppliedView && tag.empty() && !IsTransparentMaterial(item.Render.AlphaMode))
+                pass.ContactDepth = ContactDepth;
             pass.EnvironmentSampler = Services.GetMaterialEnvironmentSampler();
             pass.AreaLighting       = View.AreaLighting;
             pass.Fog                = draw.ViewMode == SceneViewMode::Lit ? Fog : nullptr;

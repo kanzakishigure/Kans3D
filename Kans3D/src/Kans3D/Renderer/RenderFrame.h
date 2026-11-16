@@ -39,6 +39,7 @@ namespace Kans
         void                                            BuildDepthPrepass(RenderGraph& graph);
         RenderHardware::Handle<RenderHardware::Texture> AmbientOcclusion;
         void                                            BuildGtao(RenderGraph& graph);
+        RenderHardware::Handle<RenderHardware::Texture> ContactDepth;
         std::shared_ptr<FogState>                       Fog;
         FogFrameResources                               FogGrid;
         bool                                            TemporalActive = false, VelocityActive = false;

@@ -18,7 +18,7 @@ namespace Kans
             TextureDesc d;
             d.Width       = size.x;
             d.Height      = size.y;
-            d.PixelFormat = Format::RGBA32Float;
+            d.PixelFormat = Format::RG16Float;
             d.Usage       = RenderHardware::TextureUsage::Sampled | RenderHardware::TextureUsage::Storage |
                             RenderHardware::TextureUsage::CopySource;
             state.AORaw   = device->CreateTexture(d);
@@ -52,7 +52,7 @@ layout(set=0,binding=2) uniform sampler2D Normal;
 layout(set=0,binding=3) uniform sampler2D Raw;
 layout(set=0,binding=4) uniform sampler2D History;
 layout(set=0,binding=5) uniform sampler2D Velocity;
-layout(set=0,binding=6,rgba32f) uniform writeonly image2D Result;
+layout(set=0,binding=6,rg16f) uniform writeonly image2D Result;
 vec3 unproject(vec2 uv, float depth) {
     vec4 v=p.inverseProjection*vec4(uv*2-1,depth,1);
     return v.xyz/v.w;
@@ -120,12 +120,12 @@ void main() {
     if(any(greaterThanEqual(id,size))) return;
     vec2 uv=(vec2(id)+.5)/vec2(size);
     vec4 center=texelFetch(Raw,id,0);
-    if(center.a==0) { imageStore(Result,id,center); return; }
+    if(center.g<=0) { imageStore(Result,id,center); return; }
     float sum=0, weights=0, lo=1, hi=0;
     for(int y=-2;y<=2;++y) for(int x=-2;x<=2;++x) {
         ivec2 q=clamp(id+ivec2(x,y),ivec2(0),size-1);
         vec4 sampleAO=texelFetch(Raw,q,0);
-        float w=exp(-float(x*x+y*y)*.25)*exp(-abs(sampleAO.g-center.g)/max(.01,center.g*.01))*sampleAO.a;
+        float w=exp(-float(x*x+y*y)*.25)*exp(-abs(sampleAO.g-center.g)/max(.01,center.g*.01))*float(sampleAO.g>0);
         sum+=sampleAO.r*w; weights+=w;
         if(w>.1) { lo=min(lo,sampleAO.r); hi=max(hi,sampleAO.r); }
     }
@@ -134,7 +134,7 @@ void main() {
     if(p.temporal.y>0 && all(greaterThanEqual(oldUV,vec2(0))) && all(lessThanEqual(oldUV,vec2(1)))) {
         vec4 old=textureLod(History,oldUV,0);
         float expected=-(p.previousView*p.inverseView*vec4(position(uv),1)).z;
-        if(old.a>0 && abs(old.g-expected)<max(.02,abs(expected)*.02))
+        if(old.g>0 && abs(old.g-expected)<max(.02,abs(expected)*.02))
             ao=mix(ao,clamp(old.r,lo,hi),.85);
     }
     imageStore(Result,id,vec4(ao,center.g,0,1));

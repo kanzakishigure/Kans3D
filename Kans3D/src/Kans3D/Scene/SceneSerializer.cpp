@@ -391,6 +391,29 @@ namespace Kans
                 light.Range = 0;
             Require(light.Range >= 0, "Invalid light range");
         }
+        YAML::Node EncodeContactShadows(const ContactShadowSettings& settings)
+        {
+            auto       s = settings.Validated();
+            YAML::Node n;
+            n["Enabled"]   = s.Enabled;
+            n["Length"]    = s.Length;
+            n["Thickness"] = s.Thickness;
+            return n;
+        }
+        ContactShadowSettings DecodeContactShadows(const YAML::Node& n)
+        {
+            ContactShadowSettings s;
+            if (!n)
+                return s;
+            Keys(n, {"Enabled", "Length", "Thickness"});
+            if (n["Enabled"])
+                s.Enabled = n["Enabled"].as<bool>();
+            if (n["Length"])
+                s.Length = Number(n["Length"]);
+            if (n["Thickness"])
+                s.Thickness = Number(n["Thickness"]);
+            return s.Validated();
+        }
         YAML::Node EncodeShadows(const ShadowSettings& settings)
         {
             const auto s = settings.Validated();
@@ -1709,6 +1732,7 @@ namespace Kans
                 value["Direction"]          = Vector(light.Direction, 3);
                 EncodeEmission(value, light);
                 value["Shadows"]            = EncodeShadows(light.Shadows);
+                value["ContactShadows"]     = EncodeContactShadows(light.ContactShadows);
             }
             if (entity.HasComponent<PointLightComponent>())
             {
@@ -1718,6 +1742,7 @@ namespace Kans
                 value["Unit"]  = light.Unit == LightUnit::Lumens ? "Lumens" : "Candela";
                 EncodeEmission(value, light);
                 value["Shadows"]            = EncodeShadows(light.Shadows);
+                value["ContactShadows"]     = EncodeContactShadows(light.ContactShadows);
             }
             if (entity.HasComponent<SpotLightComponent>())
             {
@@ -1746,6 +1771,7 @@ namespace Kans
                 b["UseCookie"]          = beam.UseCookie;
                 b["Samples"]            = beam.Samples;
                 value["Shadows"]        = EncodeShadows(light.Shadows);
+                value["ContactShadows"] = EncodeContactShadows(light.ContactShadows);
             }
             if (entity.HasComponent<AreaLightComponent>())
             {
@@ -2450,11 +2476,13 @@ namespace Kans
                           "Diffuse_Intensity",
                           "Specular_Intensity",
                           "Ambient_Intensity",
-                          "Shadows"});
+                          "Shadows",
+                          "ContactShadows"});
                     auto& light     = entity.AddComponent<DirLightComponent>();
                     light.Direction = Vec3(value["Direction"]);
                     DecodeEmission(value, light);
                     light.Shadows = DecodeShadows(value["Shadows"]);
+                    light.ContactShadows = DecodeContactShadows(value["ContactShadows"]);
                 }
                 if (node["PointLightComponent"])
                 {
@@ -2472,11 +2500,13 @@ namespace Kans
                           "Diffuse_Intensity",
                           "Specular_Intensity",
                           "Ambient_Intensity",
-                          "Shadows"});
+                          "Shadows",
+                          "ContactShadows"});
                     auto& light  = entity.AddComponent<PointLightComponent>();
                     bool  legacy = DecodeEmission(value, light);
                     DecodePunctual(value, light, legacy);
                     light.Shadows = DecodeShadows(value["Shadows"], ShadowSettings::PointDefaults());
+                    light.ContactShadows = DecodeContactShadows(value["ContactShadows"]);
                 }
                 if (node["SpotLightComponent"])
                 {
@@ -2497,7 +2527,8 @@ namespace Kans
                           "CookieRotation",
                           "CookieScale",
                           "Beam",
-                          "Shadows"});
+                          "Shadows",
+                          "ContactShadows"});
                     auto& light = entity.AddComponent<SpotLightComponent>();
                     DecodeEmission(value, light);
                     DecodePunctual(value, light, false);
@@ -2550,6 +2581,7 @@ namespace Kans
                         Require(beam == beam.Validated(), "Invalid spot beam settings");
                     }
                     light.Shadows = DecodeShadows(value["Shadows"], ShadowSettings::SpotDefaults());
+                    light.ContactShadows = DecodeContactShadows(value["ContactShadows"]);
                 }
                 if (auto fog = node["FogVolumeComponent"])
                 {

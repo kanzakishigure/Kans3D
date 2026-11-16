@@ -333,8 +333,24 @@ namespace Kans
             renderer.Output.EnsureSampledDepth();
         const auto& view = renderer.View;
         using namespace RenderHardware;
+        const auto contactEnabled = [](const auto& light) {
+            const auto s = light.ContactShadows.Validated();
+            return s.Enabled && s.Length > 0;
+        };
+        const bool contact = renderer.Samples == 1 &&
+                             (((view.Scene.HasDirectionalLight || LightRadiance(view.Scene.dirLight) != glm::vec3(0)) &&
+                               contactEnabled(view.Scene.dirLight)) ||
+                              (view.Scene.pointLights.empty() && contactEnabled(view.Scene.pointLight)) ||
+                              std::any_of(view.Scene.pointLights.begin(),
+                                          view.Scene.pointLights.begin() +
+                                              std::min(view.Scene.pointLights.size(), size_t(EnginePointLightLimit)),
+                                          contactEnabled) ||
+                              std::any_of(view.Scene.spotLights.begin(),
+                                          view.Scene.spotLights.begin() +
+                                              std::min(view.Scene.spotLights.size(), size_t(EngineSpotLightLimit)),
+                                          contactEnabled));
         const bool reconstruct = renderer.ReconstructsHDR() || renderer.View.Environment.Fog.Enabled ||
-                                 view.Environment.AmbientOcclusion.Enabled;
+                                 view.Environment.AmbientOcclusion.Enabled || contact;
         if (reconstruct)
             renderer.DeferToneMapping = true;
         if (renderer.Samples > 1)
@@ -342,7 +358,7 @@ namespace Kans
             BuildMSAA(graph, renderer);
             return;
         }
-        if (HasSpotBeams(renderer) || view.DepthPrepass || view.Environment.AmbientOcclusion.Enabled ||
+        if (contact || HasSpotBeams(renderer) || view.DepthPrepass || view.Environment.AmbientOcclusion.Enabled ||
             renderer.VelocityActive || view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
             renderer.Output.EnsureSampledDepth();
         if (!graph.PassCount())
@@ -510,9 +526,19 @@ namespace Kans
         featureContext.Immediate = nullptr;
         // Immediates retain their original cleared-depth behavior. Test camera
         // geometry against their depth before the opaque lighting pass.
-        if (view.DepthPrepass || view.Environment.AmbientOcclusion.Enabled ||
+        if (contact || view.DepthPrepass || view.Environment.AmbientOcclusion.Enabled ||
             view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
             renderer.BuildDepthPrepass(graph);
+        if (contact)
+        {
+            renderer.ContactDepth = renderer.Output.EnsureContactDepth();
+            const auto source     = graph.ImportTexture("SceneDepthStencil", renderer.Output.GetDepth());
+            const auto snapshot   = graph.ImportTexture("Contact shadow depth", renderer.ContactDepth);
+            graph.AddPass(
+                "Contact shadow depth snapshot",
+                {{source, GraphAccess::TransferRead}, {snapshot, GraphAccess::TransferWrite}},
+                [source, snapshot](auto& c) { c.Commands.CopyTexture(c.Texture(source), {}, c.Texture(snapshot)); });
+        }
         if (view.Environment.AmbientOcclusion.Enabled)
         {
             if (view.EffectiveAA == AntiAliasing::TAA)
@@ -566,9 +592,11 @@ namespace Kans
             }
         }
         Inject(RenderExtensionPoint::BeforeOpaque, featureContext);
-        if (view.EffectiveAA == AntiAliasing::TAA || HasSpotBeams(renderer) || renderer.AmbientOcclusion)
+        if (view.EffectiveAA == AntiAliasing::TAA || HasSpotBeams(renderer) || renderer.AmbientOcclusion || contact)
         {
             auto       materialUses = target;
+            if (renderer.ContactDepth)
+                sampled(materialUses, renderer.ContactDepth, "Contact shadow depth");
             if (renderer.AmbientOcclusion)
                 sampled(materialUses, renderer.AmbientOcclusion, "GTAO filtered");
             if (renderer.Fog)

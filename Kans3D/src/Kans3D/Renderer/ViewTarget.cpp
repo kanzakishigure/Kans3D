@@ -87,6 +87,16 @@ namespace Kans
             m_Depth    = m_Device->CreateTexture(desc);
         }
     }
+    RenderHardware::Handle<RenderHardware::Texture> ViewTarget::EnsureContactDepth()
+    {
+        if (!m_ContactDepth)
+        {
+            auto desc      = m_Depth->GetDesc();
+            desc.Usage     = RenderHardware::TextureUsage::Sampled | RenderHardware::TextureUsage::CopyDestination;
+            m_ContactDepth = m_Device->CreateTexture(desc);
+        }
+        return m_ContactDepth;
+    }
     void ViewTarget::EnsureNormalRoughness()
     {
         using namespace RenderHardware;
@@ -164,6 +174,7 @@ namespace Kans
         m_RenderTarget.reset();
         // AddPasses recreates size-dependent FSR resources while preserving the context identity.
         m_NormalRoughness.reset();
+        m_ContactDepth.reset();
         m_SceneVelocity.reset();
         m_VelocityValid = false;
         m_Jitter        = {};

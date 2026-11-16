@@ -185,6 +185,9 @@ namespace Kans::ComponentEditors
             auto shadows = c.Shadows;
             if (DrawShadowSettings(shadows, true))
                 c.Shadows = shadows.Validated();
+            auto contact = c.ContactShadows;
+            if (DrawContactShadowSettings(contact))
+                c.ContactShadows = contact.Validated();
         });
     }
 
@@ -205,6 +208,9 @@ namespace Kans::ComponentEditors
             auto shadows = c.Shadows;
             if (DrawShadowSettings(shadows, false))
                 c.Shadows = shadows.Validated();
+            auto contact = c.ContactShadows;
+            if (DrawContactShadowSettings(contact))
+                c.ContactShadows = contact.Validated();
         });
     }
 
@@ -257,6 +263,9 @@ namespace Kans::ComponentEditors
             auto shadows = c.Shadows;
             if (DrawShadowSettings(shadows, false))
                 c.Shadows = shadows.Validated();
+            auto contact = c.ContactShadows;
+            if (DrawContactShadowSettings(contact))
+                c.ContactShadows = contact.Validated();
         });
     }
     void DrawAreaLight(Entity entity, ComponentUI& ui)

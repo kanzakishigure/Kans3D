@@ -421,6 +421,7 @@ vec3 KansSixWayLighting(vec4 positiveAxes,
 #include <Kans3D/Engine.glsl>
 #if defined(KANS_FRAGMENT_STAGE) && !defined(KANS_PARTICLE_DIFFUSE_ONLY)
 layout(set = 0, binding = 36) uniform sampler2D u_AmbientOcclusion;
+layout(set = 0, binding = 37) uniform sampler2D u_ContactDepth;
 #endif
 layout(set = 0, binding = 5) uniform sampler2DShadow u_DirectionalShadow;
 layout(set = 0, binding = 6) uniform sampler2D u_DirectionalShadowRaw;
@@ -737,6 +738,46 @@ float KansPointShadow(int light, vec3 worldPos, vec3 normal)
     return sum / total;
 }
 
+// Fixed-cost world-space ray, sampled at render resolution. Only visible prepass occluders participate.
+float KansContactShadow(vec3 worldPos, vec3 normal, vec3 toLight, vec2 settings)
+{
+#if defined(KANS_FRAGMENT_STAGE) && !defined(KANS_PARTICLE_DIFFUSE_ONLY)
+    if (settings.x <= 0.0 || u_Object.MaterialRender.w > 0.5 ||
+        u_Object.MaterialRender.x == 2.0 || u_Object.MaterialRender.x >= 6.0) return 1.0;
+    float distanceToLight = length(toLight);
+    if (distanceToLight < 1e-6) return 1.0;
+    vec3 L = toLight / distanceToLight;
+    if (dot(normal, L) <= 0.0) return 1.0;
+    float rayLength = min(settings.x, distanceToLight);
+    vec3 origin = (u_Frame.View * vec4(worldPos + normal * .002, 1)).xyz;
+    vec3 direction = mat3(u_Frame.View) * L;
+    const int steps = 24;
+    for (int step = 0; step < steps; ++step) {
+        float t = (float(step) + 1.0) / float(steps);
+        vec3 ray = origin + direction * (rayLength * t);
+        vec4 clip = u_Frame.Projection * vec4(ray, 1);
+        if (clip.w <= 0.0) break;
+        vec3 ndc = clip.xyz / clip.w;
+        vec2 uv = ndc.xy * .5 + .5;
+        if (any(lessThan(uv,vec2(0))) || any(greaterThanEqual(uv,vec2(1))) || ndc.z < 0.0 || ndc.z >= 1.0) break;
+        ivec2 size = textureSize(u_ContactDepth, 0);
+        ivec2 pixel = ivec2(uv * vec2(size));
+        float depth = texelFetch(u_ContactDepth, pixel, 0).r;
+        if (depth >= 1.0) continue;
+        vec2 sampleUV = (vec2(pixel) + .5) / vec2(size);
+        vec4 surface = u_Frame.InverseProjection * vec4(sampleUV * 2.0 - 1.0, depth, 1);
+        float difference = -ray.z + surface.z / surface.w;
+        // The pixel footprint gives a receiver-plane bias, avoiding grazing-angle self shadows.
+        vec3 surfacePosition = surface.xyz / surface.w;
+        vec3 viewNormal = mat3(u_Frame.View) * normal;
+        float planeSeparation = dot(surfacePosition - origin, viewNormal);
+        if (difference > .001 && difference < settings.y && planeSeparation > .002)
+            return smoothstep(.8, 1.0, t); // Fade hits at the maximum length to avoid a hard cutoff.
+    }
+#endif
+    return 1.0;
+}
+
 float KansDistributionGGX(vec3 N, vec3 H, float roughness)
 {
     float a     = roughness * roughness;
@@ -787,11 +828,11 @@ vec3 KansShadePbr(vec3 albedo, float metallic, float roughness, float ao, vec3 N
         float distanceSquared = dot(toLight, toLight);
         vec3 L = normalize(toLight);
         Lo += KansDirectPbr(albedo, metallic, roughness, N, V, L,
-                            u_Frame.PointRadiance[i].rgb * KansPointAttenuation(i,distanceSquared), KansPointLightSpecular(i), u_Frame.PointDiffuseScales[i/4][i%4]) * KansPointShadow(i, worldPos, N);
+                            u_Frame.PointRadiance[i].rgb * KansPointAttenuation(i,distanceSquared), KansPointLightSpecular(i), u_Frame.PointDiffuseScales[i/4][i%4]) * min(KansPointShadow(i, worldPos, N), KansContactShadow(worldPos, N, toLight, vec2(u_Frame.PointRadiance[i].w, u_Frame.PointSpecular[i].w)));
     }
     if (u_Frame.DirectionalDirection.w != 0.0)
         Lo += KansDirectPbr(albedo, metallic, roughness, N, V, KansDirectionalToLight(),
-                            u_Frame.DirectionalRadiance.rgb, u_Frame.DirectionalSpecular.rgb, u_Frame.DirectionalScales.x) * KansShadow(worldPos, N)
+                            u_Frame.DirectionalRadiance.rgb, u_Frame.DirectionalSpecular.rgb, u_Frame.DirectionalScales.x) * min(KansShadow(worldPos, N), KansContactShadow(worldPos, N, KansDirectionalToLight()*1e6, vec2(u_Frame.DirectionalRadiance.w, u_Frame.DirectionalSpecular.w)))
 #ifdef KANS_DIRECTIONAL_TRANSMITTANCE
             * KANS_DIRECTIONAL_TRANSMITTANCE
 #endif
@@ -800,7 +841,7 @@ vec3 KansShadePbr(vec3 albedo, float metallic, float roughness, float ao, vec3 N
         vec3 toLight=u_Frame.SpotPositionRange[i].xyz-worldPos;
         float attenuation=KansSpotAttenuation(i,toLight);
         if (attenuation>0.0) Lo += KansDirectPbr(albedo,metallic,roughness,N,V,normalize(toLight),
-            u_Frame.SpotRadianceInner[i].rgb*attenuation*KansSpotCookie(i,worldPos),vec3(u_Frame.SpotScales[i].y),u_Frame.SpotScales[i].x)*KansSpotShadow(i,worldPos,N);
+            u_Frame.SpotRadianceInner[i].rgb*attenuation*KansSpotCookie(i,worldPos),vec3(u_Frame.SpotScales[i].y),u_Frame.SpotScales[i].x)*min(KansSpotShadow(i,worldPos,N),KansContactShadow(worldPos,N,toLight,u_Frame.SpotScales[i].zw));
     }
     for (int i=0; i<KansAreaLightCount(); ++i) {
 #ifdef KANS_PARTICLE_DIFFUSE_ONLY
@@ -933,6 +974,7 @@ vec4 KansToneMap(vec3 color)
                 {},
                 {},
                 {}, // Reserved post-process bindings 11..14.
+                {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
                 {ShaderBindingKind::CombinedImageSampler, ShaderImageDimension::Texture2D, 0, {}},
