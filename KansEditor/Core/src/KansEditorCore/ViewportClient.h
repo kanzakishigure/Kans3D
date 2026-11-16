@@ -52,6 +52,7 @@ namespace Kans
         const ErrorBoundary& GetRenderError() const { return m_Target->GetError(); }
 
         RenderFeatureSet& GetFeatures() { return m_Features; }
+        void              SetAmbientOcclusionDebug(bool enabled) { m_AmbientOcclusionDebug = enabled; }
         void              SetViewMode(SceneViewMode mode) { m_ViewMode = mode; }
         // The editor view's grid look; its plane follows the camera (see RenderEditor).
         void              SetGrid(const GridSettings& grid) { m_Grid = grid; }
@@ -104,6 +105,7 @@ namespace Kans
         EnvironmentPrecomputeSizes           m_EnvironmentSizes;
         std::filesystem::path                m_EnvironmentSource;
         glm::uvec2                           m_Size {0, 0};
+        bool                                           m_AmbientOcclusionDebug = false;
         SceneViewMode                        m_ViewMode = SceneViewMode::Lit;
         GridSettings                         m_Grid;
         GraphCaptureSettings                 m_Debug;

@@ -215,6 +215,7 @@ namespace Kans
         int        m_GameResolution = 0; // Index into the game resolutions; 0 fits the panel.
         ImVec2     m_ImageMin {0, 0}, m_ImageSize {1, 1};
 
+        bool          m_AmbientOcclusionDebug = false;
         SceneViewMode m_ViewMode  = SceneViewMode::Lit;
         GridSettings  m_Grid;
         bool          m_ShowIcons = true, m_ShowStats = false;

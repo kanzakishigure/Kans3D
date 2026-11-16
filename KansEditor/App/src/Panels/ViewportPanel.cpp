@@ -221,6 +221,7 @@ namespace Kans
     {
         // The game camera shows what the game renders: no editor grid or outlines.
         m_Client->SetViewMode(m_ViewMode);
+        m_Client->SetAmbientOcclusionDebug(m_AmbientOcclusionDebug);
         m_Client->SetGrid(m_Grid);
         if (!UsesSceneCamera() || !m_Client->RenderGame())
             m_Client->RenderEditor(m_Camera);
@@ -1393,6 +1394,7 @@ namespace Kans
             if (ImGui::BeginPopup("##ViewOptions"))
             {
                 ImGui::TextDisabled("Display");
+                ImGui::Checkbox("Ambient Occlusion buffer", &m_AmbientOcclusionDebug);
                 const std::pair<SceneViewMode, const char*> modes[] = {{SceneViewMode::Lit, "Lit"},
                                                                        {SceneViewMode::BaseColor, "Base color"},
                                                                        {SceneViewMode::Normals, "Normals"},

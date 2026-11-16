@@ -1817,6 +1817,17 @@ namespace Kans
             const auto& settings    = scene.GetEnvironmentSettings();
             auto        environment = root["Environment"];
             environment["Fog"]      = EncodeFog(settings.Fog);
+            const auto& ao          = settings.AmbientOcclusion;
+            auto        node        = environment["AmbientOcclusion"];
+            node["Enabled"]         = ao.Enabled;
+            node["FullResolution"]  = ao.FullResolution;
+            node["Slices"]          = ao.Slices;
+            node["Steps"]           = ao.Steps;
+            node["Radius"]          = ao.Radius;
+            node["Intensity"]       = ao.Intensity;
+            node["Power"]           = ao.Power;
+            node["Falloff"]         = ao.Falloff;
+            node["Thickness"]       = ao.Thickness;
             environment["Map"]      = settings.Map.generic_string(); // Empty explicitly disables IBL.
             if (settings.DiffuseIntensity != 1)
                 environment["DiffuseIntensity"] = settings.DiffuseIntensity;
@@ -1976,8 +1987,41 @@ namespace Kans
                       "SkyboxIntensity",
                       "ShowSkybox",
                       "BackgroundColor",
-                      "Fog"});
+                      "Fog",
+                      "AmbientOcclusion"});
                 EnvironmentSettings settings;
+                if (auto node = environment["AmbientOcclusion"])
+                {
+                    Keys(node,
+                         {"Enabled",
+                          "FullResolution",
+                          "Slices",
+                          "Steps",
+                          "Radius",
+                          "Intensity",
+                          "Power",
+                          "Falloff",
+                          "Thickness"});
+                    auto& ao = settings.AmbientOcclusion;
+                    if (node["Enabled"])
+                        ao.Enabled = node["Enabled"].as<bool>();
+                    if (node["FullResolution"])
+                        ao.FullResolution = node["FullResolution"].as<bool>();
+                    if (node["Slices"])
+                        ao.Slices = node["Slices"].as<uint32_t>();
+                    if (node["Steps"])
+                        ao.Steps = node["Steps"].as<uint32_t>();
+                    if (node["Radius"])
+                        ao.Radius = node["Radius"].as<float>();
+                    if (node["Intensity"])
+                        ao.Intensity = node["Intensity"].as<float>();
+                    if (node["Power"])
+                        ao.Power = node["Power"].as<float>();
+                    if (node["Falloff"])
+                        ao.Falloff = node["Falloff"].as<float>();
+                    if (node["Thickness"])
+                        ao.Thickness = node["Thickness"].as<float>();
+                }
                 if (environment["Fog"])
                     settings.Fog = DecodeFog(environment["Fog"]);
                 if (environment["Map"])

@@ -139,6 +139,7 @@ namespace Kans
         void BeginFrame(uint64_t unusedFrames = 600);
         void Clear();
         std::shared_ptr<ShadowResources> GetShadowFallback();
+        RenderHardware::Handle<RenderHardware::Texture> GetWhiteAO();
         std::shared_ptr<AreaLightResources> GetAreaLightFallback();
 
         const ModelInstances* GetModel(AssetID id);
@@ -205,6 +206,7 @@ namespace Kans
         std::array<Ref<Texture2D>, 3>                                      m_FallbackTextures;
         AssetManager&                                                      m_Assets;
         std::shared_ptr<ShadowResources>                                             m_ShadowFallback;
+        RenderHardware::Handle<RenderHardware::Texture>                              m_WhiteAO;
         std::shared_ptr<AreaLightResources>                                          m_AreaLightFallback;
         struct EditableEntry
         {

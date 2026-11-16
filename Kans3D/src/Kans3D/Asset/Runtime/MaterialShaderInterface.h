@@ -38,9 +38,10 @@ namespace Kans
         SpotShadowRaw        = 17,
         LtcMatrix            = 18,
         LtcAmplitude         = 19,
+        AmbientOcclusion     = 36,
         AreaSource0          = 20, // One sampled 2D texture per selected area light (20..35).
     };
-    constexpr uint32_t EngineBindingCount = 36;
+    constexpr uint32_t EngineBindingCount = 37;
 
     // std140 images of the engine uniform blocks.
     struct EngineFrameUniforms

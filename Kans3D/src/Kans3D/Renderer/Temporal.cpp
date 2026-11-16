@@ -44,8 +44,10 @@ namespace Kans
     void RenderFrame::PrepareTemporal()
     {
         TemporalActive = Samples == 1 && (View.EffectiveAA == AntiAliasing::TAA || View.TemporalJitter ||
-                                          View.Velocity || View.DebugBuffer == RenderView::DebugBuffer::Velocity);
+                                          View.Velocity || View.Environment.AmbientOcclusion.Enabled ||
+                                          View.DebugBuffer == RenderView::DebugBuffer::Velocity);
         VelocityActive = TemporalActive && (View.EffectiveAA == AntiAliasing::TAA || View.Velocity ||
+                                            View.Environment.AmbientOcclusion.Enabled ||
                                             View.DebugBuffer == RenderView::DebugBuffer::Velocity);
         if (!TemporalActive)
         {
@@ -641,7 +643,8 @@ void main() {
         if (Samples > 1 || View.DebugBuffer == RenderView::DebugBuffer::None)
             return;
         const bool velocity = View.DebugBuffer == RenderView::DebugBuffer::Velocity;
-        auto       input    = velocity ? Output.GetVelocity() : Output.GetNormalRoughness();
+        const bool ao       = View.DebugBuffer == RenderView::DebugBuffer::AmbientOcclusion;
+        auto       input    = ao ? AmbientOcclusion : velocity ? Output.GetVelocity() : Output.GetNormalRoughness();
         if (!input)
             return;
         const auto  src = graph.ImportTexture(velocity ? "SceneVelocity" : "SceneNormalRoughness", input);
@@ -658,7 +661,7 @@ void main() {
     color=vec4(rgb*clamp(length(v)*32,0,1),1);
 }
 )";
-        const char* normals  = R"(#version 450
+        const char* normals   = R"(#version 450
 layout(set=0,binding=0,std140) uniform Settings { vec4 size; } u;
 layout(set=0,binding=1) uniform sampler2D image;
 layout(location=0) out vec4 color;
@@ -674,10 +677,20 @@ void main() {
     color=vec4(rgb,1);
 }
 )";
+        const char* occlusion = R"(#version 450
+layout(set=0,binding=0,std140) uniform Settings { vec4 size; } u;
+layout(set=0,binding=1) uniform sampler2D image;
+layout(location=0) out vec4 color;
+void main() { color=vec4(vec3(texture(image,gl_FragCoord.xy/u.size.xy).r),1); }
+)";
         Fullscreen(*this,
                    graph,
-                   velocity ? "Debug velocity" : "Debug normal roughness",
-                   velocity ? fragment : normals,
+                   ao       ? "Debug ambient occlusion" :
+                   velocity ? "Debug velocity" :
+                              "Debug normal roughness",
+                   ao       ? occlusion :
+                   velocity ? fragment :
+                              normals,
                    &size,
                    sizeof(size),
                    input,

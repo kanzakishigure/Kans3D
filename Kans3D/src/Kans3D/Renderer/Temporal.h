@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <tuple>
+#include "Passes/GtaoSettings.h"
 #include "RenderView.h"
 
 namespace Kans
@@ -17,6 +18,14 @@ namespace Kans
     // Per-target history and cached temporal GPU state. Never shared between viewports.
     struct TemporalState
     {
+        RenderHardware::Handle<RenderHardware::Texture>         AORaw, AOHistory[2];
+        RenderHardware::Handle<RenderHardware::BindGroupLayout> AOLayout;
+        RenderHardware::Handle<RenderHardware::ComputePipeline> AOPipeline[2];
+        RenderHardware::Handle<RenderHardware::Sampler>         AOSampler;
+        GtaoSettings                                            AOSettings;
+        uint64_t                                                AOFrame = 0;
+        glm::mat4                                               AOPreviousView {1};
+        bool                                                    AOValid = false;
         struct Object
         {
             glm::mat4                                      Transform {1};

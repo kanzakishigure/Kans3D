@@ -10,6 +10,25 @@
 
 namespace Kans
 {
+    RenderHardware::Handle<RenderHardware::Texture> RenderAssetCache::GetWhiteAO()
+    {
+        if (!m_WhiteAO)
+        {
+            RenderHardware::TextureDesc d;
+            d.PixelFormat = RenderHardware::Format::RGBA8Unorm;
+            d.Usage       = RenderHardware::TextureUsage::Sampled | RenderHardware::TextureUsage::CopyDestination;
+            const uint32_t white = 0xffffffff;
+            m_WhiteAO            = GetDevice()->CreateTexture(d);
+            auto buffer          = GetDevice()->CreateBuffer(
+                {4, RenderHardware::BufferUsage::CopySource, RenderHardware::MemoryUsage::Upload});
+            buffer->Write(0, &white, 4);
+            auto commands = GetDevice()->CreateCommandList();
+            commands->CopyBufferToTexture(buffer, 0, m_WhiteAO);
+            GetDevice()->Submit(commands);
+        }
+        return m_WhiteAO;
+    }
+
     std::variant<GpuMesh, AssetError> UploadMesh(const MeshData& data, std::shared_ptr<RenderHardware::Device> device)
     {
         auto valid = ValidateMeshData(data);
@@ -1013,6 +1032,7 @@ namespace Kans
         m_Bindings.clear();
         m_StandardBindings.clear();
         m_FallbackTextures = {};
+        m_WhiteAO.reset();
         m_MaterialSampler.reset();
         m_TextureSamplers.clear();
         m_ProductSamplers.clear();

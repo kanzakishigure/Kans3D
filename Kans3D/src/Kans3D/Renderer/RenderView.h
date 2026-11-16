@@ -280,7 +280,8 @@ namespace Kans
         {
             None,
             Velocity,
-            NormalRoughness
+            NormalRoughness,
+            AmbientOcclusion
         } DebugBuffer                                                            = DebugBuffer::None;
         Kans::AntiAliasing                                EffectiveAA            = Kans::AntiAliasing::None;
         float                                             Time         = 0;

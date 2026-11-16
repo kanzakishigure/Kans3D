@@ -9,6 +9,7 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Buffer>                 Frame, Object;
         RenderHardware::Handle<RenderHardware::Buffer>                 Palette;
         size_t                                                         FrameOffset = 0, ObjectOffset = 0;
+        RenderHardware::Handle<RenderHardware::Texture>                AmbientOcclusion;
         std::array<RenderHardware::Handle<RenderHardware::Texture>, 3> Environment;
         RenderHardware::Handle<RenderHardware::Sampler>                EnvironmentSampler;
         std::vector<RenderHardware::Format> ColorFormats {RenderHardware::Format::RGBA8Unorm};

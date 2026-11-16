@@ -206,6 +206,30 @@ namespace Kans
                                            &defaults.SpecularIntensity);
             PropertyGrid::EndGroup();
         }
+        if (PropertyGrid::BeginGroup("Ambient Occlusion"))
+        {
+            auto&       a = settings.AmbientOcclusion;
+            const auto& d = defaults.AmbientOcclusion;
+            changed |= PropertyGrid::Checkbox("Enabled", a.Enabled, &d.Enabled);
+            changed |= PropertyGrid::Checkbox("Full resolution", a.FullResolution, &d.FullResolution);
+            int slices = int(a.Slices), steps = int(a.Steps);
+            if (PropertyGrid::Int("Slices", slices, 1, 16))
+            {
+                a.Slices = uint32_t(slices);
+                changed  = true;
+            }
+            if (PropertyGrid::Int("Steps", steps, 1, 32))
+            {
+                a.Steps = uint32_t(steps);
+                changed = true;
+            }
+            changed |= PropertyGrid::Float("Radius (m)", a.Radius, .01f, .01f, 100, "%.2f", &d.Radius);
+            changed |= PropertyGrid::Float("Intensity", a.Intensity, .01f, 0, 4, "%.2f", &d.Intensity);
+            changed |= PropertyGrid::Float("Power", a.Power, .01f, .01f, 8, "%.2f", &d.Power);
+            changed |= PropertyGrid::Float("Falloff", a.Falloff, .01f, .01f, 1, "%.2f", &d.Falloff);
+            changed |= PropertyGrid::Float("Thickness", a.Thickness, .01f, 0, 1, "%.2f", &d.Thickness);
+            PropertyGrid::EndGroup();
+        }
         if (PropertyGrid::BeginGroup("Volumetric fog"))
         {
             auto&       f = settings.Fog;

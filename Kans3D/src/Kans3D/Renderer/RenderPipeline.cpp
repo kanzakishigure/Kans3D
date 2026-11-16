@@ -333,7 +333,8 @@ namespace Kans
             renderer.Output.EnsureSampledDepth();
         const auto& view = renderer.View;
         using namespace RenderHardware;
-        const bool reconstruct = renderer.ReconstructsHDR() || renderer.View.Environment.Fog.Enabled;
+        const bool reconstruct = renderer.ReconstructsHDR() || renderer.View.Environment.Fog.Enabled ||
+                                 view.Environment.AmbientOcclusion.Enabled;
         if (reconstruct)
             renderer.DeferToneMapping = true;
         if (renderer.Samples > 1)
@@ -341,8 +342,8 @@ namespace Kans
             BuildMSAA(graph, renderer);
             return;
         }
-        if (HasSpotBeams(renderer) || view.DepthPrepass || renderer.VelocityActive ||
-            view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
+        if (HasSpotBeams(renderer) || view.DepthPrepass || view.Environment.AmbientOcclusion.Enabled ||
+            renderer.VelocityActive || view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
             renderer.Output.EnsureSampledDepth();
         if (!graph.PassCount())
             Begin(graph, renderer);
@@ -509,8 +510,19 @@ namespace Kans
         featureContext.Immediate = nullptr;
         // Immediates retain their original cleared-depth behavior. Test camera
         // geometry against their depth before the opaque lighting pass.
-        if (view.DepthPrepass || view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
+        if (view.DepthPrepass || view.Environment.AmbientOcclusion.Enabled ||
+            view.DebugBuffer == RenderView::DebugBuffer::NormalRoughness)
             renderer.BuildDepthPrepass(graph);
+        if (view.Environment.AmbientOcclusion.Enabled)
+        {
+            if (view.EffectiveAA == AntiAliasing::TAA)
+                renderer.Output.EnsureVelocity(); // TAA generates final visibility-correct velocity after opaque draws.
+            else
+                renderer.BuildVelocity(graph);
+            renderer.BuildGtao(graph);
+        }
+        else
+            renderer.Output.GetTemporalState().AOValid = false;
         GraphTexture opaqueOnly = uint32_t(-1);
         if (view.EffectiveAA == AntiAliasing::TAA)
         {
@@ -554,9 +566,11 @@ namespace Kans
             }
         }
         Inject(RenderExtensionPoint::BeforeOpaque, featureContext);
-        if (view.EffectiveAA == AntiAliasing::TAA || HasSpotBeams(renderer))
+        if (view.EffectiveAA == AntiAliasing::TAA || HasSpotBeams(renderer) || renderer.AmbientOcclusion)
         {
             auto       materialUses = target;
+            if (renderer.AmbientOcclusion)
+                sampled(materialUses, renderer.AmbientOcclusion, "GTAO filtered");
             if (renderer.Fog)
                 sampled(materialUses, renderer.Fog->Integrated, "Fog integrated scattering transmittance");
             const auto hdr          = graph.ImportTexture("SceneHDR", renderer.Output.GetHDR());
@@ -613,19 +627,23 @@ namespace Kans
                 });
             Inject(RenderExtensionPoint::AfterOpaque, featureContext);
             BuildSpotBeamPasses(graph, renderer);
-            auto opaqueDesc  = renderer.Output.GetHDR()->GetDesc();
-            opaqueDesc.Usage = RenderHardware::TextureUsage::CopyDestination |
-                               RenderHardware::TextureUsage::CopySource | RenderHardware::TextureUsage::Sampled;
-            opaqueOnly       = graph.CreateTexture("Temporal opaque color", opaqueDesc);
-            append("Opaque HDR snapshot",
-                   {{hdr, GraphAccess::TransferRead}, {opaqueOnly, GraphAccess::TransferWrite}},
-                   [hdr, opaqueOnly](auto& c) { c.Commands.CopyTexture(c.Texture(hdr), {}, c.Texture(opaqueOnly)); });
+            if (view.EffectiveAA == AntiAliasing::TAA)
+            {
+                auto opaqueDesc  = renderer.Output.GetHDR()->GetDesc();
+                opaqueDesc.Usage = RenderHardware::TextureUsage::CopyDestination |
+                                   RenderHardware::TextureUsage::CopySource | RenderHardware::TextureUsage::Sampled;
+                opaqueOnly       = graph.CreateTexture("Temporal opaque color", opaqueDesc);
+                append(
+                    "Opaque HDR snapshot",
+                    {{hdr, GraphAccess::TransferRead}, {opaqueOnly, GraphAccess::TransferWrite}},
+                    [hdr, opaqueOnly](auto& c) { c.Commands.CopyTexture(c.Texture(hdr), {}, c.Texture(opaqueOnly)); });
+            }
             if (!view.MaterialOrder.empty())
                 append("Materials (blend)", materialUses, [&renderer](auto& c) {
                     renderer.PostProcessHDR = true;
                     renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, true);
                 });
-            if (renderer.VelocityActive)
+            if (renderer.VelocityActive && (!renderer.AmbientOcclusion || view.EffectiveAA == AntiAliasing::TAA))
                 renderer.BuildVelocity(graph);
         }
         else if (!view.MaterialOrder.empty())
@@ -669,7 +687,7 @@ namespace Kans
                                                   renderer.FinalPostRecordMilliseconds.value_or(0));
             if (pass)
                 graph.OrderAfter(pass, pass - 1);
-            if (renderer.VelocityActive)
+            if (renderer.VelocityActive && (!renderer.AmbientOcclusion || view.EffectiveAA == AntiAliasing::TAA))
                 renderer.BuildVelocity(graph);
             if (post)
             {
@@ -683,7 +701,8 @@ namespace Kans
                 graph.OrderAfter(resolve, resolve - 1);
             }
         }
-        if (renderer.VelocityActive && view.MaterialOrder.empty() && view.EffectiveAA != AntiAliasing::TAA)
+        if (renderer.VelocityActive && !renderer.AmbientOcclusion && view.MaterialOrder.empty() &&
+            view.EffectiveAA != AntiAliasing::TAA)
             renderer.BuildVelocity(graph);
         Inject(RenderExtensionPoint::AfterTransparent, featureContext);
         if (renderer.DisplayFrame && view.DebugBuffer != RenderView::DebugBuffer::None)

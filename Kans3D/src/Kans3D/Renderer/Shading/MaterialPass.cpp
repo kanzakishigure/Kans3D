@@ -258,6 +258,11 @@ namespace Kans
                 entry.Offset         = data.ObjectOffset;
                 entry.Bytes          = sizeof(EngineObjectUniforms);
             }
+            else if (binding.Binding == uint32_t(EngineBinding::AmbientOcclusion))
+            {
+                entry.TextureResource = data.AmbientOcclusion ? data.AmbientOcclusion : cache.GetWhiteAO();
+                entry.SamplerResource = data.EnvironmentSampler;
+            }
             else if (binding.Binding >= uint32_t(EngineBinding::LtcMatrix))
             {
                 auto area             = data.AreaLighting ? data.AreaLighting : cache.GetAreaLightFallback();

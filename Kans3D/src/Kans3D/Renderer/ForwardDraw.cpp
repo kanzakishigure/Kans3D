@@ -344,6 +344,13 @@ namespace Kans
             pass.ObjectOffset       = range * objectStride;
             pass.Shadows            = View.Shadows;
             pass.Environment        = environment;
+            if (!suppliedView && tag.empty() && PrepassDraws.count(item.DrawIndex) &&
+                !IsTransparentMaterial(item.Render.AlphaMode) &&
+                (IsStandardShader(bindings->Shader) ||
+                 std::any_of(shader->Passes.begin(), shader->Passes.end(), [&](const auto& p) {
+                     return p.Tag == "DepthNormals" && bindings->PassEnabled(p.Name);
+                 })))
+                pass.AmbientOcclusion = AmbientOcclusion;
             pass.EnvironmentSampler = Services.GetMaterialEnvironmentSampler();
             pass.AreaLighting       = View.AreaLighting;
             pass.Fog                = draw.ViewMode == SceneViewMode::Lit ? Fog : nullptr;
