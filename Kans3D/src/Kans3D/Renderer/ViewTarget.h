@@ -11,6 +11,7 @@ namespace Kans
     struct FogState;
     struct TemporalState;
     class Fsr3Upscaler;
+    class AutoExposurePass;
     class ViewTarget
     {
     public:
@@ -44,6 +45,7 @@ namespace Kans
         void           SetJitter(glm::vec2 jitter) { m_Jitter = jitter; }
         std::shared_ptr<FogState>&           GetFogStorage() { return m_Fog; }
         TemporalState& GetTemporalState();
+        std::shared_ptr<AutoExposurePass>&   GetAutoExposure() { return m_AutoExposure; }
         void           InvalidateTemporalHistory();
         Fsr3Upscaler&                        EnsureFsr3Upscaler();
         const std::shared_ptr<Fsr3Upscaler>& GetFsr3Upscaler() const { return m_Fsr3Upscaler; }
@@ -96,6 +98,7 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Texture>              m_SceneVelocity;
         bool                                                         m_VelocityValid = false;
         glm::vec2                                                    m_Jitter {0};
+        std::shared_ptr<AutoExposurePass>                            m_AutoExposure;
         std::shared_ptr<Fsr3Upscaler>                                m_Fsr3Upscaler;
         std::shared_ptr<TemporalState>                               m_Temporal;
         std::shared_ptr<FogState>                                    m_Fog;

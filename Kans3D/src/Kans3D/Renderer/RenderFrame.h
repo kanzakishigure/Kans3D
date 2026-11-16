@@ -48,7 +48,13 @@ namespace Kans
         void                                            BuildDebugBuffer(RenderGraph& graph);
         bool                                            ReconstructsHDR() const
         {
-            return View.GetPostProcessSettings().FilterSize >= 1 || View.EffectiveAA == AntiAliasing::TAA;
+            return View.GetPostProcessSettings().Exposure.Mode == ExposureMode::Automatic ||
+                   View.GetPostProcessSettings().ColorGrading.Active() ||
+                   View.GetPostProcessSettings().FilterSize >= 1 || View.EffectiveAA == AntiAliasing::TAA ||
+                   View.GetPostProcessSettings().ToneMapping == ToneMappingMode::AgX ||
+                   View.GetPostProcessSettings().ToneMapping == ToneMappingMode::PBRNeutral ||
+                   View.GetPostProcessSettings().ToneMapping == ToneMappingMode::AgXPunchy ||
+                   View.GetPostProcessSettings().ToneMapping == ToneMappingMode::AgXGolden;
         }
         bool                                            HasBackgroundColor() const
         {
@@ -64,13 +70,19 @@ namespace Kans
             commands.EndRendering();
             // Immediate display-space submissions need the same background. Keep the raw
             // HDR image for materials/bloom until an immediate submission replaces it.
-            Services.GetToneMapping().Record(*GetDevice(),
-                                             commands,
-                                             HDR(),
-                                             Colors(),
-                                             View.GetPostProcessSettings().Exposure,
-                                             false,
-                                             View.GetPostProcessSettings().ToneMapping);
+            Services.GetToneMapping().Record(
+                *GetDevice(),
+                commands,
+                HDR(),
+                Colors(),
+                View.GetPostProcessSettings().Exposure,
+                false,
+                View.GetPostProcessSettings().ToneMapping,
+                View.GetPostProcessSettings().ColorGrading,
+                View.Assets && View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                    View.Assets->GetTextureResource(View.GetPostProcessSettings().ColorGrading.LUT) :
+                    RenderHardware::Handle<RenderHardware::Texture> {},
+                View.GPUExposure);
         }
         RenderHardware::Handle<RenderHardware::Texture> HDR() const
         {

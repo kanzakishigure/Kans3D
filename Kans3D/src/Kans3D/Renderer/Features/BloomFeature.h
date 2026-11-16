@@ -22,20 +22,22 @@ namespace Kans
                                     glm::uvec2                                      viewport,
                                     const BloomSettings&                            settings,
                                     float                                           exposure,
-                                    RenderHardware::Handle<RenderHardware::Texture> dirt = {});
+                                    RenderHardware::Handle<RenderHardware::Texture> dirt         = {},
+                                    RenderHardware::Handle<RenderHardware::Texture> autoExposure = {});
 
     private:
         struct Parameters
         {
             glm::vec4 OutputSize {0}, Curve {0}, Options {0}, Tint {1};
         };
-        void                                                            Record(RenderGraphContext& context,
-                                                                               unsigned            stage,
-                                                                               GraphTexture        source,
-                                                                               GraphTexture        fine,
-                                                                               GraphTexture        target,
-                                                                               GraphTexture        dirt,
-                                                                               const Parameters&   parameters);
+        void Record(RenderGraphContext&                             context,
+                    unsigned                                        stage,
+                    GraphTexture                                    source,
+                    GraphTexture                                    fine,
+                    GraphTexture                                    target,
+                    GraphTexture                                    dirt,
+                    const Parameters&                               parameters,
+                    RenderHardware::Handle<RenderHardware::Texture> autoExposure);
         RenderHardware::Handle<RenderHardware::Shader>                  m_Shader;
         RenderHardware::Handle<RenderHardware::BindGroupLayout>         m_Layout;
         RenderHardware::Handle<RenderHardware::Sampler>                 m_Sampler;

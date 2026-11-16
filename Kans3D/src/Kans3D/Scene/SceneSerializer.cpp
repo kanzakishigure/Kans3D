@@ -1208,10 +1208,30 @@ namespace Kans
         {
             const auto settings = input.Validated();
             Require(std::isfinite(input.Exposure) && std::isfinite(input.FilterSize) &&
-                        uint32_t(input.ToneMapping) <= 1,
+                        uint32_t(input.ToneMapping) <= uint32_t(ToneMappingMode::AgXGolden),
                     "Invalid post-process settings");
             YAML::Node node;
-            node["Exposure"] = settings.Exposure;
+            node["Exposure"]["Mode"] = settings.Exposure.Mode == ExposureMode::Manual         ? "Manual" :
+                                       settings.Exposure.Mode == ExposureMode::PhysicalCamera ? "PhysicalCamera" :
+                                                                                                "Automatic";
+            node["Exposure"]["ManualEV100"]    = settings.Exposure.ManualEV100;
+            node["Exposure"]["Compensation"]   = settings.Exposure.Compensation;
+            node["Exposure"]["Aperture"]       = settings.Exposure.Camera.Aperture;
+            node["Exposure"]["ShutterSeconds"] = settings.Exposure.Camera.ShutterSeconds;
+            node["Exposure"]["ISO"]            = settings.Exposure.Camera.ISO;
+            if (settings.Exposure.Mode == ExposureMode::Automatic ||
+                !(settings.Exposure.Automatic == AutoExposureSettings {}))
+            {
+                node["Exposure"]["Automatic"]["HistogramMinEV"] = settings.Exposure.Automatic.HistogramMinEV;
+                node["Exposure"]["Automatic"]["HistogramMaxEV"] = settings.Exposure.Automatic.HistogramMaxEV;
+                node["Exposure"]["Automatic"]["LowPercentile"]  = settings.Exposure.Automatic.LowPercentile;
+                node["Exposure"]["Automatic"]["HighPercentile"] = settings.Exposure.Automatic.HighPercentile;
+                node["Exposure"]["Automatic"]["CentreWeight"]   = settings.Exposure.Automatic.CentreWeight;
+                node["Exposure"]["Automatic"]["MinEV"]          = settings.Exposure.Automatic.MinEV;
+                node["Exposure"]["Automatic"]["MaxEV"]          = settings.Exposure.Automatic.MaxEV;
+                node["Exposure"]["Automatic"]["SpeedUp"]        = settings.Exposure.Automatic.SpeedUp;
+                node["Exposure"]["Automatic"]["SpeedDown"]      = settings.Exposure.Automatic.SpeedDown;
+            }
             for (const auto& entry : settings.Materials)
             {
                 YAML::Node material;
@@ -1227,15 +1247,34 @@ namespace Kans
                 node["Temporal"]["ReactiveThreshold"]   = settings.Temporal.ReactiveThreshold;
                 node["Temporal"]["ReactiveBinaryValue"] = settings.Temporal.ReactiveBinaryValue;
             }
+            if (!(settings.ColorGrading == ColorGradingSettings {}))
+            {
+                auto        g    = node["ColorGrading"];
+                const auto& c    = settings.ColorGrading;
+                g["Temperature"] = c.Temperature;
+                g["Tint"]        = c.Tint;
+                g["Contrast"]    = c.Contrast;
+                g["Saturation"]  = c.Saturation;
+                for (int i = 0; i < 3; ++i)
+                {
+                    g["Lift"].push_back(c.Lift[i]);
+                    g["Gamma"].push_back(c.Gamma[i]);
+                    g["Gain"].push_back(c.Gain[i]);
+                }
+                if (c.LUT.IsValid())
+                    g["LUT"] = IdentityText(c.LUT);
+                g["Contribution"] = c.Contribution;
+            }
             node["Bloom"]       = EncodeBloom(input.Bloom);
-            node["Tonemapping"] = settings.ToneMapping == ToneMappingMode::ACES ? "ACES" : "Standard";
+            const char* modes[] = {"ACES", "Standard", "AgX", "PBRNeutral", "AgXPunchy", "AgXGolden"};
+            node["Tonemapping"] = modes[uint32_t(settings.ToneMapping)];
             if (settings.FilterSize != 0)
                 node["FilterSize"] = settings.FilterSize;
             return node;
         }
         PostProcessSettings DecodePostProcess(const YAML::Node& node)
         {
-            Keys(node, {"Exposure", "Bloom", "Tonemapping", "FilterSize", "Materials", "Temporal"});
+            Keys(node, {"Exposure", "Bloom", "Tonemapping", "FilterSize", "Materials", "Temporal", "ColorGrading"});
             PostProcessSettings settings;
             if (node["Materials"])
             {
@@ -1261,8 +1300,96 @@ namespace Kans
                 if (temporal["ReactiveBinaryValue"])
                     settings.Temporal.ReactiveBinaryValue = Number(temporal["ReactiveBinaryValue"]);
             }
-            if (node["Exposure"])
-                settings.Exposure = Number(node["Exposure"]);
+            if (const auto g = node["ColorGrading"])
+            {
+                Keys(g,
+                     {"Temperature", "Tint", "Contrast", "Saturation", "Lift", "Gamma", "Gain", "LUT", "Contribution"});
+                auto& c = settings.ColorGrading;
+                if (g["Temperature"])
+                    c.Temperature = Number(g["Temperature"]);
+                if (g["Tint"])
+                    c.Tint = Number(g["Tint"]);
+                if (g["Contrast"])
+                    c.Contrast = Number(g["Contrast"]);
+                if (g["Saturation"])
+                    c.Saturation = Number(g["Saturation"]);
+                if (g["Contribution"])
+                    c.Contribution = Number(g["Contribution"]);
+                for (auto pair : {std::make_pair("Lift", &c.Lift),
+                                  std::make_pair("Gamma", &c.Gamma),
+                                  std::make_pair("Gain", &c.Gain)})
+                    if (const auto v = g[pair.first])
+                    {
+                        Require(v.IsSequence() && v.size() == 3, "Invalid grading wheel");
+                        for (int i = 0; i < 3; ++i)
+                            (*pair.second)[i] = Number(v[i]);
+                    }
+                if (g["LUT"])
+                    c.LUT = Identity(g["LUT"]);
+            }
+            if (const auto exposure = node["Exposure"])
+            {
+                if (exposure.IsScalar())
+                {
+                    const auto legacy = Number(exposure);
+                    settings.Exposure = std::clamp(legacy, .001f, 128.f);
+                }
+                else
+                {
+                    Keys(exposure,
+                         {"Mode", "ManualEV100", "Compensation", "Aperture", "ShutterSeconds", "ISO", "Automatic"});
+                    if (exposure["Mode"])
+                    {
+                        const auto mode = Text(exposure["Mode"]);
+                        Require(mode == "Manual" || mode == "PhysicalCamera" || mode == "Automatic",
+                                "Invalid exposure mode");
+                        settings.Exposure.Mode = mode == "Manual"         ? ExposureMode::Manual :
+                                                 mode == "PhysicalCamera" ? ExposureMode::PhysicalCamera :
+                                                                            ExposureMode::Automatic;
+                    }
+                    if (const auto a = exposure["Automatic"])
+                    {
+                        Keys(a,
+                             {"HistogramMinEV",
+                              "HistogramMaxEV",
+                              "LowPercentile",
+                              "HighPercentile",
+                              "CentreWeight",
+                              "MinEV",
+                              "MaxEV",
+                              "SpeedUp",
+                              "SpeedDown"});
+                        if (a["HistogramMinEV"])
+                            settings.Exposure.Automatic.HistogramMinEV = Number(a["HistogramMinEV"]);
+                        if (a["HistogramMaxEV"])
+                            settings.Exposure.Automatic.HistogramMaxEV = Number(a["HistogramMaxEV"]);
+                        if (a["LowPercentile"])
+                            settings.Exposure.Automatic.LowPercentile = Number(a["LowPercentile"]);
+                        if (a["HighPercentile"])
+                            settings.Exposure.Automatic.HighPercentile = Number(a["HighPercentile"]);
+                        if (a["CentreWeight"])
+                            settings.Exposure.Automatic.CentreWeight = Number(a["CentreWeight"]);
+                        if (a["MinEV"])
+                            settings.Exposure.Automatic.MinEV = Number(a["MinEV"]);
+                        if (a["MaxEV"])
+                            settings.Exposure.Automatic.MaxEV = Number(a["MaxEV"]);
+                        if (a["SpeedUp"])
+                            settings.Exposure.Automatic.SpeedUp = Number(a["SpeedUp"]);
+                        if (a["SpeedDown"])
+                            settings.Exposure.Automatic.SpeedDown = Number(a["SpeedDown"]);
+                    }
+                    if (exposure["ManualEV100"])
+                        settings.Exposure.ManualEV100 = Number(exposure["ManualEV100"]);
+                    if (exposure["Compensation"])
+                        settings.Exposure.Compensation = Number(exposure["Compensation"]);
+                    if (exposure["Aperture"])
+                        settings.Exposure.Camera.Aperture = Number(exposure["Aperture"]);
+                    if (exposure["ShutterSeconds"])
+                        settings.Exposure.Camera.ShutterSeconds = Number(exposure["ShutterSeconds"]);
+                    if (exposure["ISO"])
+                        settings.Exposure.Camera.ISO = Number(exposure["ISO"]);
+                }
+            }
             if (node["Bloom"])
                 settings.Bloom = DecodeBloom(node["Bloom"]);
             if (node["FilterSize"])
@@ -1270,8 +1397,15 @@ namespace Kans
             if (node["Tonemapping"])
             {
                 const auto mode = node["Tonemapping"].as<std::string>();
-                Require(mode == "ACES" || mode == "Standard", "Invalid tonemapping mode");
-                settings.ToneMapping = mode == "ACES" ? ToneMappingMode::ACES : ToneMappingMode::Standard;
+                Require(mode == "ACES" || mode == "Standard" || mode == "AgX" || mode == "PBRNeutral" ||
+                            mode == "AgXPunchy" || mode == "AgXGolden",
+                        "Invalid tonemapping mode");
+                settings.ToneMapping = mode == "ACES"       ? ToneMappingMode::ACES :
+                                       mode == "Standard"   ? ToneMappingMode::Standard :
+                                       mode == "AgX"        ? ToneMappingMode::AgX :
+                                       mode == "PBRNeutral" ? ToneMappingMode::PBRNeutral :
+                                       mode == "AgXPunchy"  ? ToneMappingMode::AgXPunchy :
+                                                              ToneMappingMode::AgXGolden;
             }
             return settings.Validated();
         }

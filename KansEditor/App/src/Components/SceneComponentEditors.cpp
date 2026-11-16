@@ -111,7 +111,10 @@ namespace Kans::ComponentEditors
                             [&](const char* label, AssetID& id) {
                                 return ui.AssetPicker(label, AssetType::Material, id);
                             },
-                            false))
+                            false,
+                            [&](const char* label, AssetID& id) {
+                                return ui.AssetPicker(label, AssetType::Texture, id);
+                            }))
                         camera.SetPostProcessOverride(settings);
                 }
                 PropertyGrid::EndGroup();

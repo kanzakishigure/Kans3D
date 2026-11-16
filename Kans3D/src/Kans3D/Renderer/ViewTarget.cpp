@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "ViewTarget.h"
 #include "Kans3D/Core/Debug/FatalError.h"
+#include "Kans3D/Renderer/Passes/AutoExposurePass.h"
 #include "Features/BloomFeature.h"
 #include "Graph/GraphCapture.h"
 #include "Lighting/Fog.h"
@@ -10,6 +11,7 @@ namespace Kans
 {
     void ViewTarget::RecoverFailedFrame()
     {
+        m_AutoExposure.reset();
         try
         {
             InvalidateTemporalHistory();

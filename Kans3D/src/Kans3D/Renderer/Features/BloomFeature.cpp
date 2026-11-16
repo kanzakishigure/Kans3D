@@ -42,20 +42,28 @@ namespace Kans
             graph.AddPass("Bloom HDR prefill",
                           {{display, GraphAccess::SampledRead}, {hdr, GraphAccess::ColorWrite}},
                           [frame, exposure](auto& c) {
-                              frame->Services.GetToneMapping().Record(c.Device,
-                                                                      c.Commands,
-                                                                      frame->Output.GetColors()[0],
-                                                                      {frame->Output.GetHDR()},
-                                                                      exposure,
-                                                                      true,
-                                                                      frame->View.GetPostProcessSettings().ToneMapping);
+                              frame->Services.GetToneMapping().Record(
+                                  c.Device,
+                                  c.Commands,
+                                  frame->Output.GetColors()[0],
+                                  {frame->Output.GetHDR()},
+                                  exposure,
+                                  true,
+                                  frame->View.GetPostProcessSettings().ToneMapping,
+                                  frame->View.GetPostProcessSettings().ColorGrading,
+                                  frame->View.Assets &&
+                                          frame->View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                                      frame->View.Assets->GetTextureResource(
+                                          frame->View.GetPostProcessSettings().ColorGrading.LUT) :
+                                      RenderHardware::Handle<RenderHardware::Texture> {},
+                                  frame->View.GPUExposure);
                           });
         }
         auto dirt = b.DirtTexture.IsValid() && b.DirtIntensity > 0 && frame->Assets() ?
                         frame->Assets()->GetTextureResource(b.DirtTexture) :
                         RenderHardware::Handle<RenderHardware::Texture> {};
         frame->View.BloomMipCount = uint32_t(Levels(context.View.Viewport).size());
-        AddBloomPasses(graph, hdr, context.View.Viewport, b, exposure, dirt);
+        AddBloomPasses(graph, hdr, context.View.Viewport, b, exposure, dirt, context.View.GPUExposure);
         frame->PostProcessHDR = true;
     }
     GraphTexture BloomFeature::AddBloomPasses(RenderGraph&                                    graph,
@@ -63,7 +71,8 @@ namespace Kans
                                               glm::uvec2                                      viewport,
                                               const BloomSettings&                            settings,
                                               float                                           exposure,
-                                              RenderHardware::Handle<RenderHardware::Texture> dirt)
+                                              RenderHardware::Handle<RenderHardware::Texture> dirt,
+                                              RenderHardware::Handle<RenderHardware::Texture> autoExposure)
     {
         using namespace RenderHardware;
         const auto b = settings.Validated();
@@ -93,15 +102,19 @@ namespace Kans
             auto p       = parameters;
             p.OutputSize = {float(size.x), float(size.y), 0, 0};
             p.Options.x  = float(stage);
+            if (autoExposure)
+                p.Curve.w = -1;
             std::vector<GraphUse> uses {{source, GraphAccess::SampledRead}};
             if (fine != source)
                 uses.push_back({fine, GraphAccess::SampledRead});
             if (dirtID != source && dirtID != fine)
                 uses.push_back({dirtID, GraphAccess::SampledRead});
             uses.push_back({target, stage >= 4 ? GraphAccess::ColorReadWrite : GraphAccess::ColorWrite});
-            graph.AddPass(std::move(name), std::move(uses), [this, stage, source, fine, target, dirtID, p](auto& c) {
-                Record(c, stage, source, fine, target, dirtID, p);
-            });
+            graph.AddPass(std::move(name),
+                          std::move(uses),
+                          [this, stage, source, fine, target, dirtID, p, autoExposure](auto& c) {
+                              Record(c, stage, source, fine, target, dirtID, p, autoExposure);
+                          });
         };
         std::vector<GraphTexture> down;
         for (size_t i = 0; i < levels.size(); ++i)
@@ -137,13 +150,14 @@ namespace Kans
         add("Bloom Composite", b.Mode == BloomSettings::Additive ? 4 : 5, bloom, bloom, hdr, viewport, dirtID);
         return bloom;
     }
-    void BloomFeature::Record(RenderGraphContext& context,
-                              unsigned            stage,
-                              GraphTexture        source,
-                              GraphTexture        fine,
-                              GraphTexture        target,
-                              GraphTexture        dirt,
-                              const Parameters&   parameters)
+    void BloomFeature::Record(RenderGraphContext&                             context,
+                              unsigned                                        stage,
+                              GraphTexture                                    source,
+                              GraphTexture                                    fine,
+                              GraphTexture                                    target,
+                              GraphTexture                                    dirt,
+                              const Parameters&                               parameters,
+                              RenderHardware::Handle<RenderHardware::Texture> autoExposure)
     {
         using namespace RenderHardware;
         auto& device = context.Device;
@@ -161,22 +175,24 @@ layout(set=0,binding=0,std140) uniform Parameters { vec4 OutputSize; vec4 Curve;
 layout(set=0,binding=1) uniform sampler2D InputColor;
 layout(set=0,binding=2) uniform sampler2D FineColor;
 layout(set=0,binding=3) uniform sampler2D Dirt;
+layout(set=0,binding=4) uniform sampler2D AutomaticExposure;
 layout(location=0) out vec4 Color;
+float exposure() { return p.Curve.w>=0. ? p.Curve.w : texelFetch(AutomaticExposure,ivec2(0),0).r; }
 float luma(vec3 c) { return dot(c,vec3(0.2126,0.7152,0.0722)); }
 vec3 sampleAt(vec2 uv, vec2 offset) { return texture(InputColor,uv+offset/vec2(textureSize(InputColor,0))).rgb; }
 vec3 prefilter(vec3 c) {
-    c = max(c,vec3(0))*p.Curve.w;
+    c = max(c,vec3(0))*exposure();
     float brightness = max(c.r,max(c.g,c.b));
     float soft = clamp(brightness-p.Curve.x+p.Curve.y,0,2*p.Curve.y);
     soft = soft*soft/max(4*p.Curve.y,1e-8);
     c *= max(soft,brightness-p.Curve.x)/max(brightness,1e-8);
     // Clamp in exposed luminance units, then return to the scene's radiance units.
     c *= min(1,p.Curve.z/max(luma(c),1e-8));
-    return min(c/p.Curve.w,vec3(65472));
+    return min(c/exposure(),vec3(65472));
 }
 vec3 group4(vec3 a, vec3 b, vec3 c, vec3 d, bool karis) {
     if (!karis) return (a+b+c+d)*0.25;
-    vec4 w = 1/(1+vec4(luma(a),luma(b),luma(c),luma(d))*p.Curve.w);
+    vec4 w = 1/(1+vec4(luma(a),luma(b),luma(c),luma(d))*exposure());
     return (a*w.x+b*w.y+c*w.z+d*w.w)/dot(w,vec4(1));
 }
 vec3 down13(vec2 uv, bool karis) {
@@ -229,7 +245,8 @@ void main() {
                                                      {{0, BindingType::UniformBuffer},
                                                       {1, BindingType::CombinedTextureSampler},
                                                       {2, BindingType::CombinedTextureSampler},
-                                                      {3, BindingType::CombinedTextureSampler}}});
+                                                      {3, BindingType::CombinedTextureSampler},
+                                                      {4, BindingType::CombinedTextureSampler}}});
             SamplerDesc sampler;
             sampler.U = sampler.V = sampler.W = AddressMode::ClampToEdge;
             m_Sampler                         = device.CreateSampler(sampler);
@@ -265,6 +282,7 @@ void main() {
         auto&         commands = context.Commands;
         RenderingDesc render;
         render.Colors.push_back({context.Texture(target), {}, kind ? LoadOp::Load : LoadOp::Discard});
+        group.Entries.push_back({4, {}, 0, 0, autoExposure ? autoExposure : context.Texture(source), m_Sampler});
         commands.BeginRendering(render);
         const auto size = parameters.OutputSize;
         commands.SetViewport({0, 0, size.x, size.y});

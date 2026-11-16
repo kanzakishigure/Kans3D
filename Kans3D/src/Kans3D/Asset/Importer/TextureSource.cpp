@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "TextureSource.h"
 #include "Kans3D/Asset/Storage/ProductFiles.h"
+#include "CubeLutSource.h"
 
 #include <cmath>
 #include <cstddef>
@@ -10,6 +11,13 @@
 
 namespace
 {
+    bool IsCubeSourceFile(const std::filesystem::path& file)
+    {
+        auto extension = file.extension().u8string();
+        for (auto& c : extension)
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+        return extension == ".cube";
+    }
     constexpr size_t    DecoderBudget = size_t(1024) * 1024 * 1024;
     thread_local size_t decoderBytes  = 0;
     struct alignas(std::max_align_t) AllocationHeader
@@ -488,6 +496,20 @@ namespace Kans
         const auto& bytes = std::get<std::vector<std::byte>>(read);
         if (bytes.empty())
             return AssetError {AssetErrorCode::InvalidData, "Texture source is empty"};
+        if (IsCubeSourceFile(file))
+        {
+            const auto parsed = ParseCubeLutSource({reinterpret_cast<const char*>(bytes.data()), bytes.size()});
+            if (const auto* error = std::get_if<AssetError>(&parsed))
+                return *error;
+            const auto&     cube = std::get<CubeLutSource>(parsed);
+            SourceInventory result;
+            result.Texture.emplace();
+            result.Texture->Width = result.Texture->Height = cube.Size;
+            result.Texture->Channels                       = 3;
+            result.Texture->BitDepth                       = 32;
+            result.Texture->Format                         = "CUBE 3D LUT";
+            return result;
+        }
         const auto* data = reinterpret_cast<const unsigned char*>(bytes.data());
         int         w = 0, h = 0, c = 0;
         if (!stbi_info_from_memory(data, int(bytes.size()), &w, &h, &c) || w <= 0 || h <= 0 || w > 16384 || h > 16384)
@@ -536,6 +558,55 @@ namespace Kans
         const auto& owned = std::get<std::vector<std::byte>>(read);
         if (owned.empty())
             return AssetError {AssetErrorCode::InvalidData, "Texture source is empty"};
+        if (IsCubeSourceFile(file))
+        {
+            const auto parsed = ParseCubeLutSource({reinterpret_cast<const char*>(owned.data()), owned.size()});
+            if (const auto* error = std::get_if<AssetError>(&parsed))
+                return *error;
+            const auto& cube = std::get<CubeLutSource>(parsed);
+            TextureData texture;
+            texture.Kind       = TextureKind::Volume3D;
+            texture.Format     = TexturePixelFormat::RGBA32Float;
+            texture.ColorSpace = TextureColorSpace::Linear;
+            texture.Usage      = TextureUsage::Data;
+            texture.AlphaMode  = TextureAlphaMode::Opaque;
+            texture.Wrap       = TextureWrap::Clamp;
+            texture.Width = texture.Height = texture.Depth = cube.Size;
+            texture.Mips.resize(1);
+            auto& pixels = texture.Mips[0].Pixels;
+            pixels.reserve(size_t(cube.Size) * cube.Size * cube.Size * 16);
+            // Bake the source domain into normalized [0,1] coordinates. This keeps
+            // the runtime texture self-contained and preserves Adobe red-fast ordering.
+            const auto sample = [&](uint32_t r, uint32_t g, uint32_t b) {
+                return cube.Values[(size_t(b) * cube.Size + g) * cube.Size + r];
+            };
+            for (uint32_t b = 0; b < cube.Size; ++b)
+                for (uint32_t g = 0; g < cube.Size; ++g)
+                    for (uint32_t r = 0; r < cube.Size; ++r)
+                    {
+                        auto coordinate  = (glm::vec3(r, g, b) / float(cube.Size - 1) - cube.DomainMin) /
+                                           (cube.DomainMax - cube.DomainMin);
+                        coordinate       = glm::clamp(coordinate, glm::vec3(0), glm::vec3(1)) * float(cube.Size - 1);
+                        const auto lo    = glm::uvec3(glm::floor(coordinate));
+                        const auto hi    = glm::min(lo + 1u, glm::uvec3(cube.Size - 1));
+                        const auto t     = coordinate - glm::vec3(lo);
+                        const auto lower = glm::mix(glm::mix(sample(lo.x, lo.y, lo.z), sample(hi.x, lo.y, lo.z), t.x),
+                                                    glm::mix(sample(lo.x, hi.y, lo.z), sample(hi.x, hi.y, lo.z), t.x),
+                                                    t.y);
+                        const auto upper = glm::mix(glm::mix(sample(lo.x, lo.y, hi.z), sample(hi.x, lo.y, hi.z), t.x),
+                                                    glm::mix(sample(lo.x, hi.y, hi.z), sample(hi.x, hi.y, hi.z), t.x),
+                                                    t.y);
+                        const glm::vec4 value(glm::mix(lower, upper, t.z), 1);
+                        for (int channel = 0; channel < 4; ++channel)
+                        {
+                            uint32_t word;
+                            std::memcpy(&word, &value[channel], 4);
+                            for (unsigned shift = 0; shift < 32; shift += 8)
+                                pixels.push_back(std::byte((word >> shift) & 255));
+                        }
+                    }
+            return texture;
+        }
         const auto* bytes    = reinterpret_cast<const unsigned char*>(owned.data());
         const int   length   = static_cast<int>(owned.size());
         auto        metadata = CheckMetadata(bytes, owned.size(), settings);

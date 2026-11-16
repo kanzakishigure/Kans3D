@@ -3,6 +3,7 @@
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
 #include "Kans3D/Asset/Runtime/EngineShaderText.h"
+#include "Kans3D/Renderer/Passes/ExposureBinding.h"
 #include "Kans3D/Renderer/RenderFrame.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "AreaLights.h"
@@ -86,9 +87,12 @@ namespace Kans
             glm::vec4 Points[4] {}, Spots[16] {}, Areas[4] {}, Directional {0};
         };
         template<class T>
-        Handle<RenderHardware::Buffer> Upload(Device& device, const T& value)
+        Handle<RenderHardware::Buffer> Upload(Device& device, const T& value, bool writable = false)
         {
-            auto buffer = device.CreateBuffer({sizeof(value), BufferUsage::Uniform, MemoryUsage::Upload});
+            auto buffer =
+                device.CreateBuffer({sizeof(value),
+                                     writable ? BufferUsage::Uniform | BufferUsage::Storage : BufferUsage::Uniform,
+                                     MemoryUsage::Upload});
             buffer->Write(0, &value, sizeof(value));
             return buffer;
         }
@@ -474,7 +478,7 @@ namespace Kans
                                   float(size.z),
                                   ToneMappingPass::EffectiveExposure(frame.View.GetPostProcessSettings().Exposure),
                                   float(frame.View.GetPostProcessSettings().ToneMapping)}};
-        state->SampleUniforms = Upload(*device, sample);
+        state->SampleUniforms = Upload(*device, sample, bool(frame.View.GPUExposure));
         state->SampleGroup    = device->CreateBindGroup(
             {state->SampleLayout, {{0, state->SampleUniforms}, {1, {}, 0, 0, state->Integrated, state->Linear}}});
         state->World              = &frame.World;
@@ -783,7 +787,14 @@ namespace Kans
                                               {frame.HDR()},
                                               frame.View.GetPostProcessSettings().Exposure,
                                               true,
-                                              frame.View.GetPostProcessSettings().ToneMapping);
+                                              frame.View.GetPostProcessSettings().ToneMapping,
+                                              frame.View.GetPostProcessSettings().ColorGrading,
+                                              frame.View.Assets &&
+                                                      frame.View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                                                  frame.View.Assets->GetTextureResource(
+                                                      frame.View.GetPostProcessSettings().ColorGrading.LUT) :
+                                                  RenderHardware::Handle<RenderHardware::Texture> {},
+                                              frame.View.GPUExposure);
                                                });
             if (pass)
                 graph.OrderAfter(pass, pass - 1);
@@ -828,6 +839,12 @@ namespace Kans
                 frame.DeferToneMapping = frame.PostProcessHDR = true;
                 RenderingDesc render;
                 render.Colors.push_back({c.Texture(hdr), {}, LoadOp::Load});
+                PatchFrameExposure(frame,
+                                   c.Commands,
+                                   state->SampleUniforms,
+                                   1,
+                                   0,
+                                   offsetof(SampleParameters, Depth) + 2 * sizeof(float));
                 c.Commands.BeginRendering(render);
                 c.Commands.SetViewport({0, 0, float(frame.View.Viewport.x), float(frame.View.Viewport.y)});
                 c.Commands.SetScissor({0, 0, frame.View.Viewport.x, frame.View.Viewport.y});

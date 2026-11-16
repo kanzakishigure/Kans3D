@@ -2,6 +2,7 @@
 #include "Kans3D/Asset/Runtime/StandardShader.h"
 #include "Kans3D/Renderer/2D/TextRenderer.h"
 #include "Kans3D/Renderer/2D/UIRenderer.h"
+#include "Kans3D/Renderer/Passes/ExposureBinding.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Kans3D/Renderer/Shading/MaterialPass.h"
 #include "Kans3D/Renderer/Shading/SceneShaders.h"
@@ -176,8 +177,8 @@ namespace Kans
         // Each draw owns disjoint immutable ranges until command/frame retirement.
         if (ready.empty())
             return;
-        auto frames =
-            Services.GetDevice()->CreateBuffer({frameStride * ready.size(), BufferUsage::Uniform, MemoryUsage::Upload});
+        auto frames = Services.GetDevice()->CreateBuffer(
+            {frameStride * ready.size(), ExposureUniformUsage(View), MemoryUsage::Upload});
         auto objects = Services.GetDevice()->CreateBuffer(
             {objectStride * ready.size(), BufferUsage::Uniform, MemoryUsage::Upload});
         const bool writeTemporalMasks = TemporalMasks != uint32_t(-1) && tag.empty() && !suppliedView;
@@ -194,14 +195,20 @@ namespace Kans
         bool       rendering        = false,
                    hdr = writeTemporalMasks || ((deferToneMapping || HasBackgroundColor()) && PostProcessHDR);
         bool invalidatingNormals = false;
-        auto resolve = [&](RenderHardware::CommandList& output) {
-            Services.GetToneMapping().Record(*Services.GetDevice(),
-                                             output,
-                                             HDR(),
-                                             Colors(),
-                                             frame.LightingInfo.y,
-                                             false,
-                                             View.GetPostProcessSettings().ToneMapping);
+        auto resolve                = [&](RenderHardware::CommandList& output) {
+            Services.GetToneMapping().Record(
+                *Services.GetDevice(),
+                output,
+                HDR(),
+                Colors(),
+                frame.LightingInfo.y,
+                false,
+                View.GetPostProcessSettings().ToneMapping,
+                View.GetPostProcessSettings().ColorGrading,
+                View.Assets && View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                    View.Assets->GetTextureResource(View.GetPostProcessSettings().ColorGrading.LUT) :
+                    RenderHardware::Handle<RenderHardware::Texture> {},
+                View.GPUExposure);
         };
         auto beginTarget = [&](bool nextHDR, bool invalidate = false) {
             if (rendering && nextHDR == hdr && invalidatingNormals == invalidate)
@@ -211,13 +218,19 @@ namespace Kans
             if (hdr && !nextHDR)
                 resolve(*commands);
             if (nextHDR && !hdr)
-                Services.GetToneMapping().Record(*Services.GetDevice(),
-                                                 *commands,
-                                                 Colors()[0],
-                                                 {HDR()},
-                                                 frame.LightingInfo.y,
-                                                 true,
-                                                 View.GetPostProcessSettings().ToneMapping);
+                Services.GetToneMapping().Record(
+                    *Services.GetDevice(),
+                    *commands,
+                    Colors()[0],
+                    {HDR()},
+                    frame.LightingInfo.y,
+                    true,
+                    View.GetPostProcessSettings().ToneMapping,
+                    View.GetPostProcessSettings().ColorGrading,
+                    View.Assets && View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                        View.Assets->GetTextureResource(View.GetPostProcessSettings().ColorGrading.LUT) :
+                        RenderHardware::Handle<RenderHardware::Texture> {},
+                    View.GPUExposure);
             hdr = nextHDR;
             invalidatingNormals = invalidate;
             auto target         = materialTarget(LoadOp::Load, hdr, invalidate);
@@ -417,15 +430,29 @@ namespace Kans
         }
         if (rendering)
             commands->EndRendering();
+        if (View.GPUExposure && uploadedDebugView)
+        {
+            // All host snapshots are complete before recording their GPU writes.
+            // Submit the small patch ahead of the still-unsubmitted material list.
+            auto exposureCommands = Services.GetDevice()->CreateCommandList();
+            PatchFrameExposure(*this, *exposureCommands, frames, uint32_t(frameRange + 1), uint32_t(frameStride));
+            Services.GetDevice()->Submit(exposureCommands);
+        }
         if (View.EffectiveAA == AntiAliasing::TAA && !hdr)
         {
-            Services.GetToneMapping().Record(*GetDevice(),
-                                             *commands,
-                                             Colors()[0],
-                                             {HDR()},
-                                             View.GetPostProcessSettings().Exposure,
-                                             true,
-                                             View.GetPostProcessSettings().ToneMapping);
+            Services.GetToneMapping().Record(
+                *GetDevice(),
+                *commands,
+                Colors()[0],
+                {HDR()},
+                View.GetPostProcessSettings().Exposure,
+                true,
+                View.GetPostProcessSettings().ToneMapping,
+                View.GetPostProcessSettings().ColorGrading,
+                View.Assets && View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                    View.Assets->GetTextureResource(View.GetPostProcessSettings().ColorGrading.LUT) :
+                    RenderHardware::Handle<RenderHardware::Texture> {},
+                View.GPUExposure);
             hdr = true;
         }
         if (deferToneMapping)
@@ -613,13 +640,19 @@ void main() {
         const bool hdrSkybox = (Samples > 1 && !MSAAResolved) || ReconstructsHDR();
         if (hdrSkybox && !PostProcessHDR)
         {
-            Services.GetToneMapping().Record(*GetDevice(),
-                                             commandList,
-                                             Colors()[0],
-                                             {HDR()},
-                                             View.GetPostProcessSettings().Exposure,
-                                             true,
-                                             View.GetPostProcessSettings().ToneMapping);
+            Services.GetToneMapping().Record(
+                *GetDevice(),
+                commandList,
+                Colors()[0],
+                {HDR()},
+                View.GetPostProcessSettings().Exposure,
+                true,
+                View.GetPostProcessSettings().ToneMapping,
+                View.GetPostProcessSettings().ColorGrading,
+                View.Assets && View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                    View.Assets->GetTextureResource(View.GetPostProcessSettings().ColorGrading.LUT) :
+                    RenderHardware::Handle<RenderHardware::Texture> {},
+                View.GPUExposure);
             PostProcessHDR = true;
         }
         auto desc = Services.ScenePipeline("skybox", SceneShaders::SkyboxVertex, SceneShaders::SkyboxFragment, true);

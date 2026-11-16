@@ -261,7 +261,9 @@ namespace Kans
             if (DrawPostProcessSettings(
                     settings,
                     [&](AssetID& dirt) { return AssetPicker("Lens dirt", AssetType::Texture, dirt); },
-                    [&](const char* label, AssetID& id) { return AssetPicker(label, AssetType::Material, id); }))
+                    [&](const char* label, AssetID& id) { return AssetPicker(label, AssetType::Material, id); },
+                    true,
+                    [&](const char* label, AssetID& id) { return AssetPicker(label, AssetType::Texture, id); }))
                 scene.SetPostProcessSettings(settings);
         }
         PropertyGrid::EndCard();

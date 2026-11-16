@@ -45,7 +45,7 @@ namespace Kans
         struct Inputs
         {
             glm::uvec2                                      RenderSize {}, DisplaySize {};
-            RenderHardware::Handle<RenderHardware::Texture> Color, Depth, MotionVectors;
+            RenderHardware::Handle<RenderHardware::Texture> Color, Depth, MotionVectors, Exposure;
             GraphTexture                                    OpaqueOnly = uint32_t(-1), MaterialMasks = uint32_t(-1);
             TemporalReconstructionSettings                  Settings;
             // Engine projection before DeviceProjection, finite conventional Z (near=0, far=1 on Vulkan).

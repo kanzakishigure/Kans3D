@@ -103,18 +103,65 @@ namespace Kans
     bool DrawPostProcessSettings(PostProcessSettings&                 settings,
                                  const std::function<bool(AssetID&)>& dirtPicker,
                                  const AssetRowPicker&                materialPicker,
-                                 bool                                 temporal)
+                                 bool                                 temporal,
+                                 const AssetRowPicker&                lutPicker)
     {
         static const PostProcessSettings defaults;
         bool changed = false;
         if (PropertyGrid::BeginGroup("Exposure"))
         {
-            changed |= PropertyGrid::Float("Exposure", settings.Exposure, 0.01f, 0.001f, 128.0f, "%.3f", &defaults.Exposure);
+            const char* exposureModes[] = {"Manual", "Physical camera", "Automatic (histogram)"};
+            int         mode            = int(settings.Exposure.Mode);
+            if (PropertyGrid::Combo("Mode", exposureModes, 3, mode))
+            {
+                settings.Exposure.Mode = ExposureMode(mode);
+                changed                = true;
+            }
+            auto& exposure = settings.Exposure;
+            if (exposure.Mode == ExposureMode::Manual)
+                changed |= PropertyGrid::Float(
+                    "EV100", exposure.ManualEV100, .1f, -24, 32, "%.2f", &defaults.Exposure.ManualEV100);
+            else if (exposure.Mode == ExposureMode::PhysicalCamera)
+            {
+                changed |= PropertyGrid::Float(
+                    "Aperture", exposure.Camera.Aperture, .1f, .1f, 128, "f/%.2f", &defaults.Exposure.Camera.Aperture);
+                changed |= PropertyGrid::Float("Shutter",
+                                               exposure.Camera.ShutterSeconds,
+                                               .001f,
+                                               .000001f,
+                                               3600,
+                                               "%.6f s",
+                                               &defaults.Exposure.Camera.ShutterSeconds);
+                changed |= PropertyGrid::Float(
+                    "ISO", exposure.Camera.ISO, 1, 1, 1000000, "%.0f", &defaults.Exposure.Camera.ISO);
+            }
+            if (exposure.Mode == ExposureMode::Automatic)
+            {
+                auto&       a = exposure.Automatic;
+                const auto& d = defaults.Exposure.Automatic;
+                changed |= PropertyGrid::Float(
+                    "Histogram min EV", a.HistogramMinEV, .01f, -32.0f, 31.0f, "%.2f", &d.HistogramMinEV);
+                changed |= PropertyGrid::Float(
+                    "Histogram max EV", a.HistogramMaxEV, .01f, -31.0f, 64.0f, "%.2f", &d.HistogramMaxEV);
+                changed |=
+                    PropertyGrid::Float("Low percentile", a.LowPercentile, .01f, 0.0f, 0.99f, "%.2f", &d.LowPercentile);
+                changed |= PropertyGrid::Float(
+                    "High percentile", a.HighPercentile, .01f, 0.001f, 1.0f, "%.2f", &d.HighPercentile);
+                changed |=
+                    PropertyGrid::Float("Centre weight", a.CentreWeight, .01f, 0.0f, 1.0f, "%.2f", &d.CentreWeight);
+                changed |= PropertyGrid::Float("Min EV", a.MinEV, .01f, -24.0f, 32.0f, "%.2f", &d.MinEV);
+                changed |= PropertyGrid::Float("Max EV", a.MaxEV, .01f, -24.0f, 32.0f, "%.2f", &d.MaxEV);
+                changed |= PropertyGrid::Float("Speed up", a.SpeedUp, .01f, 0.0f, 100.0f, "%.2f", &d.SpeedUp);
+                changed |= PropertyGrid::Float("Speed down", a.SpeedDown, .01f, 0.0f, 100.0f, "%.2f", &d.SpeedDown);
+            }
+            changed |= PropertyGrid::Float(
+                "Compensation", exposure.Compensation, .1f, -24, 24, "%.2f stops", &defaults.Exposure.Compensation);
             // Standard matches Blender's "Standard" view transform: exposure, then sRGB.
-            const char* toneMappings[] = {"ACES", "Standard (none)"};
+            const char* toneMappings[] = {
+                "ACES", "Standard (none)", "AgX", "Khronos PBR Neutral", "AgX Punchy", "AgX Golden"};
             int         toneMapping    = int(settings.ToneMapping);
             const int   toneDefault    = int(defaults.ToneMapping);
-            if (PropertyGrid::Combo("Tone mapping", toneMappings, 2, toneMapping, &toneDefault))
+            if (PropertyGrid::Combo("Tone mapping", toneMappings, 6, toneMapping, &toneDefault))
             {
                 settings.ToneMapping = ToneMappingMode(toneMapping);
                 changed              = true;
@@ -122,6 +169,22 @@ namespace Kans
             // Blackman-Harris reconstruction radius (Blender Film > Filter Size); 0 keeps the sharp resolve.
             changed |= PropertyGrid::Float("Pixel filter", settings.FilterSize, 0.05f, 0.0f, 4.0f, "%.2f px",
                                            &defaults.FilterSize);
+            PropertyGrid::EndGroup();
+        }
+        if (PropertyGrid::BeginGroup("Color Grading"))
+        {
+            auto&       g = settings.ColorGrading;
+            const auto& d = defaults.ColorGrading;
+            changed |= PropertyGrid::Float("Temperature", g.Temperature, 10, 1000, 40000, "%.0f K", &d.Temperature);
+            changed |= PropertyGrid::Float("Tint", g.Tint, .01f, -1, 1, "%.2f", &d.Tint);
+            changed |= PropertyGrid::Float("Contrast", g.Contrast, .01f, 0, 4, "%.2f", &d.Contrast);
+            changed |= PropertyGrid::Float("Saturation", g.Saturation, .01f, 0, 4, "%.2f", &d.Saturation);
+            changed |= PropertyGrid::Color3("Lift", g.Lift, &d.Lift);
+            changed |= PropertyGrid::Color3("Gamma", g.Gamma, &d.Gamma);
+            changed |= PropertyGrid::Color3("Gain", g.Gain, &d.Gain);
+            if (lutPicker)
+                changed |= lutPicker("LUT (.cube, log2 -12..12)", g.LUT);
+            changed |= PropertyGrid::Float("Contribution", g.Contribution, .01f, 0, 1, "%.2f", &d.Contribution);
             PropertyGrid::EndGroup();
         }
         // Used by cameras set to TAA (FSR 3.1); other modes ignore it.

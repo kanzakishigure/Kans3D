@@ -33,7 +33,13 @@ namespace Kans
             return m_PostProcessOverride.value_or(scene).Validated();
         }
         float  GetExposure() const { return m_PostProcessOverride.value_or(PostProcessSettings {}).Exposure; }
-        float& GetExposure() { return EnsurePostProcess().Exposure; }
+        float  GetExposure() { return EnsurePostProcess().Exposure; }
+        const ExposureSettings& GetExposureSettings() const
+        {
+            static const ExposureSettings defaults;
+            return m_PostProcessOverride ? m_PostProcessOverride->Exposure : defaults;
+        }
+        ExposureSettings&    GetExposureSettings() { return EnsurePostProcess().Exposure; }
         void   SetExposure(float value) { EnsurePostProcess().Exposure = value; }
         const BloomSettings& GetBloomSettings() const
         {

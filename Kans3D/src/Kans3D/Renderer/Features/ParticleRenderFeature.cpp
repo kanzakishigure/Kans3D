@@ -3,6 +3,7 @@
 #include "Kans3D/Renderer/Lighting/AreaLights.h"
 #include "Kans3D/Renderer/Lighting/ShadowMaps.h"
 #include "Kans3D/Renderer/Particles/ParticleSprite.h"
+#include "Kans3D/Renderer/Passes/ExposureBinding.h"
 #include "Kans3D/Renderer/RenderFrame.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Kans3D/Renderer/Shading/MaterialPass.h"
@@ -577,7 +578,14 @@ namespace Kans
                 pass.Fog       = frame->Fog;
                 pass.DebugName = "VFX/" + draw.System->Asset()->assetID.ToString() + "/" +
                                  emitter.Compiled->Settings.Name + "/Renderer/" + r.Guid;
-                pass.Frame     = upload(&ef, sizeof(ef));
+                if (frame->View.GPUExposure)
+                {
+                    pass.Frame = frame->GetDevice()->CreateBuffer(
+                        {sizeof(ef), ExposureUniformUsage(frame->View), MemoryUsage::Upload});
+                    pass.Frame->Write(0, &ef, sizeof(ef));
+                }
+                else
+                    pass.Frame = upload(&ef, sizeof(ef));
                 pass.Object    = upload(&object, sizeof(object));
                 auto sprite    = upload(&uniforms, sizeof(uniforms));
                 pass.Render    = bindings->Render;
@@ -717,6 +725,7 @@ namespace Kans
                                   sceneDepth.SamplerResource = sampler;
                                   group.Entries.push_back(sceneDepth);
                                   pass.VertexGroup = c.Device.CreateBindGroup(group);
+                                  PatchFrameExposure(*frame, c.Commands, pass.Frame);
                                   const auto post  = frame->View.GetPostProcessSettings();
                                   const auto tone  = [&](bool inverse) {
                                       frame->Services.GetToneMapping().Record(
@@ -727,7 +736,12 @@ namespace Kans
                                                     frame->Colors(),
                                           post.Exposure,
                                           inverse,
-                                          post.ToneMapping);
+                                          post.ToneMapping,
+                                          post.ColorGrading,
+                                          post.ColorGrading.LUT.IsValid() ?
+                                              frame->Assets()->GetTextureResource(post.ColorGrading.LUT) :
+                                              Handle<RenderHardware::Texture> {},
+                                          frame->View.GPUExposure);
                                   };
                                   bool inputHDR = frame->Samples > 1 ? frame->PostProcessHDR : previousHDR;
                                   if (!inputHDR)

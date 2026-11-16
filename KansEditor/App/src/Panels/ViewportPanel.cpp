@@ -810,12 +810,15 @@ namespace Kans
             return;
         const auto&    stats = m_Client->GetLastResult().Stats;
         const ImGuiIO& io    = ImGui::GetIO();
-        OverlayGroup({m_Min.x + EditorTheme::Px(10.0f), m_Max.y - EditorTheme::Px(96.0f)}, [&] {
-            ImGui::Text("%.0f FPS  %.2f ms", io.Framerate, io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
-            ImGui::Text("%u x %u", m_Size.x, m_Size.y);
-            ImGui::Text("%u draw calls", stats.DrawCalls);
-            ImGui::Text("%llu triangles", static_cast<unsigned long long>(stats.Triangles));
-        });
+        OverlayGroup(
+            {m_Min.x + EditorTheme::Px(10.0f), m_Max.y - EditorTheme::Px(stats.AutoExposureEV ? 116.0f : 96.0f)}, [&] {
+                ImGui::Text("%.0f FPS  %.2f ms", io.Framerate, io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
+                ImGui::Text("%u x %u", m_Size.x, m_Size.y);
+                ImGui::Text("%u draw calls", stats.DrawCalls);
+                ImGui::Text("%llu triangles", static_cast<unsigned long long>(stats.Triangles));
+                if (stats.AutoExposureEV)
+                    ImGui::Text("Auto EV100 %.2f", *stats.AutoExposureEV);
+            });
     }
 
     // ---------------------------------------------------------------------- gizmo and toolbar

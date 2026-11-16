@@ -2,6 +2,7 @@
 #include <map>
 #include <glm/glm.hpp>
 #include "Kans3D/RHI/RHI.h"
+#include "Kans3D/Renderer/Passes/ColorGradingPass.h"
 #include "Kans3D/Renderer/Passes/PostProcessSettings.h"
 namespace Kans
 {
@@ -16,14 +17,18 @@ namespace Kans
                             const std::vector<RenderHardware::Handle<RenderHardware::Texture>>& targets,
                             float                                                               exposure,
                             bool                                                                inverse = false,
-                            ToneMappingMode                                                     mode = ToneMappingMode::ACES);
+                            ToneMappingMode                                                     mode = ToneMappingMode::ACES,
+                            const ColorGradingSettings&                                         grading      = {},
+                            const RenderHardware::Handle<RenderHardware::Texture>&              userLut      = {},
+                            const RenderHardware::Handle<RenderHardware::Texture>&              autoExposure = {});
         static float EffectiveExposure(float exposure);
 
     private:
         // Matching settings are immutable and can be shared across submitted command lists.
         std::vector<std::pair<glm::vec4, RenderHardware::Handle<RenderHardware::Buffer>>> m_Uniforms;
-        RenderHardware::Handle<RenderHardware::Shader>                                    m_Programs[2];
-        RenderHardware::Handle<RenderHardware::BindGroupLayout>                           m_Layout;
+        RenderHardware::Handle<RenderHardware::Shader>                                    m_Programs[2][2][2];
+        RenderHardware::Handle<RenderHardware::BindGroupLayout>                           m_Layouts[2][2];
+        ColorGradingPass                                                                  m_Grading;
         RenderHardware::Handle<RenderHardware::Sampler>                                   m_Sampler;
         std::map<std::pair<std::vector<RenderHardware::Format>, uint32_t>,
                  RenderHardware::Handle<RenderHardware::Pipeline>>

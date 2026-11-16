@@ -49,6 +49,7 @@ namespace Kans
         uint32_t VelocityDrawCalls  = 0;
         uint64_t PrepassTriangles   = 0;
         uint64_t SimulatedParticles = 0, ParticleDraws = 0;
+        std::optional<float> AutoExposureEV;
     };
     struct ShadowStatistics
     {
@@ -267,6 +268,7 @@ namespace Kans
         std::optional<EngineFrameUniforms>                LightingUniforms;
         std::string                                       Pipeline = "Forward";
         std::optional<float>                              Exposure;
+        RenderHardware::Handle<RenderHardware::Texture>   GPUExposure;
         std::optional<Kans::AntiAliasing>                 AntiAliasing; // nullopt inherits the camera.
         std::optional<UpscalingSettings>                  Upscaling;    // nullopt inherits the camera.
         bool                                              DepthPrepass           = true;

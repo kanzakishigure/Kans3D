@@ -91,7 +91,8 @@ namespace Kans
         c.JitterPhaseCount = float(JitterPhaseCount(displaySize.x, renderSize.x));
         c.DeltaTime        = std::clamp(delta.GetSeconds(), 0.f, 1.f);
         // SceneHDR has no pre-exposure. User exposure is applied later by tone mapping;
-        // FSR input exposure and deltaPreExposure are therefore both 1, independent of it.
+        // deltaPreExposure stays 1. The optional GPU input exposure is an SDK working-space
+        // scale, removed before storing history (ffx_fsr3upscaler_accumulate.h).
         c.FrameIndex = reset ? 0 : previous.FrameIndex + 1;
         return c;
     }
@@ -270,7 +271,8 @@ imageStore(rw_transparency_and_composition_mask,p,vec4(material.g)); }
         if (generateReactive)
             images["r_input_opaque_only"] = in.OpaqueOnly;
         images["r_reactive_mask"] = images["r_transparency_and_composition_mask"] = images.at("black");
-        images["r_input_exposure"]                                                = images.at("exposure");
+        images["r_input_exposure"] =
+            in.Exposure ? graph.ImportTexture("Automatic exposure", in.Exposure) : images.at("exposure");
         images["r_lanczos_lut"]                                                   = images.at("black");
         images["r_input_color_jittered"] = graph.ImportTexture("SceneHDR", in.Color);
         images["r_input_depth"]          = graph.ImportTexture("SceneDepth", in.Depth);

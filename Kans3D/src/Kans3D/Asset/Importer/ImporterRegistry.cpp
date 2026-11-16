@@ -111,7 +111,7 @@ namespace Kans
                 {"ModelImporter",
                  {{".obj", ".fbx", ".gltf", ".glb", ".dae", ".3ds"}, std::make_shared<ModelImporter>()}},
                 {"TextureImporter",
-                 {{".png", ".jpg", ".jpeg", ".bmp", ".tga", ".hdr"}, std::make_shared<TextureImporter>()}},
+                 {{".png", ".jpg", ".jpeg", ".bmp", ".tga", ".hdr", ".cube"}, std::make_shared<TextureImporter>()}},
                 {"ShaderImporter", {{".vert", ".frag", ".comp", ".shaderprog"}, std::make_shared<ShaderImporter>()}},
                 {"MaterialImporter", {{".material"}, std::make_shared<MaterialImporter>()}},
                 {"ActionImporter", {{".action"}, std::make_shared<ActionImporter>()}},

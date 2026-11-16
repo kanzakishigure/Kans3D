@@ -8,6 +8,8 @@
 #include "Kans3D/Renderer/Features/DebugDrawFeature.h"
 #include "Kans3D/Renderer/Lighting/AreaLights.h"
 #include "Kans3D/Renderer/Lighting/ShadowMaps.h"
+#include "Kans3D/Renderer/Passes/AutoExposurePass.h"
+#include "Kans3D/Renderer/Passes/ExposureBinding.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Features/ParticleRenderFeature.h"
 #include "Passes/Fsr3Upscaler.h"
@@ -112,13 +114,20 @@ namespace Kans
             {
                 // The compatibility clear is display-space .02. Decode it with the same
                 // exposure/tone curve used at existing display-to-HDR batch boundaries.
-                renderer.Services.GetToneMapping().Record(context.Device,
-                                                          context.Commands,
-                                                          renderer.Output.GetColors()[0],
-                                                          {renderer.Output.GetHDR()},
-                                                          renderer.View.GetPostProcessSettings().Exposure,
-                                                          true,
-                                                          renderer.View.GetPostProcessSettings().ToneMapping);
+                renderer.Services.GetToneMapping().Record(
+                    context.Device,
+                    context.Commands,
+                    renderer.Output.GetColors()[0],
+                    {renderer.Output.GetHDR()},
+                    renderer.View.GetPostProcessSettings().Exposure,
+                    true,
+                    renderer.View.GetPostProcessSettings().ToneMapping,
+                    renderer.View.GetPostProcessSettings().ColorGrading,
+                    renderer.View.Assets && renderer.View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                        renderer.View.Assets->GetTextureResource(
+                            renderer.View.GetPostProcessSettings().ColorGrading.LUT) :
+                        RenderHardware::Handle<RenderHardware::Texture> {},
+                    renderer.View.GPUExposure);
             }
         });
         if (view.EffectiveAA == AntiAliasing::TAA)
@@ -198,13 +207,20 @@ namespace Kans
                 append("Post material HDR prefill",
                        {{display, GraphAccess::SampledRead}, {output, GraphAccess::ColorWrite}},
                        [&frame](auto& c) {
-                           frame.Services.GetToneMapping().Record(c.Device,
-                                                                  c.Commands,
-                                                                  frame.Output.GetColors()[0],
-                                                                  {frame.Output.GetHDR()},
-                                                                  frame.View.GetPostProcessSettings().Exposure,
-                                                                  true,
-                                                                  frame.View.GetPostProcessSettings().ToneMapping);
+                           frame.Services.GetToneMapping().Record(
+                               c.Device,
+                               c.Commands,
+                               frame.Output.GetColors()[0],
+                               {frame.Output.GetHDR()},
+                               frame.View.GetPostProcessSettings().Exposure,
+                               true,
+                               frame.View.GetPostProcessSettings().ToneMapping,
+                               frame.View.GetPostProcessSettings().ColorGrading,
+                               frame.View.Assets && frame.View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                                   frame.View.Assets->GetTextureResource(
+                                       frame.View.GetPostProcessSettings().ColorGrading.LUT) :
+                                   RenderHardware::Handle<RenderHardware::Texture> {},
+                               frame.View.GPUExposure);
                        });
             }
             auto desc        = image->GetDesc();
@@ -237,8 +253,8 @@ namespace Kans
             uniforms.CameraPosition    = glm::vec4(frame.View.Scene.sceneCamera.Position, 1);
             uniforms.Time              = frame.View.Time;
             uniforms.LightingInfo.y    = frame.View.GetPostProcessSettings().Exposure;
-            auto buffer =
-                frame.GetDevice()->CreateBuffer({sizeof(uniforms), BufferUsage::Uniform, MemoryUsage::Upload});
+            auto buffer                = frame.GetDevice()->CreateBuffer(
+                {sizeof(uniforms), ExposureUniformUsage(frame.View), MemoryUsage::Upload});
             const auto custom = m_CustomDepth;
             if (!m_PostLinearSampler)
             {
@@ -265,6 +281,7 @@ namespace Kans
                     point  = m_PostPointSampler](auto& c) {
                        // Upload in graph order, after deferred scene draws have written their jittered uniforms.
                        buffer->Write(0, &uniforms, sizeof(uniforms));
+                       PatchFrameExposure(frame, c.Commands, buffer);
                        PipelineDesc pipeline;
                        pipeline.Program         = draw.Shader->Program;
                        pipeline.GroupLayouts    = {draw.Shader->EngineLayout, draw.Shader->MaterialLayout};
@@ -385,13 +402,19 @@ namespace Kans
                 resolveUses.push_back(
                     {graph.ImportTexture("SceneHDR", renderer.Output.GetHDR()), GraphAccess::SampledRead});
                 auto commands = renderer.GetDevice()->CreateCommandList();
-                renderer.Services.GetToneMapping().Record(*renderer.GetDevice(),
-                                                          *commands,
-                                                          renderer.Output.GetHDR(),
-                                                          renderer.Output.GetColors(),
-                                                          view.GetPostProcessSettings().Exposure,
-                                                          false,
-                                                          view.GetPostProcessSettings().ToneMapping);
+                renderer.Services.GetToneMapping().Record(
+                    *renderer.GetDevice(),
+                    *commands,
+                    renderer.Output.GetHDR(),
+                    renderer.Output.GetColors(),
+                    view.GetPostProcessSettings().Exposure,
+                    false,
+                    view.GetPostProcessSettings().ToneMapping,
+                    view.GetPostProcessSettings().ColorGrading,
+                    view.Assets && view.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                        view.Assets->GetTextureResource(view.GetPostProcessSettings().ColorGrading.LUT) :
+                        RenderHardware::Handle<RenderHardware::Texture> {},
+                    view.GPUExposure);
                 auto pass = graph.AddRecordedPass("Immediate display prefill", std::move(resolveUses), commands);
                 if (pass)
                     graph.OrderAfter(pass, pass - 1);
@@ -513,13 +536,19 @@ namespace Kans
                        {{graph.ImportTexture("SceneColor0", renderer.Output.GetColors()[0]), GraphAccess::SampledRead},
                         {graph.ImportTexture("SceneHDR", renderer.Output.GetHDR()), GraphAccess::ColorWrite}},
                        [&renderer, &view](auto& c) {
-                           renderer.Services.GetToneMapping().Record(c.Device,
-                                                                     c.Commands,
-                                                                     renderer.Output.GetColors()[0],
-                                                                     {renderer.Output.GetHDR()},
-                                                                     view.GetPostProcessSettings().Exposure,
-                                                                     true,
-                                                                     view.GetPostProcessSettings().ToneMapping);
+                           renderer.Services.GetToneMapping().Record(
+                               c.Device,
+                               c.Commands,
+                               renderer.Output.GetColors()[0],
+                               {renderer.Output.GetHDR()},
+                               view.GetPostProcessSettings().Exposure,
+                               true,
+                               view.GetPostProcessSettings().ToneMapping,
+                               view.GetPostProcessSettings().ColorGrading,
+                               view.Assets && view.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                                   view.Assets->GetTextureResource(view.GetPostProcessSettings().ColorGrading.LUT) :
+                                   RenderHardware::Handle<RenderHardware::Texture> {},
+                               view.GPUExposure);
                        });
                 renderer.PostProcessHDR = true;
             }
@@ -670,13 +699,19 @@ namespace Kans
                     {graph.ImportTexture("SceneColor0", renderer.Output.GetColors()[0]), GraphAccess::SampledRead},
                     {graph.ImportTexture("SceneHDR", renderer.Output.GetHDR()), GraphAccess::ColorWrite}};
                 append("TAA HDR prefill", std::move(uses), [&renderer, &view](auto& c) {
-                    renderer.Services.GetToneMapping().Record(c.Device,
-                                                              c.Commands,
-                                                              renderer.Output.GetColors()[0],
-                                                              {renderer.Output.GetHDR()},
-                                                              view.GetPostProcessSettings().Exposure,
-                                                              true,
-                                                              view.GetPostProcessSettings().ToneMapping);
+                    renderer.Services.GetToneMapping().Record(
+                        c.Device,
+                        c.Commands,
+                        renderer.Output.GetColors()[0],
+                        {renderer.Output.GetHDR()},
+                        view.GetPostProcessSettings().Exposure,
+                        true,
+                        view.GetPostProcessSettings().ToneMapping,
+                        view.GetPostProcessSettings().ColorGrading,
+                        view.Assets && view.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                            view.Assets->GetTextureResource(view.GetPostProcessSettings().ColorGrading.LUT) :
+                            RenderHardware::Handle<RenderHardware::Texture> {},
+                        view.GPUExposure);
                 });
             }
             auto& displayOutput = renderer.DisplayFrame ? renderer.DisplayFrame->Output : renderer.Output;
@@ -690,6 +725,7 @@ namespace Kans
             inputs.Projection     = view.Scene.sceneCamera.camera.GetProjectionMatrix();
             inputs.Jitter         = renderer.Output.GetJitter();
             inputs.FrameTimeDelta = view.FrameTimeDelta;
+            inputs.Exposure       = view.GPUExposure;
             inputs.Reset          = renderer.Output.GetTemporalState().Reset;
             inputs.OpaqueOnly     = opaqueOnly;
             inputs.MaterialMasks  = renderer.TemporalMasks;
@@ -710,6 +746,33 @@ namespace Kans
         }
         else
             Finish(graph, renderer);
+    }
+    static void AddAutoExposure(RenderGraph& graph, RenderFrame& frame)
+    {
+        if (frame.View.GetPostProcessSettings().Exposure.Mode != ExposureMode::Automatic)
+            return;
+        auto state = frame.Output.GetAutoExposure();
+        if (!state)
+            return;
+        auto hdr      = graph.ImportTexture("Exposure meter HDR", frame.Output.GetHDR());
+        auto previous = graph.ImportTexture("Automatic exposure", state->Input());
+        auto next     = graph.ImportTexture("Exposure next", state->Output());
+        graph.ExportTexture(next);
+        auto pass = graph.AddPass(
+            "Exposure histogram and adaptation",
+            GraphPassKind::Compute,
+            {{hdr, GraphAccess::SampledRead}, {previous, GraphAccess::SampledRead}, {next, GraphAccess::StorageWrite}},
+            [&frame, state, hdr](auto& c) {
+                const auto exposure = frame.View.GetPostProcessSettings().Exposure;
+                state->Record(c.Device,
+                              c.Commands,
+                              c.Texture(hdr),
+                              exposure.Automatic,
+                              exposure.Compensation,
+                              frame.View.FrameTimeDelta.GetSeconds());
+            });
+        if (pass)
+            graph.OrderAfter(pass, pass - 1);
     }
     void ForwardPipeline::Finish(RenderGraph& graph, RenderFrame& renderer)
     {
@@ -736,6 +799,7 @@ namespace Kans
         if (!m_PostDraws.empty())
             m_CustomDepth = BuildCustomDepthPass(graph, renderer);
         AddPostMaterials(graph, renderer, PostProcessStage::BeforeToneMap);
+        AddAutoExposure(graph, renderer);
         Inject(RenderExtensionPoint::BeforePostProcess, featureContext);
         if (renderer.DeferToneMapping && renderer.PostProcessHDR)
         {
@@ -744,13 +808,19 @@ namespace Kans
             uses.push_back({graph.ImportTexture("SceneHDR", renderer.Output.GetHDR()), GraphAccess::SampledRead});
             append("Tone mapping (ACES fitted + sRGB)", std::move(uses), [&renderer, &view](auto& context) {
                 const float exposure = view.GetPostProcessSettings().Exposure;
-                renderer.Services.GetToneMapping().Record(context.Device,
-                                                          context.Commands,
-                                                          renderer.Output.GetHDR(),
-                                                          renderer.Output.GetColors(),
-                                                          exposure,
-                                                          false,
-                                                          view.GetPostProcessSettings().ToneMapping);
+                renderer.Services.GetToneMapping().Record(
+                    context.Device,
+                    context.Commands,
+                    renderer.Output.GetHDR(),
+                    renderer.Output.GetColors(),
+                    exposure,
+                    false,
+                    view.GetPostProcessSettings().ToneMapping,
+                    view.GetPostProcessSettings().ColorGrading,
+                    view.Assets && view.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                        view.Assets->GetTextureResource(view.GetPostProcessSettings().ColorGrading.LUT) :
+                        RenderHardware::Handle<RenderHardware::Texture> {},
+                    view.GPUExposure);
             });
         }
         // Display-space overlays follow every post effect and the final tone mapping.
@@ -860,13 +930,20 @@ namespace Kans
             append("Reconstruction HDR prefill",
                    {{display, GraphAccess::SampledRead}, {hdr, GraphAccess::ColorWrite}},
                    [&frame](auto& c) {
-                       frame.Services.GetToneMapping().Record(c.Device,
-                                                              c.Commands,
-                                                              frame.Output.GetColors()[0],
-                                                              {frame.Output.GetHDR()},
-                                                              frame.View.GetPostProcessSettings().Exposure,
-                                                              true,
-                                                              frame.View.GetPostProcessSettings().ToneMapping);
+                       frame.Services.GetToneMapping().Record(
+                           c.Device,
+                           c.Commands,
+                           frame.Output.GetColors()[0],
+                           {frame.Output.GetHDR()},
+                           frame.View.GetPostProcessSettings().Exposure,
+                           true,
+                           frame.View.GetPostProcessSettings().ToneMapping,
+                           frame.View.GetPostProcessSettings().ColorGrading,
+                           frame.View.Assets && frame.View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                               frame.View.Assets->GetTextureResource(
+                                   frame.View.GetPostProcessSettings().ColorGrading.LUT) :
+                               RenderHardware::Handle<RenderHardware::Texture> {},
+                           frame.View.GPUExposure);
                    });
         }
         auto desc        = frame.Output.GetHDR()->GetDesc();
@@ -988,13 +1065,20 @@ namespace Kans
                 append("Renderer2D sprites MSAA", uses, [&frame, immediate, end](auto& c) {
                     if (frame.PostProcessHDR)
                     {
-                        frame.Services.GetToneMapping().Record(c.Device,
-                                                               c.Commands,
-                                                               frame.HDR(),
-                                                               frame.Colors(),
-                                                               frame.View.GetPostProcessSettings().Exposure,
-                                                               false,
-                                                               frame.View.GetPostProcessSettings().ToneMapping);
+                        frame.Services.GetToneMapping().Record(
+                            c.Device,
+                            c.Commands,
+                            frame.HDR(),
+                            frame.Colors(),
+                            frame.View.GetPostProcessSettings().Exposure,
+                            false,
+                            frame.View.GetPostProcessSettings().ToneMapping,
+                            frame.View.GetPostProcessSettings().ColorGrading,
+                            frame.View.Assets && frame.View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                                frame.View.Assets->GetTextureResource(
+                                    frame.View.GetPostProcessSettings().ColorGrading.LUT) :
+                                RenderHardware::Handle<RenderHardware::Texture> {},
+                            frame.View.GPUExposure);
                         frame.PostProcessHDR = false;
                     }
                     auto& sprites = frame.Services.GetSpriteBatch();
@@ -1092,13 +1176,19 @@ namespace Kans
         append("MSAA Karis HDR + sample 0 depth/stencil resolve", resolveUses, [&frame](auto& c) {
             const float exposure = frame.View.GetPostProcessSettings().Exposure;
             if (!frame.PostProcessHDR)
-                frame.Services.GetToneMapping().Record(c.Device,
-                                                       c.Commands,
-                                                       frame.Colors()[0],
-                                                       {frame.HDR()},
-                                                       exposure,
-                                                       true,
-                                                       frame.View.GetPostProcessSettings().ToneMapping);
+                frame.Services.GetToneMapping().Record(
+                    c.Device,
+                    c.Commands,
+                    frame.Colors()[0],
+                    {frame.HDR()},
+                    exposure,
+                    true,
+                    frame.View.GetPostProcessSettings().ToneMapping,
+                    frame.View.GetPostProcessSettings().ColorGrading,
+                    frame.View.Assets && frame.View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                        frame.View.Assets->GetTextureResource(frame.View.GetPostProcessSettings().ColorGrading.LUT) :
+                        RenderHardware::Handle<RenderHardware::Texture> {},
+                    frame.View.GPUExposure);
             frame.Services.GetAntiAliasing().Resolve(c.Device, c.Commands, frame.HDR(), frame.Output.GetHDR());
             // Compatibility color outputs and depth/stencil use attachment resolves.
             auto render = frame.SceneTarget(LoadOp::Load);
@@ -1117,18 +1207,25 @@ namespace Kans
         if (!m_PostDraws.empty())
             m_CustomDepth = BuildCustomDepthPass(graph, frame);
         AddPostMaterials(graph, frame, PostProcessStage::BeforeToneMap);
+        AddAutoExposure(graph, frame);
         Inject(RenderExtensionPoint::BeforePostProcess, postFeatures);
         auto toneUses = resolved;
         toneUses.pop_back();
         toneUses.push_back({hdr, GraphAccess::SampledRead});
         append("Tone mapping (ACES fitted + sRGB)", toneUses, [&frame](auto& c) {
-            frame.Services.GetToneMapping().Record(c.Device,
-                                                   c.Commands,
-                                                   frame.Output.GetHDR(),
-                                                   frame.Output.GetColors(),
-                                                   frame.View.GetPostProcessSettings().Exposure,
-                                                   false,
-                                                   frame.View.GetPostProcessSettings().ToneMapping);
+            frame.Services.GetToneMapping().Record(
+                c.Device,
+                c.Commands,
+                frame.Output.GetHDR(),
+                frame.Output.GetColors(),
+                frame.View.GetPostProcessSettings().Exposure,
+                false,
+                frame.View.GetPostProcessSettings().ToneMapping,
+                frame.View.GetPostProcessSettings().ColorGrading,
+                frame.View.Assets && frame.View.GetPostProcessSettings().ColorGrading.LUT.IsValid() ?
+                    frame.View.Assets->GetTextureResource(frame.View.GetPostProcessSettings().ColorGrading.LUT) :
+                    RenderHardware::Handle<RenderHardware::Texture> {},
+                frame.View.GPUExposure);
             frame.DeferToneMapping = frame.PostProcessHDR = false;
         });
         AddPostMaterials(graph, frame, PostProcessStage::AfterToneMap);

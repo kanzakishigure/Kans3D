@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <map>
 #include <unordered_set>
 #include <entt.hpp>
@@ -37,6 +38,13 @@ namespace Kans
                    SpriteOrderVisits = 0;
         };
         explicit RenderWorld(Scene& scene) : m_Scene(&scene) {}
+        uint64_t GetIdentity() const { return m_Identity; }
+
+    private:
+        inline static std::atomic<uint64_t> s_Identity {1};
+        uint64_t                            m_Identity = s_Identity.fetch_add(1);
+
+    public:
         RenderWorld() = default; // Dedicated procedural worlds (e.g. material preview).
         void SetProceduralDraws(std::vector<DrawProxy> draws) { m_ProceduralDraws = std::move(draws); }
         void SetProceduralLights(std::vector<PointLight> points,

@@ -9,6 +9,7 @@
 #include "Kans3D/Renderer/2D/SpriteBatch.h"
 #include "Kans3D/Renderer/2D/TextRenderer.h"
 #include "Kans3D/Renderer/2D/UIRenderer.h"
+#include "Kans3D/Renderer/Passes/AutoExposurePass.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Kans3D/Renderer/Shading/SceneShaders.h"
 #include "Features/ParticleRenderFeature.h"
@@ -644,6 +645,32 @@ namespace Kans
         if (frame.Samples == 1)
             target.GetTransientPool().DiscardMultisampled();
         m_Device->BeginFrame();
+        view.GPUExposure    = {};
+        const auto exposure = view.GetPostProcessSettings().Exposure;
+        if (exposure.Mode == ExposureMode::Automatic)
+        {
+            auto previous = target.GetAutoExposure();
+            if (!previous || previous->NeedsReset(world.GetIdentity(), view.CameraCut))
+            {
+                target.InvalidateTemporalHistory();
+                target.GetAutoExposure() = previous;
+            }
+            auto& automatic = target.GetAutoExposure();
+            if (!automatic)
+                automatic = std::make_shared<AutoExposurePass>();
+            automatic->Prepare(*m_Device,
+                               world.GetIdentity(),
+                               view.CameraCut,
+                               std::clamp(exposure.ManualEV100, exposure.Automatic.MinEV, exposure.Automatic.MaxEV),
+                               exposure.Compensation);
+            view.GPUExposure            = automatic->Input();
+            result.Stats.AutoExposureEV = automatic->CurrentEV();
+        }
+        else
+            target.GetAutoExposure().reset();
+        if (sceneView)
+            sceneView->GPUExposure = view.GPUExposure;
+
         double                        executeStart = 0;
         std::shared_ptr<GraphCapture> capture;
         try

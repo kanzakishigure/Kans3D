@@ -332,6 +332,45 @@ namespace Kans
                     value = {static_cast<const Camera&>(c).GetExposure(), 0, 0, 0};
                 return true;
             }
+            if (field.rfind("Camera.ColorGrading.", 0) == 0)
+            {
+                auto settings =
+                    static_cast<const Camera&>(c).GetPostProcessOverride().value_or(scene.GetPostProcessSettings());
+                auto&  g      = settings.ColorGrading;
+                float* target = nullptr;
+                if (field == "Camera.ColorGrading.Temperature")
+                    target = &g.Temperature;
+                if (field == "Camera.ColorGrading.Tint")
+                    target = &g.Tint;
+                if (field == "Camera.ColorGrading.Contrast")
+                    target = &g.Contrast;
+                if (field == "Camera.ColorGrading.Saturation")
+                    target = &g.Saturation;
+                if (!target)
+                    return false;
+                if (write)
+                {
+                    *target = value.x;
+                    c.SetPostProcessOverride(settings);
+                }
+                else
+                    value = {*target, 0, 0, 0};
+                return true;
+            }
+            if (field == "Camera.Exposure.ManualEV100" || field == "Camera.Exposure.Compensation")
+            {
+                auto  post     = c.ResolvePostProcess(scene.GetPostProcessSettings());
+                auto& settings = post.Exposure;
+                auto& target   = field == "Camera.Exposure.ManualEV100" ? settings.ManualEV100 : settings.Compensation;
+                if (write)
+                {
+                    target = value.x;
+                    c.SetPostProcessOverride(post);
+                }
+                else
+                    value = {target, 0, 0, 0};
+                return true;
+            }
 #undef CAMERA
         }
         if (e.HasComponent<TextComponent>())

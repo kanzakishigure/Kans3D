@@ -23,7 +23,8 @@ namespace Kans
     bool DrawPostProcessSettings(PostProcessSettings&                 settings,
                                  const std::function<bool(AssetID&)>& dirtPicker     = {},
                                  const AssetRowPicker&                materialPicker = {},
-                                 bool                                 temporal       = true);
+                                 bool                                 temporal       = true,
+                                 const AssetRowPicker&                lutPicker      = {});
 
     // ---- Anti-aliasing (one group wherever a camera's mode is edited) ----
 
