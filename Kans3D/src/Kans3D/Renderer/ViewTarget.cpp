@@ -125,6 +125,7 @@ namespace Kans
         if (m_Temporal)
         {
             m_Temporal->Valid = false;
+            m_Temporal->ReflectionValid = false;
             for (auto it = m_Temporal->Objects.begin(); it != m_Temporal->Objects.end();)
                 if (m_FrameNumber - it->second.LastSeen >= 4)
                     it = m_Temporal->Objects.erase(it);

@@ -299,12 +299,6 @@ namespace Kans
                     return pass.Tag == tag && bindings->PassEnabled(pass.Name);
                 })))
                 continue;
-            if (CompositeReflections &&
-                (draw.ViewMode != SceneViewMode::Lit || !PrepassDraws.count(item.DrawIndex) ||
-                 std::none_of(shader->EngineResources.begin(), shader->EngineResources.end(), [](const auto& r) {
-                     return r.Binding == uint32_t(EngineBinding::ScreenSpaceReflections);
-                 })))
-                continue;
             const auto& render = item.Render;
             frame              = litFrame;
             frame.DebugView    = draw.ViewMode == SceneViewMode::BaseColor      ? 1.0f :
@@ -366,7 +360,8 @@ namespace Kans
                      return p.Tag == "DepthNormals" && bindings->PassEnabled(p.Name);
                  })))
                 pass.AmbientOcclusion = AmbientOcclusion;
-            if (CompositeReflections && !suppliedView && tag.empty() && !IsTransparentMaterial(item.Render.AlphaMode))
+            if (draw.ViewMode == SceneViewMode::Lit && !suppliedView && tag.empty() &&
+                PrepassDraws.count(item.DrawIndex) && !IsTransparentMaterial(item.Render.AlphaMode))
                 pass.Reflections = Reflections;
             if (!suppliedView && tag.empty() && !IsTransparentMaterial(item.Render.AlphaMode))
                 pass.ContactDepth = ContactDepth;

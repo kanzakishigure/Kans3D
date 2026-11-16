@@ -541,12 +541,24 @@ namespace Kans
                 {{source, GraphAccess::TransferRead}, {snapshot, GraphAccess::TransferWrite}},
                 [source, snapshot](auto& c) { c.Commands.CopyTexture(c.Texture(source), {}, c.Texture(snapshot)); });
         }
+        if (ssr)
+        {
+            // The prepass has resolved the same alpha/material descriptors as the opaque draw.
+            renderer.VelocitySurfaceDraws = renderer.PrepassDraws;
+            renderer.BuildVelocity(graph);
+            renderer.BuildReflections(graph);
+        }
+        else
+            renderer.Output.GetTemporalState().ReflectionValid = false;
         if (view.Environment.AmbientOcclusion.Enabled)
         {
-            if (view.EffectiveAA == AntiAliasing::TAA)
-                renderer.Output.EnsureVelocity(); // TAA generates final visibility-correct velocity after opaque draws.
-            else
-                renderer.BuildVelocity(graph);
+            if (!ssr) // SSR already generated velocity against prepass visibility.
+            {
+                if (view.EffectiveAA == AntiAliasing::TAA)
+                    renderer.Output.EnsureVelocity(); // TAA generates velocity after opaque draws.
+                else
+                    renderer.BuildVelocity(graph);
+            }
             renderer.BuildGtao(graph);
         }
         else
@@ -600,6 +612,8 @@ namespace Kans
             auto       materialUses = target;
             if (renderer.ContactDepth)
                 sampled(materialUses, renderer.ContactDepth, "Contact shadow depth");
+            if (renderer.Reflections)
+                sampled(materialUses, renderer.Reflections, "SSR filtered reflection");
             if (renderer.AmbientOcclusion)
                 sampled(materialUses, renderer.AmbientOcclusion, "GTAO filtered");
             if (renderer.Fog)
@@ -656,18 +670,6 @@ namespace Kans
                     renderer.PostProcessHDR = true;
                     renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, false);
                 });
-            if (ssr)
-            {
-                renderer.BuildReflections(graph);
-                auto compositeUses = materialUses;
-                compositeUses.push_back({renderer.ReflectionTrace, GraphAccess::SampledRead});
-                append("SSR composite (opaque lighting)", compositeUses, [&renderer](auto& c) {
-                    renderer.PostProcessHDR       = true;
-                    renderer.CompositeReflections = true;
-                    renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, false);
-                    renderer.CompositeReflections = false;
-                });
-            }
             Inject(RenderExtensionPoint::AfterOpaque, featureContext);
             BuildSpotBeamPasses(graph, renderer);
             if (view.EffectiveAA == AntiAliasing::TAA)
@@ -686,7 +688,8 @@ namespace Kans
                     renderer.PostProcessHDR = true;
                     renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, true);
                 });
-            if (renderer.VelocityActive && (!renderer.AmbientOcclusion || view.EffectiveAA == AntiAliasing::TAA))
+            if (renderer.VelocityActive && !ssr &&
+                (!renderer.AmbientOcclusion || view.EffectiveAA == AntiAliasing::TAA))
                 renderer.BuildVelocity(graph);
         }
         else if (!view.MaterialOrder.empty())
@@ -730,7 +733,8 @@ namespace Kans
                                                   renderer.FinalPostRecordMilliseconds.value_or(0));
             if (pass)
                 graph.OrderAfter(pass, pass - 1);
-            if (renderer.VelocityActive && (!renderer.AmbientOcclusion || view.EffectiveAA == AntiAliasing::TAA))
+            if (renderer.VelocityActive && !ssr &&
+                (!renderer.AmbientOcclusion || view.EffectiveAA == AntiAliasing::TAA))
                 renderer.BuildVelocity(graph);
             if (post)
             {
@@ -744,10 +748,12 @@ namespace Kans
                 graph.OrderAfter(resolve, resolve - 1);
             }
         }
-        if (renderer.VelocityActive && !renderer.AmbientOcclusion && view.MaterialOrder.empty() &&
+        if (renderer.VelocityActive && !ssr && !renderer.AmbientOcclusion && view.MaterialOrder.empty() &&
             view.EffectiveAA != AntiAliasing::TAA)
             renderer.BuildVelocity(graph);
         Inject(RenderExtensionPoint::AfterTransparent, featureContext);
+        if (ssr)
+            renderer.CaptureReflectionHistory(graph);
         if (renderer.DisplayFrame && view.DebugBuffer != RenderView::DebugBuffer::None)
         {
             renderer.BuildDebugBuffer(graph);

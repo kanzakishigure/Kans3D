@@ -45,10 +45,12 @@ namespace Kans
     {
         TemporalActive = Samples == 1 && (View.EffectiveAA == AntiAliasing::TAA || View.TemporalJitter ||
                                           View.Velocity || View.Environment.AmbientOcclusion.Enabled ||
+                                          View.Environment.ScreenSpaceReflections.Enabled ||
                                           View.DebugBuffer == RenderView::DebugBuffer::Velocity);
-        VelocityActive = TemporalActive && (View.EffectiveAA == AntiAliasing::TAA || View.Velocity ||
-                                            View.Environment.AmbientOcclusion.Enabled ||
-                                            View.DebugBuffer == RenderView::DebugBuffer::Velocity);
+        VelocityActive =
+            TemporalActive &&
+            (View.EffectiveAA == AntiAliasing::TAA || View.Velocity || View.Environment.AmbientOcclusion.Enabled ||
+             View.Environment.ScreenSpaceReflections.Enabled || View.DebugBuffer == RenderView::DebugBuffer::Velocity);
         if (!TemporalActive)
         {
             Output.InvalidateTemporalHistory();

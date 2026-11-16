@@ -20,7 +20,15 @@ namespace Kans
     struct TemporalState
     {
         HiZState                                                HiZ;
-        RenderHardware::Handle<RenderHardware::Texture>         ReflectionRaw, ReflectionSurface;
+        RenderHardware::Handle<RenderHardware::Texture>         ReflectionRaw, ReflectionSurface, ReflectionRay,
+            ReflectionFiltered, ReflectionHistory[2], ReflectionColor, ReflectionDepth, ReflectionNormal;
+        RenderHardware::Handle<RenderHardware::BindGroupLayout> ReflectionResolveLayout;
+        RenderHardware::Handle<RenderHardware::ComputePipeline> ReflectionResolvePipeline[3];
+        ScreenSpaceReflectionSettings                           ReflectionSettings;
+        glm::mat4                                               ReflectionPreviousViewProjection {1};
+        glm::mat4                                               ReflectionPreviousInverseProjection {1};
+        glm::vec2                                               ReflectionPreviousJitter {0};
+        bool                                                    ReflectionValid = false;
         RenderHardware::Handle<RenderHardware::BindGroupLayout> ReflectionLayout;
         RenderHardware::Handle<RenderHardware::ComputePipeline> ReflectionPipeline;
         RenderHardware::Handle<RenderHardware::Sampler>         ReflectionSampler;

@@ -41,8 +41,8 @@ namespace Kans
         void                                            BuildGtao(RenderGraph& graph);
         GraphTexture                                    HiZ = uint32_t(-1), ReflectionTrace = uint32_t(-1);
         RenderHardware::Handle<RenderHardware::Texture> ReflectionSurface, Reflections;
-        bool                                            CompositeReflections = false;
         void                                            BuildReflections(RenderGraph& graph);
+        void                                            CaptureReflectionHistory(RenderGraph& graph);
         RenderHardware::Handle<RenderHardware::Texture> ContactDepth;
         std::shared_ptr<FogState>                       Fog;
         FogFrameResources                               FogGrid;
