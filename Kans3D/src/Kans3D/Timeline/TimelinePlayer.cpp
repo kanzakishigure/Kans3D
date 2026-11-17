@@ -21,6 +21,7 @@ namespace Kans
         {
             const bool bound =
                 (component && !component->Bindings.empty()) || (data && !data->Bindings.empty()) || !spawned.empty();
+            scene.ResetTransformConstraints();
             if (!bound)
             {
                 scene.ResetSecondaryMotion();
@@ -113,6 +114,7 @@ namespace Kans
             std::optional<AnimatorComponent>                                              AnimatorData;
             std::optional<Animator>                                                       AnimatorValue;
             std::optional<ModelPoseComponent>                                             ModelPose;
+            std::optional<AimConstraintComponent>                                         AimConstraint;
             std::optional<IKComponent>                                                    IK;
             Ref<IKRuntime>                                                                IKState;
             std::optional<MaterialParameterDriversComponent>                              Drivers;
@@ -201,6 +203,7 @@ namespace Kans
         Save(e, s.Prefab);
         Save(e, s.ModelPose);
         Save(e, s.Drivers);
+        Save(e, s.AimConstraint);
         Save(e, s.IK);
         if (s.IK)
             s.IKState = e.GetComponent<IKComponent>().Runtime;
@@ -296,6 +299,7 @@ namespace Kans
     void TimelinePlayer::RestoreBoundState()
     {
         m_Playing = false;
+        m_Scene.ResetTransformConstraints();
         RemoveSpawned();
         if (!m_State)
             return;
@@ -348,6 +352,7 @@ namespace Kans
                 if (e.HasComponent<AnimatorComponent>())
                     e.PatchComponent<AnimatorComponent>([](auto&) {});
                 Restore(e, s.ModelPose);
+                Restore(e, s.AimConstraint);
                 Restore(e, s.IK);
                 if (s.IK)
                     e.GetComponent<IKComponent>().Runtime = s.IKState;
@@ -967,6 +972,8 @@ namespace Kans
                         e.GetComponent<CameraComponent>().Primary = false;
                 target.GetComponent<CameraComponent>().Primary = true;
             }
+        if (!m_Scene.m_DeferIK && !m_State->LiveAdvance)
+            m_Scene.UpdateTransformConstraints(0);
         m_Scene.UpdateBounds();
         return true;
     }

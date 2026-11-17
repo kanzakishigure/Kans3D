@@ -34,8 +34,9 @@ namespace Kans
                     x->second.ForceField != y->second.ForceField || x->second.Ragdoll != y->second.Ragdoll ||
                     x->second.Particles != y->second.Particles || x->second.Vehicle != y->second.Vehicle ||
                     x->second.CharacterController != y->second.CharacterController ||
-                    x->second.Joint != y->second.Joint || x->second.SpringBone != y->second.SpringBone ||
-                    x->second.Cloth != y->second.Cloth || x->second.MotionCollider != y->second.MotionCollider ||
+                    x->second.AimConstraint != y->second.AimConstraint || x->second.Joint != y->second.Joint ||
+                    x->second.SpringBone != y->second.SpringBone || x->second.Cloth != y->second.Cloth ||
+                    x->second.MotionCollider != y->second.MotionCollider ||
 
                     x->second.RenderCustomDepth != y->second.RenderCustomDepth ||
                     x->second.CustomStencil != y->second.CustomStencil ||
@@ -192,6 +193,10 @@ namespace Kans
             change.MotionCollider =
                 part.HasComponent<MotionColliderComponent>() ?
                     std::optional<MotionColliderComponent>(part.GetComponent<MotionColliderComponent>()) :
+                    std::nullopt;
+            change.AimConstraint =
+                part.HasComponent<AimConstraintComponent>() ?
+                    std::optional<AimConstraintComponent>(part.GetComponent<AimConstraintComponent>()) :
                     std::nullopt;
             change.SpringBone = part.HasComponent<SpringBoneComponent>() ?
                                     std::optional<SpringBoneComponent>(part.GetComponent<SpringBoneComponent>()) :
@@ -475,6 +480,15 @@ namespace Kans
             }
             else if (entity.HasComponent<VehicleComponent>())
                 entity.RemoveComponent<VehicleComponent>();
+            if (change != instance.Overrides.end() && change->second.AimConstraint)
+            {
+                if (!entity.HasComponent<AimConstraintComponent>())
+                    entity.AddComponent<AimConstraintComponent>(*change->second.AimConstraint);
+                else if (entity.GetComponent<AimConstraintComponent>() != *change->second.AimConstraint)
+                    entity.SetComponent<AimConstraintComponent>(*change->second.AimConstraint);
+            }
+            else if (entity.HasComponent<AimConstraintComponent>())
+                entity.RemoveComponent<AimConstraintComponent>();
             if (change != instance.Overrides.end() && change->second.SpringBone)
             {
                 if (!entity.HasComponent<SpringBoneComponent>())

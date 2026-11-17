@@ -20,6 +20,7 @@
 #include "Kans3D/Renderer/Lighting/LightUnits.h"
 #include "Kans3D/Timeline/Timeline.h"
 #include "Kans3D/VFX/ParticleSystemComponent.h"
+#include "TransformConstraints.h"
 
 #include "Kans3D/Core/UUID.h"
 #include "Kans3D/Geometry/Shapes.h"
@@ -206,6 +207,7 @@ namespace Kans
         std::optional<CharacterControllerComponent> CharacterController;
         std::optional<ClothComponent>               Cloth;
         std::optional<SpringBoneComponent>          SpringBone;
+        std::optional<AimConstraintComponent>       AimConstraint;
         std::optional<MotionColliderComponent>      MotionCollider;
         std::optional<JointComponent>               Joint;
         std::optional<UIScreenComponent>            UIScreen;
@@ -220,7 +222,7 @@ namespace Kans
             return !LocalTransform && Materials.empty() && !Removed && !RenderCustomDepth && !CustomStencil &&
                    !UIScreen && !UIWorld && !RigidBody && !BoxCollider && !SphereCollider && !CapsuleCollider &&
                    !MeshCollider && !ForceField && !Ragdoll && !Particles && !Vehicle && !GlobalWind &&
-                   !CharacterController && !Joint && !Cloth && !SpringBone && !MotionCollider;
+                   !CharacterController && !AimConstraint && !Joint && !Cloth && !SpringBone && !MotionCollider;
         }
     };
     struct PrefabNodeState
@@ -404,6 +406,7 @@ namespace Kans
                                          TimelinePlayerComponent,
                                          ActiveComponent,
                                          IKComponent,
+                                         AimConstraintComponent,
                                          ShapeKeysComponent,
                                          MaterialParameterDriversComponent,
                                          AudioSourceComponent,

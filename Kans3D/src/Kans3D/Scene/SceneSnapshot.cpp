@@ -75,8 +75,9 @@ namespace Kans
                     x->second.ForceField != y->second.ForceField || x->second.Ragdoll != y->second.Ragdoll ||
                     x->second.Particles != y->second.Particles || x->second.Vehicle != y->second.Vehicle ||
                     x->second.CharacterController != y->second.CharacterController ||
-                    x->second.Joint != y->second.Joint || x->second.SpringBone != y->second.SpringBone ||
-                    x->second.Cloth != y->second.Cloth || x->second.MotionCollider != y->second.MotionCollider ||
+                    x->second.AimConstraint != y->second.AimConstraint || x->second.Joint != y->second.Joint ||
+                    x->second.SpringBone != y->second.SpringBone || x->second.Cloth != y->second.Cloth ||
+                    x->second.MotionCollider != y->second.MotionCollider ||
 
                     x->second.RenderCustomDepth != y->second.RenderCustomDepth ||
                     x->second.CustomStencil != y->second.CustomStencil ||
@@ -104,6 +105,7 @@ namespace Kans
         bool Same(const AnimatorComponent& a, const AnimatorComponent& b) { return a == b; }
         bool Same(const TimelinePlayerComponent& a, const TimelinePlayerComponent& b) { return a == b; }
         bool Same(const ActiveComponent& a, const ActiveComponent& b) { return a == b; }
+        bool Same(const AimConstraintComponent& a, const AimConstraintComponent& b) { return a == b; }
         bool Same(const IKComponent& a, const IKComponent& b) { return a == b; }
         bool Same(const ShapeKeysComponent& a, const ShapeKeysComponent& b) { return a == b; }
         bool Same(const RigidBodyComponent& a, const RigidBodyComponent& b) { return a == b; }
@@ -158,15 +160,15 @@ namespace Kans
                Same(a.Text, b.Text) && Same(a.UIScreen, b.UIScreen) && Same(a.UIWorld, b.UIWorld) &&
                Same(a.Model, b.Model) && Same(a.Editable, b.Editable) && Same(a.Prefab, b.Prefab) &&
                Same(a.PrefabParent, b.PrefabParent) && Same(a.Animator, b.Animator) && Same(a.IK, b.IK) &&
-               Same(a.Timeline, b.Timeline) && Same(a.Active, b.Active) && Same(a.ShapeKeys, b.ShapeKeys) &&
-               Same(a.MaterialDrivers, b.MaterialDrivers) && Same(a.DirLight, b.DirLight) &&
-               Same(a.AreaLight, b.AreaLight) && Same(a.FogVolume, b.FogVolume) && Same(a.SpotLight, b.SpotLight) &&
-               Same(a.PointLight, b.PointLight) && Same(a.Script, b.Script) && Same(a.AudioSource, b.AudioSource) &&
-               Same(a.AudioListener, b.AudioListener) && Same(a.RigidBody, b.RigidBody) &&
-               Same(a.BoxCollider, b.BoxCollider) && Same(a.SphereCollider, b.SphereCollider) &&
-               Same(a.CapsuleCollider, b.CapsuleCollider) && Same(a.MeshCollider, b.MeshCollider) &&
-               Same(a.Vehicle, b.Vehicle) && Same(a.Ragdoll, b.Ragdoll) && Same(a.Particles, b.Particles) &&
-               Same(a.ForceField, b.ForceField) && Same(a.GlobalWind, b.GlobalWind) &&
+               Same(a.AimConstraint, b.AimConstraint) && Same(a.Timeline, b.Timeline) && Same(a.Active, b.Active) &&
+               Same(a.ShapeKeys, b.ShapeKeys) && Same(a.MaterialDrivers, b.MaterialDrivers) &&
+               Same(a.DirLight, b.DirLight) && Same(a.AreaLight, b.AreaLight) && Same(a.FogVolume, b.FogVolume) &&
+               Same(a.SpotLight, b.SpotLight) && Same(a.PointLight, b.PointLight) && Same(a.Script, b.Script) &&
+               Same(a.AudioSource, b.AudioSource) && Same(a.AudioListener, b.AudioListener) &&
+               Same(a.RigidBody, b.RigidBody) && Same(a.BoxCollider, b.BoxCollider) &&
+               Same(a.SphereCollider, b.SphereCollider) && Same(a.CapsuleCollider, b.CapsuleCollider) &&
+               Same(a.MeshCollider, b.MeshCollider) && Same(a.Vehicle, b.Vehicle) && Same(a.Ragdoll, b.Ragdoll) &&
+               Same(a.Particles, b.Particles) && Same(a.ForceField, b.ForceField) && Same(a.GlobalWind, b.GlobalWind) &&
                Same(a.CharacterController, b.CharacterController) && Same(a.Joint, b.Joint) &&
                Same(a.SpringBone, b.SpringBone) && Same(a.Cloth, b.Cloth) && Same(a.MotionCollider, b.MotionCollider);
     }
@@ -208,6 +210,7 @@ namespace Kans
             Kans::Capture(entity, item.Timeline);
             Kans::Capture(entity, item.Active);
             Kans::Capture(entity, item.IK);
+            Kans::Capture(entity, item.AimConstraint);
             Kans::Capture(entity, item.ShapeKeys);
             Kans::Capture(entity, item.MaterialDrivers);
             Kans::Capture(entity, item.AudioSource);
@@ -273,6 +276,7 @@ namespace Kans
 
     void Scene::Restore(const SceneSnapshot& snapshot)
     {
+        ResetTransformConstraints();
         m_PhysicsWorld.reset();
         StopAudio();
         DestroyNativeScriptInstances();
@@ -316,6 +320,7 @@ namespace Kans
             Kans::Restore(entity, item.Editable);
             Kans::Restore(entity, item.Prefab);
             Kans::Restore(entity, item.IK);
+            Kans::Restore(entity, item.AimConstraint);
             Kans::Restore(entity, item.ShapeKeys);
             Kans::Restore(entity, item.Animator);
             Kans::Restore(entity, item.Timeline);

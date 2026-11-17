@@ -987,6 +987,8 @@ namespace Kans
                     item["VehicleComponent"] = PhysicsYaml::Encode(*change.Vehicle);
                 if (change.MotionCollider)
                     item["MotionColliderComponent"] = PhysicsYaml::Encode(*change.MotionCollider);
+                if (change.AimConstraint)
+                    item["AimConstraintComponent"] = EncodeAimConstraint(*change.AimConstraint);
                 if (change.SpringBone)
                     item["SpringBoneComponent"] = PhysicsYaml::Encode(*change.SpringBone);
                 if (change.Cloth)
@@ -1042,6 +1044,7 @@ namespace Kans
                       "VehicleComponent",
                       "MotionColliderComponent",
                       "ClothComponent",
+                      "AimConstraintComponent",
                       "SpringBoneComponent",
                       "CharacterControllerComponent",
                       "JointComponent",
@@ -1125,6 +1128,8 @@ namespace Kans
                     PhysicsYaml::Decode(item["MotionColliderComponent"], c);
                     change.MotionCollider = c;
                 }
+                if (item["AimConstraintComponent"])
+                    change.AimConstraint = DecodeAimConstraint(item["AimConstraintComponent"]);
                 if (item["SpringBoneComponent"])
                 {
                     SpringBoneComponent c;
@@ -1631,6 +1636,8 @@ namespace Kans
                     list.push_back(item);
                 }
             }
+            if (entity.HasComponent<AimConstraintComponent>())
+                node["AimConstraintComponent"] = EncodeAimConstraint(entity.GetComponent<AimConstraintComponent>());
             if (entity.HasComponent<IKComponent>())
                 node["IKComponent"] = EncodeIKComponent(entity.GetComponent<IKComponent>());
             if (entity.HasComponent<ShapeKeysComponent>())
@@ -2138,6 +2145,7 @@ namespace Kans
                       "VehicleComponent",
                       "MotionColliderComponent",
                       "ClothComponent",
+                      "AimConstraintComponent",
                       "SpringBoneComponent",
                       "CharacterControllerComponent",
                       "JointComponent",
@@ -2321,6 +2329,8 @@ namespace Kans
                     }
                     entity.AddComponent<MaterialParameterDriversComponent>(std::move(component));
                 }
+                if (node["AimConstraintComponent"])
+                    entity.AddComponent<AimConstraintComponent>(DecodeAimConstraint(node["AimConstraintComponent"]));
                 if (node["IKComponent"])
                     entity.AddComponent<IKComponent>(DecodeIKComponent(node["IKComponent"]));
                 if (node["ShapeKeysComponent"])

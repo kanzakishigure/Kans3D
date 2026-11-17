@@ -150,6 +150,13 @@ namespace Kans
         ik.IconRank = 8;
         ik.Draw     = DrawIK;
 
+        auto& aim       = registry.Register<AimConstraintComponent>("Aim Constraint", ICON_FA_CROSSHAIRS, "Animation");
+        aim.Draw        = DrawAimConstraint;
+        aim.IconRank    = 9;
+        aim.CreateName  = "Aim Constraint";
+        aim.CreateOrder = 20;
+        aim.Create      = aim.Add;
+
         auto& shapeKeys    = registry.Register<ShapeKeysComponent>("Shape Keys", ICON_FA_FACE_SMILE, "Animation");
         shapeKeys.IconRank = 8;
         shapeKeys.Draw     = DrawShapeKeys;

@@ -331,6 +331,13 @@ namespace Kans::SceneClipboard
                             reference(id);
                     }
                 };
+                auto aimReferences = [&](YAML::Node aim) {
+                    if (!aim)
+                        return;
+                    reference(aim["UpObject"]);
+                    for (auto source : aim["Sources"])
+                        reference(source["Entity"]);
+                };
                 springReferences(node["SpringBoneComponent"]);
                 springReferences(node["ClothComponent"]);
                 auto vehicleReferences = [&](YAML::Node vehicle) {
@@ -342,6 +349,7 @@ namespace Kans::SceneClipboard
                 if (auto prefab = node["PrefabInstanceComponent"])
                     for (auto change : prefab["Overrides"])
                     {
+                        aimReferences(change["AimConstraintComponent"]);
                         springReferences(change["SpringBoneComponent"]);
                         springReferences(change["ClothComponent"]);
                         vehicleReferences(change["VehicleComponent"]);
@@ -353,6 +361,12 @@ namespace Kans::SceneClipboard
                 if (auto drivers = node["MaterialParameterDriversComponent"])
                     for (auto binding : drivers["Bindings"])
                         reference(binding["SourceEntity"]);
+                if (auto aim = node["AimConstraintComponent"])
+                {
+                    reference(aim["UpObject"]);
+                    for (auto source : aim["Sources"])
+                        reference(source["Entity"]);
+                }
                 if (auto ik = node["IKComponent"])
                     for (auto constraint : ik["Constraints"])
                     {

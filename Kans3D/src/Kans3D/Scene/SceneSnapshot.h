@@ -28,6 +28,7 @@ namespace Kans
         std::optional<TimelinePlayerComponent> Timeline;
         std::optional<ActiveComponent>         Active;
         std::optional<IKComponent>             IK;
+        std::optional<AimConstraintComponent>  AimConstraint;
         std::optional<ShapeKeysComponent>      ShapeKeys;
         std::optional<MaterialParameterDriversComponent> MaterialDrivers;
         std::optional<AudioSourceComponent>              AudioSource;

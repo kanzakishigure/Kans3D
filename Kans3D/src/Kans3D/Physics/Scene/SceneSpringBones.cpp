@@ -166,6 +166,8 @@ namespace Kans
     }
     glm::mat4 Scene::SpringBoneRenderLocal(Entity e) const
     {
+        if (m_ConstraintsVisible && m_ConstraintRotations.count(e.GetUUID()))
+            return ConstraintLocalTransform(e);
         const auto& t = e.GetComponent<TransformComponent>();
         if (!m_SpringBonePreview || m_PhysicsWorld)
             return t.GetTransform();

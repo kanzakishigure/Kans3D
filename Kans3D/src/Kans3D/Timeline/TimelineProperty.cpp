@@ -38,6 +38,8 @@ namespace Kans
             return e.HasComponent<ScriptComponent>();
         if (name == "ActiveComponent")
             return e.HasComponent<ActiveComponent>();
+        if (name == "AimConstraintComponent")
+            return e.HasComponent<AimConstraintComponent>();
         if (name == "IKComponent")
             return e.HasComponent<IKComponent>();
         if (name == "ShapeKeysComponent")
@@ -201,6 +203,16 @@ namespace Kans
             }
             return false;
         }
+        if (field == "AimConstraint.Weight")
+        {
+            if (write && !std::isfinite(value.x))
+                return false;
+            if (write)
+                value.x = std::clamp(value.x, 0.f, 1.f);
+            return component(AimConstraintComponent {}, &AimConstraintComponent::Weight);
+        }
+        if (field == "AimConstraint.Active")
+            return component(AimConstraintComponent {}, &AimConstraintComponent::Active);
         if (field == "Transform.Position")
             return component(TransformComponent {}, &TransformComponent::Position);
         if (field == "Transform.Rotation")

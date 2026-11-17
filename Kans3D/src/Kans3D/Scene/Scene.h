@@ -1,10 +1,12 @@
 #pragma once
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <unordered_set>
 #include <entt.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include "Kans3D/Asset/Asset.h"
 #include "Kans3D/Audio/AudioClipRegistry.h"
 #include "Kans3D/Core/Math/Bounds.h"
@@ -124,6 +126,12 @@ namespace Kans
         void ApplyAnimatorPose(Entity root, const struct AnimationPose& pose, double seconds = 0);
         void EvaluatePoseIK(Entity, const struct SkeletonData&, struct AnimationPose&, double seconds = 0);
         void ApplyDeferredIK(double seconds);
+        void UpdateTransformConstraints(double seconds = 0);
+        void BeginTransformConstraintFrame() { m_ConstraintsVisible = false; }
+        void ResetTransformConstraints();
+        bool ResolveConstraintSource(const struct TransformConstraintSource&, glm::mat4&) const;
+        bool GetAimConstraintTarget(Entity, glm::vec3&) const;
+        const std::vector<std::string>& GetConstraintWarnings() const { return m_ConstraintWarnings; }
         void                           ApplyModelPose(Entity root,
                                                       const struct SkeletonData&,
                                                       const struct AnimationPose&,
@@ -325,6 +333,11 @@ namespace Kans
         mutable std::unordered_map<entt::entity, std::shared_ptr<const EditableMesh>> m_EditableSources;
         mutable uint64_t                                                              m_EditableMeshBuildCount = 0;
         void                                 OnEditableMeshRemoved(entt::registry&, entt::entity entity);
+        glm::mat4                            ConstraintLocalTransform(Entity) const;
+        std::map<UUID, glm::quat>            m_ConstraintRotations;
+        std::vector<std::string>             m_ConstraintWarnings;
+        bool                                 m_ResetConstraintSmoothing = false;
+        bool                                 m_ConstraintsVisible       = true;
         void                                 OnTransformChanged(entt::registry&, entt::entity entity);
         void                                 OnPrefabChanged(entt::registry&, entt::entity entity);
         void                                 DirtySubtree(Entity entity);

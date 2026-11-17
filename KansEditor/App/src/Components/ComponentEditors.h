@@ -41,6 +41,7 @@ namespace Kans::ComponentEditors
     void DrawEditableMesh(Entity entity, ComponentUI& ui);
     void DrawAnimator(Entity entity, ComponentUI& ui);
     void DrawIK(Entity entity, ComponentUI& ui);
+    void DrawAimConstraint(Entity entity, ComponentUI& ui);
     void DrawShapeKeys(Entity entity, ComponentUI& ui);
     void DrawTimelinePlayer(Entity entity, ComponentUI& ui);
     // Physics (PhysicsComponentEditors.cpp).

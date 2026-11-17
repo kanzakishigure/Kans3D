@@ -103,6 +103,9 @@ namespace Kans
         m_Registry.on_construct<ActiveComponent>().connect<&Scene::OnTransformChanged>(this);
         m_Registry.on_update<ActiveComponent>().connect<&Scene::OnTransformChanged>(this);
         m_Registry.on_destroy<ActiveComponent>().connect<&Scene::OnTransformChanged>(this);
+        m_Registry.on_construct<AimConstraintComponent>().connect<&Scene::OnTransformChanged>(this);
+        m_Registry.on_update<AimConstraintComponent>().connect<&Scene::OnTransformChanged>(this);
+        m_Registry.on_destroy<AimConstraintComponent>().connect<&Scene::OnTransformChanged>(this);
         m_Registry.on_construct<IKComponent>().connect<&Scene::OnTransformChanged>(this);
         m_Registry.on_update<IKComponent>().connect<&Scene::OnTransformChanged>(this);
         m_Registry.on_destroy<IKComponent>().connect<&Scene::OnTransformChanged>(this);
@@ -330,6 +333,7 @@ namespace Kans
     {
         m_FrameTimeDelta = ts;
 
+        BeginTransformConstraintFrame();
         RestoreSpringBoneTransforms();
         UpdatePrefabs();
         const double animationDelta = m_PhysicsPaused && !m_PhysicsSingleStep ? 0 : double(ts);
@@ -366,6 +370,7 @@ namespace Kans
         }
         if (ScriptEngine::GetSceneContext() == this)
             ScriptEngine::OnUpdate(ts);
+        UpdateTransformConstraints(animationDelta);
         auto vfxCamera = GetCameraEntity();
         m_VfxWorld->Tick(float(ts), false, vfxCamera ? glm::vec3(GetWorldTransform(vfxCamera)[3]) : glm::vec3(0));
         UpdateAudio(double(ts));
@@ -557,13 +562,13 @@ namespace Kans
 
     glm::mat4 Scene::GetWorldTransform(Entity entity) const
     {
-        const glm::mat4 local = entity.GetComponent<TransformComponent>().GetTransform();
+        const glm::mat4 local = ConstraintLocalTransform(entity);
         if (entity.HasComponent<PrefabOwnedComponent>())
         {
             const auto root     = GetPrefabInstanceRoot(entity);
             auto       relative = [&](auto&& self, Entity part) -> glm::mat4 {
                 const auto parent = GetParent(part);
-                const auto matrix = part.GetComponent<TransformComponent>().GetTransform();
+                const auto matrix = ConstraintLocalTransform(part);
                 return parent && parent != root ? self(self, parent) * matrix : matrix;
             };
             // Preserve phase-2 multiplication grouping: rootWorld * modelSpace.
@@ -711,6 +716,7 @@ namespace Kans
         CopyComponent<EditableMeshComponent>(source, copy);
         CopyComponent<AnimatorComponent>(source, copy);
         CopyComponent<IKComponent>(source, copy);
+        CopyComponent<AimConstraintComponent>(source, copy);
         CopyComponent<ShapeKeysComponent>(source, copy);
         CopyComponent<MaterialParameterDriversComponent>(source, copy);
         CopyComponent<TimelinePlayerComponent>(source, copy);
@@ -848,6 +854,8 @@ namespace Kans
         for (const auto& [source, target] : remap)
         {
             auto e = GetEntityByUUID(target);
+            if (e.HasComponent<AimConstraintComponent>())
+                e.PatchComponent<AimConstraintComponent>([&](auto& c) { c.RemapEntities(springRemap); });
             if (e.HasComponent<VehicleComponent>())
                 e.PatchComponent<VehicleComponent>([&](auto& c) { c.RemapEntities(springRemap); });
             if (e.HasComponent<ClothComponent>())
@@ -857,6 +865,8 @@ namespace Kans
             if (e.HasComponent<PrefabInstanceComponent>())
                 for (auto& [key, change] : e.GetComponent<PrefabInstanceComponent>().Overrides)
                 {
+                    if (change.AimConstraint)
+                        change.AimConstraint->RemapEntities(springRemap);
                     if (change.Vehicle)
                         change.Vehicle->RemapEntities(springRemap);
                     if (change.Cloth)
@@ -931,6 +941,7 @@ namespace Kans
 
     void Scene::OnRuntimeStop()
     {
+        ResetTransformConstraints();
         m_VfxWorld->Clear();
         RestoreSpringBoneTransforms();
         ResetSecondaryMotion();
@@ -1041,6 +1052,9 @@ namespace Kans
     void Scene::OnComponentAdd<MaterialParameterDriversComponent>(Entity, MaterialParameterDriversComponent&)
     {}
 
+    template<>
+    void Scene::OnComponentAdd<AimConstraintComponent>(Entity, AimConstraintComponent&)
+    {}
     template<>
     void Scene::OnComponentAdd<IKComponent>(Entity, IKComponent&)
     {}

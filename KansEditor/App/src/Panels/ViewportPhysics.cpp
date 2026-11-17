@@ -134,6 +134,16 @@ namespace Kans
             PhysicsEditing::DrawColliders(lines, scene, selected, SelectedCollider);
             PhysicsEditing::DrawController(lines, scene, selected, Controller);
             PhysicsEditing::DrawJoint(lines, scene, selected);
+            glm::vec3 aimTarget;
+            if (scene.GetAimConstraintTarget(selected, aimTarget))
+            {
+                const auto& accent = EditorTheme::Colors().Accent;
+                OverlaySegment(ImGui::GetWindowDrawList(),
+                               glm::vec3(scene.GetWorldTransform(selected)[3]),
+                               aimTarget,
+                               ImGui::ColorConvertFloat4ToU32(accent),
+                               EditorTheme::Px(1.5f));
+            }
             if (auto root = scene.GetDeformationRoot(selected); root && root.HasComponent<IKComponent>())
             {
                 const auto& colors = EditorTheme::Colors();
