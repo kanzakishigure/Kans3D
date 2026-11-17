@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include <limits>
 #include "Animation.h"
+#include "ContactTracks.h"
 namespace Kans
 {
     namespace
@@ -137,6 +138,8 @@ namespace Kans
     {
         auto& a = m_Actions[l];
         SampleAnimation(*m_Skeleton, a.Binding, m_ActionStatus[l].Time, false, a.Pose);
+        if (auto settings = FindClipRetarget(Retargets, a.Binding.Clip))
+            ApplyClipRetarget(*m_Skeleton, a.Binding, *settings, m_ActionStatus[l].Time, a.Pose);
         if (a.HasFrozen && a.Data.BlendIn > 0 && a.Age < a.Data.BlendIn)
         {
             const float t      = float(a.Age / a.Data.BlendIn);
@@ -336,15 +339,21 @@ namespace Kans
             return value;
         };
         auto sample = [&](double at) {
-            auto model = JointTransform::FromMatrix(
-                parentModel * SampleAnimationJoint(m_Rest.Local[m_Root],
-                                                   track,
-                                                   at,
-                                                   at <= 0 ? AnimationSampleEndpoint::First :
-                                                   at >= a.Binding.Clip->Duration ?
-                                                             AnimationSampleEndpoint::Last :
-                                                             AnimationSampleEndpoint::Interpolated)
-                                  .Matrix());
+            auto local = SampleAnimationJoint(m_Rest.Local[m_Root],
+                                              track,
+                                              at,
+                                              at <= 0                        ? AnimationSampleEndpoint::First :
+                                              at >= a.Binding.Clip->Duration ? AnimationSampleEndpoint::Last :
+                                                                               AnimationSampleEndpoint::Interpolated);
+            if (auto settings = FindClipRetarget(Retargets, a.Binding.Clip);
+                settings && m_Skeleton->FindJoint(settings->RootJoint) == m_Root)
+            {
+                const auto initial =
+                    SampleAnimationJoint(m_Rest.Local[m_Root], track, 0, AnimationSampleEndpoint::First);
+                local.Translation =
+                    initial.Translation + (local.Translation - initial.Translation) * settings->RootTranslationScale;
+            }
+            auto model  = JointTransform::FromMatrix(parentModel * local.Matrix());
             model.Scale = glm::vec3(1);
             if (m_Controller->RootMotionPlanar)
                 model = planar(model);

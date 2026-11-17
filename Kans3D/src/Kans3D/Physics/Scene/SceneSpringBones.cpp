@@ -793,6 +793,7 @@ namespace Kans
             });
             const bool footIK =
                 !m_DeferIK && root.HasComponent<IKComponent>() &&
+                !UsesContactTracks(root.GetComponent<IKComponent>()) &&
                 std::any_of(root.GetComponent<IKComponent>().Constraints.begin(),
                             root.GetComponent<IKComponent>().Constraints.end(),
                             [](const auto& c) {
@@ -807,7 +808,9 @@ namespace Kans
             for (size_t j = 0; j < joints.size() && j < render.Local.size(); ++j)
             {
                 auto found = findRotation(joints[j]);
-                if (found != m_SpringRenderRotations.end() && found->first == joints[j])
+                if (found != m_SpringRenderRotations.end() && found->first == joints[j] &&
+                    (!root.HasComponent<IKComponent>() ||
+                     !TrackDrivenJoint(root.GetComponent<IKComponent>(), skeleton, j)))
                     render.Local[j].Rotation = found->second;
             }
             if (changed || footIK)

@@ -7,6 +7,7 @@
 #include <set>
 #include <yaml-cpp/yaml.h>
 #include "Kans3D/Animation/AnimationProduct.h"
+#include "Kans3D/Animation/ContactTracks.h"
 #include "Kans3D/Animation/DeformationProduct.h"
 #include "Kans3D/Asset/Storage/ProductFiles.h"
 #include "Kans3D/Physics/PhysicsSerialization.h"
@@ -1670,6 +1671,7 @@ namespace Kans
                 v["Controller"]      = a.Controller.ToString();
                 v["Enabled"]         = a.Enabled;
                 v["ApplyRootMotion"] = a.ApplyRootMotion;
+                v["Retargets"]       = EncodeClipRetargets(a.Retargets);
                 v["Speed"]           = a.Speed;
                 v["Parameters"]      = a.Parameters;
                 if (a.InlineController)
@@ -2368,6 +2370,7 @@ namespace Kans
                           "Controller",
                           "Enabled",
                           "ApplyRootMotion",
+                          "Retargets",
                           "Speed",
                           "Parameters",
                           "InlineController",
@@ -2377,6 +2380,7 @@ namespace Kans
                     a.Controller      = AssetID::FromString(v["Controller"].as<std::string>());
                     a.Enabled         = v["Enabled"].as<bool>();
                     a.ApplyRootMotion = v["ApplyRootMotion"].as<bool>();
+                    a.Retargets       = DecodeClipRetargets(v["Retargets"]);
                     a.Speed           = v["Speed"].as<double>();
                     Require(std::isfinite(a.Speed), "Non-finite animator speed");
                     Require(v["Parameters"].IsMap() && v["Parameters"].size() <= 4096, "Invalid animator parameters");

@@ -340,6 +340,7 @@ namespace Kans
         if (m_PhysicsWorld)
             m_PhysicsWorld->CaptureRagdollTargets(animationDelta);
         UpdatePhysics(double(ts));
+        ApplyDeferredIK(animationDelta);
         UpdateSpringBones(double(ts));
         m_DeferIK = false;
         ApplyDeferredIK(animationDelta);

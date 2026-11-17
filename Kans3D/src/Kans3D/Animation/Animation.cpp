@@ -4,6 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <glm/gtx/quaternion.hpp>
+#include "ContactTracks.h"
 
 namespace Kans
 {
@@ -66,6 +67,7 @@ namespace Kans
     }
     void RestPose(const SkeletonData& skeleton, AnimationPose& pose)
     {
+        pose.ContactSettings = nullptr;
         pose.Resize(skeleton.Joints.size());
         for (size_t j = 0; j < pose.Local.size(); ++j)
             pose.Local[j] = skeleton.Joints[j].RestLocal;
@@ -126,6 +128,12 @@ namespace Kans
         if (a.MorphWeights.size() != b.MorphWeights.size() ||
             (!morphMask.empty() && morphMask.size() != a.MorphWeights.size()))
             throw std::invalid_argument("Morph pose/mask size mismatch");
+        const AnimationPose& source = weight >= 1 ? b : a;
+        const bool  fullMask = mask.empty() || std::all_of(mask.begin(), mask.end(), [](float w) { return w >= 1; });
+        const auto* contact  = fullMask && (weight <= 0 || weight >= 1) ? source.ContactSettings : nullptr;
+        out.ContactBinding   = source.ContactBinding;
+        out.ContactTime      = source.ContactTime;
+        out.ContactSettings  = contact;
         out.MorphInfluence.resize(a.MorphWeights.size());
         for (size_t k = 0; k < a.MorphWeights.size(); ++k)
             out.MorphInfluence[k] = glm::mix(k < a.MorphInfluence.size() ? a.MorphInfluence[k] : 0.f,
@@ -154,6 +162,8 @@ namespace Kans
             pose.MorphWeights.size() != reference.MorphWeights.size() ||
             (!morphMask.empty() && morphMask.size() != pose.MorphWeights.size()))
             throw std::invalid_argument("Additive morph pose/mask size mismatch");
+        if (weight > 0)
+            pose.ContactSettings = nullptr;
         for (size_t k = 0; k < pose.MorphWeights.size(); ++k)
             pose.MorphWeights[k] += (additive.MorphWeights[k] - reference.MorphWeights[k]) *
                                     std::clamp(weight * (morphMask.empty() ? 1 : morphMask[k]), 0.f, 1.f);
@@ -465,6 +475,9 @@ namespace Kans
                 StatePose(layer, s.State, s.Time, w.Source);
             else
             {
+                w.Source.ContactBinding  = w.Frozen.ContactBinding;
+                w.Source.ContactSettings = w.Frozen.ContactSettings;
+                w.Source.ContactTime     = w.Frozen.ContactTime;
                 w.Source.Local          = w.Frozen.Local;
                 w.Source.MorphWeights   = w.Frozen.MorphWeights;
                 w.Source.MorphInfluence = w.Frozen.MorphInfluence;
@@ -497,6 +510,12 @@ namespace Kans
         if (m.Type == AnimationMotionType::Clip)
         {
             SampleAnimation(*m_Skeleton, m_Clips[motion], time, loop, out);
+            if (auto settings = FindClipRetarget(Retargets, m_Clips[motion].Clip))
+                ApplyClipRetarget(*m_Skeleton,
+                                  m_Clips[motion],
+                                  *settings,
+                                  AnimationSampleTime(time, m_Clips[motion].Clip->Duration, loop),
+                                  out);
             return;
         }
         AnimationBlendWeights(m, {float(Value(m.ParameterX)), float(Value(m.ParameterY))}, m_Weights[motion]);
@@ -513,6 +532,9 @@ namespace Kans
             SampleMotion(child, duration > 0 ? time * Duration(child) / duration : 0, loop, pose);
             if (total == 0)
             {
+                out.ContactBinding  = pose.ContactBinding;
+                out.ContactSettings = pose.ContactSettings;
+                out.ContactTime     = pose.ContactTime;
                 out.Local          = pose.Local;
                 out.MorphWeights   = pose.MorphWeights;
                 out.MorphInfluence = pose.MorphInfluence;
@@ -656,7 +678,14 @@ namespace Kans
                                       at >= clip.Duration ? AnimationSampleEndpoint::Last :
                                                             AnimationSampleEndpoint::Interpolated;
                 auto       local    = SampleAnimationJoint(rest, clip.Tracks[t], at, endpoint);
-                auto       model    = JointTransform::FromMatrix(parentModel * local.Matrix());
+                if (auto settings = FindClipRetarget(Retargets, &clip);
+                    settings && m_Skeleton->FindJoint(settings->RootJoint) == m_Root)
+                {
+                    const auto initial = SampleAnimationJoint(rest, clip.Tracks[t], 0, AnimationSampleEndpoint::First);
+                    local.Translation  = initial.Translation +
+                                         (local.Translation - initial.Translation) * settings->RootTranslationScale;
+                }
+                auto model          = JointTransform::FromMatrix(parentModel * local.Matrix());
                 model.Scale         = glm::vec3(1);
                 if (m_Controller->RootMotionPlanar)
                     model = PlanarRoot(model);
@@ -1330,6 +1359,7 @@ namespace Kans
     {
         if (!IsPrepared())
             return;
+        m_Pose.ContactSettings = nullptr;
         m_Pose.Local        = m_Rest.Local;
         m_Pose.MorphWeights = m_Rest.MorphWeights;
         for (size_t k = 0; k < m_Skeleton->ShapeKeys.size(); ++k)

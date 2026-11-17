@@ -11,6 +11,7 @@ namespace Kans
         std::optional<AnimationControllerData>           InlineController;
         bool                                             Enabled = true, ApplyRootMotion = false;
         double                                           Speed = 1;
+        std::vector<ClipRetargetSettings>                Retargets;
         std::map<std::string, double>                    Parameters;
         Ref<const SkeletonAsset>                         SkeletonSource;
         Ref<const AnimationControllerAsset>              ControllerSource;

@@ -93,6 +93,7 @@ namespace Kans
         }
         auto player                  = CreateRef<Animator>();
         player->EvaluateControllerIK = false;
+        player->Retargets            = a.Retargets;
         if (root.HasComponent<ShapeKeysComponent>())
             player->BaseShapeKeyWeights = root.GetComponent<ShapeKeysComponent>().Weights;
         auto valid = player->Prepare(
@@ -195,6 +196,8 @@ namespace Kans
         {
             ResetSecondaryMotion(root);
             auto& a = root.GetComponent<AnimatorComponent>();
+            a.PreviewPose.ContactSettings = nullptr;
+            a.SpringPose.ContactSettings  = nullptr;
             a.Player.reset();
             a.ControllerSource.reset();
             a.ClipSources.clear();
@@ -244,15 +247,21 @@ namespace Kans
     {
         auto finish = [&](Entity                   root,
                           const SkeletonData&      skeleton,
-                          const AnimationPose&     input,
+                          AnimationPose&           input,
                           const std::vector<UUID>& joints,
                           Ref<SkinningPose>&       skin,
                           uint64_t&                version) {
             if (!root.HasComponent<IKComponent>() || !IsEntityActive(root))
                 return;
+            const bool tracks = UsesContactTracks(root.GetComponent<IKComponent>());
+            // Tracks own their leg joints before secondary motion. Velocity retains S3's final pass.
+            if (tracks != m_DeferIK)
+                return;
             auto pose = input;
             EvaluatePoseIK(root, skeleton, pose, seconds);
             ApplyModelPose(root, skeleton, pose, joints, skin, version);
+            if (tracks)
+                input = pose;
             for (size_t j = 0; j < joints.size() && j < pose.Local.size(); ++j)
             {
                 auto found =

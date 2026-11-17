@@ -98,6 +98,13 @@ namespace Kans::ComponentEditors
                         {
                             changed |= PropertyGrid::Checkbox("Enabled", ik.Locking);
                             changed |= PropertyGrid::Checkbox("Lock yaw", ik.LockYaw);
+                            int source = int(ik.ContactSource);
+                            if (PropertyGrid::Row("Contact source") &&
+                                ImGui::Combo("##source", &source, "Velocity\0Tracks\0"))
+                                ik.ContactSource = FootContactSource(source), changed = true;
+                            if (ik.ContactSource == FootContactSource::Tracks)
+                                changed |= PropertyGrid::Float(
+                                    "Max correction / leg reach", ik.TrackMaxReach, .01f, .01f, 1.f);
                             changed |= PropertyGrid::Float("Contact speed", ik.LockSpeed, .001f, 0.f, 1.f);
                             changed |= PropertyGrid::Float("Max pin distance", ik.LockMaxDistance, .001f, 0.f, 1.f);
                             changed |= PropertyGrid::Float("Release time", ik.ReleaseTime, .001f, 0.f, 2.f);

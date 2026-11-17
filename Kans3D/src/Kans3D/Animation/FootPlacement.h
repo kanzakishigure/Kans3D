@@ -4,6 +4,8 @@ namespace Kans
 {
     void                 CacheSceneIKInput(const IKComponent&, const AnimationPose&);
     const AnimationPose& SceneIKInput(const IKComponent&, const AnimationPose& fallback);
+    bool                 UsesContactTracks(const IKComponent&);
+    bool                 TrackDrivenJoint(const IKComponent&, const SkeletonData&, size_t joint);
     struct FootPlacementState
     {
         struct Leg
@@ -19,6 +21,7 @@ namespace Kans
             glm::vec3 Start {0}, End {0}, Hit {0}, Normal {0, 1, 0}, Target {0};
             bool      HasHit = false, Locked = false;
         };
+        AnimationPose          TrackSample;
         std::vector<glm::mat4> BindModel;
         std::vector<Leg>       Legs;
         std::vector<Probe>     Probes;

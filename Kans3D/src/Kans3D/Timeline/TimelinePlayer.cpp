@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include <limits>
 #include <glm/gtx/quaternion.hpp>
+#include "Kans3D/Animation/ContactTracks.h"
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Renderer/Shading/Skinning.h"
 #include "Kans3D/Scene/Entity.h"
@@ -558,6 +559,14 @@ namespace Kans
                                 std::clamp(section.ClipIn + (t - section.Start) * section.Speed, section.ClipIn, out),
                                 false,
                                 sample);
+                if (animator)
+                    if (auto settings = FindClipRetarget(animator->Retargets, bound.Clip))
+                        ApplyClipRetarget(
+                            skeleton->GetData(),
+                            bound,
+                            *settings,
+                            std::clamp(section.ClipIn + (t - section.Start) * section.Speed, section.ClipIn, out),
+                            sample);
                 if (total == 0)
                     mixed = std::move(sample);
                 else

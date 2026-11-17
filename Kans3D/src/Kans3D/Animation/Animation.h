@@ -3,12 +3,17 @@
 
 namespace Kans
 {
+    struct ClipRetargetSettings;
     struct AnimationPose
     {
         std::vector<JointTransform> Local;
         std::vector<glm::mat4>      Model, Palette;
         std::vector<float>          MorphInfluence; // Authored-channel coverage through motions/fades.
         std::vector<float>          MorphWeights;   // Logical shape-key order from SkeletonData.
+        // Owning binding vectors preserve name mappings and survive temporary Timeline bindings.
+        BoundAnimationClip          ContactBinding;
+        const ClipRetargetSettings* ContactSettings = nullptr;
+        double                      ContactTime     = 0;
         void                        Resize(size_t joints);
     };
     double AnimationSampleTime(double time, double duration, bool loop);
@@ -89,6 +94,7 @@ namespace Kans
     class Animator
     {
     public:
+        std::vector<ClipRetargetSettings> Retargets;
         using ClipResolver   = std::function<const AnimationClipData*(AssetID)>;
         using ActionResolver = std::function<const ActionData*(AssetID)>;
         AnimationValidation Prepare(const SkeletonData&,

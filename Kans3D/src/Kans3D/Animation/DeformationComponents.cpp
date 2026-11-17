@@ -44,7 +44,8 @@ namespace Kans
                    a.PelvisMaxLower == b.PelvisMaxLower && a.PelvisMaxRaise == b.PelvisMaxRaise &&
                    a.RotationWeight == b.RotationWeight && a.RotationLimit == b.RotationLimit &&
                    a.Locking == b.Locking && a.LockYaw == b.LockYaw && a.LockSpeed == b.LockSpeed &&
-                   a.LockMaxDistance == b.LockMaxDistance && a.ReleaseTime == b.ReleaseTime && a.Weight == b.Weight &&
+                   a.LockMaxDistance == b.LockMaxDistance && a.ContactSource == b.ContactSource &&
+                   a.TrackMaxReach == b.TrackMaxReach && a.ReleaseTime == b.ReleaseTime && a.Weight == b.Weight &&
                    std::equal(a.Legs.begin(), a.Legs.end(), b.Legs.begin(), [](const auto& x, const auto& y) {
                        return x.Hip == y.Hip && x.Knee == y.Knee && x.Ankle == y.Ankle && x.Toe == y.Toe &&
                               x.DrivenConstraint == y.DrivenConstraint && x.FootHeight == y.FootHeight &&
@@ -254,6 +255,26 @@ namespace Kans
                     pose.Local[j] = BlendJoint(runtime.Before[j], pose.Local[j], weight);
             BuildModelPose(skeleton, pose);
         };
+        const bool tracksRig = UsesContactTracks(component);
+        auto       applyCopy = [&](const IKConstraint& c, const CopyTransformIK* copy) {
+            const float weight = std::clamp(c.Weight, 0.f, 1.f);
+            int         source = skeleton.FindJoint(copy->Source), dest = skeleton.FindJoint(copy->Joint);
+            if (source < 0 || dest < 0 || !std::isfinite(copy->Weight))
+                return;
+            auto value = pose.Local[source];
+            if (copy->WorldSpace)
+            {
+                int parent = skeleton.Joints[dest].Parent;
+                value      = JointTransform::FromMatrix((parent < 0 ? glm::mat4(1) : glm::inverse(pose.Model[parent])) *
+                                                        pose.Model[source]);
+            }
+            const float w = weight * std::clamp(copy->Weight, 0.f, 1.f);
+            if (copy->CopyRotation)
+                pose.Local[dest].Rotation = BlendAnimationRotations(pose.Local[dest].Rotation, value.Rotation, w, true);
+            if (copy->CopyLocation)
+                pose.Local[dest].Translation = glm::mix(pose.Local[dest].Translation, value.Translation, w);
+            BuildModelPose(skeleton, pose);
+        };
         for (size_t i = 0; i < component.Constraints.size(); ++i)
         {
             const auto& c = component.Constraints[i];
@@ -265,23 +286,8 @@ namespace Kans
             const float weight = std::clamp(c.Weight, 0.f, 1.f);
             if (const auto* copy = std::get_if<CopyTransformIK>(&c.Data))
             {
-                int source = skeleton.FindJoint(copy->Source), dest = skeleton.FindJoint(copy->Joint);
-                if (source < 0 || dest < 0 || !std::isfinite(copy->Weight))
-                    continue;
-                auto value = pose.Local[source];
-                if (copy->WorldSpace)
-                {
-                    int parent = skeleton.Joints[dest].Parent;
-                    value = JointTransform::FromMatrix((parent < 0 ? glm::mat4(1) : glm::inverse(pose.Model[parent])) *
-                                                       pose.Model[source]);
-                }
-                const float w = weight * std::clamp(copy->Weight, 0.f, 1.f);
-                if (copy->CopyRotation)
-                    pose.Local[dest].Rotation =
-                        BlendAnimationRotations(pose.Local[dest].Rotation, value.Rotation, w, true);
-                if (copy->CopyLocation)
-                    pose.Local[dest].Translation = glm::mix(pose.Local[dest].Translation, value.Translation, w);
-                BuildModelPose(skeleton, pose);
+                if (!tracksRig)
+                    applyCopy(c, copy);
             }
             else if (const auto* feet = std::get_if<FootPlacementIK>(&c.Data))
             {
@@ -339,7 +345,8 @@ namespace Kans
                     if (!legs[l].Name.empty())
                     {
                         targets[legs[l].Name] = legs[l];
-                        continue;
+                        if (feet->ContactSource == FootContactSource::Velocity)
+                            continue;
                     }
                     legs[l].Weight = 1;
                     if (solvers[l].m_TwoBone.empty() || solvers[l].m_TwoBone[0].Data.Root != legs[l].Root ||
@@ -349,6 +356,22 @@ namespace Kans
                     else
                         solvers[l].m_TwoBone[0].Data = legs[l];
                     solve(solvers[l], 1);
+                }
+                if (feet->ContactSource == FootContactSource::Tracks)
+                {
+                    // Initial TwoBone solve, then pelvis reach correction, then enforce the same planted goals.
+                    const int pelvis = skeleton.FindJoint(feet->Pelvis);
+                    if (pelvis >= 0)
+                    {
+                        const int  parent      = skeleton.Joints[pelvis].Parent;
+                        const auto parentWorld = parent < 0 ? world : world * pose.Model[parent];
+                        pose.Local[pelvis].Translation += glm::vec3(
+                            glm::inverse(parentWorld) *
+                            glm::vec4(0, runtime.Feet[i].Pelvis * weight * std::clamp(feet->Weight, 0.f, 1.f), 0, 0));
+                        BuildModelPose(skeleton, pose);
+                        for (size_t l = 0; l < legs.size(); ++l)
+                            solve(solvers[l], 1);
+                    }
                 }
             }
             else
@@ -363,6 +386,11 @@ namespace Kans
             }
         }
         BuildModelPose(skeleton, pose);
+        if (tracksRig)
+            for (const auto& c : component.Constraints)
+                if (c.Enabled && std::isfinite(c.Weight) && c.Weight > 0)
+                    if (const auto* copy = std::get_if<CopyTransformIK>(&c.Data))
+                        applyCopy(c, copy);
     }
     void DrawFootPlacementDebug(const IKComponent& component,
                                 DebugDraw&         draw,

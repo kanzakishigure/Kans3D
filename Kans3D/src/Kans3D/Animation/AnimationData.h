@@ -404,6 +404,30 @@ namespace Kans
         glm::vec3               WorldUp {0, 1, 0};
         float                   Weight = 1, AngleLimit = 3.14159265f; // Radians from the incoming pose's forward axis.
     };
+    struct FootContactWindow
+    {
+        double Start = 0, End = 0; // Clip seconds, half-open [Start, End).
+        bool   ToePivot = false;
+    };
+    struct FootContactTrack
+    {
+        std::string                    Foot, Heel, Toe; // Heel is optional; otherwise Foot is the heel probe.
+        std::vector<FootContactWindow> Windows;
+    };
+    struct ContactAnalysisSettings
+    {
+        float  HeightBand = .06f, VerticalSpeed = .15f;
+        double MinimumDuration = .1, MergeGap = .05, SampleRate = 60;
+    };
+    // Scene-owned, per clip name. Imported clip data is always immutable.
+    struct ClipRetargetSettings
+    {
+        std::string                   Clip, RootJoint;
+        glm::vec3                     RootTranslationScale {1};
+        ContactAnalysisSettings       Analysis;
+        std::vector<FootContactTrack> Tracks;
+        bool                          Edited = false;
+    };
     struct CopyTransformIK
     {
         std::string Name, Source, Joint;
@@ -419,6 +443,11 @@ namespace Kans
         glm::vec3   PoleDirection {0, 0, 1};
         float       LockWeight = 1; // Timeline: IK.<constraint>.Legs.<index>.LockWeight
     };
+    enum class FootContactSource : uint8_t
+    {
+        Velocity,
+        Tracks
+    };
     struct FootPlacementIK
     {
         std::string                   Name;
@@ -428,6 +457,8 @@ namespace Kans
         float                         RayStartHeight = .5f, MaxStepDown = .3f, ContactBand = .06f;
         float                         PelvisAdjustSpeed = 12, PelvisMaxLower = .4f, PelvisMaxRaise = .02f;
         float                         RotationWeight = 1, RotationLimit = .6f;
+        FootContactSource             ContactSource = FootContactSource::Velocity;
+        float                         TrackMaxReach = .9f; // Maximum pin correction as a fraction of leg reach.
         bool                          Locking = true, LockYaw = false;
         float                         LockSpeed = .05f, LockMaxDistance = .03f, ReleaseTime = .12f;
         float                         Weight = 1;

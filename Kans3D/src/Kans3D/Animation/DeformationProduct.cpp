@@ -129,6 +129,12 @@ namespace Kans
             if (!std::isfinite(ik.LockMaxDistance) || ik.LockMaxDistance < 0)
                 throw std::runtime_error("Invalid IK LockMaxDistance");
             n["LockMaxDistance"] = ik.LockMaxDistance;
+            if (ik.ContactSource != FootContactSource::Velocity && ik.ContactSource != FootContactSource::Tracks)
+                throw std::runtime_error("Invalid foot contact source");
+            n["ContactSource"] = ik.ContactSource == FootContactSource::Tracks ? "Tracks" : "Velocity";
+            if (!std::isfinite(ik.TrackMaxReach) || ik.TrackMaxReach <= 0 || ik.TrackMaxReach > 1)
+                throw std::runtime_error("Invalid foot track reach");
+            n["TrackMaxReach"] = ik.TrackMaxReach;
             if (!std::isfinite(ik.ReleaseTime) || ik.ReleaseTime < 0)
                 throw std::runtime_error("Invalid IK ReleaseTime");
             n["ReleaseTime"] = ik.ReleaseTime;
@@ -167,6 +173,15 @@ namespace Kans
                 ik.RotationWeight = n["RotationWeight"].as<float>();
             if (n["RotationLimit"])
                 ik.RotationLimit = n["RotationLimit"].as<float>();
+            if (n["ContactSource"])
+            {
+                const auto source = n["ContactSource"].as<std::string>();
+                if (source != "Velocity" && source != "Tracks")
+                    throw std::runtime_error("Invalid foot contact source");
+                ik.ContactSource = source == "Tracks" ? FootContactSource::Tracks : FootContactSource::Velocity;
+            }
+            if (n["TrackMaxReach"])
+                ik.TrackMaxReach = n["TrackMaxReach"].as<float>();
             if (n["LockSpeed"])
                 ik.LockSpeed = n["LockSpeed"].as<float>();
             if (n["LockMaxDistance"])
