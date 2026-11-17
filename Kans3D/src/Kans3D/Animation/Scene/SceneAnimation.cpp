@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include <glm/gtx/quaternion.hpp>
+#include "Kans3D/Animation/FootPlacement.h"
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Renderer/Shading/Skinning.h"
@@ -204,7 +205,89 @@ namespace Kans
             a.JointEntities.clear();
         }
     }
-    void Scene::ApplyAnimatorPose(Entity root, const AnimationPose& input)
+    void Scene::EvaluatePoseIK(Entity root, const SkeletonData& skeleton, AnimationPose& pose, double seconds)
+    {
+        if (!root.HasComponent<IKComponent>())
+        {
+            BuildModelPose(skeleton, pose);
+            return;
+        }
+        const auto& ik = root.GetComponent<IKComponent>();
+        if (std::any_of(ik.Constraints.begin(), ik.Constraints.end(), [](const auto& c) {
+                return std::holds_alternative<FootPlacementIK>(c.Data);
+            }))
+            CacheSceneIKInput(ik, pose);
+        if (!m_PhysicsWorld && std::any_of(ik.Constraints.begin(), ik.Constraints.end(), [](const auto& c) {
+                return c.Enabled && c.Weight > 0 && std::holds_alternative<FootPlacementIK>(c.Data);
+            }))
+        {
+            if (!m_IKPreviewPhysics)
+                m_IKPreviewPhysics = std::make_unique<PhysicsWorld>(*this, GetPhysicsSettings());
+            else
+                m_IKPreviewPhysics->SynchronizeChanges();
+        }
+        EvaluateIKConstraints(
+            skeleton,
+            ik,
+            pose,
+            GetWorldTransform(root),
+            [this](uint64_t id, glm::mat4& world) {
+                auto target = GetEntityByUUID(UUID(id));
+                if (!target)
+                    return false;
+                world = GetWorldTransform(target);
+                return true;
+            },
+            {m_PhysicsWorld ? m_PhysicsWorld.get() : m_IKPreviewPhysics.get(), seconds, uint64_t(root.GetUUID())});
+    }
+    void Scene::ApplyDeferredIK(double seconds)
+    {
+        auto finish = [&](Entity                   root,
+                          const SkeletonData&      skeleton,
+                          const AnimationPose&     input,
+                          const std::vector<UUID>& joints,
+                          Ref<SkinningPose>&       skin,
+                          uint64_t&                version) {
+            if (!root.HasComponent<IKComponent>() || !IsEntityActive(root))
+                return;
+            auto pose = input;
+            EvaluatePoseIK(root, skeleton, pose, seconds);
+            ApplyModelPose(root, skeleton, pose, joints, skin, version);
+            for (size_t j = 0; j < joints.size() && j < pose.Local.size(); ++j)
+            {
+                auto found =
+                    std::lower_bound(m_SpringRenderRotations.begin(),
+                                     m_SpringRenderRotations.end(),
+                                     joints[j],
+                                     [](const auto& entry, UUID id) { return uint64_t(entry.first) < uint64_t(id); });
+                if (found != m_SpringRenderRotations.end() && found->first == joints[j])
+                    found->second = pose.Local[j].Rotation;
+            }
+        };
+        for (auto h : m_Registry.view<AnimatorComponent>())
+        {
+            auto& a = m_Registry.get<AnimatorComponent>(h);
+            if (a.SkeletonSource && a.SkinPose && a.Enabled)
+                finish({h, this},
+                       a.SkeletonSource->GetData(),
+                       m_IKHasSpringPose ? a.SpringPose : a.PreviewPose,
+                       a.JointEntities,
+                       a.SkinPose,
+                       a.PoseVersion);
+        }
+        for (auto h : m_Registry.view<ModelPoseComponent>(entt::exclude<AnimatorComponent>))
+        {
+            auto& a = m_Registry.get<ModelPoseComponent>(h);
+            if (a.SkeletonSource && a.SkinPose)
+                finish({h, this},
+                       a.SkeletonSource->GetData(),
+                       m_IKHasSpringPose ? a.SpringPose : a.Pose,
+                       a.JointEntities,
+                       a.SkinPose,
+                       a.PoseVersion);
+        }
+    }
+    void Scene::ApplyAnimatorPose(Entity root, const AnimationPose& input, double seconds)
     {
         auto& a              = root.GetComponent<AnimatorComponent>();
         a.PreviewPose        = input;
@@ -213,18 +296,8 @@ namespace Kans
         if (!a.InlineController && !a.ControllerSource && (!a.Player || !a.Player->HasTimelinePose()))
             for (size_t j = 0; j < skeleton.Joints.size(); ++j)
                 pose.Local[j] = skeleton.Joints[j].BindLocal;
-        if (root.HasComponent<IKComponent>())
-            EvaluateIKConstraints(skeleton,
-                                  root.GetComponent<IKComponent>(),
-                                  pose,
-                                  GetWorldTransform(root),
-                                  [this](uint64_t id, glm::mat4& world) {
-                                      auto target = GetEntityByUUID(UUID(id));
-                                      if (!target)
-                                          return false;
-                                      world = GetWorldTransform(target);
-                                      return true;
-                                  });
+        if (!m_DeferIK)
+            EvaluatePoseIK(root, skeleton, pose, seconds);
         else
             BuildModelPose(skeleton, pose);
         ApplyModelPose(root, skeleton, pose, a.JointEntities, a.SkinPose, a.PoseVersion);
@@ -400,7 +473,7 @@ namespace Kans
                 a.LastSpringDiscontinuity = a.Player->DiscontinuityVersion;
                 ResetSecondaryMotion(root);
             }
-            ApplyAnimatorPose(root, a.Player->GetPose());
+            ApplyAnimatorPose(root, a.Player->GetPose(), seconds);
         }
         UpdateModelPoses();
         UpdateBounds();
@@ -516,18 +589,8 @@ namespace Kans
                 for (const auto& [name, value] : root.GetComponent<ShapeKeysComponent>().Weights)
                     if (const auto k = data.FindShapeKey(name); k >= 0)
                         state.Pose.MorphWeights[k] = std::isfinite(value) ? std::clamp(value, 0.f, 1.f) : 0;
-            if (root.HasComponent<IKComponent>())
-                EvaluateIKConstraints(data,
-                                      root.GetComponent<IKComponent>(),
-                                      state.Pose,
-                                      GetWorldTransform(root),
-                                      [this](uint64_t id, glm::mat4& world) {
-                                          auto target = GetEntityByUUID(UUID(id));
-                                          if (!target)
-                                              return false;
-                                          world = GetWorldTransform(target);
-                                          return true;
-                                      });
+            if (!m_DeferIK)
+                EvaluatePoseIK(root, data, state.Pose);
             else
                 BuildModelPose(data, state.Pose);
             ApplyModelPose(root, data, state.Pose, state.JointEntities, state.SkinPose, state.PoseVersion);

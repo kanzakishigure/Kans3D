@@ -40,46 +40,137 @@ namespace Kans::ComponentEditors
             std::visit(
                 [&](auto& ik) {
                     ik.Name = constraint.Name;
-                    if constexpr (std::is_same_v<std::decay_t<decltype(ik)>, TwoBoneIK>)
+                    using T = std::decay_t<decltype(ik)>;
+                    if constexpr (std::is_same_v<T, CopyTransformIK>)
                     {
-                        changed |= JointCombo("Root", ik.Root, skeleton);
-                        changed |= JointCombo("Middle", ik.Middle, skeleton);
-                        changed |= JointCombo("End", ik.End, skeleton);
+                        changed |= JointCombo("Source joint", ik.Source, skeleton);
+                        changed |= JointCombo("Destination joint", ik.Joint, skeleton);
+                        changed |= PropertyGrid::Checkbox("Copy rotation", ik.CopyRotation);
+                        changed |= PropertyGrid::Checkbox("Copy location", ik.CopyLocation);
+                        changed |= PropertyGrid::Checkbox("World space", ik.WorldSpace);
+                        changed |= PropertyGrid::Float("Copy weight", ik.Weight, .01f, 0.f, 1.f);
                     }
-                    else
-                        for (size_t b = 0; b < ik.Bones.size(); ++b)
-                        {
-                            ImGui::PushID(int(b));
-                            changed |= JointCombo(b ? "" : "Bones", ik.Bones[b].Joint, skeleton);
-                            ImGui::PopID();
-                        }
-                    changed |= EntityField("Target", ik.Target.Entity, scene);
-                    if (!ik.Target.Entity)
-                        changed |= PropertyGrid::Vec3("Target point", ik.Target.Position, 0.f, .01f);
-                    if constexpr (std::is_same_v<std::decay_t<decltype(ik)>, TwoBoneIK>)
+                    else if constexpr (std::is_same_v<T, FootPlacementIK>)
                     {
-                        changed |= EntityField("Pole", ik.PoleEntity, scene);
-                        if (!ik.PoleEntity)
-                            changed |= PropertyGrid::Vec3(
-                                "Pole direction", ik.PoleDirection, TwoBoneIK {}.PoleDirection, .01f);
-                        changed |= PropertyGrid::Float("Rotation weight", ik.RotationWeight, .01f, 0.f, 1.f);
-                        changed |= PropertyGrid::Checkbox("Stretch", ik.Stretch);
-                    }
-                    else
-                    {
-                        float degrees = glm::degrees(ik.AngleLimit);
-                        if (PropertyGrid::Float("Angle limit", degrees, .5f, 0.f, 180.f, "%.0f deg"))
-                            ik.AngleLimit = glm::radians(degrees), changed = true;
-                        PropertyGrid::BeginFree();
-                        if (ImGui::SmallButton(ICON_FA_PLUS " Bone"))
-                            ik.Bones.push_back({}), changed = true;
-                        if (ik.Bones.size() > 1)
+                        if (PropertyGrid::BeginGroup("Legs"))
                         {
+                            for (size_t l = 0; l < ik.Legs.size(); ++l)
+                            {
+                                ImGui::PushID(int(l));
+                                auto& leg = ik.Legs[l];
+                                changed |= JointCombo("Hip", leg.Hip, skeleton);
+                                changed |= JointCombo("Knee", leg.Knee, skeleton);
+                                changed |= JointCombo("Ankle", leg.Ankle, skeleton);
+                                changed |= JointCombo("Toe (optional)", leg.Toe, skeleton);
+                                if (PropertyGrid::Row("Driven constraint"))
+                                    changed |= ImGui::InputText("##driven", &leg.DrivenConstraint);
+                                changed |= PropertyGrid::Float("Foot height", leg.FootHeight, .001f, 0.f, 2.f);
+                                changed |= PropertyGrid::Float("Foot length", leg.FootLength, .001f, 0.f, 2.f);
+                                changed |= EntityField("Pole", leg.PoleEntity, scene);
+                                changed |= PropertyGrid::Vec3("Pole direction", leg.PoleDirection, {0, 0, 1}, .01f);
+                                changed |= PropertyGrid::Float("Lock weight", leg.LockWeight, .01f, 0.f, 1.f);
+                                ImGui::PopID();
+                            }
+                            PropertyGrid::BeginFree();
+                            if (ImGui::SmallButton(ICON_FA_PLUS " Leg") && ik.Legs.size() < 16)
+                            {
+                                ik.Legs.emplace_back();
+                                changed = true;
+                            }
                             ImGui::SameLine();
-                            if (ImGui::SmallButton(ICON_FA_MINUS " Bone"))
-                                ik.Bones.pop_back(), changed = true;
+                            if (ImGui::SmallButton(ICON_FA_MINUS " Leg") && !ik.Legs.empty())
+                            {
+                                ik.Legs.pop_back();
+                                changed = true;
+                            }
+                            PropertyGrid::EndFree();
+                            PropertyGrid::EndGroup();
                         }
-                        PropertyGrid::EndFree();
+                        if (PropertyGrid::BeginGroup("Pelvis"))
+                        {
+                            changed |= JointCombo("Joint", ik.Pelvis, skeleton);
+                            changed |= PropertyGrid::Float("Adjust speed", ik.PelvisAdjustSpeed, .1f, 0.f, 100.f);
+                            changed |= PropertyGrid::Float("Max lower", ik.PelvisMaxLower, .01f, 0.f, 2.f);
+                            changed |= PropertyGrid::Float("Max raise", ik.PelvisMaxRaise, .001f, 0.f, 1.f);
+                            PropertyGrid::EndGroup();
+                        }
+                        if (PropertyGrid::BeginGroup("Locking"))
+                        {
+                            changed |= PropertyGrid::Checkbox("Enabled", ik.Locking);
+                            changed |= PropertyGrid::Checkbox("Lock yaw", ik.LockYaw);
+                            changed |= PropertyGrid::Float("Contact speed", ik.LockSpeed, .001f, 0.f, 1.f);
+                            changed |= PropertyGrid::Float("Max pin distance", ik.LockMaxDistance, .001f, 0.f, 1.f);
+                            changed |= PropertyGrid::Float("Release time", ik.ReleaseTime, .001f, 0.f, 2.f);
+                            PropertyGrid::EndGroup();
+                        }
+                        if (PropertyGrid::BeginGroup("Ground"))
+                        {
+                            if (PropertyGrid::Row("Layer mask"))
+                                changed |= ImGui::InputScalar("##mask",
+                                                              ImGuiDataType_U32,
+                                                              &ik.GroundLayerMask,
+                                                              nullptr,
+                                                              nullptr,
+                                                              "%08X",
+                                                              ImGuiInputTextFlags_CharsHexadecimal);
+                            changed |= PropertyGrid::Float("Ray start height", ik.RayStartHeight, .01f, 0.f, 5.f);
+                            changed |= PropertyGrid::Float("Max step down", ik.MaxStepDown, .01f, 0.f, 2.f);
+                            changed |= PropertyGrid::Float("Contact band", ik.ContactBand, .001f, 0.f, 1.f);
+                            changed |= PropertyGrid::Float("Rotation weight", ik.RotationWeight, .01f, 0.f, 1.f);
+                            float degrees = glm::degrees(ik.RotationLimit);
+                            if (PropertyGrid::Float("Rotation limit", degrees, .5f, 0.f, 180.f, "%.0f deg"))
+                            {
+                                ik.RotationLimit = glm::radians(degrees);
+                                changed          = true;
+                            }
+                            PropertyGrid::EndGroup();
+                        }
+                    }
+                    else
+                    {
+                        if constexpr (std::is_same_v<std::decay_t<decltype(ik)>, TwoBoneIK>)
+                        {
+                            changed |= JointCombo("Root", ik.Root, skeleton);
+                            changed |= JointCombo("Middle", ik.Middle, skeleton);
+                            changed |= JointCombo("End", ik.End, skeleton);
+                        }
+                        else
+                            for (size_t b = 0; b < ik.Bones.size(); ++b)
+                            {
+                                ImGui::PushID(int(b));
+                                changed |= JointCombo(b ? "" : "Bones", ik.Bones[b].Joint, skeleton);
+                                changed |= JointCombo("Aim child (optional)", ik.Bones[b].AimChild, skeleton);
+                                ImGui::PopID();
+                            }
+                        changed |= JointCombo("Target joint", ik.Target.Joint, skeleton);
+                        changed |= EntityField("Target entity", ik.Target.Entity, scene);
+                        if (!ik.Target.Entity)
+                            changed |= PropertyGrid::Vec3("Target point", ik.Target.Position, 0.f, .01f);
+                        if constexpr (std::is_same_v<std::decay_t<decltype(ik)>, TwoBoneIK>)
+                        {
+                            changed |= EntityField("Pole", ik.PoleEntity, scene);
+                            if (!ik.PoleEntity)
+                                changed |= PropertyGrid::Vec3(
+                                    "Pole direction", ik.PoleDirection, TwoBoneIK {}.PoleDirection, .01f);
+                            changed |= PropertyGrid::Float("Rotation weight", ik.RotationWeight, .01f, 0.f, 1.f);
+                            changed |= PropertyGrid::Checkbox("Stretch", ik.Stretch);
+                        }
+                        else
+                        {
+                            float degrees = glm::degrees(ik.AngleLimit);
+                            if (PropertyGrid::Float("Angle limit", degrees, .5f, 0.f, 180.f, "%.0f deg"))
+                                ik.AngleLimit = glm::radians(degrees), changed = true;
+                            PropertyGrid::BeginFree();
+                            if (ImGui::SmallButton(ICON_FA_PLUS " Bone"))
+                                ik.Bones.push_back({}), changed = true;
+                            if (ik.Bones.size() > 1)
+                            {
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton(ICON_FA_MINUS " Bone"))
+                                    ik.Bones.pop_back(), changed = true;
+                            }
+                            PropertyGrid::EndFree();
+                        }
                     }
                 },
                 constraint.Data);
@@ -154,6 +245,19 @@ namespace Kans::ComponentEditors
             edited.Constraints.push_back(
                 {"LookAt" + std::to_string(edited.Constraints.size()), true, 1, LookAtIK {"", {{}}}}),
                 changed = true;
+        if (ImGui::Button(ICON_FA_PLUS "  Copy transform", {half, 0}))
+        {
+            edited.Constraints.push_back(
+                {"Copy" + std::to_string(edited.Constraints.size()), true, 1, CopyTransformIK {}});
+            changed = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_PLUS "  Foot Placement", {-FLT_MIN, 0}))
+        {
+            edited.Constraints.push_back(
+                {"Feet" + std::to_string(edited.Constraints.size()), true, 1, FootPlacementIK {}});
+            changed = true;
+        }
         if (changed)
         {
             entity.SetComponent<IKComponent>(edited);

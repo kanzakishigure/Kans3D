@@ -1063,6 +1063,28 @@ namespace Kans
             b.Data = data;
             for (const auto& bone : data.Bones)
                 b.Joints.push_back(bind(bone.Joint));
+            if (std::any_of(
+                    b.Data.Bones.begin(), b.Data.Bones.end(), [](const auto& bone) { return !bone.AimChild.empty(); }))
+            {
+                AnimationPose bindPose;
+                RestPose(*m_Skeleton, bindPose);
+                for (size_t j = 0; j < bindPose.Local.size(); ++j)
+                    bindPose.Local[j] = m_Skeleton->Joints[j].BindLocal;
+                BuildModelPose(*m_Skeleton, bindPose);
+                for (size_t k = 0; k < b.Data.Bones.size(); ++k)
+                {
+                    auto& bone = b.Data.Bones[k];
+                    if (bone.AimChild.empty())
+                        continue;
+                    const auto child = bind(bone.AimChild), joint = b.Joints[k];
+                    if (child < 0 || joint < 0)
+                    {
+                        bone.Weight = 0;
+                        continue;
+                    }
+                    bone.Forward = glm::vec3(glm::inverse(bindPose.Model[joint]) * bindPose.Model[child][3]);
+                }
+            }
             m_LookAt.push_back(std::move(b));
         }
         m_IKModel.resize(m_Skeleton->Joints.size());
@@ -1136,8 +1158,19 @@ namespace Kans
             }
         return false;
     }
-    bool Animator::ResolveIK(const IKTarget& target, glm::vec3& position, glm::quat& rotation) const
+    bool
+    Animator::ResolveIK(const IKTarget& target, const AnimationPose& pose, glm::vec3& position, glm::quat& rotation)
     {
+        if (!target.Joint.empty())
+        {
+            const auto j = m_Skeleton->FindJoint(target.Joint);
+            if (j < 0)
+                return false;
+            RefreshIK(pose, j);
+            position = glm::vec3(m_IKModel[j][3]);
+            rotation = m_IKRotations[j];
+            return IKFinite(position) && IKFinite(rotation);
+        }
         auto point = target.Position;
         auto q     = target.Rotation;
         if (target.Entity)
@@ -1199,7 +1232,7 @@ namespace Kans
                 continue;
             glm::vec3 target;
             glm::quat rotation;
-            if (!ResolveIK(ik.Target, target, rotation))
+            if (!ResolveIK(ik.Target, pose, target, rotation))
                 continue;
             RefreshIK(pose, b.End);
             const auto root   = glm::vec3(m_IKModel[b.Root][3]);
@@ -1263,7 +1296,7 @@ namespace Kans
                 continue;
             glm::vec3 target;
             glm::quat ignored;
-            if (!ResolveIK(ik.Target, target, ignored))
+            if (!ResolveIK(ik.Target, pose, target, ignored))
                 continue;
             for (size_t k = 0; k < b.Joints.size(); ++k)
             {
@@ -1285,8 +1318,10 @@ namespace Kans
                          BlendAnimationRotations(glm::quat(1, 0, 0, 0), swing, ik.AngleLimit / angle, true) :
                          swing) *
                     forward;
-                const auto solved = IKFrame(clampedForward, glm::mat3(m_IKInverse) * ik.WorldUp) *
-                                    glm::inverse(IKFrame(bone.Forward, bone.Up));
+                const auto solved = bone.AimChild.empty() ?
+                                        IKFrame(clampedForward, glm::mat3(m_IKInverse) * ik.WorldUp) *
+                                            glm::inverse(IKFrame(bone.Forward, bone.Up)) :
+                                        IKBetween(forward, clampedForward) * current;
                 RotateIK(pose, j, BlendAnimationRotations(current, solved, ik.Weight * bone.Weight, true));
             }
         }

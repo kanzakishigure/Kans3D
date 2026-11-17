@@ -174,12 +174,13 @@ namespace Kans
                                           const IKComponent&,
                                           AnimationPose&,
                                           const glm::mat4&,
-                                          const IKEntityResolver&);
+                                          const IKEntityResolver&,
+                                          const struct IKEvaluationContext&);
         void        PrepareIK();
         void        EvaluateIK(AnimationPose&);
         void        RefreshIK(const AnimationPose&, int32_t joint);
         void        RotateIK(AnimationPose&, int32_t joint, glm::quat modelRotation);
-        bool        ResolveIK(const IKTarget&, glm::vec3&, glm::quat&) const;
+        bool        ResolveIK(const IKTarget&, const AnimationPose&, glm::vec3&, glm::quat&);
         struct BoundTwoBone
         {
             TwoBoneIK Data;

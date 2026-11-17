@@ -26,8 +26,13 @@ namespace Kans
     }
     void Scene::OnPhysicsJointRemoved(entt::registry&, entt::entity handle)
     {
-        if (m_PhysicsWorld && m_Registry.all_of<IDComponent>(handle))
-            m_PhysicsWorld->NotifyJointRemoved(m_Registry.get<IDComponent>(handle).ID);
+        if (m_Registry.all_of<IDComponent>(handle))
+        {
+            if (m_PhysicsWorld)
+                m_PhysicsWorld->NotifyJointRemoved(m_Registry.get<IDComponent>(handle).ID);
+            if (m_IKPreviewPhysics)
+                m_IKPreviewPhysics->NotifyJointRemoved(m_Registry.get<IDComponent>(handle).ID);
+        }
     }
     void Scene::OnPhysicsComponentChanged(entt::registry& registry, entt::entity handle)
     {
@@ -35,6 +40,8 @@ namespace Kans
             return;
         if (m_PhysicsWorld)
             m_PhysicsWorld->NotifyTopologyChanged({handle, this});
+        if (m_IKPreviewPhysics)
+            m_IKPreviewPhysics->NotifyTopologyChanged({handle, this});
         OnPhysicsPrefabChanged(registry, handle);
     }
     void Scene::OnPhysicsHierarchyChanged(entt::registry& registry, entt::entity handle)
@@ -43,6 +50,8 @@ namespace Kans
             return;
         if (m_PhysicsWorld)
             m_PhysicsWorld->NotifyTopologyChanged({handle, this}, true);
+        if (m_IKPreviewPhysics)
+            m_IKPreviewPhysics->NotifyTopologyChanged({handle, this}, true);
         OnPhysicsPrefabChanged(registry, handle);
     }
     void Scene::OnPhysicsBodyOwnershipChanged(entt::registry& registry, entt::entity handle)
@@ -51,6 +60,8 @@ namespace Kans
             return;
         if (m_PhysicsWorld)
             m_PhysicsWorld->NotifyBodyOwnershipChanged({handle, this});
+        if (m_IKPreviewPhysics)
+            m_IKPreviewPhysics->NotifyBodyOwnershipChanged({handle, this});
         OnPhysicsPrefabChanged(registry, handle);
     }
     void Scene::OnPhysicsMeshChanged(entt::registry& registry, entt::entity handle)
@@ -59,12 +70,19 @@ namespace Kans
             return;
         if (m_PhysicsWorld)
             m_PhysicsWorld->NotifyMeshSourceChanged({handle, this});
+        if (m_IKPreviewPhysics)
+            m_IKPreviewPhysics->NotifyMeshSourceChanged({handle, this});
         OnPhysicsPrefabChanged(registry, handle);
     }
     void Scene::OnPhysicsTransformChanged(entt::registry&, entt::entity handle)
     {
-        if (!m_SuppressNotifications && !m_PhysicsWritingTransforms && m_PhysicsWorld)
-            m_PhysicsWorld->NotifyTransformChanged({handle, this});
+        if (!m_SuppressNotifications && !m_PhysicsWritingTransforms)
+        {
+            if (m_PhysicsWorld)
+                m_PhysicsWorld->NotifyTransformChanged({handle, this});
+            if (m_IKPreviewPhysics)
+                m_IKPreviewPhysics->NotifyTransformChanged({handle, this});
+        }
     }
     void Scene::DispatchFixedUpdate(double dt) { ScriptEngine::OnFixedUpdate(*this, float(dt)); }
     void Scene::OnRuntimeSingleStep()

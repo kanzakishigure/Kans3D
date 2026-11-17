@@ -1,6 +1,8 @@
 #include <imgui.h>
 #include <cmath>
 #include <functional>
+#include "Kans3D/Animation/DeformationComponents.h"
+#include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Scene/Components.h"
 #include "KansEditorCore/Physics/PhysicsEditing.h"
@@ -132,6 +134,16 @@ namespace Kans
             PhysicsEditing::DrawColliders(lines, scene, selected, SelectedCollider);
             PhysicsEditing::DrawController(lines, scene, selected, Controller);
             PhysicsEditing::DrawJoint(lines, scene, selected);
+            if (auto root = scene.GetDeformationRoot(selected); root && root.HasComponent<IKComponent>())
+            {
+                const auto& colors = EditorTheme::Colors();
+                auto        color  = [](const ImVec4& v) { return glm::vec4(v.x, v.y, v.z, v.w); };
+                DrawFootPlacementDebug(root.GetComponent<IKComponent>(),
+                                       lines,
+                                       color(colors.TextDim),
+                                       color(colors.Accent),
+                                       color(colors.Success));
+            }
             // Spring chains and every collider their groups use; a motion collider itself.
             SecondaryMotionEditing::DrawSecondaryMotion(lines, scene, selected, hidden);
             // Wheels (the card's selected row highlighted) and field shapes, outside play too.

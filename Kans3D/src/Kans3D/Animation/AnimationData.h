@@ -378,6 +378,7 @@ namespace Kans
         uint64_t  Entity = 0;
         glm::vec3 Position {0};
         glm::quat Rotation {1, 0, 0, 0};
+        std::string Joint; // Same skeleton, current pose. Takes precedence over Entity.
     };
     struct TwoBoneIK
     {
@@ -393,6 +394,7 @@ namespace Kans
         std::string Joint;
         float       Weight = 1;
         glm::vec3   Forward {0, 0, 1}, Up {0, 1, 0};
+        std::string AimChild; // Optional bind-pose child defines forward; swing only, retaining twist.
     };
     struct LookAtIK
     {
@@ -401,6 +403,34 @@ namespace Kans
         IKTarget                Target;
         glm::vec3               WorldUp {0, 1, 0};
         float                   Weight = 1, AngleLimit = 3.14159265f; // Radians from the incoming pose's forward axis.
+    };
+    struct CopyTransformIK
+    {
+        std::string Name, Source, Joint;
+        bool        CopyRotation = true, CopyLocation = false, WorldSpace = true;
+        float       Weight = 1;
+    };
+    struct FootPlacementLeg
+    {
+        std::string Hip, Knee, Ankle, Toe;
+        std::string DrivenConstraint; // Named TwoBoneIK later in the list; empty solves this leg here.
+        float       FootHeight = .08f, FootLength = .22f;
+        uint64_t    PoleEntity = 0;
+        glm::vec3   PoleDirection {0, 0, 1};
+        float       LockWeight = 1; // Timeline: IK.<constraint>.Legs.<index>.LockWeight
+    };
+    struct FootPlacementIK
+    {
+        std::string                   Name;
+        std::vector<FootPlacementLeg> Legs;
+        std::string                   Pelvis;
+        uint32_t                      GroundLayerMask = UINT32_MAX;
+        float                         RayStartHeight = .5f, MaxStepDown = .3f, ContactBand = .06f;
+        float                         PelvisAdjustSpeed = 12, PelvisMaxLower = .4f, PelvisMaxRaise = .02f;
+        float                         RotationWeight = 1, RotationLimit = .6f;
+        bool                          Locking = true, LockYaw = false;
+        float                         LockSpeed = .05f, LockMaxDistance = .03f, ReleaseTime = .12f;
+        float                         Weight = 1;
     };
     struct AnimationControllerData
     {

@@ -121,7 +121,9 @@ namespace Kans
         void                           UpdateMaterialParameterDrivers();
         void                           UpdateMaterialParameterDrivers(Entity entity);
         bool                           PreviewAnimation(Entity root, size_t layer, uint32_t state, double time);
-        void                           ApplyAnimatorPose(Entity root, const struct AnimationPose& pose);
+        void ApplyAnimatorPose(Entity root, const struct AnimationPose& pose, double seconds = 0);
+        void EvaluatePoseIK(Entity, const struct SkeletonData&, struct AnimationPose&, double seconds = 0);
+        void ApplyDeferredIK(double seconds);
         void                           ApplyModelPose(Entity root,
                                                       const struct SkeletonData&,
                                                       const struct AnimationPose&,
@@ -312,7 +314,7 @@ namespace Kans
         void                                    ClearClothStreams();
         void                                    PublishClothStreams();
         uint64_t                                m_SecondaryMotionResetEpoch = 1;
-        std::unique_ptr<PhysicsWorld>           m_PhysicsWorld;
+        std::unique_ptr<PhysicsWorld>           m_PhysicsWorld, m_IKPreviewPhysics;
         double                                  m_PhysicsAccumulator = 0;
         bool                m_PhysicsPaused = false, m_PhysicsSingleStep = false, m_PhysicsWritingTransforms = false;
         SceneRuntimeOptions m_RuntimeOptions;
@@ -330,6 +332,7 @@ namespace Kans
         void                                 TrackPrefabAssets(Entity root);
         void                                 PollAssetChanges();
         bool                                 m_SuppressNotifications = false;
+        bool                                 m_DeferIK = false, m_IKHasSpringPose = false;
         std::unique_ptr<RenderWorld>         m_RenderWorld;
         std::shared_ptr<AssetChangeObserver> m_AssetChanges;
         std::unordered_set<entt::entity>     m_DirtyPrefabs, m_CapturePrefabNodes, m_DirtyBounds;
@@ -361,6 +364,7 @@ namespace Kans
 
     private:
         friend class Entity;
+        friend class TimelinePlayer;
         friend class RenderWorld;
         friend class PhysicsWorld;
         friend class SceneSerializer;

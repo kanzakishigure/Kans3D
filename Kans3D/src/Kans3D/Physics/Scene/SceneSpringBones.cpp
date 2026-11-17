@@ -1,4 +1,5 @@
 #include "kspch.h"
+#include "Kans3D/Animation/FootPlacement.h"
 #include "Kans3D/Animation/SpringBoneComponent.h"
 #include "Kans3D/Physics/ClothSolver.h"
 #include "Kans3D/Physics/ForceFields.h"
@@ -201,6 +202,8 @@ namespace Kans
     void Scene::ResetSecondaryMotion()
     {
         RestoreSpringBoneTransforms();
+        for (auto h : m_Registry.view<IKComponent>())
+            m_Registry.get<IKComponent>(h).Runtime.reset();
         m_SpringRenderRotations.clear();
         ++m_SecondaryMotionResetEpoch;
         ClearClothStreams();
@@ -292,6 +295,9 @@ namespace Kans
         if (!scope)
             return;
         ResetClothMotion(scope);
+        for (auto h : m_Registry.view<IKComponent>())
+            if (Entity e {h, this}; e == scope || IsDescendantOf(e, scope))
+                e.GetComponent<IKComponent>().Runtime.reset();
         auto within = [&](Entity e) { return e && (e == scope || IsDescendantOf(e, scope)); };
         for (auto h : m_Registry.view<SpringBoneComponent>())
         {
@@ -765,6 +771,7 @@ namespace Kans
                         }
                     }
         }
+        m_IKHasSpringPose = true;
         // Rebuild the final palette after every modifier, including timeline-driven IK.
         auto finish = [&](Entity                   root,
                           const SkeletonData&      skeleton,
@@ -784,18 +791,40 @@ namespace Kans
                 auto found = findRotation(id);
                 return found != m_SpringRenderRotations.end() && found->first == id;
             });
-            if (!changed)
+            const bool footIK =
+                !m_DeferIK && root.HasComponent<IKComponent>() &&
+                std::any_of(root.GetComponent<IKComponent>().Constraints.begin(),
+                            root.GetComponent<IKComponent>().Constraints.end(),
+                            [](const auto& c) {
+                                return c.Enabled && c.Weight > 0 && std::holds_alternative<FootPlacementIK>(c.Data);
+                            });
+            AnimationPose input;
+            if (footIK)
+                input = SceneIKInput(root.GetComponent<IKComponent>(), animated);
+            render = footIK ? input : animated;
+            if (!changed && !footIK)
                 return;
-            render = animated;
             for (size_t j = 0; j < joints.size() && j < render.Local.size(); ++j)
             {
                 auto found = findRotation(joints[j]);
                 if (found != m_SpringRenderRotations.end() && found->first == joints[j])
                     render.Local[j].Rotation = found->second;
             }
-            if (changed)
+            if (changed || footIK)
             {
-                BuildModelPose(skeleton, render);
+                if (footIK)
+                {
+                    EvaluatePoseIK(root, skeleton, render, preview ? 0 : seconds);
+                    CacheSceneIKInput(root.GetComponent<IKComponent>(), input);
+                    for (size_t j = 0; j < joints.size() && j < render.Local.size(); ++j)
+                    {
+                        auto found = findRotation(joints[j]);
+                        if (found != m_SpringRenderRotations.end() && found->first == joints[j])
+                            found->second = render.Local[j].Rotation;
+                    }
+                }
+                else
+                    BuildModelPose(skeleton, render);
                 ApplyModelPose(root, skeleton, render, joints, skin, version, !preview);
             }
         };

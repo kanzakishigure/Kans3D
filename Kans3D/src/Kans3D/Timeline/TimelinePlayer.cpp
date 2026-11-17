@@ -599,18 +599,8 @@ namespace Kans
                 RestPose(skeleton->GetData(), rest);
                 BlendAnimationPoses(rest, mixed, total, mixed);
             }
-            if (e.HasComponent<IKComponent>())
-                EvaluateIKConstraints(skeleton->GetData(),
-                                      e.GetComponent<IKComponent>(),
-                                      mixed,
-                                      m_Scene.GetWorldTransform(e),
-                                      [this](uint64_t id, glm::mat4& world) {
-                                          auto target = m_Scene.GetEntityByUUID(UUID(id));
-                                          if (!target)
-                                              return false;
-                                          world = m_Scene.GetWorldTransform(target);
-                                          return true;
-                                      });
+            if (!m_Scene.m_DeferIK)
+                m_Scene.EvaluatePoseIK(e, skeleton->GetData(), mixed);
             else
                 BuildModelPose(skeleton->GetData(), mixed);
             if (!e.HasComponent<ModelPoseComponent>())
@@ -932,6 +922,23 @@ namespace Kans
             if (auto e = entity(tr.Binding))
                 if (!EvaluateAnimation(tr, e.GetUUID(), t))
                     return false;
+        if (!m_Scene.m_DeferIK)
+        {
+            bool           models = false;
+            std::set<UUID> refreshed;
+            for (const auto& track : data.Properties)
+                if (track.Path.rfind("IK.", 0) == 0)
+                    if (auto e = entity(track.Binding);
+                        e && !m_State->EvaluatedAnimators.count(e.GetUUID()) && refreshed.insert(e.GetUUID()).second)
+                    {
+                        if (e.HasComponent<AnimatorComponent>() && m_Scene.PrepareAnimator(e))
+                            m_Scene.ApplyAnimatorPose(e, e.GetComponent<AnimatorComponent>().Player->GetPose());
+                        else
+                            models = true;
+                    }
+            if (models)
+                m_Scene.UpdateModelPoses();
+        }
         for (const auto& tr : data.Particles)
             if (auto e = entity(tr.Binding))
                 if (!EvaluateParticles(tr, e.GetUUID(), t))
@@ -1043,8 +1050,7 @@ namespace Kans
     {
         if (!std::isfinite(time) || !m_Source)
             return false;
-        if (m_State && m_State->LiveAdvance)
-            ResetBoundSecondaryMotion(m_Scene, Component(), &m_Source->GetData(), m_Spawned);
+        ResetBoundSecondaryMotion(m_Scene, Component(), &m_Source->GetData(), m_Spawned);
         double to = std::clamp(time, 0.0, m_Source->GetData().Length), from = m_Time;
         if (!Evaluate(to))
             return false;

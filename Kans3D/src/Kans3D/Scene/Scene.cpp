@@ -135,6 +135,7 @@ namespace Kans
 
     Scene::~Scene()
     {
+        m_IKPreviewPhysics.reset();
         m_PhysicsWorld.reset();
         if (ScriptEngine::GetSceneContext() == this)
             ScriptEngine::OnRuntimeEnd();
@@ -240,6 +241,8 @@ namespace Kans
         m_AssetChanges = assets ? assets->ObserveChanges() : nullptr;
         if (m_PhysicsWorld)
             m_PhysicsWorld->NotifyAssetProviderChanged();
+        if (m_IKPreviewPhysics)
+            m_IKPreviewPhysics->NotifyAssetProviderChanged();
         for (auto handle : m_Registry.view<PrefabInstanceComponent>())
             m_DirtyPrefabs.insert(handle);
         for (auto handle : m_Registry.view<MeshComponent>())
@@ -284,6 +287,8 @@ namespace Kans
             m_VfxWorld->NotifyAssetChanged(id);
             if (m_PhysicsWorld)
                 m_PhysicsWorld->NotifyAssetChanged(id);
+            if (m_IKPreviewPhysics)
+                m_IKPreviewPhysics->NotifyAssetChanged(id);
             const auto found = m_PrefabAssetUsers.find(id);
             if (found != m_PrefabAssetUsers.end())
                 for (auto handle : found->second)
@@ -328,12 +333,16 @@ namespace Kans
         RestoreSpringBoneTransforms();
         UpdatePrefabs();
         const double animationDelta = m_PhysicsPaused && !m_PhysicsSingleStep ? 0 : double(ts);
+        m_DeferIK                   = true;
+        m_IKHasSpringPose           = false;
         UpdateAnimations(animationDelta);
         UpdateTimelines(animationDelta);
         if (m_PhysicsWorld)
             m_PhysicsWorld->CaptureRagdollTargets(animationDelta);
         UpdatePhysics(double(ts));
         UpdateSpringBones(double(ts));
+        m_DeferIK = false;
+        ApplyDeferredIK(animationDelta);
         UpdateCloth(double(ts));
 
         // update ScripteableEntity
@@ -449,6 +458,12 @@ namespace Kans
         }
         Detach(entity);
         auto& id = entity.GetComponent<IDComponent>().ID;
+        if (m_IKPreviewPhysics && !m_SuppressNotifications)
+        {
+            if (entity.HasComponent<JointComponent>())
+                m_IKPreviewPhysics->NotifyJointRemoved(id);
+            m_IKPreviewPhysics->NotifyTopologyChanged(entity);
+        }
         if (m_PhysicsWorld && !m_SuppressNotifications)
         {
             if (entity.HasComponent<JointComponent>())
@@ -871,6 +886,7 @@ namespace Kans
         UpdatePrefabs();
         m_PhysicsAccumulator = 0;
         m_PhysicsPaused = m_PhysicsSingleStep = false;
+        m_IKPreviewPhysics.reset();
         m_PhysicsWorld                        = std::make_unique<PhysicsWorld>(*this, GetPhysicsSettings());
         StartAudio();
         m_VfxWorld->Start();

@@ -356,7 +356,12 @@ namespace Kans::SceneClipboard
                 if (auto ik = node["IKComponent"])
                     for (auto constraint : ik["Constraints"])
                     {
-                        reference(constraint["Data"]["target"]["entity"]);
+                        const auto type = constraint["Type"].as<std::string>();
+                        if (type == "TwoBone" || type == "LookAt")
+                            reference(constraint["Data"]["target"]["entity"]);
+                        if (type == "FootPlacement")
+                            for (auto leg : constraint["Data"]["Legs"])
+                                reference(leg["PoleEntity"]);
                         if (constraint["Type"].as<std::string>() == "TwoBone")
                             reference(constraint["Data"]["pole_entity"]);
                     }

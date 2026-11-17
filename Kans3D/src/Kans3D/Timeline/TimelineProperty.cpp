@@ -169,6 +169,38 @@ namespace Kans
                 apply(e.GetComponent<T>());
             return ok;
         };
+        if (field.rfind("IK.", 0) == 0 && e.HasComponent<IKComponent>())
+        {
+            auto& constraints = e.GetComponent<IKComponent>().Constraints;
+            for (auto& c : constraints)
+            {
+                const auto prefix = "IK." + c.Name + ".";
+                if (field.rfind(prefix, 0) != 0)
+                    continue;
+                const auto member = field.substr(prefix.size());
+                float*     target = member == "Weight" ? &c.Weight : nullptr;
+                if (auto* feet = std::get_if<FootPlacementIK>(&c.Data); feet && member.rfind("Legs.", 0) == 0)
+                {
+                    auto   dot   = member.find('.', 5);
+                    size_t index = 0;
+                    if (dot != std::string::npos)
+                    {
+                        const auto parsed = std::from_chars(member.data() + 5, member.data() + dot, index);
+                        if (parsed.ec == std::errc() && parsed.ptr == member.data() + dot &&
+                            index < feet->Legs.size() && member.substr(dot + 1) == "LockWeight")
+                            target = &feet->Legs[index].LockWeight;
+                    }
+                }
+                if (!target || (write && !std::isfinite(value.x)))
+                    return false;
+                if (write)
+                    *target = std::clamp(value.x, 0.f, 1.f);
+                else
+                    value = {*target, 0, 0, 0};
+                return true;
+            }
+            return false;
+        }
         if (field == "Transform.Position")
             return component(TransformComponent {}, &TransformComponent::Position);
         if (field == "Transform.Rotation")

@@ -58,6 +58,7 @@ namespace Kans
         YAML::Node Target(const IKTarget& t)
         {
             YAML::Node n;
+            n["joint"]    = t.Joint;
             n["entity"]   = t.Entity;
             n["position"] = Vec(t.Position);
             n["rotation"] = Quat(t.Rotation);
@@ -65,7 +66,10 @@ namespace Kans
         }
         IKTarget ReadTarget(const YAML::Node& n)
         {
-            return {n["entity"].as<uint64_t>(), ReadVec(n["position"]), ReadQuat(n["rotation"])};
+            return {n["entity"].as<uint64_t>(),
+                    ReadVec(n["position"]),
+                    ReadQuat(n["rotation"]),
+                    n["joint"] ? n["joint"].as<std::string>() : std::string()};
         }
         AssetID ReadID(const YAML::Node& n)
         {
@@ -826,6 +830,7 @@ namespace Kans
             {
                 YAML::Node a;
                 a["joint"]   = b.Joint;
+                a["aim_child"] = b.AimChild;
                 a["weight"]  = b.Weight;
                 a["forward"] = Vec(b.Forward);
                 a["up"]      = Vec(b.Up);
@@ -982,7 +987,8 @@ namespace Kans
                     ik.Bones.push_back({a["joint"].as<std::string>(),
                                         a["weight"].as<float>(),
                                         ReadVec(a["forward"]),
-                                        ReadVec(a["up"])});
+                                        ReadVec(a["up"]),
+                                        a["aim_child"] ? a["aim_child"].as<std::string>() : std::string()});
                 c.LookAtConstraints.push_back(std::move(ik));
             }
         }

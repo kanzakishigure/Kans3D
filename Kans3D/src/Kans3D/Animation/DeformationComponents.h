@@ -9,7 +9,16 @@ namespace Kans
         std::string                       Name;
         bool                              Enabled = true;
         float                             Weight  = 1;
-        std::variant<TwoBoneIK, LookAtIK> Data    = TwoBoneIK {};
+        std::variant<TwoBoneIK, LookAtIK, CopyTransformIK, FootPlacementIK> Data    = TwoBoneIK {};
+    };
+    class PhysicsWorld;
+    class DebugDraw;
+    struct IKEvaluationContext
+    {
+        PhysicsWorld* Physics      = nullptr;
+        double        DeltaTime    = 0; // Nonpositive = stateless preview/seek, clears contact history.
+        uint64_t      IgnoreEntity = 0;
+        bool          Reset        = false;
     };
     struct IKRuntime;
     struct IKComponent
@@ -51,5 +60,8 @@ namespace Kans
                                const IKComponent&,
                                AnimationPose&,
                                const glm::mat4& world,
-                               const Animator::IKEntityResolver&);
+                               const Animator::IKEntityResolver&,
+                               const IKEvaluationContext& = {});
+    void
+    DrawFootPlacementDebug(const IKComponent&, DebugDraw&, glm::vec4 rayColor, glm::vec4 hitColor, glm::vec4 lockColor);
 } // namespace Kans
