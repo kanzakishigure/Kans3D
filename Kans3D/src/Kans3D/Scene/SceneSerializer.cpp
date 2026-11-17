@@ -265,6 +265,7 @@ namespace Kans
             n["NoiseScale"]            = f.NoiseScale;
             n["NoiseAmount"]           = f.NoiseAmount;
             n["NoiseScroll"]           = Vector(f.NoiseScroll, 3);
+            n["FollowWind"]            = f.FollowWind;
             return n;
         }
         FogSettings DecodeFog(const YAML::Node& n)
@@ -284,7 +285,8 @@ namespace Kans
                   "Noise",
                   "NoiseScale",
                   "NoiseAmount",
-                  "NoiseScroll"});
+                  "NoiseScroll",
+                  "FollowWind"});
             FogSettings f;
             if (n["Enabled"])
                 f.Enabled = n["Enabled"].as<bool>();
@@ -316,6 +318,7 @@ namespace Kans
                 f.NoiseAmount = Number(n["NoiseAmount"]);
             if (n["NoiseScroll"])
                 f.NoiseScroll = Vec3(n["NoiseScroll"]);
+            f.FollowWind = n["FollowWind"].as<bool>(false);
             return f.Validated();
         }
         void EncodeEmission(YAML::Node& n, const LightEmission& light)
@@ -1797,7 +1800,11 @@ namespace Kans
                 const auto& fog = entity.GetComponent<FogVolumeComponent>();
                 Require(uint32_t(fog.Shape) <= uint32_t(FogVolumeShape::Sphere) && std::isfinite(fog.Density) &&
                             fog.Density >= 0 && std::isfinite(fog.EdgeFalloff) && fog.EdgeFalloff >= 0 &&
-                            fog.EdgeFalloff <= 1 && glm::all(glm::greaterThanEqual(fog.Albedo, glm::vec3(0))) &&
+                            fog.EdgeFalloff <= 1 && std::isfinite(fog.NoiseScale) && fog.NoiseScale > 0 &&
+                            std::isfinite(fog.NoiseAmount) && fog.NoiseAmount >= 0 && fog.NoiseAmount <= 1 &&
+                            std::isfinite(fog.NoiseScroll.x) && std::isfinite(fog.NoiseScroll.y) &&
+                            std::isfinite(fog.NoiseScroll.z) &&
+                            glm::all(glm::greaterThanEqual(fog.Albedo, glm::vec3(0))) &&
                             glm::all(glm::lessThanEqual(fog.Albedo, glm::vec3(1))),
                         "Invalid fog volume medium");
                 value.reset(node["FogVolumeComponent"]);
@@ -1805,6 +1812,11 @@ namespace Kans
                 value["Density"]     = fog.Density;
                 value["Albedo"]      = Vector(fog.Albedo, 3);
                 value["EdgeFalloff"] = fog.EdgeFalloff;
+                value["Noise"]       = fog.Noise;
+                value["FollowWind"]  = fog.FollowWind;
+                value["NoiseScale"]  = fog.NoiseScale;
+                value["NoiseAmount"] = fog.NoiseAmount;
+                value["NoiseScroll"] = Vector(fog.NoiseScroll, 3);
             }
             if (entity.HasComponent<ScriptComponent>())
             {
@@ -2611,7 +2623,16 @@ namespace Kans
                 }
                 if (auto fog = node["FogVolumeComponent"])
                 {
-                    Keys(fog, {"Shape", "Density", "Albedo", "EdgeFalloff"});
+                    Keys(fog,
+                         {"Shape",
+                          "Density",
+                          "Albedo",
+                          "EdgeFalloff",
+                          "Noise",
+                          "FollowWind",
+                          "NoiseScale",
+                          "NoiseAmount",
+                          "NoiseScroll"});
                     auto& c = entity.AddComponent<FogVolumeComponent>();
                     if (fog["Shape"])
                     {
@@ -2625,6 +2646,15 @@ namespace Kans
                         c.Albedo = Vec3(fog["Albedo"]);
                     if (fog["EdgeFalloff"])
                         c.EdgeFalloff = Number(fog["EdgeFalloff"]);
+                    c.Noise      = fog["Noise"].as<bool>(false);
+                    c.FollowWind = fog["FollowWind"].as<bool>(false);
+                    if (fog["NoiseScale"])
+                        c.NoiseScale = Number(fog["NoiseScale"]);
+                    if (fog["NoiseAmount"])
+                        c.NoiseAmount = Number(fog["NoiseAmount"]);
+                    if (fog["NoiseScroll"])
+                        c.NoiseScroll = Vec3(fog["NoiseScroll"]);
+                    Require(c.NoiseScale > 0 && c.NoiseAmount >= 0 && c.NoiseAmount <= 1, "Invalid fog volume noise");
                     Require(c.Density >= 0 && c.EdgeFalloff >= 0 && c.EdgeFalloff <= 1 &&
                                 glm::all(glm::greaterThanEqual(c.Albedo, glm::vec3(0))) &&
                                 glm::all(glm::lessThanEqual(c.Albedo, glm::vec3(1))),

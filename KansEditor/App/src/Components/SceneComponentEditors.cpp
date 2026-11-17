@@ -164,6 +164,11 @@ namespace Kans::ComponentEditors
                 PropertyGrid::Float("Density", c.Density, .001f, 0, 100, "%.4f", &defaults.Density);
                 PropertyGrid::Color3("Albedo", c.Albedo, &defaults.Albedo);
                 PropertyGrid::Float("Edge falloff", c.EdgeFalloff, .01f, 0, 1, "%.3f", &defaults.EdgeFalloff);
+                PropertyGrid::Checkbox("Density noise", c.Noise, &defaults.Noise);
+                PropertyGrid::Float("Noise scale", c.NoiseScale, .01f, .0001f, 100, "%.3f", &defaults.NoiseScale);
+                PropertyGrid::Float("Noise amount", c.NoiseAmount, .01f, 0, 1, "%.3f", &defaults.NoiseAmount);
+                PropertyGrid::Vec3("Noise scroll", c.NoiseScroll, defaults.NoiseScroll, .01f);
+                PropertyGrid::Checkbox("Follow wind", c.FollowWind, &defaults.FollowWind);
                 PropertyGrid::EndGroup();
             }
         });

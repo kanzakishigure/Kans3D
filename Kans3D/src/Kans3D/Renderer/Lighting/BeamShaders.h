@@ -15,6 +15,7 @@ layout(set=1,binding=5) uniform sampler2D sceneDepth;
 float readDepth(ivec2 p){return texelFetch(sceneDepth,p,0).r;}
 #endif
 layout(set=1,binding=6) uniform sampler3D integratedFog;
+layout(set=1,binding=7) uniform sampler3D injectedFog;
 layout(push_constant) uniform DrawBeam { int beamIndex; };
 layout(location=0) out vec4 color;
 // Intersect the axial slab, then the cone quadratic. Testing intervals also handles
@@ -55,7 +56,12 @@ void main() {
         float t=lo+(float(s)+j)*ds;vec3 world=origin+ray*t;
         vec3 d=u_Frame.SpotPositionRange[i].xyz-world;float attenuation=KansSpotAttenuation(i,d);
         if(attenuation<=0)continue;
-        vec4 medium=mediumAt(world);if(medium.a<=0)continue;
+        vec4 medium=mediumAt(world);
+        if(f.previousDepth.w>0){
+            float slice=log(1+(t/rayScale)/.1)/log(1+f.grid.w/.1)*f.grid.z;
+            medium+=textureLod(injectedFog,vec3(uv-f.previousDepth.yz,slice/f.grid.z),0);
+        }
+        if(medium.a<=0)continue;
         float h=dot(-d,axis),fade=1;
         if(b.fadesFlags.x>0)fade*=clamp(h/b.fadesFlags.x,0,1);
         if(b.fadesFlags.y>0)fade*=clamp((b.indexLengthScaleSamples.y-h)/b.fadesFlags.y,0,1);

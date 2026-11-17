@@ -1842,6 +1842,23 @@ namespace Kans
                         edit(true);
                     PropertyGrid::EndGroup();
                 }
+                if (PropertyGrid::BeginGroup("Volumetric fog", nullptr, nullptr, false))
+                {
+                    if (PropertyGrid::Checkbox("Inject into volumetric fog", r.InjectVolumetricFog))
+                        edit(false);
+                    if (PropertyGrid::Float("Density per particle", r.FogDensity, .01f, 0, 100))
+                        edit(true);
+                    if (PropertyGrid::Float("Radius scale", r.FogRadiusScale, .01f, .001f, 100))
+                        edit(true);
+                    if (PropertyGrid::Color3("Albedo / tint", r.FogAlbedo))
+                        edit(true);
+                    if (PropertyGrid::InputText("Grid3D interface", r.FogGrid))
+                        edit(true);
+                    if (PropertyGrid::InputText("Density attribute", r.FogDensityAttribute))
+                        edit(true);
+                    PropertyGrid::Text("Particle budget per view", "4096 candidates");
+                    PropertyGrid::EndGroup();
+                }
                 if (PropertyGrid::BeginGroup("Bindings", nullptr, nullptr, false))
                 {
                     auto        parameters = ListParameters(m_Document.Data(), m_Context, handle);

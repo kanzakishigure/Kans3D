@@ -33,9 +33,11 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::BindGroupLayout> MarchLayout, ResolveLayout;
         RenderHardware::Handle<RenderHardware::Shader>          MarchShader[2], TemporalShader, CompositeShader[2];
     };
+    struct FogInjectionState;
     struct FogState
     {
         std::shared_ptr<BeamState>                                             Beams;
+        std::shared_ptr<FogInjectionState>                                     Injection;
         std::string                                                            BeamMediumSignature;
         RenderHardware::Handle<RenderHardware::Buffer>                         BeamParameters, VolumeUniforms;
         RenderHardware::Handle<RenderHardware::BindGroup>                      BeamLighting;
@@ -63,10 +65,11 @@ namespace Kans
         glm::mat4  InverseView {1}, InverseProjection {1};
         float      Distance    = 64;
         uint32_t   JitterFrame = 0;
+        uint32_t   Injected    = uint32_t(-1);
     };
     // media: RGBA16F sigma_s.rgb, sigma_t.a in inverse metres, additive in world space.
     // Grid3D and R4b can declare graph writes here before lighting without owning the fog renderer.
-    using FogDensityInjector = std::function<void(RenderGraph&, const FogFrameResources&)>;
+    using FogDensityInjector = std::function<void(RenderGraph&, FogFrameResources&)>;
     void                                 BuildFogPasses(RenderGraph& graph, RenderFrame& frame);
     void                                 AddFogBackground(RenderGraph& graph, RenderFrame& frame);
     std::variant<ShaderData, AssetError> MakeFogShader(const ShaderProgramCode&, uint32_t alphaMode);

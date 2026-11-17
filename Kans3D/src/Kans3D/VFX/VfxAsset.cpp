@@ -319,6 +319,12 @@ namespace Kans::Vfx
             n["ReceiveShadows"]                = x.ReceiveShadows;
             n["FrameBlending"]                 = x.FrameBlending;
             n["DepthFadeDistance"]             = x.DepthFadeDistance;
+            n["InjectVolumetricFog"]           = x.InjectVolumetricFog;
+            n["FogDensity"]                    = x.FogDensity;
+            n["FogRadiusScale"]                = x.FogRadiusScale;
+            n["FogAlbedo"]                     = Vec(glm::vec4(x.FogAlbedo, 1), 3);
+            n["FogGrid"]                       = x.FogGrid;
+            n["FogDensityAttribute"]           = x.FogDensityAttribute;
             for (const auto& [k, v] : x.Bindings)
                 n["Bindings"][k] = v;
             return n;
@@ -402,6 +408,18 @@ namespace Kans::Vfx
             x.ReceiveShadows = n["ReceiveShadows"].as<bool>(true);
             Check(std::isfinite(x.Curvature) && x.Curvature >= 0 && x.Curvature <= 1, "Invalid VFX Curvature");
             x.FrameBlending     = n["FrameBlending"].as<bool>(false);
+            x.InjectVolumetricFog = n["InjectVolumetricFog"].as<bool>(false);
+            x.FogDensity          = n["FogDensity"].as<float>(1);
+            x.FogRadiusScale      = n["FogRadiusScale"].as<float>(1);
+            if (n["FogAlbedo"])
+                x.FogAlbedo = glm::vec3(ReadVec(n["FogAlbedo"], 3));
+            x.FogGrid             = n["FogGrid"].as<std::string>("");
+            x.FogDensityAttribute = n["FogDensityAttribute"].as<std::string>("Density");
+            Check(std::isfinite(x.FogDensity) && x.FogDensity >= 0 && x.FogDensity <= 100 &&
+                      std::isfinite(x.FogRadiusScale) && x.FogRadiusScale > 0 &&
+                      glm::all(glm::greaterThanEqual(x.FogAlbedo, glm::vec3(0))) &&
+                      glm::all(glm::lessThanEqual(x.FogAlbedo, glm::vec3(1))),
+                  "Invalid VFX fog injection");
             x.DepthFadeDistance = n["DepthFadeDistance"].as<float>(0);
             Check(std::isfinite(x.DepthFadeDistance) && x.DepthFadeDistance >= 0, "Invalid VFX depth fade");
             if (n["Bindings"])

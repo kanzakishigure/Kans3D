@@ -27,20 +27,23 @@ vec3 sampleWorld(ivec3 cell) {
 )";
     inline constexpr const char* MediumSampling = R"(
 layout(set=1,binding=2) uniform sampler3D densityNoise;
-struct Volume { mat4 worldToLocal; vec4 albedoDensity; vec4 shapeFalloff; };
+struct Volume { mat4 worldToLocal; vec4 albedoDensity; vec4 shapeFalloff; vec4 noise; vec4 scroll; };
 layout(set=1,binding=3,std140) uniform FogVolumes { Volume volumes[32]; };
 vec4 mediumAt(vec3 p) {
     float density=f.medium.x*exp(clamp(-f.medium.y*(p.y-f.medium.z),-40,12));
+    float n=f.noise.z>0 ? mix(1.0,textureLod(densityNoise,p*f.noise.x+f.scroll.xyz,0).r*2,f.noise.y) : 1;
+    density*=n;
     vec3 scattering=f.albedoG.rgb*density;
     for(int i=0;i<int(f.noise.w);++i) {
         vec3 q=(volumes[i].worldToLocal*vec4(p,1)).xyz*2;
         float edge=volumes[i].shapeFalloff.x>0.5 ? length(q) : max(abs(q.x),max(abs(q.y),abs(q.z)));
         float fade=volumes[i].shapeFalloff.y>0 ? clamp((1-edge)/volumes[i].shapeFalloff.y,0,1) : float(edge<=1);
-        float d=volumes[i].albedoDensity.w*fade;
+        vec4 vn=volumes[i].noise;
+        float volumeNoise=vn.z<0 ? n : vn.z>0 ? mix(1.0,textureLod(densityNoise,p*vn.x+volumes[i].scroll.xyz,0).r*2,vn.y) : 1;
+        float d=volumes[i].albedoDensity.w*fade*volumeNoise;
         density+=d; scattering+=d*volumes[i].albedoDensity.rgb;
     }
-    float n=f.noise.z>0 ? mix(1.0,textureLod(densityNoise,p*f.noise.x+f.scroll.xyz*f.temporal.z,0).r*2,f.noise.y) : 1;
-    return min(vec4(scattering,density)*f.medium.w*n,vec4(60000));
+    return min(vec4(scattering,density)*f.medium.w,vec4(60000));
 }
 )";
     inline constexpr const char* Media          = R"(

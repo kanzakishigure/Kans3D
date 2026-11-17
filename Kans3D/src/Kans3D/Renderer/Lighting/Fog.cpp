@@ -8,12 +8,39 @@
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "AreaLights.h"
 #include "BeamShaders.h"
+#include "FogInjection.h"
 #include "FogShaders.h"
 #include "ShadowMaps.h"
 
 namespace Kans
 {
     using namespace RenderHardware;
+    glm::vec3 FogWindDisplacement(const std::vector<FieldRecord>& fields, double time)
+    {
+        glm::dvec3 displacement(0);
+        if (!std::isfinite(time))
+            return {};
+        for (const auto& r : fields)
+        {
+            if (r.Kind.x != uint32_t(FieldType::Wind) || r.Kind.y != uint32_t(FieldShape::Infinite) ||
+                !(r.Filter.y & uint32_t(FieldSystem::Particles)))
+                continue;
+            const auto  direction = glm::vec3(r.DirectionStrength);
+            const float length    = glm::length(direction);
+            const auto  axis      = glm::quat(r.Rotation.w, r.Rotation.x, r.Rotation.y, r.Rotation.z) *
+                                    (length > 1e-6f ? direction / length : glm::vec3(0));
+            auto        integral  = [time](double frequency, double phase) {
+                const double w = frequency * 6.283185307179586;
+                return std::abs(w) < 1e-8 ? time * std::sin(phase) : (std::cos(phase) - std::cos(w * time + phase)) / w;
+            };
+            displacement += glm::dvec3(axis) *
+                            (double(r.DirectionStrength.w) * time + r.NoisePulse.z * integral(r.NoisePulse.w, 0));
+            for (int i = 0; i < 3; ++i)
+                displacement[i] += r.NoisePulse.x * integral(r.NoisePulse.y, i * 2.094395102393195);
+        }
+        return glm::vec3(displacement);
+    }
+
     std::vector<ViewFogVolume> SelectFogVolumes(std::vector<ViewFogVolume> volumes, glm::vec3 camera)
     {
         volumes.erase(std::remove_if(volumes.begin(),
@@ -80,7 +107,7 @@ namespace Kans
         struct Volume
         {
             glm::mat4 WorldToLocal {1};
-            glm::vec4 AlbedoDensity {0}, ShapeFalloff {0};
+            glm::vec4 AlbedoDensity {0}, ShapeFalloff {0}, Noise {0}, Scroll {0};
         };
         struct LightScales
         {
@@ -318,16 +345,33 @@ namespace Kans
             settings.HistoryWeight, valid ? 1 : 0, frame.View.Time, float(frame.Output.GetFrameNumber() % 1024)};
         auto volumes = SelectFogVolumes(frame.View.FogVolumes, frame.View.Scene.sceneCamera.Position);
         std::array<Volume, FogVolumeLimit> packed;
+        const auto                         wind = FogWindDisplacement(frame.View.FogWind, frame.View.Time);
         for (size_t i = 0; i < volumes.size(); ++i)
         {
             const auto& v           = volumes[i];
             packed[i].WorldToLocal  = glm::inverse(v.Transform);
             packed[i].AlbedoDensity = {glm::clamp(v.Medium.Albedo, glm::vec3(0), glm::vec3(1)), v.Medium.Density};
+            const auto& m           = v.Medium;
+            const float scale       = m.Noise ? m.NoiseScale : settings.NoiseScale;
+            packed[i].Noise         = {
+                scale, m.Noise ? m.NoiseAmount : settings.NoiseAmount, m.Noise || settings.Noise ? 1 : 0, 0};
+            // Reuse the global lookup for inherited noise with the same advection settings.
+            if (!m.Noise && m.FollowWind == settings.FollowWind)
+                packed[i].Noise.z = -1;
+            packed[i].Scroll        = glm::vec4(m.Noise || settings.Noise ?
+                                                    (m.Noise ? m.NoiseScroll : settings.NoiseScroll) * frame.View.Time -
+                                                        (m.FollowWind ? wind * scale : glm::vec3(0)) :
+                                                    glm::vec3(0),
+                                                0);
             packed[i].ShapeFalloff  = {
                 v.Medium.Shape == FogVolumeShape::Sphere ? 1 : 0, std::clamp(v.Medium.EdgeFalloff, 0.f, 1.f), 0, 0};
         }
         p.Noise         = {settings.NoiseScale, settings.NoiseAmount, settings.Noise ? 1 : 0, float(volumes.size())};
-        p.Scroll        = glm::vec4(settings.NoiseScroll, 0);
+        // Unused offsets must stay constant: they are part of the stationary beam history signature.
+        p.Scroll = glm::vec4(settings.Noise ? settings.NoiseScroll * frame.View.Time -
+                                                  (settings.FollowWind ? wind * settings.NoiseScale : glm::vec3(0)) :
+                                              glm::vec3(0),
+                             0);
         p.PreviousDepth = {state->Settings.VolumetricFogDistance, 0, 0, 0};
         auto        uniform = Upload(*device, p), volumeBuffer = Upload(*device, packed);
         LightScales scales;
@@ -350,11 +394,6 @@ namespace Kans
         auto       engine      = LightingGroup(frame, *state, p);
         if (HasSpotBeams(frame))
         {
-            auto beamParameters              = p;
-            beamParameters.InverseProjection = glm::inverse(frame.SceneProjection());
-            const auto jitter                = frame.Output.GetJitter() / glm::vec2(frame.View.Viewport);
-            beamParameters.PreviousDepth.y   = jitter.x;
-            beamParameters.PreviousDepth.z   = jitter.y;
             state->BeamMediumSignature.clear();
             auto signature = [&](const auto& value) {
                 state->BeamMediumSignature.append(reinterpret_cast<const char*>(&value), sizeof(value));
@@ -368,7 +407,6 @@ namespace Kans
             signature(settings.VolumetricFogDistance);
             const void* world = &frame.World;
             signature(world);
-            state->BeamParameters = Upload(*device, beamParameters);
             state->VolumeUniforms = volumeBuffer;
             state->BeamLighting   = LightingGroup(frame, *state, p, true);
         }
@@ -439,6 +477,21 @@ namespace Kans
                          uint32_t(p.Temporal.w)};
         if (frame.View.InjectFogDensity)
             frame.View.InjectFogDensity(graph, frame.FogGrid);
+        const auto sources = CollectFogInjectionSources(frame);
+        if (!sources.empty())
+            frame.FogGrid.Injected = AddFogInjection(graph, *device, frame.FogGrid, sources, state->Injection);
+        if (HasSpotBeams(frame))
+        {
+            auto beamParameters              = p;
+            beamParameters.InverseProjection = glm::inverse(frame.SceneProjection());
+            const auto jitter                = frame.Output.GetJitter() / glm::vec2(frame.View.Viewport);
+            beamParameters.PreviousDepth.y   = jitter.x;
+            beamParameters.PreviousDepth.z   = jitter.y;
+            beamParameters.PreviousDepth.w   = frame.FogGrid.Injected != uint32_t(-1) ? 1 : 0;
+            state->BeamParameters            = Upload(*device, beamParameters);
+            if (beamParameters.PreviousDepth.w > 0 && state->Beams)
+                state->Beams->Valid = false; // Animated particle/grid density must not retain stale beams.
+        }
         std::vector<GraphUse> lightingUses {
             {media, GraphAccess::SampledRead},
             {raw, GraphAccess::StorageWrite},
@@ -571,7 +624,8 @@ namespace Kans
                                                                    {3, BindingType::UniformBuffer},
                                                                    {4, BindingType::UniformBuffer},
                                                                    {5, BindingType::CombinedTextureSampler},
-                                                                   {6, BindingType::CombinedTextureSampler}}});
+                                                                   {6, BindingType::CombinedTextureSampler},
+                                                                   {7, BindingType::CombinedTextureSampler}}});
             state->ResolveLayout = device->CreateBindGroupLayout({1,
                                                                   {{0, BindingType::UniformBuffer},
                                                                    {1, BindingType::CombinedTextureSampler},
@@ -656,6 +710,7 @@ namespace Kans
         const auto hdr        = ms ? frame.MSHDR : graph.ImportTexture("SceneHDR", frame.Output.GetHDR());
         const auto noise      = graph.ImportTexture("Fog tiled density noise", fog->Noise);
         const auto integrated = graph.ImportTexture("Fog integrated scattering transmittance", fog->Integrated);
+        const auto injected   = frame.FogGrid.Injected != uint32_t(-1) ? frame.FogGrid.Injected : integrated;
         auto       add        = [&](const char* name, std::vector<GraphUse> uses, RenderGraph::Record record) {
             auto pass = graph.AddPass(name, std::move(uses), std::move(record));
             if (pass)
@@ -669,6 +724,8 @@ namespace Kans
             {graph.ImportBuffer("Beam lights", beamBuffer), GraphAccess::UniformRead},
             {graph.ImportBuffer("Beam fog parameters", fog->BeamParameters), GraphAccess::UniformRead},
             {graph.ImportBuffer("Beam volumes", fog->VolumeUniforms), GraphAccess::UniformRead}};
+        if (injected != integrated)
+            uses.push_back({injected, GraphAccess::SampledRead});
         if (frame.View.Shadows)
             for (auto image : {frame.View.Shadows->Spots, frame.View.Shadows->Cookies})
                 if (image)
@@ -693,7 +750,8 @@ namespace Kans
                                   {3, fog->VolumeUniforms},
                                   {4, beamBuffer},
                                   {5, {}, 0, 0, c.Texture(depth), depthSampler},
-                                  {6, {}, 0, 0, c.Texture(integrated), fog->Linear}}};
+                                  {6, {}, 0, 0, c.Texture(integrated), fog->Linear},
+                                  {7, {}, 0, 0, c.Texture(injected), fog->Linear}}};
             RenderingDesc render;
             render.Colors.push_back({c.Texture(current), {}, LoadOp::Clear});
             c.Commands.BeginRendering(render);

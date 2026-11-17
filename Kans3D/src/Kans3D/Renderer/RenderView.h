@@ -295,6 +295,7 @@ namespace Kans
         uint32_t                                          SpotShadowAtlasSize = 2048; // Pixels per side, at most 4096.
         std::shared_ptr<ShadowResources>                  Shadows;
         std::vector<ViewFogVolume>                        FogVolumes;
+        std::vector<FieldRecord>                          FogWind;
         FogDensityInjector                                InjectFogDensity;
         bool                                              BeamHalfResolution = false;
         std::shared_ptr<AreaLightResources>               AreaLighting;

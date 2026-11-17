@@ -350,6 +350,12 @@ namespace Kans::Vfx
         bool               ReceiveShadows    = true;
         bool               FrameBlending     = false;
         float              DepthFadeDistance = 0;
+        bool               InjectVolumetricFog = false;
+        float              FogDensity = 1, FogRadiusScale = 1;
+        glm::vec3          FogAlbedo {1};
+        // Optional Grid3D interface and scalar attribute; empty injects particles using Position/SpriteSize.
+        // Grids without a density attribute remain opt-in through this explicit attribute name.
+        std::string                        FogGrid, FogDensityAttribute = "Density";
         std::map<std::string, std::string> Bindings {
             {"Position", "Particles.Position"},
             {"Color", "Particles.Color"},

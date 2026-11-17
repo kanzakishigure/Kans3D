@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <glm/glm.hpp>
+#include "Kans3D/Physics/ForceFields.h"
 
 namespace Kans
 {
@@ -17,6 +18,7 @@ namespace Kans
         uint32_t    GridPixelSize = 8, DepthSlices = 64;
         float       HistoryWeight = .9f;
         bool        Noise         = false;
+        bool        FollowWind    = false;
         float       NoiseScale = .1f, NoiseAmount = .5f;
         glm::vec3   NoiseScroll {.03f, 0, .01f};
         FogSettings Validated() const
@@ -48,7 +50,7 @@ namespace Kans
                    Anisotropy == b.Anisotropy && VolumetricFogDistance == b.VolumetricFogDistance &&
                    GridPixelSize == b.GridPixelSize && DepthSlices == b.DepthSlices &&
                    HistoryWeight == b.HistoryWeight && Noise == b.Noise && NoiseScale == b.NoiseScale &&
-                   NoiseAmount == b.NoiseAmount && NoiseScroll == b.NoiseScroll;
+                   NoiseAmount == b.NoiseAmount && NoiseScroll == b.NoiseScroll && FollowWind == b.FollowWind;
         }
         bool operator!=(const FogSettings& b) const { return !(*this == b); }
     };
@@ -73,6 +75,9 @@ namespace Kans
         const float d = 1 + g * g - 2 * g * std::clamp(cosine, -1.f, 1.f);
         return (1 - g * g) / (4 * 3.14159265358979323846f * d * std::sqrt(d));
     }
+    // World-space displacement since t=0. Infinite particle-affecting winds only; bounded fields cannot
+    // translate an entire noise tile. The integral of smooth turbulence/pulses is independent of frame rate.
+    glm::vec3 FogWindDisplacement(const std::vector<FieldRecord>& fields, double time);
     enum class FogVolumeShape
     {
         Box,
@@ -83,10 +88,15 @@ namespace Kans
         FogVolumeShape Shape   = FogVolumeShape::Box;
         float          Density = .1f;
         glm::vec3      Albedo {1};
+        bool           Noise = false, FollowWind = false;
+        float          NoiseScale = .1f, NoiseAmount = .5f;
+        glm::vec3      NoiseScroll {.03f, 0, .01f};
         float          EdgeFalloff = .1f; // Fraction of the half extent; shapes have unit diameter before transform.
         bool           operator==(const FogVolumeComponent& b) const
         {
-            return Shape == b.Shape && Density == b.Density && Albedo == b.Albedo && EdgeFalloff == b.EdgeFalloff;
+            return Shape == b.Shape && Density == b.Density && Albedo == b.Albedo && EdgeFalloff == b.EdgeFalloff &&
+                   Noise == b.Noise && FollowWind == b.FollowWind && NoiseScale == b.NoiseScale &&
+                   NoiseAmount == b.NoiseAmount && NoiseScroll == b.NoiseScroll;
         }
         bool operator!=(const FogVolumeComponent& b) const { return !(*this == b); }
     };

@@ -712,6 +712,19 @@ namespace Kans
                                        entity.GetComponent<FogVolumeComponent>()});
             }
             output.FogVolumes = SelectFogVolumes(std::move(volumes), output.Scene.sceneCamera.Position);
+            output.FogWind.clear();
+            // Existing scenes do not gather/copy physics fields until a fog setting opts into wind.
+            const auto fog =
+                output.UseWorldEnvironment ? (Environment ? Environment->Fog : FogSettings {}) : output.Environment.Fog;
+            if (fog.Enabled &&
+                (fog.FollowWind || std::any_of(output.FogVolumes.begin(), output.FogVolumes.end(), [](const auto& v) {
+                     return v.Medium.FollowWind;
+                 })))
+            {
+                ForceFieldSet fields;
+                m_Scene->GatherForceFields(fields);
+                output.FogWind = fields.GetRecords();
+            }
         }
         else
             output.FogVolumes = SelectFogVolumes(std::move(output.FogVolumes), output.Scene.sceneCamera.Position);

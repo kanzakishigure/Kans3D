@@ -276,6 +276,7 @@ namespace Kans
             changed |= PropertyGrid::Float("Noise scale", f.NoiseScale, .01f, .0001f, 100, "%.3f", &d.NoiseScale);
             changed |= PropertyGrid::Float("Noise amount", f.NoiseAmount, .01f, 0, 1, "%.3f", &d.NoiseAmount);
             changed |= PropertyGrid::Vec3("Noise scroll", f.NoiseScroll, d.NoiseScroll, .01f);
+            changed |= PropertyGrid::Checkbox("Follow wind", f.FollowWind, &d.FollowWind);
             PropertyGrid::EndGroup();
         }
         if (changed)
