@@ -75,6 +75,7 @@ namespace Kans
     {
         SourceAssetMetadata   Source;
         std::filesystem::path SourceFile; // Absolute.
+        std::map<std::string, std::filesystem::path> ShaderIncludeRoots;
         std::filesystem::path AssetRoot;  // Absolute.
         RegisteredImporter    Importer;
         LocalIDMap            PreviousLocalIDs;

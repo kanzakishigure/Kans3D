@@ -388,10 +388,21 @@ namespace Kans
 
     // ====================================================================== data
 
+    fs::path ContentBrowserPanel::NavigationRoot(const fs::path& file) const
+    {
+        if (Browser::IsWithin(file, m_Root))
+            return m_Root;
+        if (m_Service)
+            for (const auto& [prefix, directory] : m_Service->GetContentMounts())
+                if (Browser::IsWithin(file, directory))
+                    return directory;
+        return {};
+    }
+
     void ContentBrowserPanel::Navigate(const fs::path& directory, bool record)
     {
         const auto target = Normal(directory);
-        if (target == m_Current || !Browser::IsWithin(target, m_Root))
+        if (target == m_Current || NavigationRoot(target).empty())
             return;
         CommitRename();
         if (record)
@@ -425,7 +436,7 @@ namespace Kans
             if (const auto* list = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
                 for (const auto& source : *list)
                     if (source.Exists)
-                        m_Sources[Key(m_Root / source.Path.GetPath())] = {source, 0};
+                        m_Sources[Key(m_Service->ResolveSourcePath(source.Path))] = {source, 0};
         };
         read();
         // New files in the shown folder are registered as sources (when no import runs).
@@ -558,7 +569,8 @@ namespace Kans
         using EditorTheme::Px;
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {Px(3.0f), Px(4.0f)});
         // Create and import: the main actions, as text buttons.
-        if (Widgets::TextButton(ICON_FA_PLUS, "Add", "Create in this folder", false, true))
+        if (Widgets::TextButton(
+                ICON_FA_PLUS, "Add", "Create in this folder", false, !m_Service || !m_Service->IsReadOnly(m_Current)))
             ImGui::OpenPopup("##Add");
         if (ImGui::BeginPopup("##Add"))
         {
@@ -615,7 +627,7 @@ namespace Kans
         }
         ImGui::SameLine();
         if (IconButton(ICON_FA_ARROW_UP, "Parent folder (Backspace)", false, m_Current != m_Root))
-            Navigate(m_Current.parent_path());
+            Navigate(m_Current == NavigationRoot(m_Current) ? m_Root : m_Current.parent_path());
         ImGui::SameLine();
         if (IconButton(ICON_FA_ROTATE_RIGHT, "Refresh"))
         {
@@ -816,13 +828,18 @@ namespace Kans
 
     void ContentBrowserPanel::DrawBreadcrumbs(float width)
     {
-        std::vector<fs::path> segments = {m_Root};
-        for (const auto& part : m_Current.lexically_relative(m_Root))
+        const auto            root      = NavigationRoot(m_Current);
+        std::vector<fs::path> segments  = {root};
+        std::string           rootLabel = root.filename().u8string();
+        if (m_Service)
+            for (const auto& [prefix, directory] : m_Service->GetContentMounts())
+                if (directory == root)
+                    rootLabel = prefix;
+        for (const auto& part : m_Current.lexically_relative(root))
             if (part != ".")
                 segments.push_back(segments.back() / part);
         const auto name = [&](size_t i) {
-            return i == 0 ? std::string(ICON_FA_HOUSE " ") + m_Root.filename().u8string() :
-                            segments[i].filename().u8string();
+            return i == 0 ? std::string(ICON_FA_HOUSE " ") + rootLabel : segments[i].filename().u8string();
         };
         // Hide leading folders (after the root) until the rest fits.
         const float separator = ImGui::CalcTextSize(">").x + 10.0f;
@@ -941,6 +958,9 @@ namespace Kans
         section("FOLDERS");
         ImGui::SetNextItemOpen(true, ImGuiCond_Once);
         DrawTreeNode(m_Root, m_Root.filename().u8string());
+        if (m_Service)
+            for (const auto& [prefix, directory] : m_Service->GetContentMounts())
+                DrawTreeNode(directory, prefix + (m_Service->IsReadOnly(directory) ? " (read-only)" : ""));
         m_RevealCurrent = false;
     }
 
@@ -1405,11 +1425,11 @@ namespace Kans
                 Navigate(target, false);
             }
             if (pressed(ImGuiKey_UpArrow) && m_Current != m_Root)
-                Navigate(m_Current.parent_path());
+                Navigate(m_Current == NavigationRoot(m_Current) ? m_Root : m_Current.parent_path());
             return;
         }
         if (pressed(ImGuiKey_Backspace) && m_Current != m_Root)
-            Navigate(m_Current.parent_path());
+            Navigate(m_Current == NavigationRoot(m_Current) ? m_Root : m_Current.parent_path());
         if (pressed(ImGuiKey_F2) && targets.size() == 1)
             StartRename(targets.front());
         if (pressed(ImGuiKey_Delete) && !targets.empty())
@@ -1729,7 +1749,7 @@ namespace Kans
         if (ImGui::BeginPopup("##FolderMenu"))
         {
             const auto folder = m_MenuFolder;
-            if (ImGui::BeginMenu(Label(ICON_FA_PLUS, "Create").c_str()))
+            if (ImGui::BeginMenu(Label(ICON_FA_PLUS, "Create").c_str(), !m_Service || !m_Service->IsReadOnly(folder)))
             {
                 if (ImGui::MenuItem(Label(ICON_FA_FOLDER_PLUS, "Folder").c_str()))
                     NewFolder(folder);
@@ -2036,7 +2056,7 @@ namespace Kans
     void ContentBrowserPanel::Reveal(const fs::path& file)
     {
         const auto target = Normal(file);
-        if (!Browser::IsWithin(target, m_Root))
+        if (NavigationRoot(target).empty())
             return;
         Navigate(target.parent_path());
         m_Search.fill(0); // A search could hide the file.

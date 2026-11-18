@@ -160,6 +160,11 @@ namespace Kans
                                          Ref<const MeshAsset>                              mesh,
                                          std::function<void(const std::filesystem::path&)> created)
     {
+        if (m_ReadOnly && m_ReadOnly(directory))
+        {
+            m_Status = "Plugin content is read-only; choose a project folder for the new ragdoll";
+            return;
+        }
         if (m_Session.IsOpen())
             m_Session.Close();
         m_Creating        = true;
@@ -206,6 +211,11 @@ namespace Kans
     {
         if (!m_Session.IsOpen())
             return false;
+        if (m_ReadOnly && m_ReadOnly(m_Session.GetFile()))
+        {
+            m_Status = "Plugin content is read-only";
+            return false;
+        }
         if (auto error = m_Session.Save())
         {
             m_Status = error->Message;

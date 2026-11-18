@@ -12,6 +12,7 @@
 #include "Kans3D/Asset/Storage/ProductFiles.h"
 #include "Kans3D/Physics/PhysicsSerialization.h"
 #include "Kans3D/UI/UIAsset.h"
+#include "ComponentRegistry.h"
 #include "Entity.h"
 namespace Kans
 {
@@ -1847,6 +1848,9 @@ namespace Kans
                 value["FlipY"]        = sprite.FlipY;
                 value["SortingOrder"] = sprite.SortingOrder;
             }
+            for (const auto& entry : ComponentRegistry::Runtime().Entries())
+                if (entry.Serialize && entry.Has(entity))
+                    node["PluginComponents"][entry.Name] = entry.Serialize(entity);
             return node;
         }
     } // namespace
@@ -2165,7 +2169,8 @@ namespace Kans
                       "AreaLightComponent",
                       "FogVolumeComponent",
                       "ScriptComponent",
-                      "SpriteRendererComponent"});
+                      "SpriteRendererComponent",
+                      "PluginComponents"});
                 auto id = UInt(node["Entity"]);
                 Require(id && seen.insert(id).second, "Duplicate/zero Scene identity");
                 if (node["Parent"])
@@ -2753,6 +2758,24 @@ namespace Kans
                     sprite.SortingOrder = value["SortingOrder"].as<int>(0);
                 }
             }
+            for (const auto& node : entities)
+                if (const auto plugins = node["PluginComponents"])
+                {
+                    Require(plugins.IsMap(), "PluginComponents must be a mapping");
+                    auto                  entity = candidate->GetEntityByUUID(UInt(node["Entity"]));
+                    std::set<std::string> names;
+                    for (const auto& pair : plugins)
+                    {
+                        const auto name = pair.first.as<std::string>();
+                        Require(names.insert(name).second, ("Duplicate plugin component " + name).c_str());
+                        const auto& entries = ComponentRegistry::Runtime().Entries();
+                        auto        found   = std::find_if(entries.begin(), entries.end(), [&](const auto& e) {
+                            return e.Name == name && bool(e.Deserialize);
+                        });
+                        Require(found != entries.end(), ("Unavailable plugin component " + name).c_str());
+                        found->Deserialize(entity, pair.second.as<std::string>());
+                    }
+                }
             if (root["PostProcess"])
                 candidate->SetPostProcessSettings(DecodePostProcess(root["PostProcess"]));
             else

@@ -14,10 +14,11 @@
 #include "Kans3D/Scene/SceneSerializer.h"
 #include "Kans3D/Timeline/TimelineProduct.h"
 #include "Components/ComponentEditors.h"
-#include "KansEditorCore/Components/MaterialAssignment.h"
 #include "EditorLayer.h"
+#include "KansEditorCore/Components/MaterialAssignment.h"
 #include "KansEditorCore/Launcher/LauncherModel.h"
 #include "KansEditorCore/Physics/PhysicsEditing.h"
+#include "UI/EditorIcons.h"
 
 namespace Kans
 {
@@ -64,7 +65,10 @@ namespace Kans
         recent.Touch(m_ProjectFile, file.Name, static_cast<int64_t>(std::time(nullptr)));
         if (auto error = recent.Save())
             CORE_WARN("Cannot save recent projects: {}", error->Message);
-        auto opened = Project::Open(config);
+        ProjectOpenOptions pluginOptions;
+        pluginOptions.Editor        = true;
+        pluginOptions.EditorModules = CompiledEditorPluginModules();
+        auto opened                 = Project::Open(config, pluginOptions);
         if (const auto* error = std::get_if<AssetError>(&opened))
         {
             CORE_ERROR("Cannot open project: {}", error->Message);
@@ -73,6 +77,17 @@ namespace Kans
         auto project = std::move(std::get<std::unique_ptr<Project>>(opened));
         for (const auto& warning : project->GetAssetWarnings())
             CORE_WARN("Project asset cache: {}", warning.Message);
+        for (const auto& panel : project->GetPluginHost().Panels())
+        {
+            PanelSpec pluginPanel;
+            pluginPanel.ID          = "Plugin/" + panel.Name;
+            pluginPanel.Title       = panel.Name;
+            pluginPanel.Icon        = ICON_FA_CUBES;
+            pluginPanel.Category    = PanelCategory::Assets;
+            pluginPanel.Dock        = PanelDock::Floating;
+            pluginPanel.DefaultOpen = false;
+            m_Panels.Register(pluginPanel, panel.Draw);
+        }
         auto controller = EditorAssetImportService::Create(std::move(project));
         if (const auto* error = std::get_if<AssetError>(&controller))
         {
@@ -86,6 +101,7 @@ namespace Kans
         m_PhysicsMaterialPanel.Bind(m_AssetImports.get());
         m_RenderTexturePanel.Bind(m_AssetImports.get());
         m_ProjectSettingsPanel.Bind(m_ProjectFile);
+        m_PluginsPanel.Bind(m_ProjectFile);
         m_UIDesignerPanel.Bind(m_AssetImports.get());
         ComponentEditors::SetMotionPresetDirectories(SecondaryMotionEditing::BuiltInPresetDirectory(),
                                                      SecondaryMotionEditing::ProjectPresetDirectory(config.RootDirectory));
@@ -308,7 +324,8 @@ namespace Kans
         const auto&     root    = m_AssetImports->GetConfig().AssetDirectory;
         for (const auto& source : std::get<std::vector<SourceAssetMetadata>>(sources))
         {
-            if (!source.Exists || std::filesystem::weakly_canonical(root / source.Path.GetPath(), error) != dropped)
+            if (!source.Exists ||
+                std::filesystem::weakly_canonical(m_AssetImports->ResolveSourcePath(source.Path), error) != dropped)
                 continue;
             const auto importer = CreateDefaultImporterRegistry();
             const auto selected = std::get<ImporterRegistry>(importer).Resolve(file, source.Import.Importer);
@@ -410,8 +427,7 @@ namespace Kans
             auto sources = m_AssetImports->GetSources();
             if (const auto* list = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
                 for (const auto& source : *list)
-                    if (std::filesystem::weakly_canonical(
-                            m_AssetImports->GetConfig().AssetDirectory / source.Path.GetPath(), error)
+                    if (std::filesystem::weakly_canonical(m_AssetImports->ResolveSourcePath(source.Path), error)
                             .u8string() == key)
                         for (const auto& product : m_AssetImports->GetRuntimeAssetRegistry()->GetAllProducts())
                             if (product.Metadata.assetID.GetSourceID() == source.sourceAssetID &&
@@ -460,8 +476,7 @@ namespace Kans
         auto            sources = m_AssetImports->GetSources();
         if (const auto* list = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
             for (const auto& source : *list)
-                if (std::filesystem::weakly_canonical(m_AssetImports->GetConfig().AssetDirectory / source.Path.GetPath(),
-                                                      error) == wanted)
+                if (std::filesystem::weakly_canonical(m_AssetImports->ResolveSourcePath(source.Path), error) == wanted)
                     for (const auto& product : m_AssetImports->GetRuntimeAssetRegistry()->GetAllProducts())
                         if (product.Metadata.assetID.GetSourceID() == source.sourceAssetID &&
                             product.Metadata.Type == AssetType::Material && product.Target == EditorAssetTarget)
@@ -471,6 +486,11 @@ namespace Kans
 
     void EditorLayer::CreateMaterialInstance(const std::filesystem::path& file)
     {
+        if (m_AssetImports && m_AssetImports->IsReadOnly(file))
+        {
+            Record(AssetError {AssetErrorCode::InvalidArgument, "Plugin content is read-only"});
+            return;
+        }
         const AssetID parent = FindPublishedMaterial(file);
         if (!parent.IsValid())
         {
@@ -511,8 +531,8 @@ namespace Kans
         {
             std::error_code error;
             for (const auto& meta : *list)
-                if (std::filesystem::weakly_canonical(m_AssetImports->GetConfig().AssetDirectory / meta.Path.GetPath(),
-                                                      error) == std::filesystem::weakly_canonical(target, error))
+                if (std::filesystem::weakly_canonical(m_AssetImports->ResolveSourcePath(meta.Path), error) ==
+                    std::filesystem::weakly_canonical(target, error))
                 {
                     AssetBuildOptions options;
                     options.Target = EditorAssetTarget;
@@ -579,7 +599,8 @@ namespace Kans
         const auto      target = std::filesystem::weakly_canonical(file, error);
         const auto&     root   = m_AssetImports->GetConfig().AssetDirectory;
         for (const auto& source : std::get<std::vector<SourceAssetMetadata>>(sources))
-            if (source.Exists && std::filesystem::weakly_canonical(root / source.Path.GetPath(), error) == target)
+            if (source.Exists &&
+                std::filesystem::weakly_canonical(m_AssetImports->ResolveSourcePath(source.Path), error) == target)
             {
                 AssetBuildOptions options;
                 options.Target = EditorAssetTarget;
@@ -702,6 +723,8 @@ namespace Kans
 
     std::variant<std::monostate, AssetError> EditorLayer::SaveScene(const std::filesystem::path& path)
     {
+        if (m_AssetImports && m_AssetImports->IsReadOnly(path))
+            return AssetError {AssetErrorCode::InvalidArgument, "Plugin content is read-only"};
         if (m_Play.IsActive())
             return AssetError {AssetErrorCode::InvalidArgument, "Stop play mode before saving the scene"};
         m_TimelinePanel.StopPreview(); // Saves the scene, not a previewed frame.
@@ -885,7 +908,7 @@ namespace Kans
                 for (const auto& source : sources())
                     if (source.sourceAssetID == id.GetSourceID())
                         return Vfx::DecodeModule(
-                            YAML::LoadFile((m_AssetImports->GetConfig().AssetDirectory / source.Path.GetPath()).string()));
+                            YAML::LoadFile((m_AssetImports->ResolveSourcePath(source.Path)).string()));
                 throw std::invalid_argument("Missing VFX script " + id.ToString());
             });
             // Emitters and systems whose products depend on the module's products.
@@ -897,7 +920,7 @@ namespace Kans
                 SourceAssetID  id;
                 std::error_code ec;
                 for (const auto& source : all)
-                    if (std::filesystem::equivalent(m_AssetImports->GetConfig().AssetDirectory / source.Path.GetPath(), module, ec))
+                    if (std::filesystem::equivalent(m_AssetImports->ResolveSourcePath(source.Path), module, ec))
                         id = source.sourceAssetID;
                 if (!id.IsValid())
                     return std::nullopt;
@@ -934,7 +957,7 @@ namespace Kans
             if (record.Metadata.Type == type)
                 for (const auto& source : sources)
                     if (source.sourceAssetID == record.Metadata.assetID.GetSourceID())
-                        r.emplace_back(record.Metadata.assetID, m_AssetImports->GetConfig().AssetDirectory / source.Path.GetPath());
+                        r.emplace_back(record.Metadata.assetID, m_AssetImports->ResolveSourcePath(source.Path));
         return r;
     }
 

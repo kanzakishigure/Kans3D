@@ -1,16 +1,17 @@
 #include "VfxSystemEditorPanel.h"
-#include <algorithm>
-#include <cstring>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <algorithm>
+#include <cstring>
 #include <misc/cpp/imgui_stdlib.h>
 #include "Kans3D/ImGui/EditorTheme.h"
+#include "KansEditorCore/EditorAssetImportService.h"
+#include "KansEditorCore/UI/SourceBuild.h"
 #include "Panels/VfxModuleEditing.h"
 #include "UI/CurveEditor.h"
 #include "UI/EditorIcons.h"
 #include "UI/GradientEditor.h"
 #include "UI/PropertyGrid.h"
-#include "KansEditorCore/UI/SourceBuild.h"
 
 namespace Kans
 {
@@ -257,6 +258,11 @@ namespace Kans
 
     bool VfxSystemEditorPanel::Save()
     {
+        if (m_Service && m_Service->IsReadOnly(m_Document.File()))
+        {
+            m_Status = "Plugin content is read-only.";
+            return false;
+        }
         if (auto error = m_Document.Save())
         {
             m_Status = *error;

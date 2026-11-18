@@ -5,6 +5,7 @@
 #include "Kans3D/Physics/PhysicsWorld.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Script/ScriptEngine.h"
+#include "ComponentRegistry.h"
 #include "Entity.h"
 #include "Scene.h"
 
@@ -155,20 +156,21 @@ namespace Kans
 
     bool operator==(const EntitySnapshot& a, const EntitySnapshot& b)
     {
-        return a.ID == b.ID && a.Tag == b.Tag && Same(a.Transform, b.Transform) &&
-               Same(a.Relationship, b.Relationship) && Same(a.Camera, b.Camera) && Same(a.Sprite, b.Sprite) &&
-               Same(a.Text, b.Text) && Same(a.UIScreen, b.UIScreen) && Same(a.UIWorld, b.UIWorld) &&
-               Same(a.Model, b.Model) && Same(a.Editable, b.Editable) && Same(a.Prefab, b.Prefab) &&
-               Same(a.PrefabParent, b.PrefabParent) && Same(a.Animator, b.Animator) && Same(a.IK, b.IK) &&
-               Same(a.AimConstraint, b.AimConstraint) && Same(a.Timeline, b.Timeline) && Same(a.Active, b.Active) &&
-               Same(a.ShapeKeys, b.ShapeKeys) && Same(a.MaterialDrivers, b.MaterialDrivers) &&
-               Same(a.DirLight, b.DirLight) && Same(a.AreaLight, b.AreaLight) && Same(a.FogVolume, b.FogVolume) &&
-               Same(a.SpotLight, b.SpotLight) && Same(a.PointLight, b.PointLight) && Same(a.Script, b.Script) &&
-               Same(a.AudioSource, b.AudioSource) && Same(a.AudioListener, b.AudioListener) &&
-               Same(a.RigidBody, b.RigidBody) && Same(a.BoxCollider, b.BoxCollider) &&
-               Same(a.SphereCollider, b.SphereCollider) && Same(a.CapsuleCollider, b.CapsuleCollider) &&
-               Same(a.MeshCollider, b.MeshCollider) && Same(a.Vehicle, b.Vehicle) && Same(a.Ragdoll, b.Ragdoll) &&
-               Same(a.Particles, b.Particles) && Same(a.ForceField, b.ForceField) && Same(a.GlobalWind, b.GlobalWind) &&
+        return a.PluginComponents == b.PluginComponents && a.ID == b.ID && a.Tag == b.Tag &&
+               Same(a.Transform, b.Transform) && Same(a.Relationship, b.Relationship) && Same(a.Camera, b.Camera) &&
+               Same(a.Sprite, b.Sprite) && Same(a.Text, b.Text) && Same(a.UIScreen, b.UIScreen) &&
+               Same(a.UIWorld, b.UIWorld) && Same(a.Model, b.Model) && Same(a.Editable, b.Editable) &&
+               Same(a.Prefab, b.Prefab) && Same(a.PrefabParent, b.PrefabParent) && Same(a.Animator, b.Animator) &&
+               Same(a.IK, b.IK) && Same(a.AimConstraint, b.AimConstraint) && Same(a.Timeline, b.Timeline) &&
+               Same(a.Active, b.Active) && Same(a.ShapeKeys, b.ShapeKeys) &&
+               Same(a.MaterialDrivers, b.MaterialDrivers) && Same(a.DirLight, b.DirLight) &&
+               Same(a.AreaLight, b.AreaLight) && Same(a.FogVolume, b.FogVolume) && Same(a.SpotLight, b.SpotLight) &&
+               Same(a.PointLight, b.PointLight) && Same(a.Script, b.Script) && Same(a.AudioSource, b.AudioSource) &&
+               Same(a.AudioListener, b.AudioListener) && Same(a.RigidBody, b.RigidBody) &&
+               Same(a.BoxCollider, b.BoxCollider) && Same(a.SphereCollider, b.SphereCollider) &&
+               Same(a.CapsuleCollider, b.CapsuleCollider) && Same(a.MeshCollider, b.MeshCollider) &&
+               Same(a.Vehicle, b.Vehicle) && Same(a.Ragdoll, b.Ragdoll) && Same(a.Particles, b.Particles) &&
+               Same(a.ForceField, b.ForceField) && Same(a.GlobalWind, b.GlobalWind) &&
                Same(a.CharacterController, b.CharacterController) && Same(a.Joint, b.Joint) &&
                Same(a.SpringBone, b.SpringBone) && Same(a.Cloth, b.Cloth) && Same(a.MotionCollider, b.MotionCollider);
     }
@@ -266,6 +268,9 @@ namespace Kans
             Kans::Capture(entity, item.Cloth);
             Kans::Capture(entity, item.MotionCollider);
 
+            for (const auto& entry : ComponentRegistry::Runtime().Entries())
+                if (entry.Serialize && entry.Has(entity))
+                    item.PluginComponents.emplace(entry.Name, entry.Serialize(entity));
             snapshot.Entities.push_back(std::move(item));
         }
         std::sort(snapshot.Entities.begin(), snapshot.Entities.end(), [](const auto& a, const auto& b) {
@@ -350,6 +355,15 @@ namespace Kans
             Kans::Restore(entity, item.SpringBone);
             Kans::Restore(entity, item.Cloth);
             Kans::Restore(entity, item.MotionCollider);
+            for (const auto& entry : ComponentRegistry::Runtime().Entries())
+                if (entry.Serialize)
+                {
+                    const auto found = item.PluginComponents.find(entry.Name);
+                    if (found != item.PluginComponents.end())
+                        entry.Deserialize(entity, found->second);
+                    else if (entry.Has(entity))
+                        entry.Remove(entity);
+                }
         }
         m_RootOrder         = snapshot.RootOrder;
         m_ReconcilingPrefab = true;

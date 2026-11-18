@@ -142,6 +142,11 @@ namespace Kans
 
     void MaterialEditorPanel::Create(const std::filesystem::path& directory)
     {
+        if (m_Service && m_Service->IsReadOnly(directory))
+        {
+            m_Status = "Plugin content is read-only.";
+            return;
+        }
         std::filesystem::path file;
         for (int index = 0; index < 1000; ++index)
         {
@@ -531,7 +536,7 @@ namespace Kans
                 return std::nullopt;
             const auto& root = m_Service->GetConfig().AssetDirectory;
             for (const auto& source : std::get<std::vector<SourceAssetMetadata>>(sources))
-                if (source.Exists && Canonical(root / source.Path.GetPath()) == dropped)
+                if (source.Exists && Canonical(m_Service->ResolveSourcePath(source.Path)) == dropped)
                     return source;
             return std::nullopt;
         };
@@ -594,6 +599,11 @@ namespace Kans
 
     void MaterialEditorPanel::Save()
     {
+        if (m_Service && m_Service->IsReadOnly(m_File))
+        {
+            m_Status = "Plugin content is read-only.";
+            return;
+        }
         // Values the current Shader does not declare would fail the import.
         if (const auto* schema = Schema())
         {
@@ -616,7 +626,7 @@ namespace Kans
             const auto  file = Canonical(m_File);
             const auto& root = m_Service->GetConfig().AssetDirectory;
             for (const auto& source : std::get<std::vector<SourceAssetMetadata>>(sources))
-                if (source.Exists && Canonical(root / source.Path.GetPath()) == file)
+                if (source.Exists && Canonical(m_Service->ResolveSourcePath(source.Path)) == file)
                     return source.sourceAssetID;
             return std::nullopt;
         };
@@ -1175,6 +1185,8 @@ namespace Kans
             return;
         }
         ImGui::TextUnformatted(m_File.filename().u8string().c_str());
+        if (m_Service && m_Service->IsReadOnly(m_File))
+            ImGui::TextDisabled("Read-only plugin content");
         if (m_Dirty)
         {
             ImGui::SameLine();

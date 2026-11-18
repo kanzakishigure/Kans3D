@@ -1,0 +1,4 @@
+magic: KansMaterial
+version: 4
+name: Example Plugin Color
+shader: e100000000000001:0000000000000001

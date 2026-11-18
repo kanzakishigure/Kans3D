@@ -45,6 +45,10 @@ namespace Kans
         bool Save();
         bool Undo(Scene& scene);
         bool Redo(Scene& scene);
+        void SetReadOnly(std::function<bool(const std::filesystem::path&)> readOnly)
+        {
+            m_ReadOnly = std::move(readOnly);
+        }
         void SetSavedCallback(std::function<void(const std::filesystem::path&)> saved) { m_Saved = std::move(saved); }
 
         // The map over the cloth, pins, the brush and the hovered particle's spheres.
@@ -81,6 +85,7 @@ namespace Kans
         int                                                   m_ImportChannel = 0;
         float                                                 m_ImportScale   = 1.0f;
         std::string                                           m_Status;
+        std::function<bool(const std::filesystem::path&)>     m_ReadOnly;
         std::function<void(const std::filesystem::path&)>    m_Saved;
         uint64_t                                              m_RefreshedFrame = UINT64_MAX;
     };

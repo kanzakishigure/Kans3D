@@ -97,6 +97,9 @@ namespace Kans
             spec(
                 PanelID::UIDesigner, "UI Designer", ICON_FA_DESKTOP, PanelCategory::Assets, PanelDock::Floating, false),
             [this] { m_UIDesignerPanel.Draw(); });
+        m_Panels.Register(
+            spec(PanelID::Plugins, "Plugins", ICON_FA_CUBES, PanelCategory::Assets, PanelDock::Floating, false),
+            [this] { m_PluginsPanel.Draw(); });
         m_Panels.Register(spec(PanelID::ProjectSettings,
                                "Project Settings",
                                ICON_FA_GEAR,
@@ -766,6 +769,13 @@ namespace Kans
                 }
                 Widgets::EndMenu();
             }
+            ImGui::Separator();
+            if (Widgets::IconMenuItem(ICON_FA_CUBES, "Plugins"))
+                m_Panels.Open(PanelID::Plugins);
+            if (m_AssetImports)
+                for (const auto& item : m_AssetImports->GetPluginHost().MenuItems())
+                    if (ImGui::MenuItem(item.Name.c_str()))
+                        item.Execute();
             Widgets::EndMenu();
         }
         // Play, pause and step live on the band's play controls (and Ctrl+P / Ctrl+Shift+P).

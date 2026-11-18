@@ -27,6 +27,9 @@ namespace Kans
         {
             if (project.Name.empty())
                 return ProjectYaml::Error(AssetErrorCode::InvalidData, file, "Missing or empty Name");
+            for (const auto& [name, enabled] : project.Plugins)
+                if (!IsPluginName(name))
+                    return ProjectYaml::Error(AssetErrorCode::InvalidData, file, "Invalid plugin override " + name);
             if (project.FormatVersion > 1)
                 return ProjectYaml::Error(AssetErrorCode::UnsupportedVersion, file, "Unsupported FormatVersion");
             if (!RelativePath(project.StartupScene) || !RelativePath(project.AssetDirectory) ||
@@ -72,6 +75,19 @@ namespace Kans
                 project.AssetDirectory = fs::u8path(node["AssetDirectory"].as<std::string>());
             if (node["CacheDirectory"])
                 project.CacheDirectory = fs::u8path(node["CacheDirectory"].as<std::string>());
+            if (node["Plugins"])
+            {
+                if (!node["Plugins"].IsMap())
+                    return ProjectYaml::Error(
+                        AssetErrorCode::InvalidData, kproj, "Plugins must be a name to enabled mapping");
+                for (const auto& pair : node["Plugins"])
+                {
+                    const auto name = pair.first.as<std::string>();
+                    if (!IsPluginName(name) || !project.Plugins.emplace(name, pair.second.as<bool>()).second)
+                        return ProjectYaml::Error(
+                            AssetErrorCode::InvalidData, kproj, "Invalid or duplicate plugin override " + name);
+                }
+            }
             if (node["PhysicsSettings"])
                 PhysicsYaml::Decode(node["PhysicsSettings"], project.Physics);
             if (auto error = Validate(kproj, project))
@@ -108,7 +124,15 @@ namespace Kans
             << project.FormatVersion << YAML::Key << "StartupScene" << YAML::Value
             << project.StartupScene.generic_u8string() << YAML::Key << "AssetDirectory" << YAML::Value
             << project.AssetDirectory.generic_u8string() << YAML::Key << "CacheDirectory" << YAML::Value
-            << project.CacheDirectory.generic_u8string() << YAML::EndMap;
+            << project.CacheDirectory.generic_u8string();
+        if (!project.Plugins.empty())
+        {
+            out << YAML::Key << "Plugins" << YAML::Value << YAML::BeginMap;
+            for (const auto& [name, enabled] : project.Plugins)
+                out << YAML::Key << name << YAML::Value << enabled;
+            out << YAML::EndMap;
+        }
+        out << YAML::EndMap;
         return ProjectYaml::Save(kproj, out);
     }
 
@@ -137,6 +161,7 @@ namespace Kans
     ProjectConfig MakeProjectConfig(const fs::path& root, const ProjectFile& project)
     {
         ProjectConfig config;
+        config.Plugins        = project.Plugins;
         config.Physics        = project.Physics;
         config.Name           = project.Name;
         config.RootDirectory  = fs::absolute(root).lexically_normal();

@@ -5,9 +5,10 @@
 #include <fstream>
 #include <misc/cpp/imgui_stdlib.h>
 #include "Kans3D/ImGui/EditorTheme.h"
+#include "KansEditorCore/EditorAssetImportService.h"
+#include "KansEditorCore/UI/SourceBuild.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
-#include "KansEditorCore/UI/SourceBuild.h"
 
 namespace Kans
 {
@@ -143,6 +144,11 @@ namespace Kans
 
     void UIDesignerPanel::Save()
     {
+        if (m_Service && m_Service->IsReadOnly(m_File))
+        {
+            m_Status = "Plugin content is read-only.";
+            return;
+        }
         if (!m_Loaded)
             return;
         if (auto problem = ValidateUI(m_Data); std::holds_alternative<AssetError>(problem))

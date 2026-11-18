@@ -202,7 +202,7 @@ namespace Kans
     std::filesystem::path ProductImportPanel::SelectedFile() const
     {
         const auto* source = Selected();
-        return source ? m_Service->GetConfig().AssetDirectory / source->Path.GetPath() : std::filesystem::path();
+        return source ? m_Service->ResolveSourcePath(source->Path) : std::filesystem::path();
     }
 
     bool ProductImportPanel::IsImported() const
@@ -245,7 +245,8 @@ namespace Kans
             m_Error = "The settings contain an invalid key or value; fix them in the Developer section.";
             return;
         }
-        Record(m_Service->SetSourceImportConfiguration(m_Selected, configuration));
+        if (!m_Service->IsReadOnly(SelectedFile()))
+            Record(m_Service->SetSourceImportConfiguration(m_Selected, configuration));
         if (!m_Error.empty())
             return;
         m_Draft.Reset(m_Draft.Schema(), m_Draft.Settings()); // Saved now.
@@ -280,7 +281,7 @@ namespace Kans
         ReloadSources();
         for (const auto& source : m_Sources)
         {
-            const auto full = m_Service->GetConfig().AssetDirectory / source.Path.GetPath();
+            const auto full = m_Service->ResolveSourcePath(source.Path);
             error.clear();
             if (source.Exists && !source.Missing && std::filesystem::equivalent(full, absolute, error) && !error)
             {
@@ -329,7 +330,11 @@ namespace Kans
                     DrawInspect(busy);
                     break;
                 case Stage::Configure:
+                    if (m_Service->IsReadOnly(SelectedFile()))
+                        Hint("Plugin content: import settings are read-only.");
+                    ImGui::BeginDisabled(m_Service->IsReadOnly(SelectedFile()));
                     DrawConfigure(busy);
+                    ImGui::EndDisabled();
                     break;
                 case Stage::Import:
                     DrawImport(status);

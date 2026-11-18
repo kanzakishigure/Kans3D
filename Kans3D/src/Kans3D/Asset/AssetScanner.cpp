@@ -33,7 +33,8 @@ namespace Kans
                    name.find(".kmeta.tmp-") != std::string::npos;
         }
 
-        std::variant<SourceAssetMetadata, AssetError> ReadSource(const fs::path& file, const fs::path& root)
+        std::variant<SourceAssetMetadata, AssetError>
+        ReadSource(const fs::path& file, const fs::path& root, bool readOnly)
         {
             const AssetPath logicalPath(file.lexically_relative(root));
             if (!logicalPath.IsValid())
@@ -64,6 +65,9 @@ namespace Kans
             {
                 if (error->Code != AssetErrorCode::NotFound || !missing)
                     return *error;
+                if (readOnly)
+                    return Error(
+                        AssetErrorCode::NotFound, metaPath, "Plugin content requires a shipped .kmeta identity");
                 metadata.Path          = logicalPath;
                 metadata.sourceAssetID = SourceAssetID::Generate();
                 static const auto registry = CreateDefaultImporterRegistry();
@@ -104,7 +108,7 @@ namespace Kans
         return true;
     }
 
-    std::variant<AssetScanResult, AssetError> AssetScanner::Scan(const std::filesystem::path& assetRoot)
+    std::variant<AssetScanResult, AssetError> AssetScanner::Scan(const std::filesystem::path& assetRoot, bool readOnly)
     {
         if (assetRoot.empty())
             return Error(AssetErrorCode::InvalidArgument, assetRoot, "Empty asset root");
@@ -120,10 +124,11 @@ namespace Kans
             return Error(AssetErrorCode::IoError, root, ec.message());
         if (!directory)
             return Error(AssetErrorCode::InvalidArgument, root, "Asset root must be a directory");
-        return ScanNode(root);
+        return ScanNode(root, readOnly);
     }
 
-    std::variant<AssetScanResult, AssetError> AssetScanner::ScanNode(const std::filesystem::path& assetRoot)
+    std::variant<AssetScanResult, AssetError> AssetScanner::ScanNode(const std::filesystem::path& assetRoot,
+                                                                     bool                         readOnly)
     {
         AssetScanResult                  result;
         std::vector<fs::path>            files;
@@ -158,7 +163,7 @@ namespace Kans
         std::unordered_map<SourceAssetID, size_t> occurrences;
         for (const auto& file : files)
         {
-            auto loaded = ReadSource(file, assetRoot);
+            auto loaded = ReadSource(file, assetRoot, readOnly);
             if (const auto* error = std::get_if<AssetError>(&loaded))
             {
                 result.Errors.push_back(*error);

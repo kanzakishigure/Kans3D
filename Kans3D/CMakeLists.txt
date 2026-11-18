@@ -114,3 +114,6 @@ target_link_libraries(Kans3D PRIVATE PhysX PhysXCooking PhysXExtensions
 file(GLOB_RECURSE KANS_PHYSX_IMPLEMENTATION CONFIGURE_DEPENDS
     "${KANS3D_SRC}/Kans3D/Physics/PhysX/*.cpp")
 kans_use_physx_sdk(${KANS_PHYSX_IMPLEMENTATION})
+
+set_source_files_properties("${KANS3D_SRC}/Kans3D/Plugin/PluginDirectory.cpp" PROPERTIES
+    COMPILE_DEFINITIONS KANS_ENGINE_PLUGIN_DIR="${PROJECT_SOURCE_DIR}/Plugins")

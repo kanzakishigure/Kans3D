@@ -142,6 +142,7 @@ namespace Kans
         void DrawList();
         void DrawPreview();
         void DrawContextMenus();
+        std::filesystem::path NavigationRoot(const std::filesystem::path& file) const;
         void DrawDeleteDialog();
         void DrawIcon(const Browser::Entry& entry, ImVec2 min, ImVec2 max);
         void DrawStatusBadge(const Browser::Entry& entry, ImVec2 corner);

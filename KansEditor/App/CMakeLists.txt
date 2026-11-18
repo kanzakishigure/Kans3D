@@ -67,6 +67,10 @@ add_custom_target(KansEditorData ALL
         "${KANSEDITOR_DIR}/KansEditor.ini" "$<TARGET_FILE_DIR:KansEditor>/KansEditor.ini"
     VERBATIM)
 
-add_dependencies(KansEditor KansEditorData)
+add_custom_target(KansEditorPluginData ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/Plugins" "$<TARGET_FILE_DIR:KansEditor>/Plugins"
+    VERBATIM)
+set_target_properties(KansEditorPluginData PROPERTIES FOLDER "Plugins")
+add_dependencies(KansEditor KansEditorData KansEditorPluginData)
 set_target_properties(KansEditorData PROPERTIES FOLDER "Editor")
 # ScriptCore is staged into Resources/Scripts by the root CMakeLists (KansEditorScripts).

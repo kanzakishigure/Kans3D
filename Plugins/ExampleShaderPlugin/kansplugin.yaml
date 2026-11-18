@@ -1,0 +1,13 @@
+# V1: strict semver; ranges support *, exact, comparisons, ^, ~ and ||.
+# Dependencies is a name -> compatible range mapping. Paths stay inside this directory.
+Name: ExampleShaderPlugin
+FriendlyName: Example Shader Plugin
+Version: 1.0.0
+Description: Minimal shader namespace, content mount and compiled render feature example.
+EngineVersion: '>=1.0.0 <2.0.0'
+Type: Runtime
+EnabledByDefault: false
+Dependencies: {}
+Modules: [ExampleShaderModule]
+Shaders: Shaders
+Content: Content

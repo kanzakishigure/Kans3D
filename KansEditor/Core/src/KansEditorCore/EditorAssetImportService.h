@@ -92,6 +92,11 @@ namespace Kans
         Ref<const AssetRegistry> GetRuntimeAssetRegistry() const { return m_Project->GetRuntimeAssetRegistry(); }
         [[nodiscard]] std::variant<std::vector<AssetError>, AssetError> GetProjectWarnings() const;
 
+        PluginHost&                                         GetPluginHost() { return m_Project->GetPluginHost(); }
+        const std::map<std::string, std::filesystem::path>& GetContentMounts() const { return m_ContentMounts; }
+        std::filesystem::path                               ResolveSourcePath(const AssetPath& path) const;
+        AssetPath                                           LogicalSourcePath(const std::filesystem::path& file) const;
+        bool                                                IsReadOnly(const std::filesystem::path& file) const;
         const ProjectConfig&         GetConfig() const { return m_Config; }
         const std::filesystem::path& GetProductDirectory() const { return m_ProductDirectory; }
 
@@ -110,6 +115,8 @@ namespace Kans
         };
         Scope<Project>                                               m_Project;
         ProjectConfig                                                m_Config;
+        std::map<std::string, std::filesystem::path>                 m_ContentMounts;
+        std::set<std::string>                                        m_ReadOnlyMounts;
         std::filesystem::path                                        m_ProductDirectory;
         std::thread::id                                              m_Owner;
         bool                                                         m_Closed = false;

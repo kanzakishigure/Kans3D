@@ -148,6 +148,7 @@ namespace Kans
             context.SourceID         = source;
             context.SourceFile       = inputs.SourceFile;
             context.AssetRoot        = inputs.AssetRoot;
+            context.ShaderIncludeRoots = inputs.ShaderIncludeRoots;
             context.Target           = options.Target;
             context.StagingDirectory = stage.Path;
             context.Settings         = inputs.Source.Import.Settings;

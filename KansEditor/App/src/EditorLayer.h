@@ -28,6 +28,7 @@
 #include "Panels/HierarchyPanel.h"
 #include "Panels/MaterialEditorPanel.h"
 #include "Panels/PhysicsMaterialPanel.h"
+#include "Panels/PluginsPanel.h"
 #include "Panels/ProductImportPanel.h"
 #include "Panels/ProjectSettingsPanel.h"
 #include "Panels/PropertiesPanel.h"
@@ -60,6 +61,7 @@ namespace Kans
         inline constexpr const char* AnimatorGraph  = "AnimatorGraph";
         inline constexpr const char* Timeline       = "Timeline";
         inline constexpr const char* UIDesigner     = "UIDesigner";
+        inline constexpr const char* Plugins         = "Plugins";
         inline constexpr const char* ProjectSettings = "ProjectSettings";
         inline constexpr const char* RenderTexture   = "RenderTexture";
         inline constexpr const char* PhysicsMaterial = "PhysicsMaterial";
@@ -360,6 +362,7 @@ namespace Kans
         AnimatorGraphPanel  m_AnimatorGraphPanel {m_HierarchyPanel};
         TimelinePanel       m_TimelinePanel {m_HierarchyPanel};
         UIDesignerPanel     m_UIDesignerPanel;
+        PluginsPanel         m_PluginsPanel;
         ProjectSettingsPanel m_ProjectSettingsPanel;
         PhysicsMaterialPanel m_PhysicsMaterialPanel;
         RenderTexturePanel   m_RenderTexturePanel;

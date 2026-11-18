@@ -294,3 +294,5 @@ if(DOTNET)
         set_target_properties(KansScriptsAot PROPERTIES FOLDER "Core")
     endif()
 endif()
+
+include("${PROJECT_SOURCE_DIR}/script/Plugins.cmake")

@@ -64,6 +64,11 @@ namespace Kans
     {
         if (!m_Session.IsActive())
             return false;
+        if (m_ReadOnly && m_ReadOnly(m_Session.GetFile()))
+        {
+            m_Status = "Plugin content is read-only";
+            return false;
+        }
         if (auto error = m_Session.Save())
         {
             m_Status = error->Message;

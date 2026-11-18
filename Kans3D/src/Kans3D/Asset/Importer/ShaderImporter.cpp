@@ -7,6 +7,8 @@
 #include "Kans3D/Asset/Runtime/EngineShaderText.h"
 #include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "Kans3D/Asset/Storage/ProductFiles.h"
+#include "Kans3D/Core/Hash.h"
+#include "Kans3D/Core/Utilities/StringUtils.h"
 #include "ShaderProgramSource.h"
 
 namespace Kans
@@ -37,7 +39,21 @@ namespace Kans
                     return &found->second;
                 if (m_Embedded)
                     return nullptr; // Internal programs resolve exclusively from supplied memory.
-                const auto file = (m_Context.AssetRoot / fs::u8path(name)).lexically_normal();
+                auto file   = (m_Context.AssetRoot / fs::u8path(name)).lexically_normal();
+                bool plugin = name.rfind("__plugins__/", 0) == 0;
+                if (plugin)
+                {
+                    const auto end = name.find('/', 12);
+                    if (end == std::string::npos)
+                        return nullptr;
+                    const auto root = m_Context.ShaderIncludeRoots.find(name.substr(12, end - 12));
+                    if (root == m_Context.ShaderIncludeRoots.end())
+                        return nullptr;
+                    auto resolved = ResolveProductFile(root->second, AssetPath(fs::u8path(name.substr(end + 1))));
+                    if (std::holds_alternative<AssetError>(resolved))
+                        return nullptr;
+                    file = std::get<fs::path>(resolved);
+                }
                 if (!m_Discover && file != m_Context.SourceFile.lexically_normal() &&
                     !m_Context.SourceInputs.count(file))
                 {
@@ -53,7 +69,14 @@ namespace Kans
                     return nullptr;
                 m_TotalBytes += value.size();
                 if (file != m_Context.SourceFile.lexically_normal())
-                    m_Files.push_back(file);
+                {
+                    if (plugin)
+                        m_PluginFiles.emplace(file,
+                                              SourceAssetID::FromString(
+                                                  Utils::Uint64ToHex(Hash::Generate64MD5Hash("PluginShader/" + name))));
+                    else
+                        m_Files.push_back(file);
+                }
                 return &m_Texts.emplace(name, std::string(reinterpret_cast<const char*>(value.data()), value.size()))
                             .first->second;
             }
@@ -64,6 +87,16 @@ namespace Kans
                 return logical.IsValid() ? logical.ToString() : std::string();
             }
             const std::vector<fs::path>& Files() const { return m_Files; }
+            const std::map<fs::path, SourceAssetID>& PluginFiles() const { return m_PluginFiles; }
+            const std::string*                       PluginInclude(const std::string& name)
+            {
+                const auto slash = name.find('/');
+                if (slash == std::string::npos || !m_Context.ShaderIncludeRoots.count(name.substr(0, slash)))
+                    return nullptr;
+                const AssetPath local(fs::u8path(name.substr(slash + 1)));
+                return local.IsValid() ? Find("__plugins__/" + name.substr(0, slash) + "/" + local.ToString()) :
+                                         nullptr;
+            }
             const std::string*           FindEmbeddedRoot(const std::string& name) const
             {
                 const auto found = m_Texts.find(name);
@@ -77,6 +110,7 @@ namespace Kans
             bool                               m_Embedded;
             std::map<std::string, std::string> m_Texts;
             std::vector<fs::path>              m_Files;
+            std::map<fs::path, SourceAssetID>  m_PluginFiles;
             fs::path                           m_Undeclared;
             uint64_t                           m_TotalBytes = 0;
         };
@@ -99,9 +133,14 @@ namespace Kans
                     {
                         // Engine headers are covered by GetEnvironmentFingerprint(), not project file inputs.
                         const auto* text = FindEngineShaderInclude(name);
-                        if (!text)
-                            return Failure("Unknown engine include");
-                        return Result(name, *text);
+                        if (text)
+                            return Result(name, *text);
+                        text = m_Inputs.PluginInclude(name);
+                        if (text)
+                            return Result("__plugins__/" + name, *text);
+                        m_Error = "Plugin " + name.substr(0, name.find('/')) +
+                                  " is disabled, unavailable, or has no shader include " + name;
+                        return Failure(m_Error.c_str());
                     }
                     if (name.empty() || name.find('\\') != std::string::npos || name.find(':') != std::string::npos)
                         return Failure("Invalid include path");
@@ -149,6 +188,7 @@ namespace Kans
                 m_Failure = {"", 0, message, std::strlen(message), nullptr};
                 return &m_Failure;
             }
+            std::string            m_Error;
             ShaderInputs&          m_Inputs;
             shaderc_include_result m_Failure {};
         };
@@ -358,6 +398,7 @@ namespace Kans
             return std::move(*error);
         ImportInputs result;
         result.SourceFiles = inputs.Files();
+        result.BuiltinSourceFiles = inputs.PluginFiles();
         return result;
     }
 

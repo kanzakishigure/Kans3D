@@ -30,10 +30,12 @@ namespace Kans
         // Skips dotfiles, symlinks, .kmeta sidecars and .kmeta.tmp-* files, and
         // directories named Cache, Intermediate or Products (case-insensitive).
         // Created sidecars persist even if a later part of the scan fails.
-        [[nodiscard]] static std::variant<AssetScanResult, AssetError> Scan(const std::filesystem::path& assetRoot);
+        [[nodiscard]] static std::variant<AssetScanResult, AssetError> Scan(const std::filesystem::path& assetRoot,
+                                                                            bool readOnly = false);
 
     private:
-        static std::variant<AssetScanResult, AssetError> ScanNode(const std::filesystem::path& assetRoot);
+        static std::variant<AssetScanResult, AssetError> ScanNode(const std::filesystem::path& assetRoot,
+                                                                  bool                         readOnly);
     };
 
 } // namespace Kans

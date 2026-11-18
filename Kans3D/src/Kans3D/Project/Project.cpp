@@ -95,6 +95,7 @@ namespace Kans
                 return AssetError {error->Code, "Project is in use by another process: " + error->Message};
             project->m_Lock = std::get<Scope<ProductStoreLock>>(std::move(lock));
 
+            project->DiscoverPluginMounts();
             auto recovered = project->RecoverInterruptedMove();
             if (auto* error = std::get_if<AssetError>(&recovered))
                 project->m_AssetWarnings.push_back(std::move(*error));
@@ -117,6 +118,10 @@ namespace Kans
             auto scanned = project->ScanAssets();
             if (auto* error = std::get_if<AssetError>(&scanned))
                 return std::move(*error);
+            auto modules = CompiledRuntimePluginModules();
+            modules.insert(modules.end(), options.EditorModules.begin(), options.EditorModules.end());
+            if (auto error = project->m_PluginHost.Start(project->m_Plugins, modules, options.Editor))
+                project->m_AssetWarnings.push_back(*error);
             return project;
         }
         catch (const std::exception& error)
@@ -128,7 +133,28 @@ namespace Kans
     std::variant<std::monostate, AssetError> Project::RefreshAssets()
     {
         m_AssetWarnings.clear();
+        DiscoverPluginMounts();
         return ScanAssets();
+    }
+
+    void Project::DiscoverPluginMounts()
+    {
+        m_Plugins = DiscoverPlugins(EnginePluginDirectory(), m_Config.RootDirectory / "Plugins", m_Config.Plugins);
+        m_ContentMounts.clear();
+        m_ShaderRoots.clear();
+        for (const auto& diagnostic : m_Plugins.Diagnostics)
+            m_AssetWarnings.push_back({AssetErrorCode::InvalidData, diagnostic});
+        for (const auto& [name, plugin] : m_Plugins.Plugins)
+        {
+            for (const auto& error : plugin.Errors)
+                m_AssetWarnings.push_back({AssetErrorCode::InvalidData, name + ": " + error});
+            if (!plugin.Enabled)
+                continue;
+            if (!plugin.Manifest.Content.empty() && fs::is_directory(plugin.Directory / plugin.Manifest.Content))
+                m_ContentMounts.emplace("Plugins/" + name, fs::canonical(plugin.Directory / plugin.Manifest.Content));
+            if (!plugin.Manifest.Shaders.empty() && fs::is_directory(plugin.Directory / plugin.Manifest.Shaders))
+                m_ShaderRoots.emplace(name, fs::canonical(plugin.Directory / plugin.Manifest.Shaders));
+        }
     }
 
     std::variant<std::monostate, AssetError> Project::ScanAssets()
@@ -144,6 +170,36 @@ namespace Kans
         // Reconcile by identity: a source that disappeared stays registered as
         // Missing so references to it can be restored when it comes back.
         auto candidate = std::move(scan.Database);
+        for (const auto& source : candidate.GetAllSources())
+            if (source.Path.ToString().rfind("Plugins/", 0) == 0)
+            {
+                auto removed = candidate.UnregisterSource(source.sourceAssetID);
+                if (const auto* error = std::get_if<AssetError>(&removed))
+                    return *error;
+                m_AssetWarnings.push_back(
+                    {AssetErrorCode::InvalidData,
+                     source.Path.ToString() + ": Plugins/ is reserved for mounted plugin content"});
+            }
+        for (const auto& [prefix, directory] : m_ContentMounts)
+        {
+            const auto name    = prefix.substr(8);
+            auto       mounted = AssetScanner::Scan(directory, !m_Plugins.Plugins.at(name).ProjectOwned);
+            if (const auto* error = std::get_if<AssetError>(&mounted))
+            {
+                m_AssetWarnings.push_back(*error);
+                continue;
+            }
+            auto& content = std::get<AssetScanResult>(mounted);
+            for (const auto& error : content.Errors)
+                m_AssetWarnings.push_back(error);
+            for (auto source : content.Database.GetAllSources())
+            {
+                source.Path     = AssetPath(fs::u8path(prefix) / source.Path.GetPath());
+                auto registered = candidate.RegisterSource(source);
+                if (const auto* error = std::get_if<AssetError>(&registered))
+                    m_AssetWarnings.push_back(*error);
+            }
+        }
         for (auto previous : m_SourceAssetDatabase.GetAllSources())
         {
             if (candidate.Contains(previous.sourceAssetID))
@@ -170,6 +226,13 @@ namespace Kans
             if (auto* error = std::get_if<AssetError>(&registered))
                 m_AssetWarnings.push_back(std::move(*error));
         }
+        for (const auto& source : candidate.GetAllSources())
+            if (!source.Exists && source.Path.ToString().rfind("Plugins/", 0) == 0)
+            {
+                auto removed = m_ProductStore->RemoveSource(source.sourceAssetID);
+                if (const auto* error = std::get_if<AssetError>(&removed))
+                    m_AssetWarnings.push_back(*error);
+            }
         m_SourceAssetDatabase = std::move(candidate);
         auto saved            = SaveSourceCache();
         if (auto* error = std::get_if<AssetError>(&saved))
@@ -185,14 +248,114 @@ namespace Kans
             m_SourceAssetCachePath, m_Config.AssetDirectory, m_SourceAssetDatabase);
     }
 
-    fs::path Project::SourceFile(const SourceAssetMetadata& metadata) const
+    fs::path Project::SourceFile(const SourceAssetMetadata& metadata) const { return ResolveSourcePath(metadata.Path); }
+
+    fs::path Project::ResolveSourcePath(const AssetPath& path) const
     {
-        return (m_Config.AssetDirectory / metadata.Path.GetPath()).lexically_normal();
+        for (const auto& [prefix, directory] : m_ContentMounts)
+        {
+            const auto text = path.ToString();
+            if (text == prefix)
+                return directory;
+            if (text.rfind(prefix + "/", 0) == 0)
+                return directory / fs::u8path(text.substr(prefix.size() + 1));
+        }
+        return (m_Config.AssetDirectory / path.GetPath()).lexically_normal();
+    }
+    bool Project::IsReadOnly(const AssetPath& path) const
+    {
+        const auto text = path.ToString();
+        if (text.rfind("Plugins/", 0) != 0)
+            return false;
+        const auto end   = text.find('/', 8);
+        const auto found = m_Plugins.Plugins.find(text.substr(8, end - 8));
+        return found == m_Plugins.Plugins.end() || !found->second.ProjectOwned;
+    }
+    std::variant<std::vector<AssetBuildGraphResult>, AssetError>
+    Project::BuildPluginContent(const AssetBuildOptions& options)
+    {
+        std::vector<AssetBuildGraphResult> results;
+        auto                               registry = m_PluginHost.CreateImporters();
+        if (const auto* error = std::get_if<AssetError>(&registry))
+            return *error;
+        for (const auto& source : m_SourceAssetDatabase.GetAllSources())
+            if (source.Exists && source.Path.ToString().rfind("Plugins/", 0) == 0 &&
+                std::get<ImporterRegistry>(registry).Supports(SourceFile(source)))
+            {
+                auto built = BuildAsset(source.sourceAssetID, options);
+                if (const auto* error = std::get_if<AssetError>(&built))
+                    return *error;
+                results.push_back(std::get<AssetBuildGraphResult>(std::move(built)));
+            }
+        return results;
+    }
+
+    std::variant<Ref<const AssetRegistry>, AssetError> Project::Cook(const fs::path&          output,
+                                                                     const AssetBuildOptions& options)
+    {
+        auto plugins = BuildPluginContent(options);
+        if (const auto* error = std::get_if<AssetError>(&plugins))
+            return *error;
+        auto published = BuildPublishedAssets(options);
+        if (const auto* error = std::get_if<AssetError>(&published))
+            return *error;
+        for (const auto& warning : std::get<AssetBuildGraphResult>(published).Root.Warnings)
+            if (warning.rfind("Source build failed:", 0) == 0 || warning.rfind("Skipped dependent ", 0) == 0)
+                return AssetError {AssetErrorCode::InvalidData, warning};
+        try
+        {
+            std::vector<ProductRecord> records;
+            for (auto record : GetRuntimeAssetRegistry()->GetAllProducts())
+            {
+                if (record.Target != options.Target)
+                    continue;
+                auto bytes = ReadRegisteredProduct(GetProductDirectory(), record);
+                if (const auto* error = std::get_if<AssetError>(&bytes))
+                    return *error;
+                const auto file = output / record.Location.RelativeFile.GetPath();
+                fs::create_directories(file.parent_path());
+                auto saved = WriteProductFile(file, std::get<std::vector<std::byte>>(bytes));
+                if (const auto* error = std::get_if<AssetError>(&saved))
+                    return *error;
+                record.Location.Generation.reset();
+                records.push_back(std::move(record));
+            }
+            auto registry = AssetRegistry::FromProducts(records);
+            if (const auto* error = std::get_if<AssetError>(&registry))
+                return *error;
+            auto snapshot = CreateRef<AssetRegistry>(std::get<AssetRegistry>(std::move(registry)));
+            auto encoded  = EncodeAssetRegistry(*snapshot);
+            if (const auto* error = std::get_if<AssetError>(&encoded))
+                return *error;
+            const auto&            text = std::get<std::string>(encoded);
+            std::vector<std::byte> bytes(text.size());
+            std::transform(text.begin(), text.end(), bytes.begin(), [](char c) {
+                return std::byte(static_cast<unsigned char>(c));
+            });
+            fs::create_directories(output);
+            auto written = WriteProductFile(output / "AssetRegistry.yaml", bytes);
+            if (const auto* error = std::get_if<AssetError>(&written))
+                return *error;
+            return Ref<const AssetRegistry>(snapshot);
+        }
+        catch (const fs::filesystem_error& e)
+        {
+            return AssetError {AssetErrorCode::IoError, e.what()};
+        }
     }
 
     std::variant<SourceAssetID, AssetError> Project::FindSourceByFile(const fs::path& file) const
     {
-        const AssetPath logical(file.lexically_normal().lexically_relative(m_Config.AssetDirectory));
+        AssetPath logical(file.lexically_normal().lexically_relative(m_Config.AssetDirectory));
+        for (const auto& [prefix, directory] : m_ContentMounts)
+        {
+            const AssetPath local(file.lexically_normal().lexically_relative(directory));
+            if (local.IsValid())
+            {
+                logical = AssetPath(fs::u8path(prefix) / local.GetPath());
+                break;
+            }
+        }
         const auto      id       = logical.IsValid() ? m_SourceAssetDatabase.FindIDByPath(logical) : SourceAssetID {};
         const auto      metadata = m_SourceAssetDatabase.FindByID(id);
         if (!metadata.IsValid() || !metadata.Exists)
@@ -203,6 +366,8 @@ namespace Kans
 
     std::variant<std::monostate, AssetError> Project::SaveSidecar(const SourceAssetMetadata& metadata)
     {
+        if (IsReadOnly(metadata.Path))
+            return m_SourceAssetDatabase.UpdateSource(metadata);
         auto saved = SourceAssetMetaSerializer::Save(Sidecar(SourceFile(metadata)), metadata);
         if (auto* error = std::get_if<AssetError>(&saved))
             return std::move(*error);
@@ -221,6 +386,9 @@ namespace Kans
         if (!metadata.IsValid() || !metadata.Exists)
             return AssetError {AssetErrorCode::NotFound, "Source is unknown or Missing"};
         // The sidecar is authoritative; refuse to overwrite one that now names another source.
+        if (IsReadOnly(metadata.Path))
+            return AssetError {AssetErrorCode::InvalidArgument,
+                               "Plugin content is read-only: " + metadata.Path.ToString()};
         auto loaded = SourceAssetMetaSerializer::Load(Sidecar(SourceFile(metadata)), metadata.Path);
         if (auto* error = std::get_if<AssetError>(&loaded))
             return std::move(*error);
@@ -240,7 +408,7 @@ namespace Kans
     std::variant<AssetBuildGraphResult, AssetError> Project::BuildAsset(SourceAssetID            id,
                                                                         const AssetBuildOptions& options)
     {
-        auto importers = CreateDefaultImporterRegistry();
+        auto importers = m_PluginHost.CreateImporters();
         if (auto* error = std::get_if<AssetError>(&importers))
             return std::move(*error);
         return BuildAsset(id, options, std::get<ImporterRegistry>(importers));
@@ -305,7 +473,7 @@ namespace Kans
     {
         if (!IsProductTarget(options.Target))
             return AssetError {AssetErrorCode::InvalidArgument, "Invalid build target"};
-        auto importers = CreateDefaultImporterRegistry();
+        auto importers = m_PluginHost.CreateImporters();
         if (auto* error = std::get_if<AssetError>(&importers))
             return *error;
         BuildSession session {std::get<ImporterRegistry>(importers), options, {}, {}, {}, {}, {}, {}, {}};
@@ -441,6 +609,10 @@ namespace Kans
         inputs.Source     = metadata;
         inputs.SourceFile = file;
         inputs.AssetRoot  = m_Config.AssetDirectory;
+        inputs.ShaderIncludeRoots = m_ShaderRoots;
+        for (const auto& [prefix, directory] : m_ContentMounts)
+            if (metadata.Path.ToString().rfind(prefix + "/", 0) == 0)
+                inputs.AssetRoot = directory;
         inputs.Importer   = std::get<RegisteredImporter>(std::move(selected));
         // Identity from the sidecar, plus any allocated by a build whose sidecar
         // write did not complete.
@@ -451,7 +623,8 @@ namespace Kans
         ImportContext discovery;
         discovery.SourceID   = id;
         discovery.SourceFile = file;
-        discovery.AssetRoot  = m_Config.AssetDirectory;
+        discovery.AssetRoot          = inputs.AssetRoot;
+        discovery.ShaderIncludeRoots = m_ShaderRoots;
         discovery.Target     = session.Options.Target;
         discovery.Settings   = metadata.Import.Settings;
         auto discovered      = inputs.Importer.Importer->DiscoverInputs(discovery);
@@ -673,8 +846,13 @@ namespace Kans
             return AssetError {AssetErrorCode::InvalidArgument, "Invalid move destination"};
         if (destination == metadata.Path)
             return std::monostate {};
+        if (IsReadOnly(metadata.Path))
+            return AssetError {AssetErrorCode::InvalidArgument,
+                               "Plugin content is read-only: " + metadata.Path.ToString()};
         const auto      from = SourceFile(metadata);
-        const auto      to   = (m_Config.AssetDirectory / destination.GetPath()).lexically_normal();
+        if (IsReadOnly(destination))
+            return AssetError {AssetErrorCode::InvalidArgument, "Plugin destination is read-only"};
+        const auto      to = ResolveSourcePath(destination);
         std::error_code error;
         if (!fs::is_directory(to.parent_path(), error))
             return AssetError {AssetErrorCode::NotFound, "Move destination directory does not exist"};
@@ -730,8 +908,8 @@ namespace Kans
             const AssetPath toPath(fs::u8path(node["to"].as<std::string>()));
             if (fromPath.IsValid() && toPath.IsValid())
             {
-                const auto from = m_Config.AssetDirectory / fromPath.GetPath();
-                const auto to   = m_Config.AssetDirectory / toPath.GetPath();
+                const auto from = ResolveSourcePath(fromPath);
+                const auto to   = ResolveSourcePath(toPath);
                 // The source moved but its sidecar did not: move the sidecar too.
                 if (Exists(to) && !Exists(from) && Exists(Sidecar(from)) && !Exists(Sidecar(to)))
                     fs::rename(Sidecar(from), Sidecar(to));
@@ -767,6 +945,9 @@ namespace Kans
         auto removed = m_ProductStore->RemoveSource(id);
         if (auto* error = std::get_if<AssetError>(&removed))
             return std::move(*error);
+        if (IsReadOnly(metadata.Path))
+            return AssetError {AssetErrorCode::InvalidArgument,
+                               "Plugin content is read-only: " + metadata.Path.ToString()};
         const auto      file = SourceFile(metadata);
         std::error_code error;
         fs::remove(file, error);

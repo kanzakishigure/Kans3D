@@ -13,6 +13,7 @@ namespace Kans
         SourceAssetID         SourceID;
         // Absolute paths of the source file and the project asset root.
         std::filesystem::path SourceFile;
+        std::map<std::string, std::filesystem::path> ShaderIncludeRoots;
         std::filesystem::path AssetRoot;
         std::string           Target = "default";
         // Exclusive empty directory for staged Product files. Unused by discovery.

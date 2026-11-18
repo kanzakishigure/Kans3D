@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,6 +13,7 @@ namespace Kans
     // state (native scripts) is not captured.
     struct EntitySnapshot
     {
+        std::map<std::string, std::string>     PluginComponents;
         UUID                                   ID = 0;
         std::string                            Tag;
         TransformComponent                     Transform;

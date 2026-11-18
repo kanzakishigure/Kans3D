@@ -67,6 +67,10 @@ namespace Kans
             std::function<uintptr_t(const Ref<Scene>&, const EditorCamera&, glm::uvec2, const std::vector<GizmoDraw>&)>;
         void SetPreviewRenderer(PreviewRenderer render) { m_Render = std::move(render); }
         // After a save: rebuild the file.
+        void SetReadOnly(std::function<bool(const std::filesystem::path&)> readOnly)
+        {
+            m_ReadOnly = std::move(readOnly);
+        }
         void SetSavedCallback(std::function<void(const std::filesystem::path&)> saved) { m_Saved = std::move(saved); }
 
         // Opens a .ragdoll; `source` supplies the skeleton and model to preview (looked up through the
@@ -122,6 +126,7 @@ namespace Kans
         AssetManager*                  m_Assets = nullptr;
         PreviewRenderer                m_Render;
         std::vector<EditorAssetChoice> m_Choices;
+        std::function<bool(const std::filesystem::path&)> m_ReadOnly;
         std::function<void(const std::filesystem::path&)> m_Saved;
 
         RagdollEditing::RagdollSession m_Session;

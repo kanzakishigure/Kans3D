@@ -10,6 +10,7 @@
 #include "Kans3D/Renderer/DebugDraw.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/VFX/VfxWorld.h"
+#include "ComponentRegistry.h"
 #include "Components.h"
 #include "Entity.h"
 #include "Scene.h"
@@ -753,6 +754,9 @@ namespace Kans
         CopyComponent<AreaLightComponent>(source, copy);
         CopyComponent<FogVolumeComponent>(source, copy);
         CopyComponent<ScriptComponent>(source, copy);
+        for (const auto& entry : ComponentRegistry::Runtime().Entries())
+            if (entry.Serialize && entry.Has(source))
+                entry.Deserialize(copy, entry.Serialize(source));
         SetParent(copy, parent, before, false);
         if (copy.HasComponent<PrefabInstanceComponent>())
             ExpandPrefab(copy);

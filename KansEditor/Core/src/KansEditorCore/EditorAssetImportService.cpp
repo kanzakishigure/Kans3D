@@ -9,7 +9,47 @@ namespace Kans
     EditorAssetImportService::EditorAssetImportService(Scope<Project> project) :
         m_Project(std::move(project)), m_Config(m_Project->GetConfig()),
         m_ProductDirectory(m_Project->GetProductDirectory()), m_Owner(std::this_thread::get_id())
-    {}
+    {
+        m_ContentMounts = m_Project->GetContentMounts();
+        for (const auto& [prefix, directory] : m_ContentMounts)
+            if (m_Project->IsReadOnly(AssetPath(std::filesystem::u8path(prefix + "/probe"))))
+                m_ReadOnlyMounts.insert(prefix);
+    }
+
+    std::filesystem::path EditorAssetImportService::ResolveSourcePath(const AssetPath& path) const
+    {
+        for (const auto& [prefix, directory] : m_ContentMounts)
+        {
+            if (path.ToString() == prefix)
+                return directory;
+            if (path.ToString().rfind(prefix + "/", 0) == 0)
+                return directory / std::filesystem::u8path(path.ToString().substr(prefix.size() + 1));
+        }
+        return m_Config.AssetDirectory / path.GetPath();
+    }
+    AssetPath EditorAssetImportService::LogicalSourcePath(const std::filesystem::path& file) const
+    {
+        std::error_code error;
+        const auto      normalized = std::filesystem::weakly_canonical(file, error);
+        const auto      sourceFile = error ? file.lexically_normal() : normalized;
+        for (const auto& [prefix, directory] : m_ContentMounts)
+        {
+            const auto local = sourceFile.lexically_relative(directory);
+            if (local == ".")
+                return AssetPath(std::filesystem::u8path(prefix));
+            if (AssetPath(local).IsValid())
+                return AssetPath(std::filesystem::u8path(prefix) / local);
+        }
+        return AssetPath(sourceFile.lexically_relative(m_Config.AssetDirectory));
+    }
+    bool EditorAssetImportService::IsReadOnly(const std::filesystem::path& file) const
+    {
+        const auto path = LogicalSourcePath(file).ToString();
+        for (const auto& prefix : m_ReadOnlyMounts)
+            if (path == prefix || path.rfind(prefix + "/", 0) == 0)
+                return true;
+        return false;
+    }
 
     std::variant<Scope<EditorAssetImportService>, AssetError> EditorAssetImportService::Create(Scope<Project> project)
     {
@@ -197,7 +237,7 @@ namespace Kans
     {
         if (auto error = CheckOwner())
             return *error;
-        auto registry = CreateDefaultImporterRegistry();
+        auto registry = m_Project->GetPluginHost().CreateImporters();
         if (auto* error = std::get_if<AssetError>(&registry))
             return *error;
         return std::get<ImporterRegistry>(registry).GetSettingsSchema(name);
@@ -211,7 +251,7 @@ namespace Kans
         auto metadata = m_Project->GetSourceAssetDatabase().FindByID(source);
         if (!metadata.IsValid() || !metadata.Exists)
             return AssetError {AssetErrorCode::NotFound, "Inspection source is absent or Missing"};
-        auto registry = CreateDefaultImporterRegistry();
+        auto registry = m_Project->GetPluginHost().CreateImporters();
         if (auto* error = std::get_if<AssetError>(&registry))
             return *error;
         return std::get<ImporterRegistry>(registry).GetSettingsSchemaForSource(metadata.Path.ToString(),
@@ -225,7 +265,7 @@ namespace Kans
         auto metadata = m_Project->GetSourceAssetDatabase().FindByID(source);
         if (!metadata.IsValid() || !metadata.Exists)
             return AssetError {AssetErrorCode::NotFound, "Inspection source is absent or Missing"};
-        auto registry = CreateDefaultImporterRegistry();
+        auto registry = m_Project->GetPluginHost().CreateImporters();
         if (auto* error = std::get_if<AssetError>(&registry))
             return *error;
         auto resolved =
@@ -235,7 +275,14 @@ namespace Kans
         ImportContext context;
         context.SourceID   = source;
         context.AssetRoot  = m_Config.AssetDirectory;
-        context.SourceFile = m_Config.AssetDirectory / std::filesystem::u8path(metadata.Path.ToString());
+        context.SourceFile = ResolveSourcePath(metadata.Path);
+        for (const auto& [prefix, directory] : m_ContentMounts)
+            if (metadata.Path.ToString().rfind(prefix + "/", 0) == 0)
+                context.AssetRoot = directory;
+        for (const auto& [name, plugin] : m_Project->GetPlugins().Plugins)
+            if (plugin.Enabled && !plugin.Manifest.Shaders.empty() &&
+                std::filesystem::is_directory(plugin.Directory / plugin.Manifest.Shaders))
+                context.ShaderIncludeRoots.emplace(name, plugin.Directory / plugin.Manifest.Shaders);
         context.Settings   = metadata.Import.Settings;
         context.Target     = EditorAssetTarget;
         auto inspected     = std::get<RegisteredImporter>(resolved).Importer->Inspect(context);
@@ -288,6 +335,11 @@ namespace Kans
         auto refreshed = m_Project->RefreshAssets();
         if (auto* error = std::get_if<AssetError>(&refreshed))
             return *error;
+        m_ContentMounts = m_Project->GetContentMounts();
+        m_ReadOnlyMounts.clear();
+        for (const auto& [prefix, directory] : m_ContentMounts)
+            if (m_Project->IsReadOnly(AssetPath(std::filesystem::u8path(prefix + "/probe"))))
+                m_ReadOnlyMounts.insert(prefix);
         m_RegistryChange = m_Project->GetRuntimeAssetRegistry();
         return std::monostate {};
     }

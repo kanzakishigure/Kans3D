@@ -13,6 +13,8 @@ namespace Kans
 
     void EditorLayer::BindSecondaryMotion()
     {
+        m_ViewportPanel.GetClothPaint().SetReadOnly(
+            [this](const std::filesystem::path& file) { return m_AssetImports && m_AssetImports->IsReadOnly(file); });
         PropertiesPanel::ClothActions actions;
         actions.CreateAsset = [this](Entity entity, uint32_t section, bool browserFolder) {
             CreateClothAsset(entity, section, browserFolder);
@@ -34,7 +36,7 @@ namespace Kans
         if (const auto* list = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
             for (const auto& source : *list)
                 if (source.sourceAssetID == asset.GetSourceID())
-                    return m_AssetImports->GetConfig().AssetDirectory / source.Path.GetPath();
+                    return m_AssetImports->ResolveSourcePath(source.Path);
         return {};
     }
 
@@ -47,8 +49,7 @@ namespace Kans
         auto            sources = m_AssetImports->GetSources();
         if (const auto* list = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
             for (const auto& source : *list)
-                if (std::filesystem::weakly_canonical(m_AssetImports->GetConfig().AssetDirectory / source.Path.GetPath(),
-                                                      error) == wanted)
+                if (std::filesystem::weakly_canonical(m_AssetImports->ResolveSourcePath(source.Path), error) == wanted)
                     for (const auto& product : m_AssetImports->GetRuntimeAssetRegistry()->GetAllProducts())
                         if (product.Metadata.assetID.GetSourceID() == source.sourceAssetID &&
                             product.Metadata.Type == type && product.Target == EditorAssetTarget)
@@ -73,6 +74,8 @@ namespace Kans
         std::filesystem::path directory =
             browserFolder || source.empty() ? m_ContentBrowserPanel.GetCurrentFolder() : source.parent_path();
         if (directory.empty() && m_AssetImports)
+            directory = m_AssetImports->GetConfig().AssetDirectory;
+        if (m_AssetImports && m_AssetImports->IsReadOnly(directory))
             directory = m_AssetImports->GetConfig().AssetDirectory;
         // "<model>_<slot>.cloth", so the file says which part it simulates.
         std::string stem = source.empty() ? entity.GetComponent<TagComponent>().Tag : source.stem().u8string();

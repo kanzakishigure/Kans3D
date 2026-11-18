@@ -2,6 +2,7 @@
 #include <string.h>
 #include <map>
 #include <optional>
+#include <type_traits>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include "Kans3D/Animation/AnimatorComponent.h"
@@ -374,7 +375,10 @@ namespace Kans
     // Component Type Register
     template<typename... Component>
     struct ComponentGroup
-    {};
+    {
+        template<typename T>
+        static constexpr bool Contains = (std::is_same_v<T, Component> || ...);
+    };
     using AllComponents = ComponentGroup<ParticleSystemComponent,
                                          ClothComponent,
                                          SpringBoneComponent,

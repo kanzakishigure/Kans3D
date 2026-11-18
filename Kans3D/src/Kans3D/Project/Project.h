@@ -13,6 +13,8 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include "Kans3D/Plugin/PluginManifest.h"
+#include "Kans3D/Plugin/PluginModule.h"
 
 namespace Kans
 {
@@ -21,6 +23,7 @@ namespace Kans
     class ProjectConfig
     {
     public:
+        std::map<std::string, bool> Plugins;
         PhysicsSettings       Physics;
         std::string           Name;
         std::filesystem::path RootDirectory;
@@ -31,6 +34,8 @@ namespace Kans
     class ProjectOpenOptions
     {
     public:
+        bool                                  Editor = false;
+        std::vector<PluginModuleRegistration> EditorModules;
         // 留空时使用 CacheDirectory/SourceAssetDatabase.cache.yaml，否则须为绝对路径。
         std::filesystem::path SourceAssetCachePath;
     };
@@ -152,6 +157,16 @@ namespace Kans
         [[nodiscard]] Ref<IAssetProvider> CreateAssetProvider();
         std::filesystem::path        GetProductDirectory() const { return m_Config.CacheDirectory / "Products"; }
         const ProductStore&          GetProductStore() const { return *m_ProductStore; }
+        PluginHost&                       GetPluginHost() { return m_PluginHost; }
+        const PluginResolution&           GetPlugins() const { return m_Plugins; }
+        const std::map<std::string, std::filesystem::path>& GetContentMounts() const { return m_ContentMounts; }
+        std::filesystem::path                               ResolveSourcePath(const AssetPath& path) const;
+        bool                                                IsReadOnly(const AssetPath& path) const;
+        // Builds every enabled plugin content source before packaging the Product store.
+        std::variant<std::vector<AssetBuildGraphResult>, AssetError>
+                                                           BuildPluginContent(const AssetBuildOptions& options);
+        std::variant<Ref<const AssetRegistry>, AssetError> Cook(const std::filesystem::path& output,
+                                                                const AssetBuildOptions&     options);
         const ProjectConfig&         GetConfig() const { return m_Config; } // 目录已解析为绝对路径。
         const std::filesystem::path& GetSourceAssetCachePath() const { return m_SourceAssetCachePath; }
         const SourceAssetDatabase&   GetSourceAssetDatabase() const { return m_SourceAssetDatabase; }
@@ -162,6 +177,7 @@ namespace Kans
         struct BuildSession;
 
         Project() = default;
+        void                                       DiscoverPluginMounts();
         std::variant<std::monostate, AssetError>   ScanAssets();
         std::variant<std::monostate, AssetError>   SaveSourceCache() const;
         std::variant<std::monostate, AssetError>   RecoverInterruptedMove();
@@ -171,6 +187,9 @@ namespace Kans
         std::variant<std::monostate, AssetError>   SaveSidecar(const SourceAssetMetadata& metadata);
         std::filesystem::path                      SourceFile(const SourceAssetMetadata& metadata) const;
 
+        PluginHost                                   m_PluginHost;
+        PluginResolution                             m_Plugins;
+        std::map<std::string, std::filesystem::path> m_ContentMounts, m_ShaderRoots;
         ProjectConfig           m_Config;
         std::filesystem::path   m_SourceAssetCachePath;
         SourceAssetDatabase     m_SourceAssetDatabase;

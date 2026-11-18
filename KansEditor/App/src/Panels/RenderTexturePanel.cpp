@@ -34,6 +34,11 @@ namespace Kans
     }
     void RenderTexturePanel::Save()
     {
+        if (m_Service && m_Service->IsReadOnly(m_File))
+        {
+            m_Status = "Plugin content is read-only.";
+            return;
+        }
         if (m_File.empty())
             return;
         auto text = SerializeRenderTexture(m_Values);

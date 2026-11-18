@@ -22,6 +22,7 @@ namespace Kans
 
     void EditorLayer::OnAttach()
     {
+        EnsureBuiltinComponents();
         PROFILE_FUCTION();
         // Before anything logs, so the console shows the whole session.
         m_Console.Attach();
@@ -108,6 +109,7 @@ namespace Kans
         m_Viewport = CreateScope<ViewportClient>(m_ProjectConfig.RootDirectory / m_ProjectConfig.CacheDirectory /
                                                  "Editor/Visibility.yaml");
         m_Viewport->SetScene(m_ActiveScene);
+        m_AssetImports->GetPluginHost().InstallRenderFeatures(m_Viewport->GetFeatures());
         // The Hierarchy's eye column edits the visibility the editor view renders with.
         m_HierarchyPanel.SetVisibility(&m_Viewport->Visibility());
         // Scenes without environment settings show the editor's default map; a scene's own
@@ -191,6 +193,7 @@ namespace Kans
         m_RenderTexturePanel.SetResources({});
         m_RenderTexturePanel.Bind(nullptr);
         m_ProjectSettingsPanel.Bind({});
+        m_PluginsPanel.Bind({});
         m_UIDesignerPanel.Bind(nullptr);
         m_MaterialEditorPanel.Bind(nullptr);
         m_VfxModuleEditors.clear(); // Waits for a running module compile.

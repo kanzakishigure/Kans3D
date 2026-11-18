@@ -38,6 +38,14 @@ namespace Kans::Browser
     std::optional<AssetError> AssetFileOperations::CheckInside(const fs::path& path) const
     {
         const auto root = AssetRoot();
+        if (m_Service)
+            for (const auto& [prefix, directory] : m_Service->GetContentMounts())
+                if (IsWithin(Normal(path), directory))
+                {
+                    if (m_Service->IsReadOnly(Normal(path)))
+                        return Failure(AssetErrorCode::InvalidArgument, "Plugin content is read-only");
+                    return std::nullopt;
+                }
         if (Normal(path) == root || !IsWithin(Normal(path), root))
             return Failure(AssetErrorCode::InvalidArgument, path.u8string() + " is not inside the asset folder");
         return std::nullopt;
@@ -47,7 +55,7 @@ namespace Kans::Browser
     {
         if (!m_Service)
             return std::nullopt;
-        const AssetPath logical(Normal(file).lexically_relative(AssetRoot()));
+        const AssetPath logical = m_Service->LogicalSourcePath(Normal(file));
         auto            sources = m_Service->GetSources();
         if (const auto* list = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
             for (const auto& source : *list)
@@ -66,7 +74,7 @@ namespace Kans::Browser
         auto       sources = m_Service->GetSources();
         if (const auto* list = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
             for (const auto& source : *list)
-                if (source.Exists && IsWithin((root / source.Path.GetPath()).lexically_normal(), folder))
+                if (source.Exists && IsWithin(m_Service->ResolveSourcePath(source.Path), folder))
                     result.push_back(source);
         return result;
     }
@@ -84,8 +92,7 @@ namespace Kans::Browser
         if (!fs::is_directory(from, error))
             if (const auto source = FindSource(from))
                 // The project moves the file and its sidecar together, with a journal.
-                return m_Service->MoveSourceAsset(source->sourceAssetID,
-                                                  AssetPath(Normal(to).lexically_relative(AssetRoot())));
+                return m_Service->MoveSourceAsset(source->sourceAssetID, m_Service->LogicalSourcePath(Normal(to)));
         // Folders keep the sidecars next to their files; a rescan then finds every
         // source at its new path with the same identity.
         fs::rename(from, to, error);
@@ -116,6 +123,10 @@ namespace Kans::Browser
     {
         if (auto error = RequireIdle())
             return *error;
+        if (m_Service)
+            for (const auto& [prefix, mount] : m_Service->GetContentMounts())
+                if (Normal(item) == mount)
+                    return Failure(AssetErrorCode::InvalidArgument, "Cannot rename a plugin content mount");
         if (auto error = CheckInside(item))
             return *error;
         if (!ValidName(name))
@@ -144,6 +155,10 @@ namespace Kans::Browser
         std::optional<AssetError> failure;
         for (const auto& item : items)
         {
+            if (m_Service)
+                for (const auto& [prefix, mount] : m_Service->GetContentMounts())
+                    if (Normal(item) == mount)
+                        return Failure(AssetErrorCode::InvalidArgument, "Cannot move or delete a plugin content mount");
             if (auto error = CheckInside(item))
             {
                 failure = *error;
@@ -281,6 +296,10 @@ namespace Kans::Browser
             return *error;
         for (const auto& item : items)
         {
+            if (m_Service)
+                for (const auto& [prefix, mount] : m_Service->GetContentMounts())
+                    if (Normal(item) == mount)
+                        return Failure(AssetErrorCode::InvalidArgument, "Cannot move or delete a plugin content mount");
             if (auto error = CheckInside(item))
                 return *error;
             std::error_code error;

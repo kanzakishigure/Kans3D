@@ -19,8 +19,7 @@ namespace Kans
             auto sources = service->GetSources();
             if (std::holds_alternative<std::vector<SourceAssetMetadata>>(sources))
                 for (const auto& source : std::get<std::vector<SourceAssetMetadata>>(sources))
-                    if (source.Exists &&
-                        canonical(service->GetConfig().AssetDirectory / source.Path.GetPath()) == target)
+                    if (source.Exists && canonical(service->ResolveSourcePath(source.Path)) == target)
                     {
                         AssetBuildOptions options;
                         options.Target = EditorAssetTarget;

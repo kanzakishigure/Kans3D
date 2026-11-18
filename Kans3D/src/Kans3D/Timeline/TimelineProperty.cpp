@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "TimelineProperty.h"
 #include <charconv>
+#include "Kans3D/Plugin/PluginModule.h"
 #include "Kans3D/Scene/Entity.h"
 namespace Kans
 {
@@ -44,12 +45,14 @@ namespace Kans
             return e.HasComponent<IKComponent>();
         if (name == "ShapeKeysComponent")
             return e.HasComponent<ShapeKeysComponent>();
-        return false;
+        return PluginTimelineHasComponent(e, name);
     }
     bool TimelineProperty(Scene& scene, Entity e, const std::string& path, glm::vec4& value, bool write)
     {
         if (!e)
             return false;
+        if (ApplyPluginTimelineProperty(scene, e, path, value, write))
+            return true;
         std::string field   = path;
         int         channel = -1;
         if (path.size() > 2 && path[path.size() - 2] == '.')

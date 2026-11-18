@@ -1,0 +1,3 @@
+add_library(ExampleShaderModule STATIC ExampleShaderModule.cpp)
+target_link_libraries(ExampleShaderModule PUBLIC Kans3D)
+set_target_properties(ExampleShaderModule PROPERTIES FOLDER "Plugins/ExampleShaderPlugin")

@@ -30,7 +30,9 @@ namespace Kans
                     throw std::logic_error("Mesh components are mutually exclusive");
             }
             T& component = m_Scene->m_Registry.emplace<T>(m_EntityHandle, std::forward<Args>(args)...);
-            m_Scene->OnComponentAdd<T>(*this, component);
+            // Built-ins keep their engine hooks; external components use EnTT notifications.
+            if constexpr (AllComponents::Contains<T>)
+                m_Scene->OnComponentAdd<T>(*this, component);
             return component;
         }
 

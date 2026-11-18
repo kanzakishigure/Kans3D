@@ -1,0 +1,4 @@
+version: 3
+source_id: e100000000000001
+import: {importer: "", settings: {}}
+local_ids: {"shader:root": "0000000000000001"}

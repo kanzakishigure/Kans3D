@@ -3,10 +3,11 @@
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Physics/PhysicsEquality.h"
 #include "Components/ComponentEditors.h"
+#include "KansEditorCore/EditorAssetImportService.h"
 #include "KansEditorCore/Physics/PhysicsEditing.h"
+#include "KansEditorCore/UI/SourceBuild.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
-#include "KansEditorCore/UI/SourceBuild.h"
 
 namespace Kans
 {
@@ -27,6 +28,11 @@ namespace Kans
 
     void PhysicsMaterialPanel::Save()
     {
+        if (m_Service && m_Service->IsReadOnly(m_File))
+        {
+            m_Status = "Plugin content is read-only.";
+            return;
+        }
         if (m_File.empty())
             return;
         if (auto error = PhysicsEditing::SavePhysicsMaterialFile(m_File, m_Values))

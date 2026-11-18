@@ -23,6 +23,8 @@ namespace Kans
 
     void EditorLayer::BindRagdolls()
     {
+        m_RagdollEditor.SetReadOnly(
+            [this](const std::filesystem::path& file) { return m_AssetImports && m_AssetImports->IsReadOnly(file); });
         PropertiesPanel::RagdollActions actions;
         actions.Open   = [this](AssetID ragdoll) { OpenRagdollAsset(ragdoll); };
         actions.Create = [this](Entity entity) { CreateRagdollFor(entity); };
