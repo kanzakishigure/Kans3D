@@ -623,7 +623,9 @@ float KansSpotShadow(int light, vec3 worldPos, vec3 normal)
     for (int i=0;i<32;++i) sum += KansSpotCompare(light,p,KANS_POISSON[i]*radius,gradient);
     return sum/32.0;
 }
-float KansCascadeShadow(int cascade, vec3 worldPos, vec3 normal)
+)"
+// MSVC caps one string literal at 16380 characters (C2026); adjacent literals concatenate.
+R"(float KansCascadeShadow(int cascade, vec3 worldPos, vec3 normal)
 {
     vec2 gradient = KansReceiverGradient(cascade, KansReceiverNormal(worldPos, normal));
     vec3 q = worldPos + normal * u_Frame.ShadowInfo.z *
