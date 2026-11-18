@@ -446,7 +446,6 @@ namespace Kans
         commands->Draw(4);
         commands->EndRendering();
         m_Device->Submit(commands);
-        m_Device->WaitIdle();
         if (!cached)
             cached = std::make_shared<EnvironmentLighting>();
         cached->Skybox             = std::move(sky);

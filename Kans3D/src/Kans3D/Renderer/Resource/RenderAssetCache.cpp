@@ -1018,8 +1018,8 @@ namespace Kans
                 ++it;
 
         m_PendingRenderTextures.clear();
-        if (m_Device)
-            m_Device->WaitIdle();
+        // Submitted commands retain immutable resources until their frame fence
+        // retires. Mutable streams/palettes select only unreferenced pool entries.
         ++m_Frame;
         for (auto it = m_Palettes.begin(); it != m_Palettes.end();)
             if (it->second.Source.expired() || m_Frame - it->second.Frame > unusedFrames)

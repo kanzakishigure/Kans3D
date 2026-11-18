@@ -14,6 +14,7 @@
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/Core/Log/Log.h"
 #include "Kans3D/Core/Window.h"
+#include "Kans3D/RHI/DeferredDestruction.h"
 #include "Kans3D/RHI/PipelineKey.h"
 #include "VulkanInternal.h"
 #include "VulkanPresentation.h"
@@ -45,9 +46,11 @@ namespace Kans::RenderHardware
             VulkanTestProbes::BarrierObserver     Barriers;
             DeviceStats     Stats;
             bool            InFrame = false, Alive = true;
+            bool                                  WindowResourcesReady = false;
             std::thread::id Thread = std::this_thread::get_id();
             struct Frame
             {
+                uint64_t                               Serial = 0;
                 VkCommandPool Pool  = VK_NULL_HANDLE;
                 VkFence       Fence = VK_NULL_HANDLE;
                 std::vector<std::shared_ptr<Commands>> Lists;
@@ -56,7 +59,9 @@ namespace Kans::RenderHardware
             std::vector<Frame>                     Frames;
             Frame                                  Standalone;
             size_t                                 FrameIndex = 0;
-            std::vector<std::function<void()>>     Deletions;
+            DeferredDestruction                    Deletions;
+            uint64_t                               NextSerial = 1, CompletedSerial = 0;
+            bool                                   Retiring = false;
             std::vector<std::shared_ptr<Commands>> Submitted;
             State(const DeviceDesc& desc, const VulkanDeviceOptions& options) :
                 Native(options), Frames(desc.FramesInFlight)
@@ -157,23 +162,19 @@ namespace Kans::RenderHardware
             }
             Frame& Current()
             {
+                // Startup uploads and previews can submit before the application's
+                // window begin. Retire/reset the slot before its first native command.
+                if (Native.Options.AsynchronousWindowFrames && !WindowResourcesReady)
+                    BeginWindowFrame();
                 return (InFrame || Native.Options.AsynchronousWindowFrames) ? Frames[FrameIndex] : Standalone;
             }
             void   Drain()
             {
                 // Destructors may enqueue more work while retained command captures
                 // are being released. Drain only after queue/fence completion.
-                while (!Deletions.empty())
-                {
-                    auto deletions = std::move(Deletions);
-                    Deletions.clear();
-                    for (auto& destroy : deletions)
-                    {
-                        destroy();
-                        --Stats.LiveResources;
-                        --Stats.PendingDestructions;
-                    }
-                }
+                const auto count = Deletions.Retire(CompletedSerial);
+                Stats.LiveResources -= count;
+                Stats.PendingDestructions -= count;
             }
             void Retire();
             void BeginWindowFrame();
@@ -191,7 +192,8 @@ namespace Kans::RenderHardware
             {
                 if (Owner->Alive && Delete)
                 {
-                    Owner->Deletions.push_back(std::move(Delete));
+                    Owner->Deletions.Enqueue(Owner->Retiring ? Owner->CompletedSerial : Owner->NextSerial,
+                                             std::move(Delete));
                     ++Owner->Stats.PendingDestructions;
                 }
                 else if (!Delete)
@@ -1815,13 +1817,18 @@ namespace Kans::RenderHardware
         void State::BeginWindowFrame()
         {
             CheckThread();
+            if (WindowResourcesReady)
+                return;
             auto& frame = Frames[FrameIndex];
             Check(vkWaitForFences(Native.Logical, 1, &frame.Fence, VK_TRUE, UINT64_MAX));
+            CompletedSerial = std::max(CompletedSerial, frame.Serial);
+            Retiring        = true;
             for (auto& list : frame.Lists)
                 list->Retire();
             frame.Lists.clear();
             frame.UIImages.clear();
             Drain();
+            Retiring = false;
             for (auto it = UITextures.begin(); it != UITextures.end();)
                 if (it->second.expired())
                     it = UITextures.erase(it);
@@ -1833,10 +1840,12 @@ namespace Kans::RenderHardware
                 else
                     ++it;
             Check(vkResetCommandPool(Native.Logical, frame.Pool, 0));
+            WindowResourcesReady = true;
         }
         void State::FinishWindowFrame()
         {
             Require(!InFrame, "Present inside an active scene frame");
+            BeginWindowFrame();
             auto& frame = Frames[FrameIndex];
             frame.Lists = std::move(Submitted);
             Submitted.clear();
@@ -1844,10 +1853,16 @@ namespace Kans::RenderHardware
             Check(vkResetFences(Native.Logical, 1, &frame.Fence));
             VkSubmitInfo2 tail {VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
             Check(vkQueueSubmit2(Native.Queue, 1, &tail, frame.Fence));
+            frame.Serial         = NextSerial++;
             FrameIndex = (FrameIndex + 1) % Frames.size();
+            WindowResourcesReady = false;
         }
         void State::Retire()
         {
+            // Explicit idle or synchronous headless frame completion covers all
+            // earlier queue submissions, including standalone uploads.
+            CompletedSerial = NextSerial++;
+            Retiring        = true;
             for (auto& frame : Frames)
             {
                 for (auto& list : frame.Lists)
@@ -1864,6 +1879,7 @@ namespace Kans::RenderHardware
                 else
                     ++it;
             Drain();
+            Retiring = false;
             // Reset only after all submitted command buffers are known complete.
             for (auto& frame : Frames)
                 Check(vkResetCommandPool(Native.Logical, frame.Pool, 0));
@@ -2073,8 +2089,13 @@ namespace Kans::RenderHardware
             {
                 Owner->CheckThread();
                 Require(!Owner->InFrame, "Frame is already active");
-                auto& frame = Owner->Frames[Owner->FrameIndex];
-                Check(vkWaitForFences(Owner->Native.Logical, 1, &frame.Fence, VK_TRUE, UINT64_MAX));
+                if (Owner->Native.Options.AsynchronousWindowFrames)
+                    Owner->BeginWindowFrame();
+                else
+                {
+                    auto& frame = Owner->Frames[Owner->FrameIndex];
+                    Check(vkWaitForFences(Owner->Native.Logical, 1, &frame.Fence, VK_TRUE, UINT64_MAX));
+                }
                 Owner->InFrame = true;
             }
             void Submit(const Handle<CommandList>& commands) override

@@ -95,7 +95,6 @@ namespace Kans
                 commands->CopyBufferToTexture(upload, 0, image, {mip, 0});
             }
             device->Submit(commands);
-            device->WaitIdle();
             SamplerDesc sampling;
             sampling.Min = sampling.Mag = sampling.Mip =
                 data.Filter == TextureFilter::Nearest ? Filter::Nearest : Filter::Linear;
@@ -198,7 +197,6 @@ namespace Kans
             auto commands = texture->m_Device->CreateCommandList();
             commands->GenerateMips(texture->m_Image);
             texture->m_Device->Submit(commands);
-            texture->m_Device->WaitIdle();
         }
         return texture;
     }
@@ -227,7 +225,6 @@ namespace Kans
             if (desc.MipLevels > 1)
                 commands->GenerateMips(image);
             device->Submit(commands);
-            device->WaitIdle();
         }
         return CreateRef<Texture2D>(std::move(device), std::move(image), Sampling(spec));
     }

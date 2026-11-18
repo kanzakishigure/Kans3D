@@ -13,11 +13,6 @@ namespace Kans
 {
     namespace
     {
-        struct PreviewRetirement
-        {
-            RenderHardware::Device& Device;
-            ~PreviewRetirement() { Device.WaitIdle(); }
-        };
         const char*    CheckerVertex   = R"(#version 450
 void main() {
     vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
@@ -212,7 +207,6 @@ void main() {
     {
         if (!m_Assets)
             return {};
-        PreviewRetirement retirement {*m_Device};
         auto&             cache    = *m_Assets;
         const GpuShader* shader   = nullptr;
         bool             complete = true;
@@ -277,7 +271,6 @@ void main() {
     {
         if (!m_Assets)
             return {};
-        PreviewRetirement retirement {*m_Device};
         auto&             cache    = *m_Assets;
         auto  status   = cache.GetAssetManager().Request<MaterialDataAsset>(material);
         bool  complete = status.IsReady();
@@ -365,7 +358,6 @@ void main() {
     std::optional<MaterialThumbnail> MaterialPreviewRenderer::RenderThumbnail(AssetID                       material,
                                                                               const MaterialPreviewOptions& options)
     {
-        PreviewRetirement retirement {*m_Device};
         const auto        rendered = RenderImage(material, options);
         if (!rendered.Target || !rendered.Complete)
             return std::nullopt;

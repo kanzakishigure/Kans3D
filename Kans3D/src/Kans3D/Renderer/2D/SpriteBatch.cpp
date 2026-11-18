@@ -139,7 +139,6 @@ void main() { Color = V_Color * texture(Image,V_UV * V_Tiling); }
         auto copy = m_Data->GPU->CreateCommandList();
         copy->CopyBufferToTexture(buffer, 0, m_Data->White);
         m_Data->GPU->Submit(copy);
-        m_Data->GPU->WaitIdle();
         m_Data->Vertices.reserve(MaxQuads * 4);
     }
     void SpriteBatch::SetTarget(std::shared_ptr<Device> device, const RenderingDesc& target)
