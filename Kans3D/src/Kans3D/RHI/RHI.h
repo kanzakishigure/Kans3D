@@ -534,6 +534,18 @@ namespace Kans::RenderHardware
         virtual void SetScissor(const Scissor& scissor)                                               = 0;
         virtual void BindPipeline(const Handle<Pipeline>& pipeline)                                   = 0;
         virtual void BindGroup(const Handle<BindGroup>& group)                                        = 0;
+        // Offsets in ascending buffer-binding order for the dynamic engine set (set 0).
+        virtual void BindGroup(const Handle<RenderHardware::BindGroup>& group, const std::vector<uint32_t>& offsets)
+        {
+            if (!offsets.empty())
+                throw std::runtime_error("Dynamic bind offsets unavailable");
+            BindGroup(group);
+        }
+        // CPU ownership associated with this submission, released at command retirement.
+        virtual void Retain(const std::shared_ptr<void>&)
+        {
+            throw std::runtime_error("Submission ownership unavailable");
+        }
         virtual void PushConstants(uint32_t offset, const void* data, uint32_t bytes)                 = 0;
         virtual void BindVertexBuffers(const std::vector<VertexBufferView>& buffers)                  = 0;
         virtual void BindIndexBuffer(const Handle<Buffer>& buffer, IndexType type, size_t offset = 0) = 0;

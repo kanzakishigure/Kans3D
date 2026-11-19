@@ -1,5 +1,6 @@
 #pragma once
 #include <map>
+#include <unordered_map>
 #include <variant>
 #include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "Kans3D/Asset/Runtime/ModelData.h"
@@ -40,6 +41,8 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Shader>                               Program;
         mutable RenderHardware::Handle<RenderHardware::Shader>                       SkinnedProgram;
         mutable std::map<uint64_t, RenderHardware::Handle<RenderHardware::Pipeline>> Pipelines;
+
+        mutable std::unordered_map<std::string, RenderHardware::Handle<RenderHardware::Pipeline>> DepthPipelines;
         mutable RenderHardware::Handle<RenderHardware::Shader>                       SkinnedNormalFallbackProgram;
         bool                                                                         UsesSmoothNormals = false;
         mutable std::array<RenderHardware::Handle<RenderHardware::Shader>, 3>        DepthOnlyPrepassPrograms;
@@ -102,6 +105,7 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::BindGroupLayout>                      EngineLayout, MaterialLayout;
         std::vector<ShaderResourceBinding>                                           EngineResources;
         mutable std::map<uint64_t, RenderHardware::Handle<RenderHardware::Pipeline>> Pipelines;
+        mutable std::unordered_map<std::string, RenderHardware::Handle<RenderHardware::Pipeline>> DepthPipelines;
 
         mutable RenderHardware::Handle<RenderHardware::Shader>          SkinnedProgram;
         mutable RenderHardware::Handle<RenderHardware::BindGroupLayout> SkinLayout;

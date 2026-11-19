@@ -3,9 +3,11 @@
 
 namespace Kans
 {
+    class FrameUniforms;
     struct FogState;
     struct MaterialPassData
     {
+        std::shared_ptr<FrameUniforms>                                 UniformStorage;
         RenderHardware::Handle<RenderHardware::Buffer>                 Frame, Object;
         RenderHardware::Handle<RenderHardware::Buffer>                 Palette;
         size_t                                                         FrameOffset = 0, ObjectOffset = 0;

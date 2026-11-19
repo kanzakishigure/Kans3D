@@ -75,11 +75,12 @@ namespace Kans
                                        std::sin(rotation)};
             const size_t alignment  = device->GetBufferBindingAlignment(BindingType::UniformBuffer);
             const auto   align      = [alignment](size_t n) { return (n + alignment - 1) / alignment * alignment; };
-            const size_t frameBytes = align(sizeof(frame)), stride = frameBytes + align(sizeof(EngineObjectUniforms));
+            const size_t frameBytes = align(sizeof(frame)), stride = align(sizeof(EngineObjectUniforms));
             // One upload allocation for this pass; every draw owns immutable aligned ranges.
-            auto uniforms =
-                device->CreateBuffer({stride * View.MaterialOrder.size(), BufferUsage::Uniform, MemoryUsage::Upload});
-            std::vector<uint8_t> packed(stride * View.MaterialOrder.size());
+            const auto           upload = AllocateUniforms(*commands, frameBytes + stride * View.MaterialOrder.size());
+            auto                 uniforms = upload.Buffer;
+            std::vector<uint8_t> packed(frameBytes + stride * View.MaterialOrder.size());
+            std::memcpy(packed.data(), &frame, sizeof(frame));
             size_t               range       = 0;
             const auto           environment = GetMaterialEnvironment();
             for (const auto& item : View.MaterialOrder)
@@ -181,10 +182,10 @@ namespace Kans
                                          item.Render.DoubleSided ? 1.0f : 0.0f,
                                          item.Render.ReceiveShadows && draw.ReceiveShadows ? 0.0f : 1.0f};
                 data.Frame = data.Object = uniforms;
-                data.FrameOffset         = range * stride;
-                data.ObjectOffset        = range * stride + frameBytes;
-                std::memcpy(packed.data() + data.FrameOffset, &frame, sizeof(frame));
-                std::memcpy(packed.data() + data.ObjectOffset, &object, sizeof(object));
+                data.UniformStorage      = UniformStorage;
+                data.FrameOffset         = upload.Offset;
+                data.ObjectOffset        = upload.Offset + range * stride + frameBytes;
+                std::memcpy(packed.data() + range * stride + frameBytes, &object, sizeof(object));
                 const auto* instance = Assets()->GetInstanceMaterialBindings(*bindings, draw.Parameters);
                 bool        complete = true;
                 data.MaterialGroup   = Assets()->GetMaterialGroup(*shader, *instance, &complete, MaterialMipBias);
@@ -221,7 +222,7 @@ namespace Kans
                     sampled(image);
             }
             if (range)
-                uniforms->Write(0, packed.data(), range * stride);
+                uniforms->Write(upload.Offset, packed.data(), frameBytes + range * stride);
         }
         commands->EndRendering();
         const auto pass =

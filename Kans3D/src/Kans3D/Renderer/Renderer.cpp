@@ -770,6 +770,14 @@ namespace Kans
         const auto memory                = m_Device->GetStats();
         statistics.DeviceTextureBytes    = memory.TextureBytes;
         statistics.DeviceBufferBytes     = memory.BufferBytes;
+        // Free slots not used by this view must not pin old viewport/font images
+        // when a scene becomes empty. Active view and GPU leases keep their slots busy.
+        for (const auto& storage : m_Uniforms)
+            if (storage.use_count() == 1)
+            {
+                storage->Begin();
+                storage->End();
+            }
         statistics.TotalMilliseconds     = RenderClockMilliseconds() - totalStart;
         return result;
     }

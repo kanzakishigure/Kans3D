@@ -103,7 +103,8 @@ void PrepareCompute(const std::shared_ptr<VKBuffer>& indirect = {})
     }
     if (indirect)
         uses->Buffer(indirect, {VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT});
-    Recorded.push_back([pipeline = BoundCompute, groups = Groups, push = PushData, uses](Execution& e) {
+    Recorded.push_back([pipeline = BoundCompute, groups = Groups, offsets = GroupOffsets, push = PushData, uses](
+                           Execution& e) {
         uses->Prepare(e, {});
         e.FlushBarriers();
         vkCmdBindPipeline(e.Native, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline->Native);
@@ -111,14 +112,15 @@ void PrepareCompute(const std::shared_ptr<VKBuffer>& indirect = {})
         {
             const auto  slot = l->GetDesc().Group;
             const auto& g    = groups.at(slot);
+            const auto& dynamic = offsets.count(slot) ? offsets.at(slot) : g->DynamicOffsets;
             vkCmdBindDescriptorSets(e.Native,
                                     VK_PIPELINE_BIND_POINT_COMPUTE,
                                     pipeline->Layout,
                                     slot,
                                     1,
                                     &g->Set->Native,
-                                    uint32_t(g->DynamicOffsets.size()),
-                                    g->DynamicOffsets.data());
+                                    uint32_t(dynamic.size()),
+                                    dynamic.data());
         }
         if (pipeline->Desc.PushConstantBytes)
             vkCmdPushConstants(e.Native,

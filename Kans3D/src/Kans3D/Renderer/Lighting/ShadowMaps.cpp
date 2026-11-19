@@ -334,8 +334,9 @@ namespace Kans
         uniforms.InverseProjection = glm::inverse(uniforms.Projection);
         uniforms.Time              = frame.View.Time;
         uniforms.ShadowPass        = glm::vec4(0);
-        auto buffer = device->CreateBuffer({sizeof(uniforms), BufferUsage::Uniform, MemoryUsage::Upload});
-        buffer->Write(0, &uniforms, sizeof(uniforms));
+        const auto frameUpload     = frame.AllocateUniforms(sizeof(uniforms));
+        auto       buffer          = frameUpload.Buffer;
+        buffer->Write(frameUpload.Offset, &uniforms, sizeof(uniforms));
         // MaterialOrder has the main camera's frustum culling, independent of depth visibility.
         for (const auto& item : frame.View.MaterialOrder)
         {
@@ -378,9 +379,13 @@ namespace Kans
                                      bindings->Render.AlphaCutoff,
                                      bindings->Render.DoubleSided ? 1.0f : 0.0f,
                                      0};
-            auto ob               = device->CreateBuffer({sizeof(object), BufferUsage::Uniform, MemoryUsage::Upload});
-            ob->Write(0, &object, sizeof(object));
+            const auto objectUpload = frame.AllocateUniforms(sizeof(object));
+            auto       ob           = objectUpload.Buffer;
+            ob->Write(objectUpload.Offset, &object, sizeof(object));
             MaterialPassData data;
+            data.UniformStorage = frame.UniformStorage;
+            data.FrameOffset    = frameUpload.Offset;
+            data.ObjectOffset   = objectUpload.Offset;
             data.Frame         = buffer;
             data.Object        = ob;
             data.CustomDepth   = true;
@@ -610,6 +615,18 @@ void main() {
             indices = glm::vec4(-1);
         const auto proxies     = frame.World.CollectDraws(0, view.HiddenHierarchy);
         const auto environment = frame.GetMaterialEnvironment();
+        struct PreparedCaster
+        {
+            bool                                           Resolved = false;
+            const GpuMesh*                                 Mesh     = nullptr;
+            const GpuMaterialBindings*                     Bindings = nullptr;
+            const GpuShader*                               Shader   = nullptr;
+            const GpuShaderPass*                           Caster   = nullptr;
+            UniformRange                                   Object;
+            RenderHardware::Handle<RenderHardware::Buffer> Palette;
+        };
+        std::vector<PreparedCaster>    prepared(proxies.size());
+        Handle<RenderHardware::Shader> depthProgram, skinnedDepthProgram;
         auto       record      = [&](std::string                            name,
                                      const Handle<RenderHardware::Texture>& texture,
                                      uint32_t                               face,
@@ -638,13 +655,16 @@ void main() {
             data.CameraPosition     = glm::vec4(view.Scene.sceneCamera.Position, 1);
             data.ShadowPass         = {point ? 2.0f : 1.0f, settings.ConstantBias, settings.SlopeBias, 0};
             data.ShadowPassPosition = position;
-            auto buffer             = device->CreateBuffer({sizeof(data), BufferUsage::Uniform, MemoryUsage::Upload});
-            buffer->Write(0, &data, sizeof(data));
+            const auto frameUpload  = frame.AllocateUniforms(*commands, sizeof(data));
+            auto       buffer       = frameUpload.Buffer;
+            buffer->Write(frameUpload.Offset, &data, sizeof(data));
             std::vector<GraphUse> uses;
             auto                  resource = graph.ImportTexture(name, texture);
             uses.push_back({resource, GraphAccess::DepthReadWrite});
-            for (const auto& proxy : proxies)
+            std::unordered_set<const RenderHardware::Texture*> sampledImages;
+            for (size_t casterIndex = 0; casterIndex < proxies.size(); ++casterIndex)
             {
+                const auto& proxy = proxies[casterIndex];
                 if (!proxy.CastShadows || !frame.Assets())
                     continue;
                 if (!frustum.Intersects(proxy.WorldBounds))
@@ -653,60 +673,85 @@ void main() {
                     ++stats.CastersCulled;
                     continue;
                 }
-                const auto* mesh     = frame.GetMesh(proxy.Mesh);
-                if (!frame.IncludesSection(proxy.EntityID, proxy.InstanceRoot, mesh, proxy.Section))
-                    continue;
-                const auto* bindings = frame.GetBindings(proxy.Material, false);
-                const auto* shader   = bindings ? frame.GetShader(proxy.Material, bindings->Shader) : nullptr;
-                if (!mesh || proxy.Section >= mesh->Sections.size() || !bindings || !shader ||
-                    shader->Domain == ShaderDomain::PostProcess)
-                    continue;
-                const GpuShaderPass* caster = nullptr;
-                bool                 hasCaster = false;
-                for (const auto& pass : shader->Passes)
-                    if (pass.Tag == "ShadowCaster")
-                    {
-                        hasCaster = true;
-                        if (bindings->PassEnabled(pass.Name))
-                        {
-                            caster = &pass;
-                            break;
-                        }
-                    }
-                if (hasCaster && !caster)
-                    continue;
-                if (!caster)
+                auto& entry = prepared[casterIndex];
+                if (!entry.Resolved)
                 {
-                    // Built-in Standard depth path retains texture alpha, UV transforms and vertex colour.
-                    bindings = frame.GetBindings(proxy.Material, true);
-                    shader   = bindings ? frame.GetShader(proxy.Material, bindings->Shader) : nullptr;
-                    if (!bindings || !shader)
+                    entry.Resolved   = true;
+                    const auto* mesh = frame.GetMesh(proxy.Mesh);
+                    if (!frame.IncludesSection(proxy.EntityID, proxy.InstanceRoot, mesh, proxy.Section))
                         continue;
+                    const auto* bindings = frame.GetBindings(proxy.Material, false);
+                    const auto* shader   = bindings ? frame.GetShader(proxy.Material, bindings->Shader) : nullptr;
+                    if (!mesh || proxy.Section >= mesh->Sections.size() || !bindings || !shader ||
+                        shader->Domain == ShaderDomain::PostProcess)
+                        continue;
+                    const GpuShaderPass* caster    = nullptr;
+                    bool                 hasCaster = false;
+                    for (const auto& pass : shader->Passes)
+                        if (pass.Tag == "ShadowCaster")
+                        {
+                            hasCaster = true;
+                            if (bindings->PassEnabled(pass.Name))
+                            {
+                                caster = &pass;
+                                break;
+                            }
+                        }
+                    if (hasCaster && !caster)
+                        continue;
+                    if (!caster)
+                    {
+                        // Built-in Standard depth path retains texture alpha, UV transforms and vertex colour.
+                        bindings = frame.GetBindings(proxy.Material, true);
+                        shader   = bindings ? frame.GetShader(proxy.Material, bindings->Shader) : nullptr;
+                        if (!bindings || !shader)
+                            continue;
+                    }
+                    EngineObjectUniforms object;
+                    object.Transform        = proxy.Transform;
+                    object.NormalMatrix     = glm::transpose(glm::inverse(proxy.Transform));
+                    object.MaterialRender   = {float(bindings->Render.AlphaMode),
+                                               bindings->Render.AlphaCutoff,
+                                               bindings->Render.DoubleSided ? 1.0f : 0.0f,
+                                               0};
+                    const auto objectUpload = frame.AllocateUniforms(*commands, sizeof(object));
+                    objectUpload.Buffer->Write(objectUpload.Offset, &object, sizeof(object));
+                    entry.Mesh     = mesh;
+                    entry.Bindings = bindings;
+                    entry.Shader   = shader;
+                    entry.Caster   = caster;
+                    entry.Object   = objectUpload;
+                    entry.Palette  = mesh->Skin ? frame.Assets()->GetSkinningPalette(proxy.SkinPose, mesh) :
+                                                  Handle<RenderHardware::Buffer>();
                 }
-                EngineObjectUniforms object;
-                object.Transform      = proxy.Transform;
-                object.NormalMatrix   = glm::transpose(glm::inverse(proxy.Transform));
-                object.MaterialRender = {float(bindings->Render.AlphaMode),
-                                         bindings->Render.AlphaCutoff,
-                                         bindings->Render.DoubleSided ? 1.0f : 0.0f,
-                                         0};
-                auto ob = device->CreateBuffer({sizeof(object), BufferUsage::Uniform, MemoryUsage::Upload});
-                ob->Write(0, &object, sizeof(object));
+                const auto* mesh     = entry.Mesh;
+                const auto* bindings = entry.Bindings;
+                const auto* shader   = entry.Shader;
+                const auto* caster   = entry.Caster;
+                if (!mesh)
+                    continue;
                 MaterialPassData pass;
+                pass.UniformStorage     = frame.UniformStorage;
                 pass.MaterialMipBias    = frame.MaterialMipBias;
-                pass.Palette            = mesh->Skin ? frame.Assets()->GetSkinningPalette(proxy.SkinPose, mesh) :
-                                                       Handle<RenderHardware::Buffer>();
+                pass.Palette            = entry.Palette;
                 pass.Frame              = buffer;
-                pass.Object             = ob;
+                pass.FrameOffset        = frameUpload.Offset;
+                pass.Object             = entry.Object.Buffer;
+                pass.ObjectOffset       = entry.Object.Offset;
                 pass.Environment        = environment;
                 pass.EnvironmentSampler = frame.Services.GetMaterialEnvironmentSampler();
                 pass.Shadows            = fallback;
                 pass.ShadowDepth        = true;
                 pass.DepthFront         = point ? FrontFace::Clockwise : FrontFace::CounterClockwise;
                 if (!caster)
-                    pass.DepthProgram =
-                        pass.Palette ? GetSkinnedInternalProgram(*device, "ShadowDepth", DepthVertex, DepthFragment) :
-                                       frame.Services.GetInternalProgram("ShadowDepth", DepthVertex, DepthFragment);
+                {
+                    auto& program = pass.Palette ? skinnedDepthProgram : depthProgram;
+                    if (!program)
+                        program = pass.Palette ?
+                                      GetSkinnedInternalProgram(*device, "ShadowDepth", DepthVertex, DepthFragment) :
+                                      frame.Services.GetInternalProgram("ShadowDepth", DepthVertex, DepthFragment);
+                    pass.DepthProgram = program;
+                }
                 pass.ColorFormats.clear();
                 pass.Section      = proxy.Section;
                 pass.Render       = bindings->Render;
@@ -722,9 +767,11 @@ void main() {
                 frame.Stats.Triangles += mesh->Sections[proxy.Section].IndexCount / 3;
                 for (const auto& image : bindings->Images)
                 {
-                    auto id = graph.ImportTexture("ShadowCasterMaterial", image);
-                    if (std::none_of(uses.begin(), uses.end(), [&](auto use) { return use.Texture == id; }))
+                    if (sampledImages.insert(image.get()).second)
+                    {
+                        auto id = graph.ImportTexture("ShadowCasterMaterial", image);
                         uses.push_back({id, GraphAccess::SampledRead});
+                    }
                 }
             }
             for (const auto& image : frame.Services.GetTextRenderer().Textures())
@@ -747,7 +794,8 @@ void main() {
                                                       point ? position : glm::vec4(0),
                                                       settings.ConstantBias,
                                                       settings.SlopeBias,
-                                                      point);
+                                                      point,
+                                                      frame.UniformStorage);
                 ++view.ShadowStats.DrawCalls;
                 ++stats.CastersDrawn;
                 ++frame.Stats.DrawCalls;

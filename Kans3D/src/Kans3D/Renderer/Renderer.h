@@ -10,6 +10,7 @@
 #include "Graph/RenderGraph.h"
 #include "RenderView.h"
 #include "Resource/SelectionTools.h"
+#include "Shading/FrameUniforms.h"
 
 namespace Kans
 {
@@ -79,6 +80,19 @@ namespace Kans
             return m_IBLSampler;
         }
         EntityPicker&    GetPickingService() { return m_Picker; }
+        std::shared_ptr<FrameUniforms> AcquireFrameUniforms()
+        {
+            for (const auto& storage : m_Uniforms)
+                if (storage.use_count() == 1)
+                {
+                    storage->Begin();
+                    return storage;
+                }
+            auto storage = std::make_shared<FrameUniforms>();
+            storage->Begin();
+            m_Uniforms.push_back(storage);
+            return storage;
+        }
         ToneMappingPass& GetToneMapping() { return m_ToneMapping; }
         AntiAliasingPass& GetAntiAliasing() { return m_AntiAliasing; }
         const GpuMesh&   GetCube();
@@ -91,6 +105,7 @@ namespace Kans
     private:
         explicit Renderer(std::shared_ptr<RenderHardware::Device> device);
         std::shared_ptr<RenderHardware::Device> m_Device;
+        std::vector<std::shared_ptr<FrameUniforms>> m_Uniforms;
         Ref<Texture2D>                          m_White;
         struct AssetCacheEntry
         {

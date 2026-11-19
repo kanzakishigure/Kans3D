@@ -5,21 +5,23 @@
 namespace Kans
 {
     class Renderer;
+    class FrameUniforms;
     class TextRenderer
     {
     public:
         explicit TextRenderer(Renderer& renderer) : m_Renderer(renderer) {}
         void                                                         BeginFrame();
         void                                                         Upload(const std::vector<ViewTextDraw>&);
-        void                                                         Draw(RenderHardware::CommandList&,
-                                                                          const ViewTextDraw&,
-                                                                          const glm::mat4& deviceViewProjection,
-                                                                          const RenderHardware::RenderingDesc&,
-                                                                          bool      shadow       = false,
-                                                                          glm::vec4 pointLight   = {},
-                                                                          float     constantBias = 0,
-                                                                          float     slopeBias    = 0,
-                                                                          bool      point        = false);
+        void Draw(RenderHardware::CommandList&,
+                  const ViewTextDraw&,
+                  const glm::mat4& deviceViewProjection,
+                  const RenderHardware::RenderingDesc&,
+                  bool                                  shadow       = false,
+                  glm::vec4                             pointLight   = {},
+                  float                                 constantBias = 0,
+                  float                                 slopeBias    = 0,
+                  bool                                  point        = false,
+                  const std::shared_ptr<FrameUniforms>& storage      = {});
         std::vector<RenderHardware::Handle<RenderHardware::Texture>> Textures() const;
         const GpuMesh&                                               BoundsQuad();
         MeshDraw BoundsDraw(const ViewTextDraw&, const RenderCamera&, uint32_t id);

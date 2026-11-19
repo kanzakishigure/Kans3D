@@ -4,6 +4,7 @@
 #include "Kans3D/Renderer/Lighting/AreaLights.h"
 #include "Kans3D/Renderer/Lighting/Fog.h"
 #include "Kans3D/Renderer/Lighting/ShadowMaps.h"
+#include "Kans3D/Renderer/Shading/FrameUniforms.h"
 
 namespace Kans
 {
@@ -12,8 +13,55 @@ namespace Kans
     {
         using namespace RenderHardware;
         auto          device = cache.GetDevice();
+        std::string                         key;
+        std::shared_ptr<ShadowResources>    shadows;
+        std::shared_ptr<AreaLightResources> area;
+        if (data.UniformStorage)
+        {
+            key.reserve(512);
+            key.push_back('E');
+            const auto add = [&](const auto& handle) {
+                auto pointer = handle.get();
+                key.append(reinterpret_cast<const char*>(&pointer), sizeof(pointer));
+            };
+            add(shader.EngineLayout);
+            add(data.Frame);
+            add(data.Object);
+            add(data.EnvironmentSampler);
+            for (const auto& image : data.Environment)
+                add(image);
+            add(data.AmbientOcclusion);
+            add(data.ContactDepth);
+            add(data.Reflections);
+            if (!shader.EngineResources.empty() &&
+                shader.EngineResources.back().Binding >= uint32_t(EngineBinding::DirectionalShadow))
+            {
+                shadows = data.Shadows ? data.Shadows : cache.GetShadowFallback();
+                add(shadows->Directional);
+                add(shadows->Spots);
+                add(shadows->Cookies);
+                for (const auto& point : shadows->Points)
+                    add(point);
+                add(shadows->Compare);
+                add(shadows->Raw);
+                add(shadows->CookieSampler);
+            }
+            if (!shader.EngineResources.empty() &&
+                shader.EngineResources.back().Binding >= uint32_t(EngineBinding::LtcMatrix))
+            {
+                area = data.AreaLighting ? data.AreaLighting : cache.GetAreaLightFallback();
+                add(area->Matrix);
+                add(area->Amplitude);
+                add(area->Sampler);
+                for (const auto& image : area->Sources)
+                    add(image);
+            }
+            if (auto group = data.UniformStorage->FindGroup(key))
+                return group;
+        }
         BindGroupDesc engine;
         engine.Layout = shader.EngineLayout;
+        engine.Entries.reserve(shader.EngineResources.size());
         for (const auto& binding : shader.EngineResources)
         {
             BindGroupEntry entry;
@@ -21,13 +69,13 @@ namespace Kans
             if (binding.Binding == uint32_t(EngineBinding::Frame))
             {
                 entry.BufferResource = data.Frame;
-                entry.Offset         = data.FrameOffset;
+                entry.Offset         = data.UniformStorage ? 0 : data.FrameOffset;
                 entry.Bytes          = sizeof(EngineFrameUniforms);
             }
             else if (binding.Binding == uint32_t(EngineBinding::Object))
             {
                 entry.BufferResource = data.Object;
-                entry.Offset         = data.ObjectOffset;
+                entry.Offset         = data.UniformStorage ? 0 : data.ObjectOffset;
                 entry.Bytes          = sizeof(EngineObjectUniforms);
             }
             else if (binding.Binding == uint32_t(EngineBinding::ScreenSpaceReflections))
@@ -47,7 +95,8 @@ namespace Kans
             }
             else if (binding.Binding >= uint32_t(EngineBinding::LtcMatrix))
             {
-                auto area             = data.AreaLighting ? data.AreaLighting : cache.GetAreaLightFallback();
+                if (!area)
+                    area = data.AreaLighting ? data.AreaLighting : cache.GetAreaLightFallback();
                 entry.TextureResource = binding.Binding == 18 ? area->Matrix :
                                         binding.Binding == 19 ? area->Amplitude :
                                                                 area->Sources.at(binding.Binding - 20);
@@ -55,7 +104,8 @@ namespace Kans
             }
             else if (binding.Binding >= uint32_t(EngineBinding::DirectionalShadow))
             {
-                auto shadows          = data.Shadows ? data.Shadows : cache.GetShadowFallback();
+                if (!shadows)
+                    shadows = data.Shadows ? data.Shadows : cache.GetShadowFallback();
                 entry.TextureResource = binding.Binding == 16 ? shadows->Cookies :
                                         binding.Binding >= 15 ? shadows->Spots :
                                         binding.Binding <= 6  ? shadows->Directional :
@@ -71,7 +121,10 @@ namespace Kans
             }
             engine.Entries.push_back(std::move(entry));
         }
-        return device->CreateBindGroup(engine);
+        auto group = device->CreateBindGroup(engine);
+        if (data.UniformStorage)
+            data.UniformStorage->CacheGroup(std::move(key), group);
+        return group;
     }
     bool RecordMaterialDraw(RenderAssetCache&            cache,
                             RenderHardware::CommandList& commands,
@@ -131,10 +184,47 @@ namespace Kans
             key |= uint64_t(data.ColorFormats[i]) << (38 + i * 6);
         const bool fog = data.Fog && !data.ShadowDepth && !data.CustomDepth && !data.DepthPrepass;
         key |= uint64_t(fog) << 62;
-        Handle<Pipeline> shadowPipeline;
-        auto&            pipeline = (data.ShadowDepth || data.CustomDepth) ? shadowPipeline :
-                                    extraPass                              ? extraPass->Pipelines[key] :
-                                                                             shader.Pipelines[key];
+        std::string depthKey;
+        if (data.ShadowDepth || data.CustomDepth)
+        {
+            const auto add = [&](const auto& value) {
+                depthKey.append(reinterpret_cast<const char*>(&value), sizeof(value));
+            };
+            auto program = data.VertexSource ? data.VertexSource :
+                           data.DepthProgram ? data.DepthProgram :
+                           extraPass         ? extraPass->Program :
+                                               shader.Program;
+            if (skinned && !data.DepthProgram)
+                program = smoothFallback ? (extraPass ? extraPass->SkinnedNormalFallbackProgram :
+                                                        shader.SkinnedNormalFallbackProgram) :
+                                           (extraPass ? extraPass->SkinnedProgram : shader.SkinnedProgram);
+            add(key);
+            add(program.get());
+            add(data.VertexLayout.get());
+            add(data.CustomDepth);
+            add(data.CustomStencil);
+            add(data.DepthFront);
+            add(data.ConstantBias);
+            add(data.SlopeBias);
+            add(mesh.VertexBindings.size());
+            for (const auto& binding : mesh.VertexBindings)
+            {
+                add(binding.Slot);
+                add(binding.Stride);
+                add(binding.PerInstance);
+            }
+            for (const auto& attribute : mesh.Attributes)
+            {
+                add(attribute.Location);
+                add(attribute.BufferSlot);
+                add(attribute.Offset);
+                add(attribute.Type);
+            }
+        }
+        auto& depthCache = extraPass ? extraPass->DepthPipelines : shader.DepthPipelines;
+        auto& pipeline   = (data.ShadowDepth || data.CustomDepth) ? depthCache[depthKey] :
+                           extraPass                              ? extraPass->Pipelines[key] :
+                                                                    shader.Pipelines[key];
         if (!pipeline)
         {
             PipelineDesc desc;
@@ -318,7 +408,18 @@ namespace Kans
         if (!material)
             return false;
         commands.BindPipeline(pipeline);
-        commands.BindGroup(engine);
+        if (data.UniformStorage)
+        {
+            commands.Retain(data.UniformStorage);
+            std::vector<uint32_t> offsets;
+            for (const auto& binding : shader.EngineResources)
+                if (binding.Kind == ShaderBindingKind::UniformBuffer)
+                    offsets.push_back(uint32_t(binding.Binding == uint32_t(EngineBinding::Frame) ? data.FrameOffset :
+                                                                                                   data.ObjectOffset));
+            commands.BindGroup(engine, offsets);
+        }
+        else
+            commands.BindGroup(engine);
         commands.BindGroup(material);
         if (fog)
             commands.BindGroup(data.Fog->SampleGroup);
@@ -342,8 +443,21 @@ namespace Kans
         }
         if (skinned)
         {
-            BindSkinning(
-                *device, commands, shader.SkinLayout, data.Palette ? data.Palette : mesh.BindPalette, mesh.MorphDeltas);
+            if (data.UniformStorage)
+            {
+                auto palette = data.Palette ? data.Palette : mesh.BindPalette;
+                auto morph   = mesh.MorphDeltas ? mesh.MorphDeltas : palette;
+                commands.BindGroup(data.UniformStorage->Group(
+                    *device,
+                    {shader.SkinLayout,
+                     {{0, palette, 0, palette->GetDesc().Bytes}, {1, morph, 0, morph->GetDesc().Bytes}}}));
+            }
+            else
+                BindSkinning(*device,
+                             commands,
+                             shader.SkinLayout,
+                             data.Palette ? data.Palette : mesh.BindPalette,
+                             mesh.MorphDeltas);
             commands.BindVertexBuffers({{0, mesh.Vertices, 0}, {1, mesh.Skin, 0}});
         }
         else

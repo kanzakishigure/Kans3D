@@ -9,6 +9,11 @@ namespace Kans
     // One synchronous pipeline invocation. No viewport configuration or persistent scene ownership.
     struct RenderFrame
     {
+        ~RenderFrame()
+        {
+            if (UniformStorage)
+                UniformStorage->End();
+        }
         RenderWorld&                  World;
         RenderView&                   View;
         ViewTarget&                   Output;
@@ -20,6 +25,19 @@ namespace Kans
         RenderFrame* DisplayFrame    = nullptr;
         RenderFrame* RenderSource    = nullptr;
         float        MaterialMipBias = 0;
+        std::shared_ptr<FrameUniforms> UniformStorage;
+        UniformRange                   AllocateUniforms(size_t bytes, bool gpuWritable = false)
+        {
+            if (!UniformStorage)
+                UniformStorage = Services.AcquireFrameUniforms();
+            return UniformStorage->Allocate(*GetDevice(), bytes, gpuWritable);
+        }
+        UniformRange AllocateUniforms(RenderHardware::CommandList& commands, size_t bytes, bool gpuWritable = false)
+        {
+            auto range = AllocateUniforms(bytes, gpuWritable);
+            commands.Retain(UniformStorage);
+            return range;
+        }
         void         BuildDisplayDepth(RenderGraph& graph, RenderFrame& display);
 
         std::optional<double>         FinalPostRecordMilliseconds;

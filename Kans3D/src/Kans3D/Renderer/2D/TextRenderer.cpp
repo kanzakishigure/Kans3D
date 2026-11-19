@@ -170,15 +170,16 @@ void main(){
         }
         return geometry;
     }
-    void TextRenderer::Draw(RH::CommandList&         commands,
-                            const ViewTextDraw&      text,
-                            const glm::mat4&         projection,
-                            const RH::RenderingDesc& target,
-                            bool                     shadow,
-                            glm::vec4                pointLight,
-                            float                    constantBias,
-                            float                    slopeBias,
-                            bool                     point)
+    void TextRenderer::Draw(RH::CommandList&                      commands,
+                            const ViewTextDraw&                   text,
+                            const glm::mat4&                      projection,
+                            const RH::RenderingDesc&              target,
+                            bool                                  shadow,
+                            glm::vec4                             pointLight,
+                            float                                 constantBias,
+                            float                                 slopeBias,
+                            bool                                  point,
+                            const std::shared_ptr<FrameUniforms>& storage)
     {
         auto& g = Prepare(text);
         if (!g.Vertices)
@@ -232,8 +233,16 @@ void main(){
                         text.Style.Shadow.Offset.x,
                         text.Style.Shadow.Offset.y},
                        pointLight};
-        auto     buffer = device->CreateBuffer({sizeof(data), RH::BufferUsage::Uniform, RH::MemoryUsage::Upload});
-        buffer->Write(0, &data, sizeof(data));
+        UniformRange upload;
+        if (storage)
+        {
+            commands.Retain(storage);
+            upload = storage->Allocate(*device, sizeof(data));
+        }
+        else
+            upload.Buffer = device->CreateBuffer({sizeof(data), RH::BufferUsage::Uniform, RH::MemoryUsage::Upload});
+        auto buffer = upload.Buffer;
+        buffer->Write(upload.Offset, &data, sizeof(data));
         commands.BindVertexBuffers({{0, g.Vertices, 0}});
         for (auto& batch : g.Batches)
         {
@@ -244,7 +253,10 @@ void main(){
             group.Layout  = m_Layout;
             group.Entries = {{0, buffer, 0, sizeof(data), {}, {}},
                              {1, {}, 0, 0, atlas.Pages()[batch.Page], atlas.Sampler()}};
-            commands.BindGroup(device->CreateBindGroup(group));
+            if (storage)
+                commands.BindGroup(storage->Group(*device, group), {uint32_t(upload.Offset)});
+            else
+                commands.BindGroup(device->CreateBindGroup(group));
             commands.Draw(batch.Count, 1, batch.First);
         }
     }

@@ -372,6 +372,7 @@ namespace Kans
         copy.EngineLayout                 = EngineLayout;
         copy.MaterialLayout               = MaterialLayout;
         copy.EngineResources              = EngineResources;
+        copy.DepthPipelines                 = DepthPipelines;
         copy.Pipelines                    = Pipelines;
         copy.Passes                       = Passes;
         copy.UsesSmoothNormals            = UsesSmoothNormals;

@@ -19,20 +19,21 @@ namespace Kans
             glm::vec4 ViewPos {0}, Settings {0};
         };
         template<class T>
-        Handle<BindGroup> DrawGroup(Device&                         device,
-                                    const Handle<BindGroupLayout>&  layout,
-                                    const T&                        data,
-                                    Handle<RenderHardware::Texture> texture = {},
-                                    Handle<Sampler>                 sampler = {})
+        void BindDrawGroup(RenderFrame&                    frame,
+                           CommandList&                    commands,
+                           const Handle<BindGroupLayout>&  layout,
+                           const T&                        data,
+                           Handle<RenderHardware::Texture> texture = {},
+                           Handle<Sampler>                 sampler = {})
         {
-            auto buffer = device.CreateBuffer({sizeof(T), BufferUsage::Uniform, MemoryUsage::Upload});
-            buffer->Write(0, &data, sizeof(T));
+            const auto range = frame.AllocateUniforms(commands, sizeof(T));
+            range.Buffer->Write(range.Offset, &data, sizeof(T));
             BindGroupDesc group;
             group.Layout = layout;
-            group.Entries.push_back({0, buffer, 0, sizeof(T), {}, {}});
+            group.Entries.push_back({0, range.Buffer, 0, sizeof(T), {}, {}});
             if (texture)
                 group.Entries.push_back({1, {}, 0, 0, std::move(texture), std::move(sampler)});
-            return device.CreateBindGroup(group);
+            commands.BindGroup(frame.UniformStorage->Group(*frame.GetDevice(), group), {uint32_t(range.Offset)});
         }
         template<class F>
         void ForEachSection(const ModelInstance& instance, const GpuMesh& mesh, F&& action)
@@ -186,10 +187,9 @@ namespace Kans
         // Each draw owns disjoint immutable ranges until command/frame retirement.
         if (ready.empty())
             return;
-        auto frames = Services.GetDevice()->CreateBuffer(
-            {frameStride * ready.size(), ExposureUniformUsage(View), MemoryUsage::Upload});
-        auto objects = Services.GetDevice()->CreateBuffer(
-            {objectStride * ready.size(), BufferUsage::Uniform, MemoryUsage::Upload});
+        const auto frameUpload  = AllocateUniforms(commandList, frameStride * ready.size(), bool(View.GPUExposure));
+        const auto objectUpload = AllocateUniforms(commandList, objectStride * ready.size());
+        auto       frames = frameUpload.Buffer, objects = objectUpload.Buffer;
         const bool writeTemporalMasks = TemporalMasks != uint32_t(-1) && tag.empty() && !suppliedView;
         const auto materialTarget     = [&](LoadOp load, bool hdr, bool invalidate = false) {
             auto target = SceneTarget(load, hdr);
@@ -279,8 +279,16 @@ namespace Kans
                 auto text      = view.Texts[item.DrawIndex];
                 text.Transform = TextWorldTransform(
                     text.Style, text.Transform, View.Scene.sceneCamera.Position, View.Scene.sceneCamera.viewMatrix);
-                Services.GetTextRenderer().Draw(
-                    *commands, text, frame.ViewProjection, materialTarget(LoadOp::Load, true));
+                Services.GetTextRenderer().Draw(*commands,
+                                                text,
+                                                frame.ViewProjection,
+                                                materialTarget(LoadOp::Load, true),
+                                                false,
+                                                {},
+                                                0,
+                                                0,
+                                                false,
+                                                UniformStorage);
                 ++Stats.DrawCalls;
                 Stats.Triangles += text.Layout->Get().Glyphs.size() * 2;
                 continue;
@@ -328,7 +336,7 @@ namespace Kans
             {
                 if (uploadedDebugView)
                     ++frameRange;
-                frames->Write(frameRange * frameStride, &frame, sizeof(frame));
+                frames->Write(frameUpload.Offset + frameRange * frameStride, &frame, sizeof(frame));
                 uploadedDebugView = frame.DebugView;
             }
             EngineObjectUniforms object;
@@ -342,15 +350,16 @@ namespace Kans
                 object.MaterialRender.x = 4.0f;
             if (Samples > 1 && !MSAAResolved && render.AlphaMode == MaterialAlphaMode::Dithered)
                 object.MaterialRender.x = 5.0f;
-            objects->Write(range * objectStride, &object, sizeof(object));
+            objects->Write(objectUpload.Offset + range * objectStride, &object, sizeof(object));
             MaterialPassData pass;
             pass.MaterialMipBias    = MaterialMipBias;
             pass.Palette            = mesh->Skin ? Assets()->GetSkinningPalette(draw.SkinPose, mesh) :
                                                    RenderHardware::Handle<RenderHardware::Buffer>();
             pass.Frame              = frames;
             pass.Object             = objects;
-            pass.FrameOffset        = frameRange * frameStride;
-            pass.ObjectOffset       = range * objectStride;
+            pass.UniformStorage     = UniformStorage;
+            pass.FrameOffset        = frameUpload.Offset + frameRange * frameStride;
+            pass.ObjectOffset       = objectUpload.Offset + range * objectStride;
             pass.Shadows            = View.Shadows;
             pass.Environment        = environment;
             if (!suppliedView && tag.empty() && PrepassDraws.count(item.DrawIndex) &&
@@ -456,7 +465,13 @@ namespace Kans
             // All host snapshots are complete before recording their GPU writes.
             // Submit the small patch ahead of the still-unsubmitted material list.
             auto exposureCommands = Services.GetDevice()->CreateCommandList();
-            PatchFrameExposure(*this, *exposureCommands, frames, uint32_t(frameRange + 1), uint32_t(frameStride));
+            exposureCommands->Retain(UniformStorage);
+            PatchFrameExposure(*this,
+                               *exposureCommands,
+                               frames,
+                               uint32_t(frameRange + 1),
+                               uint32_t(frameStride),
+                               uint32_t(frameUpload.Offset) + FrameExposureOffset);
             Services.GetDevice()->Submit(exposureCommands);
         }
         if (View.EffectiveAA == AntiAliasing::TAA && !hdr)
@@ -592,10 +607,10 @@ void main() {
         if (const GpuMesh* mesh = GetMesh(draw.Mesh))
             ForEachSection(instance, *mesh, [&](const auto& part, const auto& section) {
                 data.Transform = draw.Transform;
-                commands->BindGroup(DrawGroup(*Services.GetDevice(), desc.GroupLayouts[0], data));
+                BindDrawGroup(*this, *commands, desc.GroupLayouts[0], data);
                 if (mesh->Skin && draw.SkinPose)
                 {
-                    commands->BindGroup(Services.GetDevice()->CreateBindGroup({desc.GroupLayouts[1], {}}));
+                    commands->BindGroup(UniformStorage->Group(*GetDevice(), {desc.GroupLayouts[1], {}}));
                     auto palette = Assets()->GetSkinningPalette(draw.SkinPose, mesh);
                     BindSkinning(*Services.GetDevice(),
                                  *commands,
@@ -710,8 +725,7 @@ void main() {
         commands->BeginRendering(SceneTarget(LoadOp::Load, hdrSkybox));
         commands->SetViewport({0, 0, float(View.Viewport.x), float(View.Viewport.y)});
         commands->BindPipeline(Services.CachedPipeline(desc));
-        commands->BindGroup(DrawGroup(
-            *Services.GetDevice(), desc.GroupLayouts[0], data, skybox, Services.GetMaterialEnvironmentSampler()));
+        BindDrawGroup(*this, *commands, desc.GroupLayouts[0], data, skybox, Services.GetMaterialEnvironmentSampler());
         commands->BindVertexBuffers({{0, cube.Vertices, 0}});
         commands->BindIndexBuffer(cube.Indices, IndexType::Uint32);
         commands->DrawIndexed(cube.IndexCount);

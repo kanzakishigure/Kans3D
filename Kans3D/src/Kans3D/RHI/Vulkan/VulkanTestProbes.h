@@ -14,6 +14,7 @@ namespace Kans::RenderHardware::VulkanTestProbes
         // Monotonic native buffer allocation count, including buffers already retired.
         uint64_t BufferCreations;
         uint64_t PipelineAttempts;
+        uint64_t GroupCreations;
     };
     using BarrierObserver =
         std::function<void(const std::vector<VkBufferMemoryBarrier2>&, const std::vector<VkImageMemoryBarrier2>&)>;

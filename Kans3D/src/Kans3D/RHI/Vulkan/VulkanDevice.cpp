@@ -42,6 +42,7 @@ namespace Kans::RenderHardware
             std::string     FailPipeline;
             uint64_t        WaitIdleCalls = 0;
             uint64_t        BufferCreations = 0;
+            uint64_t        GroupCreations  = 0;
             VulkanTestProbes::BufferWriteObserver BufferWrites;
             VulkanTestProbes::BarrierObserver     Barriers;
             DeviceStats     Stats;
@@ -1010,6 +1011,8 @@ namespace Kans::RenderHardware
             std::vector<std::shared_ptr<VKQueries>>      QueryWrites;
             std::vector<Handle<Resource>>                Temporary;
             std::vector<Handle<Resource>>                RetainedBindings;
+            std::vector<std::shared_ptr<void>>           RetainedOwners;
+            std::map<uint32_t, std::vector<uint32_t>>    GroupOffsets;
             std::shared_ptr<VKPipeline>                  BoundPipeline;
             std::shared_ptr<VKComputePipeline>           BoundCompute;
             std::shared_ptr<VKBuffer>                    BoundIndex;
@@ -1043,6 +1046,8 @@ namespace Kans::RenderHardware
                 Uses.reset();
                 RenderingInfo = {};
                 RetainedBindings.clear();
+                RetainedOwners.clear();
+                GroupOffsets.clear();
             }
             void Mutable()
             {
@@ -1279,7 +1284,42 @@ namespace Kans::RenderHardware
                 Mutable();
                 auto g                                  = Cast<VKGroup>(group, Owner);
                 Groups[g->Desc.Layout->GetDesc().Group] = g;
+                GroupOffsets.erase(g->Desc.Layout->GetDesc().Group);
                 RetainedBindings.push_back(g);
+            }
+            void Retain(const std::shared_ptr<void>& owner) override
+            {
+                Mutable();
+                Require(bool(owner), "Null submission owner");
+                if (RetainedOwners.empty() || RetainedOwners.back() != owner)
+                    RetainedOwners.push_back(owner);
+            }
+            void BindGroup(const Handle<RenderHardware::BindGroup>& group,
+                           const std::vector<uint32_t>&             offsets) override
+            {
+                Mutable();
+                auto g = Cast<VKGroup>(group, Owner);
+                Require(offsets.size() == g->DynamicOffsets.size(), "Dynamic offset count mismatch");
+                size_t index = 0;
+                for (size_t i = 0; i < g->Desc.Entries.size(); ++i)
+                {
+                    const auto& entry = g->Desc.Entries[i];
+                    if (!entry.BufferResource || g->Desc.Layout->GetDesc().Group != 0)
+                        continue;
+                    const auto type      = g->Desc.Layout->GetDesc().Entries[i].Type;
+                    const auto alignment = type == BindingType::UniformBuffer ?
+                                               Owner->Native.Properties.limits.minUniformBufferOffsetAlignment :
+                                               Owner->Native.Properties.limits.minStorageBufferOffsetAlignment;
+                    Require(offsets[index] % alignment == 0, "Misaligned dynamic offset");
+                    const size_t bytes =
+                        entry.Bytes ? entry.Bytes : entry.BufferResource->GetDesc().Bytes - entry.Offset;
+                    Range(entry.BufferResource->GetDesc().Bytes,
+                          entry.Offset - g->DynamicOffsets[index] + size_t(offsets[index]),
+                          bytes);
+                    ++index;
+                }
+                BindGroup(group);
+                GroupOffsets[g->Desc.Layout->GetDesc().Group] = offsets;
             }
             void PushConstants(uint32_t offset, const void* data, uint32_t bytes) override
             {
@@ -1479,6 +1519,7 @@ namespace Kans::RenderHardware
                 }
                 Recorded.push_back([pipeline    = BoundPipeline,
                                     groups      = Groups,
+                                    offsets     = GroupOffsets,
                                     vertices    = Vertices,
                                     index       = indexed ? BoundIndex : nullptr,
                                     indexFormat = IndexFormat,
@@ -1489,6 +1530,7 @@ namespace Kans::RenderHardware
                     {
                         auto        slot  = layout->GetDesc().Group;
                         const auto& group = groups.at(slot);
+                        const auto& dynamic = offsets.count(slot) ? offsets.at(slot) : group->DynamicOffsets;
                         auto        set   = group->Set->Native;
                         vkCmdBindDescriptorSets(e.Native,
                                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1496,8 +1538,8 @@ namespace Kans::RenderHardware
                                                 slot,
                                                 1,
                                                 &set,
-                                                uint32_t(group->DynamicOffsets.size()),
-                                                group->DynamicOffsets.data());
+                                                uint32_t(dynamic.size()),
+                                                dynamic.data());
                     }
                     if (pipeline->Desc.PushConstantBytes)
                         vkCmdPushConstants(e.Native,
@@ -1921,13 +1963,16 @@ namespace Kans::RenderHardware
             }
             size_t GetBufferBindingAlignment(BindingType type) const override
             {
+                // Upload suballocations may be written while older, disjoint ranges
+                // are read by the GPU. Keep their non-coherent flush atoms disjoint too.
+                const auto& limits = Owner->Native.Properties.limits;
                 switch (type)
                 {
                     case BindingType::UniformBuffer:
-                        return Owner->Native.Properties.limits.minUniformBufferOffsetAlignment;
+                        return std::max(limits.minUniformBufferOffsetAlignment, limits.nonCoherentAtomSize);
                     case BindingType::StorageBuffer:
                     case BindingType::ReadOnlyStorageBuffer:
-                        return Owner->Native.Properties.limits.minStorageBufferOffsetAlignment;
+                        return std::max(limits.minStorageBufferOffsetAlignment, limits.nonCoherentAtomSize);
                     default:
                         throw std::invalid_argument("Binding type is not a buffer");
                 }
@@ -2054,6 +2099,7 @@ namespace Kans::RenderHardware
                 Owner->CheckThread();
                 const auto start = std::chrono::steady_clock::now();
                 auto       group = std::make_shared<VKGroup>(Owner, desc);
+                ++Owner->GroupCreations;
                 Owner->GroupCreationNanoseconds += uint64_t(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start)
                         .count());
@@ -2442,7 +2488,8 @@ namespace Kans::RenderHardware::VulkanTestProbes
                 state.GroupCreationNanoseconds,
                 state.WaitIdleCalls,
                 state.BufferCreations,
-                state.PipelineAttempts};
+                state.PipelineAttempts,
+                state.GroupCreations};
     }
     void EmitValidationError(const Device& device, const char* message)
     {
