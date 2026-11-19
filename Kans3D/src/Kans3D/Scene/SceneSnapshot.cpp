@@ -15,8 +15,8 @@ namespace Kans
     {
         bool Same(const TransformComponent& a, const TransformComponent& b)
         {
-            return a.Position == b.Position && a.Rotation == b.Rotation && a.Scale == b.Scale &&
-                   a.GetTransform() == b.GetTransform();
+            return a.RenderMobility == b.RenderMobility && a.Position == b.Position && a.Rotation == b.Rotation &&
+                   a.Scale == b.Scale && a.GetTransform() == b.GetTransform();
         }
         bool Same(const RelationshipComponent& a, const RelationshipComponent& b)
         {
@@ -59,7 +59,7 @@ namespace Kans
         }
         bool Same(const PrefabInstanceComponent& a, const PrefabInstanceComponent& b)
         {
-            if (a.Prefab != b.Prefab || a.DrawOrder != b.DrawOrder ||
+            if (a.Prefab != b.Prefab || a.DrawOrder != b.DrawOrder || a.SceneryMobility != b.SceneryMobility ||
                 a.LegacyPending.has_value() != b.LegacyPending.has_value() ||
                 (a.LegacyPending && !Same(*a.LegacyPending, *b.LegacyPending)) ||
                 a.Overrides.size() != b.Overrides.size())

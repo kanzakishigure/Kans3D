@@ -14,6 +14,7 @@
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Kans3D/Renderer/Shading/SceneShaders.h"
 #include "Features/ParticleRenderFeature.h"
+#include "Lighting/ShadowMaps.h"
 #include "RenderFeature.h"
 #include "RenderFrame.h"
 #include "RenderPipeline.h"
@@ -724,6 +725,8 @@ namespace Kans
             result.Graph.ReleaseRecorders();
             target.GetFrameProfiler().AbortFrame(statistics.Frame);
             target.InvalidateTemporalHistory();
+            if (rendering->Output.GetShadowStorage())
+                rendering->Output.GetShadowStorage()->InvalidateStaticCaches();
             if (m_Sprites)
                 m_Sprites->ClearTarget();
             m_Device->EndFrame();
@@ -760,6 +763,14 @@ namespace Kans
         statistics.Culling               = view.Culling;
         statistics.Shadows               = view.ShadowStats.PerPass;
         statistics.ShadowedLights        = view.ShadowStats.ShadowedLights;
+        statistics.CachedShadowCasters          = view.ShadowStats.CachedCasters;
+        statistics.StaticShadowCastersRendered  = view.ShadowStats.StaticCastersRendered;
+        statistics.MovableShadowCastersRendered = view.ShadowStats.MovableCastersRendered;
+        statistics.StaticShadowCacheBytes       = view.ShadowStats.CacheBytes;
+        statistics.ShadowCacheHits              = view.ShadowStats.CacheHits;
+        statistics.ShadowCacheMisses            = view.ShadowStats.CacheMisses;
+        if (!result.Complete && rendering->Output.GetShadowStorage())
+            rendering->Output.GetShadowStorage()->InvalidateStaticCaches();
         statistics.DirectionalLights =
             view.Scene.HasDirectionalLight || LightRadiance(view.Scene.dirLight) != glm::vec3(0) ? 1 : 0;
         statistics.PointLights           = view.Scene.pointLights.empty() ?

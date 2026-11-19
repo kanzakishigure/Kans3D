@@ -18,7 +18,11 @@ namespace Kans
     GpuUniformBuffer::~GpuUniformBuffer()                                      = default;
     GpuUniformBuffer::GpuUniformBuffer(GpuUniformBuffer&&) noexcept            = default;
     GpuUniformBuffer& GpuUniformBuffer::operator=(GpuUniformBuffer&&) noexcept = default;
-    void              GpuUniformBuffer::Update(const void* data, size_t bytes) { m_Buffer->Write(0, data, bytes); }
+    void              GpuUniformBuffer::Update(const void* data, size_t bytes)
+    {
+        m_Buffer->Write(0, data, bytes);
+        ++m_Revision;
+    }
     namespace
     {
         bool ReadsSmoothNormals(const std::vector<ShaderStageReflection>& reflection)

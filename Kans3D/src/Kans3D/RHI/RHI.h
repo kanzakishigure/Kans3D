@@ -297,6 +297,10 @@ namespace Kans::RenderHardware
     {
         uint32_t Mip = 0, Face = 0; // Face is the array layer for 2D arrays.
     };
+    struct TextureCopyRegion
+    {
+        uint32_t SourceX = 0, SourceY = 0, DestinationX = 0, DestinationY = 0, Width = 0, Height = 0;
+    };
     enum class TextureAspect
     {
         Default,
@@ -476,6 +480,15 @@ namespace Kans::RenderHardware
         CopyTexture(const Handle<Texture>&, TextureSubresource, const Handle<Texture>&, TextureSubresource = {})
         {
             throw std::runtime_error("Texture copy unavailable");
+        }
+        // Exact rectangular 2D copy; also supports atlas tiles into cube faces.
+        virtual void CopyTextureRegion(const Handle<Texture>&,
+                                       TextureSubresource,
+                                       const Handle<Texture>&,
+                                       TextureSubresource,
+                                       TextureCopyRegion)
+        {
+            throw std::runtime_error("Texture region copy unavailable");
         }
         // One texel, no synchronous depth/stencil repacking. D24S8 returns a native
         // depth uint32 (low 24 bits), followed by a stencil byte at offset+4 (8 bytes reserved).

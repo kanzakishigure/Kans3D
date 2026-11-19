@@ -15,7 +15,7 @@ namespace Kans
     {
         bool Same(const TransformComponent& a, const TransformComponent& b)
         {
-            return a.GetTransform() == b.GetTransform();
+            return a.RenderMobility == b.RenderMobility && a.GetTransform() == b.GetTransform();
         }
         bool SameOverrides(const std::map<std::string, PrefabNodeOverride>& a,
                            const std::map<std::string, PrefabNodeOverride>& b)
@@ -258,7 +258,8 @@ namespace Kans
             else
                 ++it;
         if (instance.Expanded && instance.Source == instance.ExpandedSource && !meshChanged &&
-            !instance.LegacyPending && SameOverrides(instance.Overrides, instance.AppliedOverrides))
+            !instance.LegacyPending && instance.SceneryMobility == instance.AppliedSceneryMobility &&
+            SameOverrides(instance.Overrides, instance.AppliedOverrides))
             return;
         std::set<UUID>    desired;
         std::vector<bool> removed(nodes.size());
@@ -326,6 +327,7 @@ namespace Kans
             SetParent(entity, parent, {}, false);
             auto& state         = states[node.Key];
             state.BaseTransform = Transform(node.LocalTransform);
+            state.BaseTransform.RenderMobility = instance.SceneryMobility;
             MeshComponent mesh {node.Mesh, node.Materials, node.Section};
             if (node.Mesh.IsValid())
             {
@@ -553,6 +555,7 @@ namespace Kans
                 ++it;
         instance.AppliedOverrides = instance.Overrides;
         instance.ExpandedSource   = instance.Source;
+        instance.AppliedSceneryMobility = instance.SceneryMobility;
         instance.Expanded         = true;
         m_ReconcilingPrefab       = false;
         // Reattach ordinary children only when their owning instance reconciles.

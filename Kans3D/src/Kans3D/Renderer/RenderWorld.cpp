@@ -8,6 +8,25 @@
 
 namespace Kans
 {
+    bool RenderWorld::IsStaticShadowCaster(const DrawProxy& proxy) const
+    {
+        if (proxy.RenderMobility != Mobility::Static || proxy.SkinPose || proxy.Mesh.Stream || proxy.Parameters)
+            return false;
+        if (m_Scene)
+            for (auto entity = m_Scene->GetEntityByUUID(proxy.EntityID); entity; entity = m_Scene->GetParent(entity))
+            {
+                if (entity.HasComponent<AnimatorComponent>() || entity.HasComponent<ModelPoseComponent>() ||
+                    entity.HasComponent<SpringBoneComponent>() || entity.HasComponent<ClothComponent>() ||
+                    entity.HasComponent<AimConstraintComponent>() || entity.HasComponent<IKComponent>() ||
+                    entity.HasComponent<ShapeKeysComponent>() || entity.HasComponent<CharacterControllerComponent>() ||
+                    entity.HasComponent<VehicleComponent>() || entity.HasComponent<RagdollComponent>())
+                    return false;
+                if (entity.HasComponent<RigidBodyComponent>() &&
+                    entity.GetComponent<RigidBodyComponent>().Type != RigidBodyType::Static)
+                    return false;
+            }
+        return true;
+    }
     Vfx::VfxWorld* RenderWorld::GetVfxWorld() const { return m_Scene ? &m_Scene->GetVfxWorld() : nullptr; }
     AssetManager*  RenderWorld::GetAssetManager() const { return m_Scene ? m_Scene->m_PrefabAssets : nullptr; }
     void           RenderWorld::SetAssetManager(AssetManager* assets)
@@ -113,7 +132,8 @@ namespace Kans
                                             skin,
                                             {},
                                             component.RenderCustomDepth,
-                                            component.CustomStencil});
+                                            component.CustomStencil,
+                                            entity.GetComponent<TransformComponent>().RenderMobility});
                 }
             }
         }
@@ -937,7 +957,8 @@ namespace Kans
                         x.LocalBounds.Min != y.LocalBounds.Min || x.LocalBounds.Max != y.LocalBounds.Max ||
                         x.WorldBounds.Min != y.WorldBounds.Min || x.WorldBounds.Max != y.WorldBounds.Max ||
                         x.RenderCustomDepth != y.RenderCustomDepth || x.CustomStencil != y.CustomStencil ||
-                        x.CastShadows != y.CastShadows || x.ReceiveShadows != y.ReceiveShadows)
+                        x.CastShadows != y.CastShadows || x.ReceiveShadows != y.ReceiveShadows ||
+                        x.RenderMobility != y.RenderMobility)
                         stale(e.EntityID);
                 }
             }

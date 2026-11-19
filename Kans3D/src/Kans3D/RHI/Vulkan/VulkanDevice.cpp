@@ -1760,6 +1760,63 @@ namespace Kans::RenderHardware
                         }
                 });
             }
+            void CopyTextureRegion(const Handle<Texture>& source,
+                                   TextureSubresource     from,
+                                   const Handle<Texture>& destination,
+                                   TextureSubresource     to,
+                                   TextureCopyRegion      region) override
+            {
+                Outside();
+                auto s = Cast<VKTexture>(source, Owner), d = Cast<VKTexture>(destination, Owner);
+                TextureBytes(s->Desc, from);
+                TextureBytes(d->Desc, to);
+                Require(s != d && Has(s->Desc.Usage, TextureUsage::CopySource) &&
+                            Has(d->Desc.Usage, TextureUsage::CopyDestination),
+                        "Texture region copy usage mismatch");
+                Require(s->Desc.PixelFormat == d->Desc.PixelFormat && s->Desc.Samples == 1 && d->Desc.Samples == 1 &&
+                            s->Desc.Dimension != TextureDimension::Texture3D &&
+                            d->Desc.Dimension != TextureDimension::Texture3D,
+                        "Texture region copy description mismatch");
+                const auto fits = [](uint32_t offset, uint32_t count, uint32_t limit) {
+                    return count && offset <= limit && count <= limit - offset;
+                };
+                Require(fits(region.SourceX, region.Width, Width(s->Desc, from.Mip)) &&
+                            fits(region.SourceY, region.Height, Height(s->Desc, from.Mip)) &&
+                            fits(region.DestinationX, region.Width, Width(d->Desc, to.Mip)) &&
+                            fits(region.DestinationY, region.Height, Height(d->Desc, to.Mip)),
+                        "Invalid texture copy region");
+                Recorded.push_back([s, d, from, to, region](Execution& e) {
+                    e.Use(*s,
+                          from,
+                          {VK_PIPELINE_STAGE_2_COPY_BIT,
+                           VK_ACCESS_2_TRANSFER_READ_BIT,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL});
+                    e.Use(*d,
+                          to,
+                          {VK_PIPELINE_STAGE_2_COPY_BIT,
+                           VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+                    e.FlushBarriers();
+                    for (auto aspect :
+                         {VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_ASPECT_STENCIL_BIT})
+                        if (Info(s->Desc.PixelFormat).Aspects & aspect)
+                        {
+                            VkImageCopy copy {};
+                            copy.srcSubresource = {VkImageAspectFlags(aspect), from.Mip, from.Face, 1};
+                            copy.dstSubresource = {VkImageAspectFlags(aspect), to.Mip, to.Face, 1};
+                            copy.srcOffset      = {int32_t(region.SourceX), int32_t(region.SourceY), 0};
+                            copy.dstOffset      = {int32_t(region.DestinationX), int32_t(region.DestinationY), 0};
+                            copy.extent         = {region.Width, region.Height, 1};
+                            vkCmdCopyImage(e.Native,
+                                           s->Native,
+                                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                           d->Native,
+                                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           1,
+                                           &copy);
+                        }
+                });
+            }
             void CopyTextureTexelToBuffer(const Handle<Texture>& source,
                                           TextureSubresource     sub,
                                           uint32_t               x,

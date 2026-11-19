@@ -30,6 +30,7 @@ namespace Kans
             Ref<const InstanceMaterialParameters> Parameters;
             bool                                  RenderCustomDepth = false;
             uint8_t                               CustomStencil     = 0;
+            Mobility                              RenderMobility    = Mobility::Movable;
         };
         struct Stats
         {
@@ -77,6 +78,7 @@ namespace Kans
         std::unordered_set<UUID>      ResolveHiddenEntities(const std::unordered_set<UUID>& hidden) const;
         bool                          MatchesSubtree(UUID entity, UUID instanceRoot, UUID subtree) const;
         // Whether a part using `slot` survives the view's isolate list.
+        bool IsStaticShadowCaster(const DrawProxy& proxy) const;
         bool IsIsolated(const ViewHighlights& highlights, UUID entity, UUID instanceRoot, uint32_t slot) const;
         const Stats&                  GetStats() const { return m_Stats; }
         const std::vector<DrawProxy>& GetEntityDraws(entt::entity entity) const;

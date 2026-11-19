@@ -57,6 +57,8 @@ namespace Kans
         bool        Point   = false;
         uint32_t    Cascade = 0, Face = 0;
         uint64_t    CastersDrawn = 0, CastersCulled = 0;
+        uint64_t    CachedCasters = 0, StaticCastersRendered = 0, MovableCastersRendered = 0;
+        bool        CacheHit = false, CacheUpdated = false;
     };
     struct FrameStatistics
     {
@@ -72,6 +74,9 @@ namespace Kans
         CullingStatistics                 Culling;
         uint32_t                          DirectionalLights = 0, PointLights = 0, ShadowedLights = 0;
         std::vector<ShadowPassStatistics> Shadows;
+        uint64_t CachedShadowCasters = 0, StaticShadowCastersRendered = 0, MovableShadowCastersRendered = 0;
+        uint64_t StaticShadowCacheBytes = 0;
+        uint32_t ShadowCacheHits = 0, ShadowCacheMisses = 0;
         uint32_t                          BloomMipCount  = 0;
         uint64_t                          ProxiesCreated = 0, ProxiesUpdated = 0, ProxiesRemoved = 0;
         size_t                            TransientTextureSlots = 0;

@@ -69,6 +69,12 @@ namespace Kans
         std::vector<UUID> Children;
     };
 
+    enum class Mobility : uint8_t
+    {
+        Movable,
+        Static
+    };
+
     // Transform relative to the parent entity (or the world for top-level ones).
     struct TransformComponent
     {
@@ -86,6 +92,7 @@ namespace Kans
         {}
 
         // Imported matrices remain exact (including shear) until a TRS field is edited.
+        Mobility                 RenderMobility = Mobility::Movable;
         std::optional<glm::mat4> ImportedMatrix;
         glm::vec3                ImportedPosition {0}, ImportedRotation {0}, ImportedScale {1};
 
@@ -234,6 +241,8 @@ namespace Kans
     struct PrefabInstanceComponent
     {
         AssetID                                   Prefab;
+        Mobility                                  SceneryMobility        = Mobility::Movable;
+        Mobility                                  AppliedSceneryMobility = Mobility::Movable; // Runtime only.
         std::map<std::string, PrefabNodeOverride> Overrides;
         std::optional<ProductModelComponent>      LegacyPending;
         // Runtime state; serializers omit it, snapshots use it to rebuild atomically.

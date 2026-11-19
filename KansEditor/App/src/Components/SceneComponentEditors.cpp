@@ -16,12 +16,24 @@ namespace Kans::ComponentEditors
         // Edits go through PatchComponent so the render world sees them; it only
         // notifies on an actual change.
         entity.PatchComponent<TransformComponent>([](TransformComponent& c) {
+            const char* names[]  = {"Movable", "Static"};
+            int         mobility = int(c.RenderMobility);
+            if (PropertyGrid::Combo("Mobility", names, 2, mobility))
+                c.RenderMobility = Mobility(mobility);
             PropertyGrid::Vec3("Position", c.Position);
             glm::vec3 rotation = glm::degrees(c.Rotation);
             if (PropertyGrid::Vec3("Rotation", rotation, 0.0f, 0.5f))
                 c.Rotation = glm::radians(rotation);
             PropertyGrid::Vec3("Scale", c.Scale, 1.0f, 0.01f, &linkedScale);
         });
+        if (entity.HasComponent<PrefabInstanceComponent>())
+        {
+            const char* names[]  = {"Movable", "Static"};
+            int         mobility = int(entity.GetComponent<PrefabInstanceComponent>().SceneryMobility);
+            if (PropertyGrid::Combo("Prefab scenery", names, 2, mobility))
+                entity.PatchComponent<PrefabInstanceComponent>(
+                    [&](auto& c) { c.SceneryMobility = Mobility(mobility); });
+        }
         PropertyGrid::End();
     }
 

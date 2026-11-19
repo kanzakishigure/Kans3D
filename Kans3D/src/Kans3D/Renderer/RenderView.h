@@ -55,6 +55,8 @@ namespace Kans
     {
         uint32_t Passes = 0, DrawCalls = 0, CastersCulled = 0;
         uint32_t                          ShadowedLights = 0;
+        uint64_t CachedCasters = 0, StaticCastersRendered = 0, MovableCastersRendered = 0, CacheBytes = 0;
+        uint32_t CacheHits = 0, CacheMisses = 0;
         std::vector<ShadowPassStatistics> PerPass;
     };
     struct SpriteStatistics
@@ -293,6 +295,7 @@ namespace Kans
         uint32_t                                          MaxShadowedPointLights = 4;
         uint32_t                                          MaxShadowedSpotLights  = 8;
         uint32_t                                          SpotShadowAtlasSize = 2048; // Pixels per side, at most 4096.
+        bool                                              CacheStaticShadows     = true;
         std::shared_ptr<ShadowResources>                  Shadows;
         std::vector<ViewFogVolume>                        FogVolumes;
         std::vector<FieldRecord>                          FogWind;

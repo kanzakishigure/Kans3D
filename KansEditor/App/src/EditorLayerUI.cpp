@@ -1087,13 +1087,18 @@ namespace Kans
             const auto& sprites = result.SpriteStats;
             PropertyGrid::Text(
                 "2D", std::to_string(sprites.DrawCalls) + " draws, " + std::to_string(sprites.QuadCount) + " quads");
+            PropertyGrid::Text("Static shadow cache",
+                               std::to_string(stats.StaticShadowCacheBytes / 1024) + " KiB, " +
+                                   count(stats.CachedShadowCasters) + " cached / " +
+                                   count(stats.StaticShadowCastersRendered) + " static redrawn / " +
+                                   count(stats.MovableShadowCastersRendered) + " movable");
             PropertyGrid::End();
             if (!stats.Shadows.empty() && PropertyGrid::BeginGroup("Shadow passes", nullptr, nullptr, false))
             {
                 for (const auto& shadow : stats.Shadows)
                     PropertyGrid::Text(shadow.Name.c_str(),
-                                       count(shadow.CastersDrawn) + " drawn, " + count(shadow.CastersCulled) +
-                                           " culled");
+                                       count(shadow.CastersDrawn) + " drawn, " + count(shadow.CachedCasters) +
+                                           " cached, " + count(shadow.CastersCulled) + " culled");
                 PropertyGrid::EndGroup();
             }
         }

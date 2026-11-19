@@ -5,6 +5,28 @@ namespace Kans
 {
     class RenderGraph;
     struct RenderFrame;
+    struct StaticShadowKey
+    {
+        uint64_t       World = 0, Casters = 0;
+        glm::mat4      Matrix {1};
+        glm::vec4      Position {0};
+        ShadowSettings Settings;
+        float          Split = 0;
+        bool           operator==(const StaticShadowKey& b) const;
+    };
+    struct StaticShadowCache
+    {
+        RenderHardware::Handle<RenderHardware::Texture> Depth;
+        StaticShadowKey                                 Key;
+        uint64_t                                        Casters = 0;
+        bool                                            Valid   = false;
+        uint32_t                                        Face = 0, X = 0, Y = 0;
+        bool Matches(const StaticShadowKey& key) const { return Valid && Key == key; }
+    };
+    struct StaticShadowImage
+    {
+        RenderHardware::Handle<RenderHardware::Texture> Live, Depth;
+    };
     struct ShadowResources
     {
         RenderHardware::Handle<RenderHardware::Texture>                         Directional;
@@ -12,6 +34,28 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Sampler>                         Compare, Raw, CookieSampler;
         RenderHardware::Handle<RenderHardware::Texture>                         Spots, Cookies;
         std::map<std::string, RenderHardware::Handle<RenderHardware::Pipeline>> DepthPipelines;
+        std::map<std::string, StaticShadowCache>                                StaticCaches;
+        std::map<const RenderHardware::Texture*, StaticShadowImage>             StaticImages;
+        std::string                                                             StaticCasterKey;
+        std::vector<std::shared_ptr<void>>                                      StaticCasterResources;
+        uint64_t                                                                StaticRevision = 0;
+        void                                                                    InvalidateStaticCaches()
+        {
+            for (auto& item : StaticCaches)
+                item.second.Valid = false;
+        }
+        uint64_t StaticCacheBytes() const
+        {
+            uint64_t bytes = 0;
+            for (const auto& item : StaticImages)
+                if (item.second.Depth)
+                {
+                    const auto& d = item.second.Depth->GetDesc();
+                    bytes += uint64_t(d.Width) * d.Height * 4 *
+                             (d.Dimension == RenderHardware::TextureDimension::Cube ? 6 : 1);
+                }
+            return bytes;
+        }
     };
     struct ShadowCascade
     {

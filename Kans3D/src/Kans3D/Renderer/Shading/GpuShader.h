@@ -21,17 +21,20 @@ namespace Kans
         GpuUniformBuffer(const GpuUniformBuffer&)            = delete;
         GpuUniformBuffer& operator=(const GpuUniformBuffer&) = delete;
 
-        GpuUniformBuffer Snapshot() const { return GpuUniformBuffer(m_Device, m_Buffer); }
+        GpuUniformBuffer Snapshot() const { return GpuUniformBuffer(m_Device, m_Buffer, m_Revision); }
         void             Update(const void* data, size_t bytes);
+        uint64_t         Revision() const { return m_Revision; }
         const RenderHardware::Handle<RenderHardware::Buffer>& Resource() const { return m_Buffer; }
 
     private:
         GpuUniformBuffer(std::shared_ptr<RenderHardware::Device>        device,
-                         RenderHardware::Handle<RenderHardware::Buffer> buffer) :
-            m_Device(std::move(device)), m_Buffer(std::move(buffer))
+                         RenderHardware::Handle<RenderHardware::Buffer> buffer,
+                         uint64_t                                       revision) :
+            m_Device(std::move(device)), m_Buffer(std::move(buffer)), m_Revision(revision)
         {}
         std::shared_ptr<RenderHardware::Device>        m_Device;
         RenderHardware::Handle<RenderHardware::Buffer> m_Buffer;
+        uint64_t                                       m_Revision = 0;
     };
 
     struct GpuShaderPass

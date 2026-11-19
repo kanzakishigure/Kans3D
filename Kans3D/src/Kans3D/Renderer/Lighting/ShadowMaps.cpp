@@ -7,9 +7,15 @@
 #include "Kans3D/Renderer/RenderFrame.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
 #include "Kans3D/Renderer/Shading/MaterialPass.h"
+#include "Kans3D/VFX/VfxWorld.h"
 
 namespace Kans
 {
+    bool StaticShadowKey::operator==(const StaticShadowKey& b) const
+    {
+        return World == b.World && Casters == b.Casters && Matrix == b.Matrix && Position == b.Position &&
+               Settings == b.Settings && Split == b.Split;
+    }
     std::array<float, 4> ShadowSplits(float n, float f, uint32_t count, float lambda)
     {
         std::array<float, 4> splits {};
@@ -615,6 +621,188 @@ void main() {
             indices = glm::vec4(-1);
         const auto proxies     = frame.World.CollectDraws(0, view.HiddenHierarchy);
         const auto environment = frame.GetMaterialEnvironment();
+        std::vector<Frustum> staticFrusta;
+        if (view.CacheStaticShadows && std::any_of(proxies.begin(), proxies.end(), [](const auto& p) {
+                return p.RenderMobility == Mobility::Static;
+            }))
+        {
+            if (dirEnabled)
+            {
+                const auto cascades =
+                    BuildShadowCascades(view.Scene.sceneCamera, view.Scene.dirLight.Dirction, directional);
+                for (uint32_t i = 0; i < directional.Cascades && cascades[i].Split > 0; ++i)
+                    staticFrusta.emplace_back(cascades[i].ViewProjection);
+            }
+            for (const auto& tile : spots)
+                staticFrusta.emplace_back(uniforms.SpotViewProjection[tile.Light]);
+            const glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+            const glm::vec3 ups[]        = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+            for (const auto index : selected)
+            {
+                const auto& light    = view.Scene.pointLights[index];
+                const auto  settings = light.Shadows.Validated();
+                const auto  projection =
+                    DeviceTextureProjection(glm::perspective(glm::radians(90.f), 1.f, .01f, settings.MaxDistance),
+                                            device->GetCoordinateConventions());
+                for (unsigned face = 0; face < 6; ++face)
+                    staticFrusta.emplace_back(
+                        projection * glm::lookAt(light.Position, light.Position + directions[face], ups[face]));
+            }
+        }
+        std::vector<size_t> staticCasters, movableCasters, allCasters;
+        staticCasters.reserve(proxies.size());
+        movableCasters.reserve(proxies.size());
+        allCasters.reserve(proxies.size());
+        std::string casterKey;
+        if (!staticFrusta.empty())
+            casterKey.reserve(proxies.size() * 256);
+        std::vector<std::shared_ptr<void>> casterResources;
+        std::unordered_set<const void*>    retained;
+        const auto                         add = [&](const auto& value) {
+            casterKey.append(reinterpret_cast<const char*>(&value), sizeof(value));
+        };
+        const auto resource = [&](const auto& value) {
+            add(value.get());
+            if (value && retained.insert(value.get()).second)
+                casterResources.push_back(value);
+        };
+        add(frame.MaterialMipBias);
+        // Resolve material identity once per frame, never once per light. Custom vertex/shadow programs,
+        // parameter drivers and render textures may change without an entity transform notification.
+        std::map<AssetID, bool> staticMaterials;
+        for (size_t i = 0; i < proxies.size(); ++i)
+        {
+            const auto& proxy = proxies[i];
+            if (!proxy.CastShadows)
+                continue;
+            allCasters.push_back(i);
+            bool eligible = view.CacheStaticShadows && frame.Assets() && proxy.RenderMobility == Mobility::Static &&
+                            std::any_of(staticFrusta.begin(),
+                                        staticFrusta.end(),
+                                        [&](const auto& f) { return f.Intersects(proxy.WorldBounds); }) &&
+                            frame.World.IsStaticShadowCaster(proxy);
+            const GpuMaterialBindings* bindings = nullptr;
+            const GpuShader*           shader   = nullptr;
+            const GpuMesh*             mesh     = nullptr;
+            if (eligible)
+            {
+                bindings = frame.GetBindings(proxy.Material, false);
+                shader   = bindings ? frame.GetShader(proxy.Material, bindings->Shader) : nullptr;
+                mesh     = frame.GetMesh(proxy.Mesh);
+                eligible = bindings && shader && mesh && IsStandardShader(bindings->Shader) && !mesh->Skin &&
+                           mesh->MorphTargets.empty();
+            }
+            if (eligible)
+            {
+                auto found = staticMaterials.find(proxy.Material);
+                if (found == staticMaterials.end())
+                {
+                    bool stable = true;
+                    for (const auto& texture : bindings->Textures)
+                        if (texture.second.IsValid())
+                        {
+                            const auto asset = frame.Assets()->GetAssetManager().Request<TextureAsset>(texture.second);
+                            if (!asset.IsReady() || asset.Asset->GetData().RenderTexture)
+                                stable = false;
+                        }
+                    bool       complete = true;
+                    const auto group =
+                        stable ?
+                            frame.Assets()->GetMaterialGroup(*shader, *bindings, &complete, frame.MaterialMipBias) :
+                            nullptr;
+                    stable &= complete && bool(group);
+                    found = staticMaterials.emplace(proxy.Material, stable).first;
+                    if (stable)
+                    {
+                        resource(shader->Program);
+                        resource(group);
+                        add(bindings->Images.size());
+                        for (const auto& image : bindings->Images)
+                            resource(image);
+                        add(bindings->Blocks.size());
+                        add(bindings->Textures.size());
+                        for (const auto& block : bindings->Blocks)
+                        {
+                            add(block.first);
+                            resource(block.second.Resource());
+                            add(block.second.Revision());
+                        }
+                        for (const auto& texture : bindings->Textures)
+                        {
+                            add(texture.first);
+                            if (texture.second.IsValid())
+                                resource(frame.Assets()->GetTextureResource(texture.second));
+                        }
+                        add(bindings->Render.AlphaMode);
+                        add(bindings->Render.AlphaCutoff);
+                        add(bindings->Render.DoubleSided);
+                    }
+                }
+                eligible = found->second;
+            }
+            if (!eligible)
+            {
+                movableCasters.push_back(i);
+                continue;
+            }
+            staticCasters.push_back(i);
+            add(uint64_t(proxy.EntityID));
+            add(uint64_t(proxy.InstanceRoot));
+            add(proxy.Section);
+            add(uint64_t(proxy.Material.GetSourceID().GetUUID()));
+            add(proxy.Material.GetLocalID());
+            add(frame.IncludesSection(proxy.EntityID, proxy.InstanceRoot, mesh, proxy.Section));
+            for (unsigned col = 0; col < 4; ++col)
+                for (unsigned row = 0; row < 4; ++row)
+                    add(proxy.Transform[col][row]);
+            for (unsigned axis = 0; axis < 3; ++axis)
+            {
+                add(proxy.WorldBounds.Min[axis]);
+                add(proxy.WorldBounds.Max[axis]);
+            }
+            add(mesh->VertexBindings.size());
+            add(mesh->Attributes.size());
+            for (const auto& binding : mesh->VertexBindings)
+            {
+                add(binding.Slot);
+                add(binding.Stride);
+                add(binding.PerInstance);
+            }
+            for (const auto& attribute : mesh->Attributes)
+            {
+                add(attribute.Location);
+                add(attribute.BufferSlot);
+                add(attribute.Offset);
+                add(attribute.Type);
+            }
+            resource(mesh->Vertices);
+            resource(mesh->Indices);
+            if (proxy.Section < mesh->Sections.size())
+            {
+                const auto& section = mesh->Sections[proxy.Section];
+                add(section.FirstIndex);
+                add(section.IndexCount);
+            }
+        }
+        if (casterKey != shadows->StaticCasterKey)
+        {
+            ++shadows->StaticRevision;
+            shadows->StaticCasterKey       = std::move(casterKey);
+            shadows->StaticCasterResources = std::move(casterResources);
+        }
+        if (staticCasters.empty())
+        {
+            shadows->StaticCaches.clear();
+            shadows->StaticImages.clear();
+            shadows->StaticCasterResources.clear();
+        }
+        std::unordered_set<std::string>                     usedCaches;
+        std::unordered_set<const RenderHardware::Texture*>  usedImages;
+        std::map<const RenderHardware::Texture*, GraphPass> previousLivePass;
+        const auto*                                         vfx = frame.World.GetVfxWorld();
+        const bool                                          movableExtras =
+            (vfx && !vfx->Instances().empty()) ||
+            std::any_of(view.Texts.begin(), view.Texts.end(), [](const auto& text) { return text.Style.CastShadows; });
         struct PreparedCaster
         {
             bool                                           Resolved = false;
@@ -627,28 +815,55 @@ void main() {
         };
         std::vector<PreparedCaster>    prepared(proxies.size());
         Handle<RenderHardware::Shader> depthProgram, skinnedDepthProgram;
-        auto       record      = [&](std::string                            name,
-                                     const Handle<RenderHardware::Texture>& texture,
-                                     uint32_t                               face,
-                                     uint32_t                               cascade,
-                                     const glm::mat4&                       matrix,
-                                     ShadowSettings                         settings,
-                                     glm::vec4                              position,
-                                     bool                                   point,
-                                     const SpotShadowTile*                  spot = nullptr) {
+        auto                           recordGeometry = [&](std::string                            name,
+                                                            const Handle<RenderHardware::Texture>& texture,
+                                                            uint32_t                               face,
+                                                            uint32_t                               cascade,
+                                                            const glm::mat4&                       matrix,
+                                                            ShadowSettings                         settings,
+                                                            glm::vec4                              position,
+                                                            bool                                   point,
+                                                            const SpotShadowTile*                  spot,
+                                                            const std::vector<size_t>&             indices,
+                                                            bool                                   staticOnly,
+                                                            bool                                   loadCache,
+                                                            ShadowPassStatistics&                  stats) {
             const auto           recordStart = RenderClockMilliseconds();
-            ShadowPassStatistics stats {name, point, cascade, face};
             const Frustum frustum(matrix);
             auto          commands = device->CreateCommandList();
             RenderingDesc rendering;
             rendering.Depth.Target           = texture;
             rendering.Depth.Subresource.Face = face;
-            rendering.Depth.Load             = point || cascade == 0 ? LoadOp::Clear : LoadOp::Load;
+            rendering.Depth.Load = staticOnly ? (point ? LoadOp::Clear : LoadOp::Load) :
+                                                (!loadCache && (point || cascade == 0) ? LoadOp::Clear : LoadOp::Load);
             commands->BeginRendering(rendering);
-            uint32_t x = spot ? spot->X : point ? 0 : (cascade & 1) * settings.Resolution;
-            uint32_t y = spot ? spot->Y : point ? 0 : (cascade >> 1) * settings.Resolution;
+            const uint32_t x = spot ? spot->X : point ? 0 : (cascade & 1) * settings.Resolution;
+            const uint32_t y = spot ? spot->Y : point ? 0 : (cascade >> 1) * settings.Resolution;
             commands->SetViewport({float(x), float(y), float(settings.Resolution), float(settings.Resolution)});
             commands->SetScissor({int32_t(x), int32_t(y), settings.Resolution, settings.Resolution});
+            if (staticOnly && !point)
+            {
+                // A scissored far-depth draw clears only the dirty tile, preserving its neighbours.
+                auto& clearPipeline = shadows->DepthPipelines["Static cache tile clear"];
+                if (!clearPipeline)
+                {
+                    PipelineDesc desc;
+                    desc.Program = frame.Services.GetInternalProgram(
+                        "StaticShadowClear",
+                        "#version 450\nvoid main(){ vec2 p=vec2((gl_VertexIndex<<1)&2,gl_VertexIndex&2); "
+                        "gl_Position=vec4(p*2-1,1,1); }",
+                        "#version 450\nvoid main(){ gl_FragDepth=1.0; }");
+                    desc.ColorFormats.clear();
+                    desc.HasDepthStencil        = true;
+                    desc.Rasterizer.Cull        = CullMode::None;
+                    desc.DepthStencil.DepthTest = desc.DepthStencil.DepthWrite = true;
+                    desc.DepthStencil.DepthCompare                             = CompareOp::Always;
+                    clearPipeline                                              = device->CreatePipeline(desc);
+                }
+                commands->BindPipeline(clearPipeline);
+                commands->Draw(3);
+                ++frame.Stats.DrawCalls;
+            }
             auto data               = MakeLightingUniforms(view.Scene);
             data.ViewProjection     = matrix;
             data.Time               = view.Time;
@@ -662,7 +877,7 @@ void main() {
             auto                  resource = graph.ImportTexture(name, texture);
             uses.push_back({resource, GraphAccess::DepthReadWrite});
             std::unordered_set<const RenderHardware::Texture*> sampledImages;
-            for (size_t casterIndex = 0; casterIndex < proxies.size(); ++casterIndex)
+            for (size_t casterIndex : indices)
             {
                 const auto& proxy = proxies[casterIndex];
                 if (!proxy.CastShadows || !frame.Assets())
@@ -774,47 +989,193 @@ void main() {
                     }
                 }
             }
-            for (const auto& image : frame.Services.GetTextRenderer().Textures())
+            if (!staticOnly)
             {
-                const auto id = graph.ImportTexture("Shadow font atlas", image);
-                uses.push_back({id, GraphAccess::SampledRead});
-            }
-            for (auto text : view.Texts) // Collected once per frame by RenderWorld.
-            {
-                if (!text.Style.CastShadows || !frustum.Intersects(text.WorldBounds) ||
-                    !view.Highlights.Isolate.empty())
-                    continue;
-                text.Transform = TextWorldTransform(
-                    text.Style, text.Transform, view.Scene.sceneCamera.Position, view.Scene.sceneCamera.viewMatrix);
-                frame.Services.GetTextRenderer().Draw(*commands,
-                                                      text,
-                                                      matrix,
-                                                      rendering,
-                                                      true,
-                                                      point ? position : glm::vec4(0),
-                                                      settings.ConstantBias,
-                                                      settings.SlopeBias,
-                                                      point,
-                                                      frame.UniformStorage);
-                ++view.ShadowStats.DrawCalls;
-                ++stats.CastersDrawn;
-                ++frame.Stats.DrawCalls;
-                frame.Stats.Triangles += text.Layout->Get().Glyphs.size() * 2;
-            }
-            const auto& particleDepth = GetInternalShaderData("ShadowDepth", DepthVertex, DepthFragment);
-            if (auto source = std::get_if<ShaderData>(&particleDepth))
-            {
-                const auto before = view.ShadowStats.DrawCalls;
-                ParticleRenderFeature::RecordMeshShadows(
-                    graph, frame, *commands, data, *source, uses, point, settings.ConstantBias, settings.SlopeBias);
-                stats.CastersDrawn += view.ShadowStats.DrawCalls - before;
+                for (const auto& image : frame.Services.GetTextRenderer().Textures())
+                {
+                    const auto id = graph.ImportTexture("Shadow font atlas", image);
+                    uses.push_back({id, GraphAccess::SampledRead});
+                }
+                for (auto text : view.Texts) // Collected once per frame by RenderWorld.
+                {
+                    if (!text.Style.CastShadows || !frustum.Intersects(text.WorldBounds) ||
+                        !view.Highlights.Isolate.empty())
+                        continue;
+                    text.Transform = TextWorldTransform(
+                        text.Style, text.Transform, view.Scene.sceneCamera.Position, view.Scene.sceneCamera.viewMatrix);
+                    frame.Services.GetTextRenderer().Draw(*commands,
+                                                          text,
+                                                          matrix,
+                                                          rendering,
+                                                          true,
+                                                          point ? position : glm::vec4(0),
+                                                          settings.ConstantBias,
+                                                          settings.SlopeBias,
+                                                          point,
+                                                          frame.UniformStorage);
+                    ++view.ShadowStats.DrawCalls;
+                    ++stats.CastersDrawn;
+                    ++frame.Stats.DrawCalls;
+                    frame.Stats.Triangles += text.Layout->Get().Glyphs.size() * 2;
+                }
+                const auto& particleDepth = GetInternalShaderData("ShadowDepth", DepthVertex, DepthFragment);
+                if (auto source = std::get_if<ShaderData>(&particleDepth))
+                {
+                    const auto before = view.ShadowStats.DrawCalls;
+                    ParticleRenderFeature::RecordMeshShadows(
+                        graph, frame, *commands, data, *source, uses, point, settings.ConstantBias, settings.SlopeBias);
+                    stats.CastersDrawn += view.ShadowStats.DrawCalls - before;
+                }
             }
             commands->EndRendering();
             auto pass = graph.AddRecordedPass(
                 std::move(name), std::move(uses), commands, RenderClockMilliseconds() - recordStart);
-            view.ShadowStats.PerPass.push_back(std::move(stats));
             if (pass)
                 graph.OrderAfter(pass, pass - 1);
+            return pass;
+        };
+        auto record = [&](std::string                            name,
+                          const Handle<RenderHardware::Texture>& texture,
+                          uint32_t                               face,
+                          uint32_t                               cascade,
+                          const glm::mat4&                       matrix,
+                          ShadowSettings                         settings,
+                          glm::vec4                              position,
+                          bool                                   point,
+                          const SpotShadowTile*                  spot  = nullptr,
+                          float                                  split = 0) {
+            ShadowPassStatistics stats {name, point, cascade, face};
+            if (staticCasters.empty())
+            {
+                recordGeometry(name,
+                               texture,
+                               face,
+                               cascade,
+                               matrix,
+                               settings,
+                               position,
+                               point,
+                               spot,
+                               allCasters,
+                               false,
+                               false,
+                               stats);
+                stats.MovableCastersRendered = stats.CastersDrawn;
+            }
+            else
+            {
+                usedCaches.insert(name);
+                const uint32_t x = spot ? spot->X : point ? 0 : (cascade & 1) * settings.Resolution;
+                const uint32_t y = spot ? spot->Y : point ? 0 : (cascade >> 1) * settings.Resolution;
+                usedImages.insert(texture.get());
+                auto& image = shadows->StaticImages[texture.get()];
+                if (!image.Depth)
+                {
+                    image.Live      = texture;
+                    image.Depth     = DepthTexture(*device, texture->GetDesc().Width, point);
+                    auto initialize = device->CreateCommandList();
+                    for (uint32_t layer = 0; layer < (point ? 6u : 1u); ++layer)
+                    {
+                        RenderingDesc clear;
+                        clear.Depth.Target           = image.Depth;
+                        clear.Depth.Subresource.Face = layer;
+                        initialize->BeginRendering(clear);
+                        initialize->EndRendering();
+                    }
+                    auto pass = graph.AddRecordedPass(
+                        name + " cache initialize",
+                        {{graph.ImportTexture(name + " static atlas", image.Depth), GraphAccess::DepthWrite}},
+                        initialize);
+                    if (pass)
+                        graph.OrderAfter(pass, pass - 1);
+                }
+                auto&           cache = shadows->StaticCaches[name];
+                StaticShadowKey key {
+                    frame.World.GetIdentity(), shadows->StaticRevision, matrix, position, settings, split};
+                if (cache.Depth != image.Depth || cache.Face != face || cache.X != x || cache.Y != y)
+                    cache.Valid = false;
+                cache.Depth = image.Depth;
+                cache.Face  = face;
+                cache.X     = x;
+                cache.Y     = y;
+                if (!cache.Matches(key))
+                {
+                    stats.CacheUpdated = true;
+                    ++view.ShadowStats.CacheMisses;
+                    recordGeometry(name + " static cache",
+                                   cache.Depth,
+                                   face,
+                                   cascade,
+                                   matrix,
+                                   settings,
+                                   position,
+                                   point,
+                                   spot,
+                                   staticCasters,
+                                   true,
+                                   false,
+                                   stats);
+                    stats.StaticCastersRendered = stats.CastersDrawn;
+                    cache.Casters               = stats.CastersDrawn;
+                    cache.Key                   = key;
+                    cache.Valid                 = true;
+                    graph.ExportTexture(graph.ImportTexture(name + " static depth", cache.Depth));
+                }
+                else
+                {
+                    stats.CacheHit      = true;
+                    stats.CachedCasters = cache.Casters;
+                    ++view.ShadowStats.CacheHits;
+                }
+                const auto start    = RenderClockMilliseconds();
+                auto       commands = device->CreateCommandList();
+                // Full cube faces and four-cascade atlases are completely overwritten by their copies.
+                // Clear unused atlas pixels when only a subset of its tiles is occupied.
+                if (!point && cascade == 0 && (spot || directional.Cascades < 4))
+                {
+                    RenderingDesc clear;
+                    clear.Depth.Target           = texture;
+                    clear.Depth.Subresource.Face = face;
+                    commands->BeginRendering(clear);
+                    commands->EndRendering();
+                }
+                commands->CopyTextureRegion(
+                    cache.Depth, {0, face}, texture, {0, face}, {x, y, x, y, settings.Resolution, settings.Resolution});
+                auto pass = graph.AddRecordedPass(
+                    name + " cache copy",
+                    {{graph.ImportTexture(name + " static depth", cache.Depth), GraphAccess::TransferRead},
+                     {graph.ImportTexture(name, texture), GraphAccess::TransferWrite}},
+                    commands,
+                    RenderClockMilliseconds() - start,
+                    GraphPassKind::Transfer);
+                if (pass)
+                    graph.OrderAfter(pass, pass - 1);
+                // Partial copies preserve earlier tiles, including their movable overlays.
+                if (const auto previous = previousLivePass.find(texture.get()); previous != previousLivePass.end())
+                    graph.DependsOn(pass, previous->second);
+                GraphPass  livePass = pass;
+                const auto before   = stats.CastersDrawn;
+                if (!movableCasters.empty() || movableExtras)
+                    livePass = recordGeometry(name,
+                                              texture,
+                                              face,
+                                              cascade,
+                                              matrix,
+                                              settings,
+                                              position,
+                                              point,
+                                              spot,
+                                              movableCasters,
+                                              false,
+                                              true,
+                                              stats);
+                previousLivePass[texture.get()] = livePass;
+                stats.MovableCastersRendered    = stats.CastersDrawn - before;
+            }
+            view.ShadowStats.CachedCasters += stats.CachedCasters;
+            view.ShadowStats.StaticCastersRendered += stats.StaticCastersRendered;
+            view.ShadowStats.MovableCastersRendered += stats.MovableCastersRendered;
+            view.ShadowStats.PerPass.push_back(stats);
             ++view.ShadowStats.Passes;
         };
         if (dirEnabled)
@@ -844,7 +1205,9 @@ void main() {
                            c.ViewProjection,
                            directional,
                            {},
-                           false);
+                           false,
+                           nullptr,
+                           c.Split);
                 }
             }
         }
@@ -908,6 +1271,11 @@ void main() {
                        &tile);
             }
         }
+        for (auto it = shadows->StaticCaches.begin(); it != shadows->StaticCaches.end();)
+            it = usedCaches.count(it->first) ? std::next(it) : shadows->StaticCaches.erase(it);
+        for (auto it = shadows->StaticImages.begin(); it != shadows->StaticImages.end();)
+            it = usedImages.count(it->first) ? std::next(it) : shadows->StaticImages.erase(it);
+        view.ShadowStats.CacheBytes = shadows->StaticCacheBytes();
         view.LightingUniforms = uniforms;
     }
 } // namespace Kans

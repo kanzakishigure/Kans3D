@@ -214,12 +214,22 @@ namespace Kans
                 throw std::runtime_error(error->Message);
             return result;
         }
+        Mobility DecodeMobility(const YAML::Node& value)
+        {
+            if (!value)
+                return Mobility::Movable;
+            const auto name = Text(value);
+            Require(name == "Static" || name == "Movable", "Invalid mobility");
+            return name == "Static" ? Mobility::Static : Mobility::Movable;
+        }
         YAML::Node EncodeTransform(const TransformComponent& transform)
         {
             YAML::Node value;
             value["Position"] = Vector(transform.Position, 3);
             value["Rotation"] = Vector(transform.Rotation, 3);
             value["Scale"]    = Vector(transform.Scale, 3);
+            if (transform.RenderMobility == Mobility::Static)
+                value["Mobility"] = "Static";
             // Preserve an imported matrix without a TRS round trip.
             if (transform.ImportedMatrix)
             {
@@ -232,8 +242,9 @@ namespace Kans
         }
         TransformComponent DecodeTransform(const YAML::Node& value)
         {
-            Keys(value, {"Position", "Rotation", "Scale", "Matrix"});
+            Keys(value, {"Position", "Rotation", "Scale", "Matrix", "Mobility"});
             TransformComponent result {Vec3(value["Position"]), Vec3(value["Rotation"]), Vec3(value["Scale"])};
+            result.RenderMobility = DecodeMobility(value["Mobility"]);
             if (const auto matrix = value["Matrix"])
             {
                 Require(matrix.IsSequence() && matrix.size() == 16, "Invalid transform matrix");
@@ -948,6 +959,8 @@ namespace Kans
             YAML::Node value;
             value["Prefab"]    = IdentityText(prefab.Prefab);
             value["DrawOrder"] = prefab.DrawOrder;
+            if (prefab.SceneryMobility == Mobility::Static)
+                value["SceneryMobility"] = "Static";
             value["Overrides"] = YAML::Node(YAML::NodeType::Sequence);
             Require(prefab.Overrides.size() <= 65536, "Too many prefab overrides");
             for (const auto& [key, change] : prefab.Overrides)
@@ -1017,9 +1030,10 @@ namespace Kans
         }
         PrefabInstanceComponent DecodePrefab(const YAML::Node& value)
         {
-            Keys(value, {"Prefab", "DrawOrder", "Overrides", "LegacyPending"});
+            Keys(value, {"Prefab", "DrawOrder", "Overrides", "LegacyPending", "SceneryMobility"});
             PrefabInstanceComponent prefab;
             prefab.Prefab    = Identity(value["Prefab"]);
+            prefab.SceneryMobility = DecodeMobility(value["SceneryMobility"]);
             prefab.DrawOrder = UInt(value["DrawOrder"]);
             Require(prefab.DrawOrder < UINT64_MAX, "Invalid prefab draw order");
             const auto overrides = value["Overrides"];
@@ -2176,7 +2190,7 @@ namespace Kans
                 if (node["Parent"])
                     parents.emplace_back(id, UInt(node["Parent"]));
                 Keys(node["TagComponent"], {"Tag"});
-                Keys(node["TransformComponent"], {"Position", "Rotation", "Scale", "Matrix"});
+                Keys(node["TransformComponent"], {"Position", "Rotation", "Scale", "Matrix", "Mobility"});
                 auto tag       = Text(node["TagComponent"]["Tag"]);
                 auto textBytes = tag.size();
                 if (node["TextComponent"])

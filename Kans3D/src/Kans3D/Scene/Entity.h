@@ -106,7 +106,7 @@ namespace Kans
     private:
         static bool SameRenderValue(const TransformComponent& a, const TransformComponent& b)
         {
-            return a.GetTransform() == b.GetTransform();
+            return a.RenderMobility == b.RenderMobility && a.GetTransform() == b.GetTransform();
         }
         static bool SameRenderValue(const UIScreenComponent& a, const UIScreenComponent& b) { return a == b; }
         static bool SameRenderValue(const UIWorldComponent& a, const UIWorldComponent& b) { return a == b; }
