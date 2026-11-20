@@ -1067,6 +1067,8 @@ namespace Kans
         m_Materials.clear();
         m_Textures.clear();
         m_RenderTextures.clear();
+        m_MaterialParameterBuffers.clear();
+        m_EmptyMaterialParameters.reset();
         m_PendingRenderTextures.clear();
         m_Shaders.clear();
         m_Bindings.clear();

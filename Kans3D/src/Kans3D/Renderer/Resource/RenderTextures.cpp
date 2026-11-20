@@ -10,7 +10,10 @@ namespace Kans
         const auto found = m_RenderTextures.find(id);
         return found == m_RenderTextures.end() ? 0 : found->second.Schedule.Updates;
     }
-    bool RenderAssetCache::UpdateRenderTextures(Renderer& renderer, uint64_t frame, double time)
+    bool RenderAssetCache::UpdateRenderTextures(Renderer&                                               renderer,
+                                                uint64_t                                                frame,
+                                                double                                                  time,
+                                                const std::shared_ptr<const MaterialParameterUniforms>& parameters)
     {
         using namespace RenderHardware;
         bool                        complete = true;
@@ -32,7 +35,15 @@ namespace Kans
             const auto spec     = *source->GetData().RenderTexture;
             auto&      state    = m_RenderTextures[id];
             const auto requests = source->UpdateRequests();
-            if (!state.Schedule.Due(spec, frame, time, requests))
+            // Uncapped realtime textures can be shared by views of different scenes, or scrubbed at a fixed view
+            // time. A changed collection snapshot invalidates the once-per-frame result for that consumer.
+            const bool parameterChange =
+                spec.Update == RenderTextureUpdate::Realtime && spec.Rate == 0 && std::isfinite(time) && state.Shader &&
+                !state.Shader->EngineResources.empty() &&
+                state.Shader->EngineResources.back().Binding == uint32_t(EngineBinding::MaterialParameters) &&
+                (state.LastMaterialParameters.owner_before(parameters) ||
+                 parameters.owner_before(state.LastMaterialParameters));
+            if (!parameterChange && !state.Schedule.Due(spec, frame, time, requests))
             {
                 visiting.erase(id);
                 visited.insert(id);
@@ -104,6 +115,7 @@ namespace Kans
                 GpuUniformBuffer     frameBuffer(sizeof(uniforms), &uniforms, device),
                     objectBuffer(sizeof(object), &object, device);
                 MaterialPassData pass;
+                pass.MaterialParameters = parameters;
                 pass.Frame              = frameBuffer.Resource();
                 pass.Object             = objectBuffer.Resource();
                 pass.Environment        = renderer.GetMaterialEnvironment(EnvironmentLighting {});
@@ -125,6 +137,7 @@ namespace Kans
                 commands->GenerateMips(texture->GetResource());
             device->Submit(commands);
             state.Schedule.Complete(frame, time, requests);
+            state.LastMaterialParameters = parameters;
             visiting.erase(id);
             visited.insert(id);
             return true;

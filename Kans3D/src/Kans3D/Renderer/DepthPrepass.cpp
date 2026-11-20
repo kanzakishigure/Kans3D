@@ -130,6 +130,7 @@ namespace Kans
                         continue; // Main retains its depth write; flag remains zero.
                 }
                 MaterialPassData data;
+                data.MaterialParameters = View.MaterialParameters;
                 data.MaterialMipBias = MaterialMipBias;
                 data.DepthPrepass = true;
                 // Preserve Main's stencil history even if a later unmarked opaque

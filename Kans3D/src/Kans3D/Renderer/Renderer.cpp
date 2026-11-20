@@ -711,7 +711,8 @@ namespace Kans
                 // A material preview can have a static view clock. Runtime textures share the application's
                 // clock across previews and scene cameras; headless callers provide their own frame time.
                 const double textureTime = application ? application->GetTime() : view.Time;
-                result.Complete &= view.Assets->UpdateRenderTextures(*this, token, textureTime);
+                result.Complete &=
+                    view.Assets->UpdateRenderTextures(*this, token, textureTime, view.MaterialParameters);
             }
             statistics.GraphBuildMilliseconds = RenderClockMilliseconds() - buildStart;
             const auto compileStart           = RenderClockMilliseconds();

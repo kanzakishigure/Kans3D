@@ -192,6 +192,7 @@ namespace Kans
         m_PhysicsMaterialPanel.Bind(nullptr);
         m_RenderTexturePanel.SetResources({});
         m_RenderTexturePanel.Bind(nullptr);
+        m_MaterialParameterCollectionPanel.Bind(nullptr);
         m_ProjectSettingsPanel.Bind({});
         m_PluginsPanel.Bind({});
         m_UIDesignerPanel.Bind(nullptr);

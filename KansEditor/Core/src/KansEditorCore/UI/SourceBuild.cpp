@@ -3,7 +3,8 @@
 
 namespace Kans
 {
-    std::string BuildSavedSource(EditorAssetImportService* service, const std::filesystem::path& file)
+    std::string
+    BuildSavedSource(EditorAssetImportService* service, const std::filesystem::path& file, bool rebuildDependents)
     {
         if (!service)
             return "Saved.";
@@ -23,6 +24,7 @@ namespace Kans
                     {
                         AssetBuildOptions options;
                         options.Target = EditorAssetTarget;
+                        options.RebuildDependents = rebuildDependents;
                         auto started   = service->Start(source.sourceAssetID, options);
                         return std::holds_alternative<AssetError>(started) ?
                                    "Saved; build not started: " + std::get<AssetError>(started).Message :

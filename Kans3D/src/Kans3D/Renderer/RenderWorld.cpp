@@ -714,6 +714,7 @@ namespace Kans
     {
         if (m_Scene)
             output.Scene.PostProcess = m_Scene->GetPostProcessSettings();
+        output.MaterialParameters = m_Scene ? m_Scene->CaptureMaterialParameters() : nullptr;
         output.ResolvedFocusDistance.reset();
         if (m_Scene)
             output.ResolvedFocusDistance = output.GetPostProcessSettings().DepthOfField.ResolveFocusDistance(

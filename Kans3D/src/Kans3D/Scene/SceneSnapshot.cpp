@@ -178,7 +178,8 @@ namespace Kans
     bool operator==(const SceneSnapshot& a, const SceneSnapshot& b)
     {
         return a.PostProcess == b.PostProcess && a.Name == b.Name && a.Environment == b.Environment &&
-               a.RootOrder == b.RootOrder && a.Entities == b.Entities;
+               a.MaterialParameterCollections == b.MaterialParameterCollections && a.RootOrder == b.RootOrder &&
+               a.Entities == b.Entities;
     }
 
     SceneSnapshot Scene::Capture() const
@@ -187,6 +188,7 @@ namespace Kans
         SceneSnapshot snapshot;
         snapshot.Name        = m_Name;
         snapshot.PostProcess = m_PostProcessSettings;
+        snapshot.MaterialParameterCollections = GetMaterialParameterCollections();
         if (m_HasEnvironmentSettings)
             snapshot.Environment = m_EnvironmentSettings;
         snapshot.RootOrder = m_RootOrder;
@@ -306,6 +308,7 @@ namespace Kans
         m_RootOrder.clear();
         m_Name = snapshot.Name;
         SetPostProcessSettings(snapshot.PostProcess);
+        SetMaterialParameterCollections(snapshot.MaterialParameterCollections);
         if (snapshot.Environment)
             SetEnvironmentSettings(*snapshot.Environment);
         else

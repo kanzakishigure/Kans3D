@@ -7,5 +7,7 @@ namespace Kans
     class EditorAssetImportService;
     // Starts rebuilding the project source `file` after an editor saved it; returns the status to
     // show ("Saved; building...", or why no build started).
-    std::string BuildSavedSource(EditorAssetImportService* service, const std::filesystem::path& file);
+    std::string BuildSavedSource(EditorAssetImportService*    service,
+                                 const std::filesystem::path& file,
+                                 bool                         rebuildDependents = false);
 } // namespace Kans

@@ -145,6 +145,7 @@ namespace Kans
         // Scene-wide settings, shown when no entity is selected.
         void DrawContents();
         void DrawSearch();
+        bool m_MaterialCollectionConflict = false;
         void DrawSceneSettings(Scene& scene);
         void DrawEnvironmentGroups(Scene& scene);
         void DrawPostProcess(Scene& scene);

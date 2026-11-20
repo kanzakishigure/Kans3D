@@ -5,13 +5,14 @@
 namespace Kans
 {
     class EditorAssetImportService;
+    class Scene;
     class RenderTexturePanel
     {
     public:
         void Bind(EditorAssetImportService* service) { m_Service = service; }
         void SetResources(std::shared_ptr<RenderAssetCache> cache) { m_Cache = std::move(cache); }
         bool Open(const std::filesystem::path&);
-        void Draw();
+        void Draw(const Scene* scene = nullptr);
         void Save();
         bool IsDirty() const { return m_Dirty; }
         bool HasFocus() const { return m_Focused; }

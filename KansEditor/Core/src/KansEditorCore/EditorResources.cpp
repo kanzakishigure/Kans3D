@@ -77,6 +77,7 @@ namespace Kans
             {".dae", &DaeFileIcon},
             {".blend", &BlendFileIcon},
             {".rendertexture", &TextureFileIcon},
+            {".matparams", &MaterialFileIcon},
             {".mesh", &MeshFileIcon},
             {".png", &TextureFileIcon},
             {".jpg", &TextureFileIcon},

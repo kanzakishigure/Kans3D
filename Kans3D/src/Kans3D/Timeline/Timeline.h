@@ -56,6 +56,7 @@ namespace Kans
     {
         std::string   Binding, Path;
         TimelineCurve Curve;
+        bool          UseTimelineTime = false;
     };
     struct TimelineActivationTrack
     {

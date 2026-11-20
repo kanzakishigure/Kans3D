@@ -5,6 +5,7 @@
 #include "Kans3D/Core/Application.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Renderer/Renderer.h"
+#include "Kans3D/Scene/Scene.h"
 #include "KansEditorCore/EditorAssetImportService.h"
 #include "KansEditorCore/UI/SourceBuild.h"
 #include "UI/PropertyGrid.h"
@@ -59,7 +60,7 @@ namespace Kans
         m_Dirty  = false;
         m_Status = BuildSavedSource(m_Service, m_File);
     }
-    void RenderTexturePanel::Draw()
+    void RenderTexturePanel::Draw(const Scene* scene)
     {
         m_Focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         if (m_File.empty())
@@ -174,7 +175,8 @@ namespace Kans
                     const float time = app ? app->GetTime() : float(ImGui::GetTime());
                     m_Cache->UpdateRenderTextures(*Renderer::Acquire(m_Cache->GetDevice()),
                                                   app ? app->GetFrameNumber() : uint64_t(ImGui::GetFrameCount()),
-                                                  time);
+                                                  time,
+                                                  scene ? scene->CaptureMaterialParameters() : nullptr);
                     const float width = ImGui::GetContentRegionAvail().x;
                     ImGui::PushStyleColor(ImGuiCol_ChildBg, EditorTheme::Colors().Inset);
                     ImGui::BeginChild("Preview", ImVec2(width, width * texture->GetHeight() / texture->GetWidth()));

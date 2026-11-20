@@ -27,6 +27,7 @@
 #include "Panels/FrameGraphPanel.h"
 #include "Panels/HierarchyPanel.h"
 #include "Panels/MaterialEditorPanel.h"
+#include "Panels/MaterialParameterCollectionPanel.h"
 #include "Panels/PhysicsMaterialPanel.h"
 #include "Panels/PluginsPanel.h"
 #include "Panels/ProductImportPanel.h"
@@ -63,6 +64,7 @@ namespace Kans
         inline constexpr const char* UIDesigner     = "UIDesigner";
         inline constexpr const char* Plugins         = "Plugins";
         inline constexpr const char* ProjectSettings = "ProjectSettings";
+        inline constexpr const char* MaterialParameterCollections = "MaterialParameterCollections";
         inline constexpr const char* RenderTexture   = "RenderTexture";
         inline constexpr const char* PhysicsMaterial = "PhysicsMaterial";
     } // namespace PanelID
@@ -366,6 +368,7 @@ namespace Kans
         ProjectSettingsPanel m_ProjectSettingsPanel;
         PhysicsMaterialPanel m_PhysicsMaterialPanel;
         RenderTexturePanel   m_RenderTexturePanel;
+        MaterialParameterCollectionPanel m_MaterialParameterCollectionPanel;
         // Keys and text typed while playing with the viewport focused, for the game's UI.
         UIInputState m_UIInput;
         // Editor view frame times (ms) for the Stats panel's graph, oldest first.

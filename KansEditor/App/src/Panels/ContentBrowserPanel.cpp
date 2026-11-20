@@ -581,6 +581,11 @@ namespace Kans
                 m_CreateRenderTexture(m_Current), Refresh();
             if (ImGui::MenuItem(Label(ICON_FA_PALETTE, "Material").c_str(), nullptr, false, bool(m_CreateMaterial)))
                 m_CreateMaterial(m_Current);
+            if (ImGui::MenuItem(Label(ICON_FA_SLIDERS, "Material Parameter Collection").c_str(),
+                                nullptr,
+                                false,
+                                bool(m_CreateMaterialParameterCollection)))
+                m_CreateMaterialParameterCollection(m_Current), Refresh();
             if (ImGui::MenuItem(Label(ICON_FA_DESKTOP, "UI").c_str(), nullptr, false, bool(m_CreateUI)))
                 m_CreateUI(m_Current), Refresh();
             if (ImGui::MenuItem(Label(ICON_FA_FILM, "Timeline").c_str(), nullptr, false, bool(m_CreateTimeline)))
@@ -1760,6 +1765,11 @@ namespace Kans
                     m_CreateMaterial(folder);
                     Refresh();
                 }
+                if (ImGui::MenuItem(Label(ICON_FA_SLIDERS, "Material Parameter Collection").c_str(),
+                                    nullptr,
+                                    false,
+                                    bool(m_CreateMaterialParameterCollection)))
+                    m_CreateMaterialParameterCollection(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_DESKTOP, "UI").c_str()) && m_CreateUI)
                     m_CreateUI(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_FILM, "Timeline").c_str()) && m_CreateTimeline)

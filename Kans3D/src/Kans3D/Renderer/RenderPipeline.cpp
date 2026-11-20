@@ -297,6 +297,9 @@ namespace Kans
                            entry.Slot = resource.Binding;
                            if (resource.Binding == 0)
                                entry.BufferResource = buffer;
+                           else if (resource.Binding == uint32_t(EngineBinding::MaterialParameters))
+                               entry.BufferResource =
+                                   frame.Assets()->GetMaterialParameterBuffer(frame.View.MaterialParameters);
                            else
                            {
                                entry.TextureResource = c.Texture(resource.Binding == 11 ? input :

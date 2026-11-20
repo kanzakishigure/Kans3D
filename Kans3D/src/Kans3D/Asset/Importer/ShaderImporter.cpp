@@ -5,6 +5,7 @@
 #include <shaderc/shaderc.hpp>
 #include "Kans3D/Asset/Product/ShaderProduct.h"
 #include "Kans3D/Asset/Runtime/EngineShaderText.h"
+#include "Kans3D/Asset/Runtime/MaterialParameterCollection.h"
 #include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "Kans3D/Asset/Storage/ProductFiles.h"
 #include "Kans3D/Core/Hash.h"
@@ -153,6 +154,26 @@ namespace Kans
                             return Result(name, *rootText);
                     if (!text)
                         return Failure("Include not found or not declared");
+                    if (logical.GetPath().extension() == ".matparams")
+                    {
+                        const auto source = logical.ToString();
+                        auto       found  = m_Collections.find(source);
+                        if (found == m_Collections.end())
+                        {
+                            const auto parsed = ParseMaterialParameterCollection(*text);
+                            if (const auto* error = std::get_if<AssetError>(&parsed))
+                            {
+                                m_Error = error->Message;
+                                return Failure(m_Error.c_str());
+                            }
+                            found = m_Collections
+                                        .emplace(source,
+                                                 MakeMaterialParameterInclude(
+                                                     std::get<MaterialParameterCollection>(parsed), source))
+                                        .first;
+                        }
+                        return Result(source, found->second);
+                    }
                     return Result(logical.ToString(), *text);
                 }
                 catch (...)
@@ -188,6 +209,7 @@ namespace Kans
                 m_Failure = {"", 0, message, std::strlen(message), nullptr};
                 return &m_Failure;
             }
+            std::map<std::string, std::string> m_Collections;
             std::string            m_Error;
             ShaderInputs&          m_Inputs;
             shaderc_include_result m_Failure {};

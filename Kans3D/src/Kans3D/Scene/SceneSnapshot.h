@@ -62,6 +62,7 @@ namespace Kans
     struct SceneSnapshot
     {
         PostProcessSettings                PostProcess;
+        std::vector<AssetID>               MaterialParameterCollections;
         std::string                        Name;
         std::optional<EnvironmentSettings> Environment;
         std::vector<UUID>                  RootOrder;

@@ -18,6 +18,7 @@ namespace Kans
     class Renderer;
     struct ShadowResources;
     struct AreaLightResources;
+    struct MaterialParameterUniforms;
     struct GpuMesh
     {
         std::shared_ptr<RenderHardware::Device> Device;
@@ -127,7 +128,12 @@ namespace Kans
         std::shared_ptr<RenderHardware::Device>         GetDevice();
         RenderHardware::Handle<RenderHardware::Texture> GetTextureResource(AssetID id);
         // Drain only textures reached by consumers in this view. The token is shared across views of a frame.
-        bool     UpdateRenderTextures(Renderer&, uint64_t frame, double time);
+        RenderHardware::Handle<RenderHardware::Buffer>
+                 GetMaterialParameterBuffer(const std::shared_ptr<const MaterialParameterUniforms>& parameters = {});
+        bool     UpdateRenderTextures(Renderer&,
+                                      uint64_t                                                frame,
+                                      double                                                  time,
+                                      const std::shared_ptr<const MaterialParameterUniforms>& parameters = {});
         uint64_t GetRenderTextureUpdateCount(AssetID id) const;
         // Sampling belongs to an independent RHI sampler, never mutable native image state.
         void SetTextureSampler(AssetID id, const RenderHardware::SamplerDesc& desc);
@@ -187,11 +193,17 @@ namespace Kans
         struct RenderTextureState
         {
             RenderTextureSchedule                            Schedule;
+            std::weak_ptr<const MaterialParameterUniforms>   LastMaterialParameters;
             std::shared_ptr<const ShaderData>                Source;
             Scope<GpuShader>                                 Shader;
             RenderHardware::Handle<RenderHardware::Pipeline> Pipeline;
         };
         std::unordered_map<AssetID, RenderTextureState> m_RenderTextures;
+        std::map<std::weak_ptr<const MaterialParameterUniforms>,
+                 RenderHardware::Handle<RenderHardware::Buffer>,
+                 std::owner_less<>>
+                                                        m_MaterialParameterBuffers;
+        RenderHardware::Handle<RenderHardware::Buffer>  m_EmptyMaterialParameters;
         std::unordered_set<AssetID>                     m_PendingRenderTextures;
         std::unordered_set<AssetID> m_WarnedPost, m_WarnedMesh;
         struct BindingsEntry

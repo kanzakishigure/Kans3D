@@ -100,6 +100,7 @@ namespace Kans
         m_TimelinePanel.Bind(m_AssetImports.get());
         m_PhysicsMaterialPanel.Bind(m_AssetImports.get());
         m_RenderTexturePanel.Bind(m_AssetImports.get());
+        m_MaterialParameterCollectionPanel.Bind(m_AssetImports.get());
         m_ProjectSettingsPanel.Bind(m_ProjectFile);
         m_PluginsPanel.Bind(m_ProjectFile);
         m_UIDesignerPanel.Bind(m_AssetImports.get());
@@ -110,6 +111,11 @@ namespace Kans
                 ConfirmDiscard("opening " + path.filename().u8string(), [this, path] { Record(OpenScene(path)); });
             else if (path.extension() == ".material")
                 OpenMaterial(path);
+            else if (path.extension() == ".matparams")
+            {
+                m_MaterialParameterCollectionPanel.Open(path);
+                m_Panels.Open(PanelID::MaterialParameterCollections);
+            }
             else if (path.extension() == ".rendertexture")
             {
                 if (m_RenderTexturePanel.IsDirty())
@@ -156,6 +162,21 @@ namespace Kans
             out << EncodeTimelineNode(data);
             std::ofstream(UniqueFile(directory, "NewTimeline", ".timeline"), std::ios::binary) << out.c_str() << '\n';
         });
+        m_ContentBrowserPanel.SetCreateMaterialParameterCollectionCallback(
+            [this](const std::filesystem::path& directory) {
+                const auto file = UniqueFile(directory, "NewMaterialParameters", ".matparams");
+                auto       text = SerializeMaterialParameterCollection({file.stem().u8string(), {}});
+                if (const auto* error = std::get_if<AssetError>(&text))
+                    return Record(*error);
+                std::ofstream output(file, std::ios::binary);
+                output << std::get<std::string>(text) << '\n';
+                output.close();
+                if (!output)
+                    return Record(AssetError {AssetErrorCode::IoError, "Cannot create material parameter collection"});
+                if (m_MaterialParameterCollectionPanel.Open(file))
+                    m_MaterialParameterCollectionPanel.Save();
+                m_Panels.Open(PanelID::MaterialParameterCollections);
+            });
         m_ContentBrowserPanel.SetCreateRenderTextureCallback([this](const std::filesystem::path& directory) {
             const auto file = UniqueFile(directory, "NewRenderTexture", ".rendertexture");
             const auto text = SerializeRenderTexture(RenderTextureSpecification {});

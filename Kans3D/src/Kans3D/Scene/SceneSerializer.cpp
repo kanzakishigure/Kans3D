@@ -9,6 +9,7 @@
 #include "Kans3D/Animation/AnimationProduct.h"
 #include "Kans3D/Animation/ContactTracks.h"
 #include "Kans3D/Animation/DeformationProduct.h"
+#include "Kans3D/Asset/Runtime/MaterialParameterCollection.h"
 #include "Kans3D/Asset/Storage/ProductFiles.h"
 #include "Kans3D/Physics/PhysicsSerialization.h"
 #include "Kans3D/UI/UIAsset.h"
@@ -1877,6 +1878,8 @@ namespace Kans
         root["Version"]     = 1;
         root["Scene"]       = name;
         root["PostProcess"] = EncodePostProcess(scene.GetPostProcessSettings());
+        for (const auto& id : scene.GetMaterialParameterCollections())
+            root["MaterialParameterCollections"].push_back(id.ToString());
         if (scene.HasEnvironmentSettings())
         {
             const auto& settings    = scene.GetEnvironmentSettings();
@@ -2045,7 +2048,7 @@ namespace Kans
     {
         try
         {
-            Keys(root, {"Version", "Scene", "Entities", "Environment", "PostProcess"});
+            Keys(root, {"Version", "Scene", "Entities", "Environment", "PostProcess", "MaterialParameterCollections"});
             Require(UInt(root["Version"]) == 1, "Unsupported Scene version");
             auto entities = root["Entities"];
             Require(entities.IsSequence() && entities.size() <= 65536, "Invalid Scene entities");
@@ -2790,6 +2793,16 @@ namespace Kans
                         found->Deserialize(entity, pair.second.as<std::string>());
                     }
                 }
+            if (const auto collections = root["MaterialParameterCollections"])
+            {
+                Require(collections.IsSequence() && collections.size() <= MaterialCollectionLimit,
+                        "Invalid material parameter collection list size");
+                std::vector<AssetID> ids;
+                for (const auto& node : collections)
+                    ids.push_back(AssetID::FromString(node.as<std::string>()));
+                Require(candidate->SetMaterialParameterCollections(std::move(ids)),
+                        "Invalid material parameter collection list");
+            }
             if (root["PostProcess"])
                 candidate->SetPostProcessSettings(DecodePostProcess(root["PostProcess"]));
             else

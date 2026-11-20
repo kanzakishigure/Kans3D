@@ -107,13 +107,20 @@ namespace Kans
                                PanelDock::Floating,
                                false),
                           [this] { m_ProjectSettingsPanel.Draw(); });
+        m_Panels.Register(spec(PanelID::MaterialParameterCollections,
+                               "Material Parameter Collections",
+                               ICON_FA_SLIDERS,
+                               PanelCategory::Assets,
+                               PanelDock::Right,
+                               false),
+                          [this] { m_MaterialParameterCollectionPanel.Draw(); });
         m_Panels.Register(spec(PanelID::RenderTexture,
                                "Render Texture",
                                ICON_FA_IMAGE,
                                PanelCategory::Assets,
                                PanelDock::Right,
                                false),
-                          [this] { m_RenderTexturePanel.Draw(); });
+                          [this] { m_RenderTexturePanel.Draw(m_ActiveScene.get()); });
         m_Panels.Register(spec(PanelID::PhysicsMaterial,
                                "Physics Material",
                                ICON_FA_ATOM,
@@ -421,7 +428,8 @@ namespace Kans
             return;
         // The material editor has its own undo, redo and save while it has focus.
         const bool material = m_MaterialEditorPanel.HasFocus() || m_RenderTexturePanel.HasFocus() ||
-                              m_PhysicsMaterialPanel.HasFocus() || m_RagdollEditor.HasFocus() ||
+                              m_MaterialParameterCollectionPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() ||
+                              m_RagdollEditor.HasFocus() ||
                               std::any_of(m_VfxModuleEditors.begin(),
                                           m_VfxModuleEditors.end(),
                                           [](const auto& e) { return e->HasFocus(); }) ||

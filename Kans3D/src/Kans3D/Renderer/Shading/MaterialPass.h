@@ -7,6 +7,7 @@ namespace Kans
     struct FogState;
     struct MaterialPassData
     {
+        std::shared_ptr<const MaterialParameterUniforms>               MaterialParameters;
         std::shared_ptr<FrameUniforms>                                 UniformStorage;
         RenderHardware::Handle<RenderHardware::Buffer>                 Frame, Object;
         RenderHardware::Handle<RenderHardware::Buffer>                 Palette;

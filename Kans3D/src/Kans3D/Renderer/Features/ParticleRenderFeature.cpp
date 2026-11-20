@@ -125,6 +125,7 @@ namespace Kans
                                                          0};
                             auto             uniforms = gpu->UploadUniform(graph, &uniform, sizeof(uniform));
                             MaterialPassData pass;
+                            pass.MaterialParameters = frame.View.MaterialParameters;
                             pass.MaterialMipBias   = frame.MaterialMipBias;
                             pass.DebugName         = "VFX/" + instance->Asset()->assetID.ToString() + "/" +
                                                      e.Compiled->Settings.Name + "/Shadow";
@@ -254,6 +255,7 @@ namespace Kans
                                                          float(bindings->Render.DoubleSided),
                                                          0};
                                 MaterialPassData pass;
+                                pass.MaterialParameters = frame.View.MaterialParameters;
                                 pass.MaterialMipBias   = frame.MaterialMipBias;
                                 pass.DebugName         = "VFX/" + instance->Asset()->assetID.ToString() + "/" +
                                                          e.Compiled->Settings.Name + "/Shadow";
@@ -575,6 +577,7 @@ namespace Kans
                     return gpu->UploadUniform(graph, data, bytes);
                 };
                 MaterialPassData pass;
+                pass.MaterialParameters = frame->View.MaterialParameters;
                 pass.Fog       = frame->Fog;
                 pass.DebugName = "VFX/" + draw.System->Asset()->assetID.ToString() + "/" +
                                  emitter.Compiled->Settings.Name + "/Renderer/" + r.Guid;

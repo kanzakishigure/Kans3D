@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "AssetLoaderRegistry.h"
 #include "Kans3D/Asset/Runtime/AudioClipData.h"
+#include "Kans3D/Asset/Runtime/MaterialParameterCollection.h"
 #include "Kans3D/Asset/Runtime/MeshData.h"
 #include "Kans3D/Asset/Runtime/ModelData.h"
 #include "Kans3D/Asset/Runtime/ShaderData.h"
@@ -75,6 +76,8 @@ namespace Kans
     AssetLoaderRegistry AssetLoaderRegistry::CreateDefault()
     {
         AssetLoaderRegistry registry;
+        registry.m_Decoders.emplace(MaterialParameterCollectionAsset::GetStaticType(),
+                                    Decode<MaterialParameterCollectionAsset>);
         registry.m_Decoders.emplace(VfxSystemAsset::GetStaticType(), Decode<VfxSystemAsset>);
         registry.m_Decoders.emplace(VectorFieldAsset::GetStaticType(), Decode<VectorFieldAsset>);
         registry.m_Decoders.emplace(AssetType::VfxEmitter, DecodeVfxLibrary);

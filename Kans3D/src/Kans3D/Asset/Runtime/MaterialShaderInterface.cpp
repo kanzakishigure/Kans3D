@@ -2,6 +2,7 @@
 #include "MaterialShaderInterface.h"
 #include <map>
 #include <set>
+#include "MaterialParameterCollection.h"
 
 namespace Kans
 {
@@ -1166,6 +1167,40 @@ vec4 KansToneMap(vec3 color)
             if (binding.Binding >= EngineBindingCount || (binding.Binding >= 11 && binding.Binding <= 14))
                 return Contract("set 0 binding " + std::to_string(binding.Binding) +
                                 " is not engine data; declare engine data with #include <Kans3D/Engine.glsl>");
+            if (binding.Binding == uint32_t(EngineBinding::MaterialParameters))
+            {
+                const auto& members = binding.Members;
+                if (binding.Kind == ShaderBindingKind::UniformBuffer && binding.Count == 1 &&
+                    binding.Name == "KansMaterialParameters" &&
+                    binding.BlockBytes == sizeof(MaterialParameterUniforms) && members.size() == 3)
+                {
+                    const auto memberMatches = [](const auto&       member,
+                                                  const char*       name,
+                                                  size_t            offset,
+                                                  ShaderUniformType type,
+                                                  uint32_t          count,
+                                                  uint32_t          stride) {
+                        return member.Name == name && member.Offset == offset && member.Type == type &&
+                               member.Components == 4 && member.Columns == 1 && member.ArrayCount == count &&
+                               member.ArrayStride == stride;
+                    };
+                    if (memberMatches(members[0], "Count", 0, ShaderUniformType::Unsigned, 1, 0) &&
+                        memberMatches(members[1],
+                                      "Keys",
+                                      offsetof(MaterialParameterUniforms, Keys),
+                                      ShaderUniformType::Unsigned,
+                                      MaterialParameterSceneLimit / 2,
+                                      16) &&
+                        memberMatches(members[2],
+                                      "Values",
+                                      offsetof(MaterialParameterUniforms, Values),
+                                      ShaderUniformType::Float,
+                                      MaterialParameterSceneLimit,
+                                      16))
+                        return std::nullopt;
+                }
+                return Contract("set 0 binding 39 requires the generated material parameter collection layout");
+            }
             const auto& expected = Expected(static_cast<EngineBinding>(binding.Binding));
             // Block sizes are reflected without tail padding; members pin the layout.
             bool matches =
@@ -1237,7 +1272,8 @@ vec4 KansToneMap(vec3 color)
                         // Standalone stage products have no material domain yet (a post-process
                         // fragment can also be imported separately). Check their engine buffers only.
                         if (binding.Set == EngineDescriptorSet &&
-                            (!main || binding.Name == "KansFrame" || binding.Name == "KansObject"))
+                            (!main || binding.Name == "KansFrame" || binding.Name == "KansObject" ||
+                             binding.Binding == uint32_t(EngineBinding::MaterialParameters)))
                             if (auto error = CheckEngineBinding(binding))
                                 return AssetError {AssetErrorCode::StaleShaderContract, error->Message};
             return std::nullopt;
@@ -1300,7 +1336,8 @@ vec4 KansToneMap(vec3 color)
             {
                 if (binding.Set == EngineDescriptorSet)
                 {
-                    if (domain == ShaderDomain::PostProcess && binding.Binding != 0)
+                    if (domain == ShaderDomain::PostProcess && binding.Binding != 0 &&
+                        binding.Binding != uint32_t(EngineBinding::MaterialParameters))
                     {
                         if (stage.Stage != ShaderProductStage::Fragment || binding.Binding < 11 ||
                             binding.Binding > 14 || binding.Kind != ShaderBindingKind::CombinedImageSampler ||

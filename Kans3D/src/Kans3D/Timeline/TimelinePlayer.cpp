@@ -3,6 +3,7 @@
 #include <glm/gtx/quaternion.hpp>
 #include "Kans3D/Animation/ContactTracks.h"
 #include "Kans3D/Asset/Manager/AssetManager.h"
+#include "Kans3D/Asset/Runtime/MaterialParameterCollection.h"
 #include "Kans3D/Renderer/Shading/Skinning.h"
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Script/ScriptEngine.h"
@@ -131,6 +132,7 @@ namespace Kans
         std::map<UUID, Animator>                          Bases;
         std::set<UUID>                                    EvaluatedAnimators;
         bool                                              LiveAdvance = false;
+        std::map<std::string, glm::vec4>                  MaterialParameters;
         std::map<std::pair<UUID, std::string>, glm::vec4> Properties;
     };
     TimelinePlayerComponent::TimelinePlayerComponent(const TimelinePlayerComponent& c) :
@@ -259,6 +261,19 @@ namespace Kans
                     return Fail("unresolved binding " + b.ID);
                 }
             }
+        for (const auto& track : m_Source->GetData().Properties)
+            if (const auto names = MaterialParameterPath(track.Path))
+            {
+                glm::vec4   base;
+                const auto* parameter = m_Scene.FindMaterialParameter(names->first, names->second);
+                if (!parameter || (track.UseTimelineTime && parameter->Type != MaterialParameterType::Scalar) ||
+                    !TimelineProperty(m_Scene, {}, track.Path, base, false))
+                {
+                    m_State.reset();
+                    return Fail("invalid collection property " + track.Path);
+                }
+                m_State->MaterialParameters.emplace(track.Path, base);
+            }
         auto cameras = [&](auto&& self, Entity e) -> void {
             if (e.HasComponent<CameraComponent>())
                 m_State->Cameras[e.GetUUID()] = e.GetComponent<CameraComponent>().Primary;
@@ -304,6 +319,8 @@ namespace Kans
         if (!m_State)
             return;
         RestoreCameras();
+        for (auto& [path, value] : m_State->MaterialParameters)
+            TimelineProperty(m_Scene, {}, path, value, true);
         for (const auto& [binding, state] : m_State->Particles)
             if (auto instance = m_Scene.GetVfxWorld().Find(state.Entity);
                 instance && instance == state.Instance && instance->Asset() == state.Source)
@@ -917,7 +934,15 @@ namespace Kans
                     }
                 }
         for (const auto& tr : data.Properties)
-            if (auto e = entity(tr.Binding))
+        {
+            if (tr.Binding.empty())
+            {
+                auto value = tr.UseTimelineTime ? glm::vec4(float(t), 0, 0, 0) :
+                                                  tr.Curve.Sample(t, m_State->MaterialParameters.at(tr.Path));
+                if (!TimelineProperty(m_Scene, {}, tr.Path, value, true))
+                    return Fail("cannot write property " + tr.Path);
+            }
+            else if (auto e = entity(tr.Binding))
             {
                 auto key = std::make_pair(e.GetUUID(), tr.Path);
                 if (!m_State->Properties.count(key))
@@ -931,6 +956,7 @@ namespace Kans
                 if (!TimelineProperty(m_Scene, e, tr.Path, value, true))
                     return Fail("cannot write property " + tr.Path);
             }
+        }
         m_State->EvaluatedAnimators.clear();
         for (const auto& tr : data.Animations)
             if (auto e = entity(tr.Binding))

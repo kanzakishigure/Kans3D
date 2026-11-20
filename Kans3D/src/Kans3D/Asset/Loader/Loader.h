@@ -20,6 +20,13 @@ namespace Kans
 
     template<typename T>
     class Loader;
+    class MaterialParameterCollectionAsset;
+    template<>
+    class Loader<MaterialParameterCollectionAsset>
+    {
+    public:
+        std::variant<Ref<MaterialParameterCollectionAsset>, AssetError> Load(const AssetLoadContext&) const;
+    };
     class VectorFieldAsset;
     template<>
     class Loader<VectorFieldAsset>

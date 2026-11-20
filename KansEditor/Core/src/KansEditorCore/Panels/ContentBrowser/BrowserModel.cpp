@@ -34,6 +34,7 @@ namespace Kans::Browser
             {".tga", AssetKind::Texture},
             {".hdr", AssetKind::Texture},
             {".material", AssetKind::Material},
+            {".matparams", AssetKind::Material},
             {".mtl", AssetKind::Material},
             {".shaderprog", AssetKind::Shader},
             {".vert", AssetKind::Shader},

@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "TimelineProperty.h"
 #include <charconv>
+#include "Kans3D/Asset/Runtime/MaterialParameterCollection.h"
 #include "Kans3D/Plugin/PluginModule.h"
 #include "Kans3D/Scene/Entity.h"
 namespace Kans
@@ -47,8 +48,36 @@ namespace Kans
             return e.HasComponent<ShapeKeysComponent>();
         return PluginTimelineHasComponent(e, name);
     }
+    std::optional<std::pair<std::string_view, std::string_view>> MaterialParameterPath(std::string_view path)
+    {
+        constexpr std::string_view prefix = "MaterialParameters.";
+        if (path.substr(0, prefix.size()) != prefix)
+            return std::nullopt;
+        path.remove_prefix(prefix.size());
+        const auto dot = path.find('.');
+        if (dot == std::string_view::npos || !IsMaterialParameterName(path.substr(0, dot)) ||
+            !IsMaterialParameterName(path.substr(dot + 1)))
+            return std::nullopt;
+        return std::make_pair(path.substr(0, dot), path.substr(dot + 1));
+    }
+
     bool TimelineProperty(Scene& scene, Entity e, const std::string& path, glm::vec4& value, bool write)
     {
+        if (const auto names = MaterialParameterPath(path))
+        {
+            if (write)
+            {
+                const auto* parameter = scene.FindMaterialParameter(names->first, names->second);
+                return parameter && (parameter->Type == MaterialParameterType::Scalar ?
+                                         scene.SetMaterialParameter(names->first, names->second, value.x) :
+                                         scene.SetMaterialParameter(names->first, names->second, value));
+            }
+            const auto current = scene.GetMaterialParameter(names->first, names->second);
+            if (!current)
+                return false;
+            value = *current;
+            return true;
+        }
         if (!e)
             return false;
         if (ApplyPluginTimelineProperty(scene, e, path, value, write))

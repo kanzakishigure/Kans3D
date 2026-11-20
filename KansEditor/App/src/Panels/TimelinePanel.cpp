@@ -6,15 +6,17 @@
 #include <misc/cpp/imgui_stdlib.h>
 #include <yaml-cpp/yaml.h>
 #include "Kans3D/Asset/Manager/AssetManager.h"
-#include "KansEditorCore/EditorAssetImportService.h"
+#include "Kans3D/Asset/Runtime/MaterialParameterCollection.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Scene.h"
 #include "Kans3D/Timeline/TimelineProduct.h"
+#include "Kans3D/Timeline/TimelineProperty.h"
+#include "KansEditorCore/EditorAssetImportService.h"
+#include "KansEditorCore/UI/SourceBuild.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
-#include "KansEditorCore/UI/SourceBuild.h"
 
 namespace Kans
 {
@@ -362,6 +364,9 @@ namespace Kans
                 if (m_Data.Properties[i].Binding == id)
                     rows.push_back({RowKind::Property, i, id});
         }
+        for (size_t i = 0; i < m_Data.Properties.size(); ++i)
+            if (m_Data.Properties[i].Binding.empty())
+                rows.push_back({RowKind::Property, i, {}});
         rows.push_back({RowKind::Events, 0, {}});
         rows.push_back({RowKind::Cuts, 0, {}});
         return rows;
@@ -451,6 +456,51 @@ namespace Kans
             SetPlayhead(next);
         }
         DrawToolbar();
+        if (scene && !scene->GetMaterialParameterCollections().empty() && !readOnly)
+        {
+            if (ImGui::Button(ICON_FA_PLUS "  Material parameter track"))
+                ImGui::OpenPopup("##materialParameterTrack");
+            if (ImGui::BeginPopup("##materialParameterTrack"))
+            {
+                for (const auto& id : scene->GetMaterialParameterCollections())
+                    if (const auto asset = scene->GetMaterialParameterCollection(id))
+                    {
+                        const auto& collection = asset->GetData();
+                        if (ImGui::BeginMenu(collection.Name.c_str()))
+                        {
+                            for (const auto& p : collection.Parameters)
+                            {
+                                const auto path   = "MaterialParameters." + collection.Name + "." + p.Name;
+                                const bool exists = std::any_of(m_Data.Properties.begin(),
+                                                                m_Data.Properties.end(),
+                                                                [&](const auto& track) { return track.Path == path; });
+                                if (ImGui::BeginMenu(p.Name.c_str(), !exists))
+                                {
+                                    const bool keyed = ImGui::MenuItem("Keyframed");
+                                    const bool clock =
+                                        p.Type == MaterialParameterType::Scalar && ImGui::MenuItem("Timeline time");
+                                    if (keyed || clock)
+                                    {
+                                        TimelinePropertyTrack track;
+                                        track.Path            = path;
+                                        track.UseTimelineTime = clock;
+                                        if (keyed)
+                                            SetKey(track.Curve,
+                                                   std::clamp(Snap(m_Time), 0.0, m_Data.Length),
+                                                   scene->GetMaterialParameter(collection.Name, p.Name)
+                                                       .value_or(p.Default));
+                                        m_Data.Properties.push_back(std::move(track));
+                                        Changed();
+                                    }
+                                    ImGui::EndMenu();
+                                }
+                            }
+                            ImGui::EndMenu();
+                        }
+                    }
+                ImGui::EndPopup();
+            }
+        }
         UpdatePreview();
 
         const float rowHeight = ImGui::GetFrameHeight() + EditorTheme::Px(4.0f);
@@ -665,6 +715,12 @@ namespace Kans
                     break;
                 case RowKind::Property:
                     label = "    " + m_Data.Properties[row.Track].Path;
+                    if (const auto path = MaterialParameterPath(m_Data.Properties[row.Track].Path))
+                    {
+                        label = std::string(path->first) + "." + std::string(path->second);
+                        if (m_Data.Properties[row.Track].UseTimelineTime)
+                            label += " (Timeline time)";
+                    }
                     break;
                 case RowKind::Events:
                     label = ICON_FA_FLAG "  Events";
@@ -1225,7 +1281,10 @@ namespace Kans
                         KeyTransform(BoundEntity(row.Binding));
                     break;
                 case RowKind::Property:
-                    if (ImGui::MenuItem(ICON_FA_KEY "  Add key here"))
+                    if (ImGui::MenuItem(ICON_FA_KEY "  Add key here",
+                                        nullptr,
+                                        false,
+                                        !m_Data.Properties[row.Track].UseTimelineTime))
                     {
                         auto&     track = m_Data.Properties[row.Track];
                         glm::vec4 value = track.Curve.Sample(t);
@@ -1401,9 +1460,15 @@ namespace Kans
                 case RowKind::Property:
                     if (PropertyGrid::BeginGroup(m_Data.Properties[s.Track].Path.c_str()))
                     {
-                        auto& key = m_Data.Properties[s.Track].Curve.Keys[s.Item];
+                        auto& track = m_Data.Properties[s.Track];
+                        auto& key   = track.Curve.Keys[s.Item];
                         time("Time", key.Time);
-                        curveKey(key, 4);
+                        int components = 4;
+                        if (const auto names = MaterialParameterPath(track.Path); names && GetScene())
+                            if (const auto* p = GetScene()->FindMaterialParameter(names->first, names->second);
+                                p && p->Type == MaterialParameterType::Scalar)
+                                components = 1;
+                        curveKey(key, components);
                         PropertyGrid::EndGroup();
                     }
                     break;

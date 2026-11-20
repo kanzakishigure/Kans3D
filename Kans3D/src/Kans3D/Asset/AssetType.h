@@ -37,5 +37,6 @@ namespace Kans
         VfxEmitter          = 23,
         VfxModule           = 24,
         VectorField         = 25,
+        MaterialParameterCollection = 26,
     };
 } // namespace Kans

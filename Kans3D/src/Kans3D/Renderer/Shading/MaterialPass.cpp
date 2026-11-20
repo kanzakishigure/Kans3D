@@ -13,6 +13,12 @@ namespace Kans
     {
         using namespace RenderHardware;
         auto          device = cache.GetDevice();
+        auto          last   = shader.EngineResources.rbegin();
+        const bool    hasParameters =
+            last != shader.EngineResources.rend() && last->Binding == uint32_t(EngineBinding::MaterialParameters);
+        const auto parameters = hasParameters ? cache.GetMaterialParameterBuffer(data.MaterialParameters) : nullptr;
+        if (hasParameters)
+            ++last;
         std::string                         key;
         std::shared_ptr<ShadowResources>    shadows;
         std::shared_ptr<AreaLightResources> area;
@@ -27,14 +33,14 @@ namespace Kans
             add(shader.EngineLayout);
             add(data.Frame);
             add(data.Object);
+            add(parameters);
             add(data.EnvironmentSampler);
             for (const auto& image : data.Environment)
                 add(image);
             add(data.AmbientOcclusion);
             add(data.ContactDepth);
             add(data.Reflections);
-            if (!shader.EngineResources.empty() &&
-                shader.EngineResources.back().Binding >= uint32_t(EngineBinding::DirectionalShadow))
+            if (last != shader.EngineResources.rend() && last->Binding >= uint32_t(EngineBinding::DirectionalShadow))
             {
                 shadows = data.Shadows ? data.Shadows : cache.GetShadowFallback();
                 add(shadows->Directional);
@@ -46,8 +52,7 @@ namespace Kans
                 add(shadows->Raw);
                 add(shadows->CookieSampler);
             }
-            if (!shader.EngineResources.empty() &&
-                shader.EngineResources.back().Binding >= uint32_t(EngineBinding::LtcMatrix))
+            if (last != shader.EngineResources.rend() && last->Binding >= uint32_t(EngineBinding::LtcMatrix))
             {
                 area = data.AreaLighting ? data.AreaLighting : cache.GetAreaLightFallback();
                 add(area->Matrix);
@@ -78,6 +83,8 @@ namespace Kans
                 entry.Offset         = data.UniformStorage ? 0 : data.ObjectOffset;
                 entry.Bytes          = sizeof(EngineObjectUniforms);
             }
+            else if (binding.Binding == uint32_t(EngineBinding::MaterialParameters))
+                entry.BufferResource = parameters;
             else if (binding.Binding == uint32_t(EngineBinding::ScreenSpaceReflections))
             {
                 entry.TextureResource = data.Reflections ? data.Reflections : cache.GetWhiteAO();
@@ -414,8 +421,9 @@ namespace Kans
             std::vector<uint32_t> offsets;
             for (const auto& binding : shader.EngineResources)
                 if (binding.Kind == ShaderBindingKind::UniformBuffer)
-                    offsets.push_back(uint32_t(binding.Binding == uint32_t(EngineBinding::Frame) ? data.FrameOffset :
-                                                                                                   data.ObjectOffset));
+                    offsets.push_back(binding.Binding == uint32_t(EngineBinding::Frame)  ? uint32_t(data.FrameOffset) :
+                                      binding.Binding == uint32_t(EngineBinding::Object) ? uint32_t(data.ObjectOffset) :
+                                                                                           0u);
             commands.BindGroup(engine, offsets);
         }
         else

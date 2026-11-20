@@ -242,6 +242,9 @@ namespace Kans
             return;
         m_RenderWorld->m_UIRecords.clear();
         m_PrefabAssets = assets;
+        m_ActiveMaterialParameters.clear();
+        m_MaterialParameterSnapshot.reset();
+        m_MaterialParametersNeedRefresh = !m_MaterialCollectionIDs.empty();
         m_AssetChanges = assets ? assets->ObserveChanges() : nullptr;
         if (m_PhysicsWorld)
             m_PhysicsWorld->NotifyAssetProviderChanged();
@@ -288,6 +291,9 @@ namespace Kans
         for (auto id : m_AssetChanges->Drain())
         {
             m_RenderWorld->AssetChanged(id);
+            if (std::find(m_MaterialCollectionIDs.begin(), m_MaterialCollectionIDs.end(), id) !=
+                m_MaterialCollectionIDs.end())
+                m_MaterialParametersNeedRefresh = true;
             m_VfxWorld->NotifyAssetChanged(id);
             if (m_PhysicsWorld)
                 m_PhysicsWorld->NotifyAssetChanged(id);

@@ -41,9 +41,10 @@ namespace Kans
         AmbientOcclusion     = 36,
         ContactDepth         = 37,
         ScreenSpaceReflections = 38,
+        MaterialParameters     = 39,
         AreaSource0          = 20, // One sampled 2D texture per selected area light (20..35).
     };
-    constexpr uint32_t EngineBindingCount = 39;
+    constexpr uint32_t EngineBindingCount = 40;
 
     // std140 images of the engine uniform blocks.
     struct EngineFrameUniforms

@@ -3,6 +3,7 @@
 #include <cstring>
 #include <set>
 #include "Kans3D/VFX/VfxSystemAsset.h"
+#include "TimelineProperty.h"
 namespace Kans
 {
     glm::vec4 TimelineCurve::Sample(double t, glm::vec4 fallback) const
@@ -133,9 +134,15 @@ namespace Kans
                 !curve(t.Scale))
                 return error("unknown binding, duplicate transform or invalid/unsorted transform keys");
         for (const auto& t : d.Properties)
-            if (!known(t) || t.Path.empty() || !text(t.Path) || !properties.insert(t.Binding + "\n" + t.Path).second ||
-                !curve(t.Curve))
-                return error("unknown binding, duplicate property or invalid/unsorted property keys");
+        {
+            const bool collection       = MaterialParameterPath(t.Path).has_value();
+            const bool collectionPrefix = t.Path.rfind("MaterialParameters.", 0) == 0;
+            if ((collectionPrefix && !collection) || (collection ? !t.Binding.empty() : !known(t)) ||
+                (t.UseTimelineTime && (!collection || !t.Curve.Keys.empty())) || t.Path.empty() || !text(t.Path) ||
+                !properties.insert(t.Binding + "\n" + t.Path).second || !curve(t.Curve))
+                return error(
+                    "unknown binding, duplicate property, invalid property source or invalid/unsorted property keys");
+        }
         for (const auto& t : d.Activations)
         {
             if (!known(t) || !activations.insert(t.Binding).second)
@@ -355,9 +362,13 @@ namespace Kans
         for (const auto& t : d.Properties)
         {
             YAML::Node v;
-            v["Binding"] = t.Binding;
-            v["Path"]    = t.Path;
-            v["Keys"]    = Curve(t.Curve);
+            if (!t.Binding.empty())
+                v["Binding"] = t.Binding;
+            v["Path"] = t.Path;
+            if (t.UseTimelineTime)
+                v["Source"] = "TimelineTime";
+            else
+                v["Keys"] = Curve(t.Curve);
             n["Properties"].push_back(v);
         }
         for (const auto& t : d.Activations)
@@ -487,7 +498,15 @@ namespace Kans
                                         Curve(v["Scale"])});
         if (n["Properties"])
             for (const auto& v : n["Properties"])
-                d.Properties.push_back({v["Binding"].as<std::string>(), v["Path"].as<std::string>(), Curve(v["Keys"])});
+            {
+                const auto source = Get(v, "Source", std::string {});
+                if (!source.empty() && source != "TimelineTime")
+                    throw std::runtime_error("Unknown Timeline property source");
+                d.Properties.push_back({Get(v, "Binding", std::string {}),
+                                        v["Path"].as<std::string>(),
+                                        Curve(v["Keys"]),
+                                        source == "TimelineTime"});
+            }
         if (n["Activations"])
             for (const auto& v : n["Activations"])
             {

@@ -3,6 +3,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <string_view>
 #include <unordered_set>
 #include <entt.hpp>
 #include <glm/glm.hpp>
@@ -27,6 +28,9 @@ namespace Kans
     class AssetChangeObserver;
     class RenderWorld;
     class MeshAsset;
+    class MaterialParameterCollectionAsset;
+    struct MaterialParameterUniforms;
+    struct MaterialParameterDefinition;
     struct RuntimeMesh;
     struct EditableMesh;
     struct TransformComponent;
@@ -58,6 +62,16 @@ namespace Kans
     {
 
     public:
+        bool                        SetMaterialParameterCollections(std::vector<AssetID> ids);
+        const std::vector<AssetID>& GetMaterialParameterCollections() const { return m_MaterialCollectionIDs; }
+        Ref<const MaterialParameterCollectionAsset> GetMaterialParameterCollection(AssetID id) const;
+        const MaterialParameterDefinition*          FindMaterialParameter(std::string_view collection,
+                                                                          std::string_view name) const;
+        std::optional<glm::vec4> GetMaterialParameter(std::string_view collection, std::string_view name) const;
+        bool SetMaterialParameter(std::string_view collection, std::string_view name, glm::vec4 value);
+        bool SetMaterialParameter(std::string_view collection, std::string_view name, float value);
+        std::shared_ptr<const MaterialParameterUniforms> CaptureMaterialParameters() const;
+
         const PostProcessSettings& GetPostProcessSettings() const { return m_PostProcessSettings; }
         void SetPostProcessSettings(PostProcessSettings settings) { m_PostProcessSettings = settings.Validated(); }
         Scene(const std::string& name = "UntitledScene");
@@ -369,6 +383,19 @@ namespace Kans
         TimeStep                       m_FrameTimeDelta {1.f / 60.f};
         uint32_t                       m_ViewportWidth = 0, m_ViewportHeight = 0;
         std::string                    m_Name;
+        struct ActiveMaterialParameters
+        {
+            Ref<const MaterialParameterCollectionAsset> Source;
+            std::map<uint64_t, glm::vec4>               Overrides;
+        };
+        using MaterialParameterMap = std::map<AssetID, ActiveMaterialParameters>;
+        bool ResolveMaterialParameterCollections(const std::vector<AssetID>&, MaterialParameterMap&) const;
+        void RefreshMaterialParameterCollections() const;
+        std::vector<AssetID>                                     m_MaterialCollectionIDs;
+        mutable MaterialParameterMap                             m_ActiveMaterialParameters;
+        mutable bool                                             m_MaterialParametersNeedRefresh = false;
+        mutable std::shared_ptr<const MaterialParameterUniforms> m_MaterialParameterSnapshot;
+
         PostProcessSettings            m_PostProcessSettings;
         EnvironmentSettings            m_EnvironmentSettings;
         bool                           m_HasEnvironmentSettings = false;

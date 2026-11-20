@@ -15,7 +15,7 @@ namespace Kans
     public:
         std::string GetEnvironmentFingerprint() const override { return GetEngineShaderDigest(); }
         // Registered shader text and the explicit engine contract version also participate in the fingerprint.
-        uint32_t GetVersion() const override { return 19; }
+        uint32_t GetVersion() const override { return 20; }
         [[nodiscard]] std::variant<ImportInputs, AssetError>
         DiscoverInputs(const ImportContext& context) const override;
         [[nodiscard]] std::variant<ImportResult, AssetError> Import(const ImportContext& context) const override;

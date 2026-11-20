@@ -389,6 +389,7 @@ namespace Kans
             auto       ob           = objectUpload.Buffer;
             ob->Write(objectUpload.Offset, &object, sizeof(object));
             MaterialPassData data;
+            data.MaterialParameters = frame.View.MaterialParameters;
             data.UniformStorage = frame.UniformStorage;
             data.FrameOffset    = frameUpload.Offset;
             data.ObjectOffset   = objectUpload.Offset;
@@ -948,6 +949,7 @@ void main() {
                 if (!mesh)
                     continue;
                 MaterialPassData pass;
+                pass.MaterialParameters = frame.View.MaterialParameters;
                 pass.UniformStorage     = frame.UniformStorage;
                 pass.MaterialMipBias    = frame.MaterialMipBias;
                 pass.Palette            = entry.Palette;

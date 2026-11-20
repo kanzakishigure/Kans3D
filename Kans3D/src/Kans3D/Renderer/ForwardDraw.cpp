@@ -352,6 +352,7 @@ namespace Kans
                 object.MaterialRender.x = 5.0f;
             objects->Write(objectUpload.Offset + range * objectStride, &object, sizeof(object));
             MaterialPassData pass;
+            pass.MaterialParameters = View.MaterialParameters;
             pass.MaterialMipBias    = MaterialMipBias;
             pass.Palette            = mesh->Skin ? Assets()->GetSkinningPalette(draw.SkinPose, mesh) :
                                                    RenderHardware::Handle<RenderHardware::Buffer>();

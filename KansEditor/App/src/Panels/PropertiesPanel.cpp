@@ -5,6 +5,7 @@
 #include <cctype>
 #include <filesystem>
 #include <misc/cpp/imgui_stdlib.h>
+#include "Kans3D/Asset/Runtime/MaterialParameterCollection.h"
 #include "Kans3D/Asset/Runtime/MeshData.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
@@ -140,6 +141,97 @@ namespace Kans
     {
         if (PropertyGrid::BeginCard("Environment", ICON_FA_GLOBE, "Environment"))
             DrawEnvironmentGroups(scene);
+        PropertyGrid::EndCard();
+        if (PropertyGrid::BeginCard("MaterialParameterCollections", ICON_FA_SLIDERS, "Material Parameter Collections"))
+        {
+            auto ids     = scene.GetMaterialParameterCollections();
+            bool changed = false;
+            if (PropertyGrid::BeginGroup("Active collections"))
+            {
+                for (size_t i = 0; i < ids.size(); ++i)
+                {
+                    ImGui::PushID(int(i));
+                    AssetID id = ids[i];
+                    if (AssetPicker("Collection", AssetType::MaterialParameterCollection, id))
+                    {
+                        ids[i]  = id;
+                        changed = true;
+                    }
+                    if (PropertyGrid::Row("Remove") && ImGui::SmallButton("Remove collection"))
+                    {
+                        ids[i]  = {};
+                        changed = true;
+                    }
+                    ImGui::PopID();
+                }
+                if (ids.size() < MaterialCollectionLimit)
+                {
+                    AssetID added;
+                    if (AssetPicker("Add collection", AssetType::MaterialParameterCollection, added) && added.IsValid())
+                    {
+                        ids.push_back(added);
+                        changed = true;
+                    }
+                }
+                if (changed)
+                {
+                    ids.erase(std::remove_if(ids.begin(), ids.end(), [](const auto& id) { return !id.IsValid(); }),
+                              ids.end());
+                    m_MaterialCollectionConflict = !scene.SetMaterialParameterCollections(std::move(ids));
+                }
+                if (m_MaterialCollectionConflict)
+                    PropertyGrid::Text("Collection", "Each active collection needs a unique name and asset.", true);
+                PropertyGrid::EndGroup();
+            }
+            for (const auto& id : scene.GetMaterialParameterCollections())
+            {
+                ImGui::PushID(id.ToString().c_str());
+                if (const auto asset = scene.GetMaterialParameterCollection(id))
+                {
+                    const auto& data = asset->GetData();
+                    if (PropertyGrid::BeginGroup(data.Name.c_str()))
+                    {
+                        for (const auto& p : data.Parameters)
+                        {
+                            auto value   = scene.GetMaterialParameter(data.Name, p.Name).value_or(p.Default);
+                            bool updated = false;
+                            if (p.Type == MaterialParameterType::Scalar)
+                                updated = PropertyGrid::Float(p.Name.c_str(),
+                                                              value.x,
+                                                              0.05f,
+                                                              p.Range ? p.Range->x : 0.f,
+                                                              p.Range ? p.Range->y : 0.f,
+                                                              "%.3f",
+                                                              &p.Default.x);
+                            else if (PropertyGrid::Row(p.Name.c_str(), nullptr, value != p.Default))
+                            {
+                                updated = ImGui::DragFloat4(
+                                    "##value", &value.x, 0.05f, p.Range ? p.Range->x : 0.f, p.Range ? p.Range->y : 0.f);
+                                if (PropertyGrid::RowReset(value != p.Default))
+                                {
+                                    value   = p.Default;
+                                    updated = true;
+                                }
+                            }
+                            if (updated)
+                            {
+                                if (p.Type == MaterialParameterType::Scalar)
+                                    scene.SetMaterialParameter(data.Name, p.Name, value.x);
+                                else
+                                    scene.SetMaterialParameter(data.Name, p.Name, value);
+                            }
+                        }
+                        PropertyGrid::EndGroup();
+                    }
+                }
+                else if (PropertyGrid::BeginGroup("Unavailable collection"))
+                {
+                    PropertyGrid::Text("Asset", id.ToString(), true);
+                    PropertyGrid::EndGroup();
+                }
+                ImGui::PopID();
+            }
+        }
         PropertyGrid::EndCard();
     }
 
