@@ -62,8 +62,8 @@ void main() {
             vec2 q=uv+offset/p.Jitter.zw;
             vec4 s=texture(A,q);
             float w=clamp(s.a-length(offset)+1.,0.,1.);
-            // Far samples must also cover the receiving lens footprint, excluding in-focus samples.
-            if(!nearField) w*=clamp(s.a,0.,1.);
+            // Gate empty samples before the one-pixel overlap slack can count them as coverage.
+            w*=clamp(s.a,0.,1.);
             float bokeh=1.+p.Options.z*clamp(luma(s.rgb),0.,32.);
             sum+=s.rgb*w*bokeh; weight+=w*bokeh; coverage+=w;
         }
