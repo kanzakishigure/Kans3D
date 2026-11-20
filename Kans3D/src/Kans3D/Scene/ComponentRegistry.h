@@ -12,6 +12,7 @@
 namespace Kans
 {
     class AssetManager;
+    class AudioClipPreview;
     class Scene;
     class Texture2D;
     namespace SecondaryMotionEditing
@@ -84,6 +85,8 @@ namespace Kans
         // Vehicles: the wheel row selected in the card, which the viewport highlights (-1: none).
         virtual int  GetSelectedWheel(Entity) { return -1; }
         virtual void SelectWheel(Entity, int /*wheel*/) {}
+        // Edit-mode audition of clips through the editor's audio engine (null: unavailable).
+        virtual AudioClipPreview* GetAudioPreview() { return nullptr; }
     };
 
     // Everything the editor knows about one component type: how it is named, shown,

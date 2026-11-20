@@ -44,6 +44,9 @@ namespace Kans::ComponentEditors
     void DrawAimConstraint(Entity entity, ComponentUI& ui);
     void DrawShapeKeys(Entity entity, ComponentUI& ui);
     void DrawTimelinePlayer(Entity entity, ComponentUI& ui);
+    // Audio (AudioComponentEditors.cpp).
+    void DrawAudioSource(Entity entity, ComponentUI& ui);
+    void DrawAudioListener(Entity entity, ComponentUI& ui);
     // Physics (PhysicsComponentEditors.cpp).
     void DrawRigidBody(Entity entity, ComponentUI& ui);
     void DrawBoxCollider(Entity entity, ComponentUI& ui);

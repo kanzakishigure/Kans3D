@@ -231,6 +231,20 @@ namespace Kans
         fog.CreateOrder = 6;
         fog.Create      = fog.Add;
 
+        auto& audioSource       = registry.Register<AudioSourceComponent>("Audio Source", ICON_FA_VOLUME_HIGH, "Audio");
+        audioSource.IconRank    = 6;
+        audioSource.Draw        = DrawAudioSource;
+        audioSource.CreateName  = "Audio Source";
+        audioSource.CreateOrder = 0;
+        audioSource.Create      = audioSource.Add;
+
+        auto& listener       = registry.Register<AudioListenerComponent>("Audio Listener", ICON_FA_HEADPHONES, "Audio");
+        listener.IconRank    = 7;
+        listener.Draw        = DrawAudioListener;
+        listener.CreateName  = "Audio Listener";
+        listener.CreateOrder = 1;
+        listener.Create      = listener.Add;
+
         // Physics: bodies, colliders, characters, joints and fields.
         auto& body    = registry.Register<RigidBodyComponent>("Rigid Body", ICON_FA_WEIGHT_HANGING, "Physics");
         body.IconRank = 10;

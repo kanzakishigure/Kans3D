@@ -282,6 +282,9 @@ namespace Kans
         void StopAudioSource(Entity entity);
         void PauseAudioSource(Entity entity);
         bool IsAudioSourcePlaying(Entity entity) const;
+        AudioEngine* GetAudioEngine() const { return m_AudioEngine; }
+        // Between OnRuntimeStart and OnRuntimeStop (also while paused): sources play only then.
+        bool IsAudioRunning() const { return m_AudioRunning; }
 
         Entity GetCameraEntity();
 

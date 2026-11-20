@@ -502,6 +502,7 @@ namespace Kans
         if (!m_ActiveScene)
             return;
         m_TimelinePanel.StopPreview(); // Play starts from the scene as saved, not a previewed frame.
+        m_AudioPreview.Stop();         // The scene's own sources take over.
         if (!m_Play.IsActive())
         {
             // Play starts clean: no preview state, and painting ends (its strokes saved).
@@ -522,6 +523,7 @@ namespace Kans
         if (!m_ActiveScene || m_Play.IsActive())
             return;
         m_TimelinePanel.StopPreview();
+        m_AudioPreview.Stop();
         FinishClothPaint();
         SecondaryMotionEditing::SetPreview(*m_ActiveScene, false);
         m_History.Record(*m_ActiveScene);

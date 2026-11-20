@@ -66,6 +66,8 @@ namespace Kans
         // Particle systems: open a .vfxsystem asset in the VFX system editor.
         void SetOpenVfxSystem(std::function<void(AssetID)> open) { m_OpenVfxSystem = std::move(open); }
         void SetVfxHandles(VfxGizmos::SceneHandles* handles) { m_VfxHandles = handles; }
+        // Edit-mode clip previews of the Audio Source card; may be null.
+        void SetAudioPreview(AudioClipPreview* preview) { m_AudioPreview = preview; }
         // Adds the slot rows' hovered, highlighted and isolated parts to the viewport's highlights.
         void AppendSlotHighlights(ViewHighlights& highlights) const;
 
@@ -126,6 +128,7 @@ namespace Kans
                 m_OpenVfxSystem(system);
         }
         VfxGizmos::SceneHandles* GetVfxHandles() override { return m_VfxHandles; }
+        AudioClipPreview*        GetAudioPreview() override { return m_AudioPreview; }
         void CreateRagdoll(Entity entity) override
         {
             if (m_RagdollActions.Create)
@@ -179,6 +182,7 @@ namespace Kans
         RagdollActions                                      m_RagdollActions;
         std::function<void(AssetID)>                        m_OpenVfxSystem;
         VfxGizmos::SceneHandles*                            m_VfxHandles = nullptr;
+        AudioClipPreview*                                   m_AudioPreview = nullptr;
         // The Vehicle card's selected wheel row (the viewport highlights it).
         UUID m_WheelOwner    = 0;
         int  m_SelectedWheel = -1;

@@ -6,10 +6,11 @@
 #include "KansEditorCore/Components/MaterialAssignment.h"
 
 // TestInclude
+#include "Kans3D/Audio/AudioSystem.h"
 #include "Kans3D/Core/Log/Log.h"
-#include "KansEditorCore/Renderer/EditorRenderFeatures.h"
 #include <Kans3D/Core/Hash.h>
 #include <Kans3D/Core/UUID.h>
+#include "KansEditorCore/Renderer/EditorRenderFeatures.h"
 
 namespace Kans
 {
@@ -27,6 +28,8 @@ namespace Kans
         // Before anything logs, so the console shows the whole session.
         m_Console.Attach();
         RegisterPanels();
+        m_PropertiesPanel.SetAudioPreview(&m_AudioPreview);
+        m_ContentBrowserPanel.SetAudioPreview(&m_AudioPreview);
         m_Panels.InstallSettingsHandler();
         m_ContentBrowserPanel.InstallSettingsHandler();
         // The splash keeps the window's own titlebar, so it can be moved and closed while loading.
@@ -208,7 +211,15 @@ namespace Kans
                 CORE_ERROR("Project import shutdown: {}", error->Message);
         }
         if (m_ActiveScene)
+        {
             m_Play.Discard(*m_ActiveScene);
+            m_ActiveScene->SetAudioEngine(nullptr);
+        }
+        // Before the asset manager; the application shuts its audio engine down after the layers.
+        m_PropertiesPanel.SetAudioPreview(nullptr);
+        m_ContentBrowserPanel.SetAudioPreview(nullptr);
+        m_AudioPreview.Bind(nullptr, nullptr);
+        m_PendingAudio.clear();
         // The ragdoll editor's preview scene and its renderer hold asset leases.
         m_RagdollEditor.SetPreviewRenderer({});
         m_RagdollEditor.SetAssetManager(nullptr);
@@ -292,6 +303,7 @@ namespace Kans
                     StartPendingPlacementBuild();
                 else
                     PlacePendingModel();
+                PlacePendingAudio();
                 // The open-time sweep may have discovered previously unknown scene sources. The scene's
                 // references were captured when it opened; serializing it again here froze the editor.
                 Record(m_SceneAssetImports.Rematch(*m_AssetImports));
@@ -301,6 +313,12 @@ namespace Kans
         }
 
         StartNextAutoImport();
+
+        // The scene plays through the application's engine (silent when no device opened). Its
+        // sources only sound in Play and Simulate; edit mode is silent unless a clip is previewed.
+        m_ActiveScene->SetAudioEngine(AudioSystem::Get());
+        m_AudioPreview.Bind(AudioSystem::Get(), m_Assets.get());
+        m_AudioPreview.Update();
 
         // The scene only runs in play mode; IK and saved shape keys of models without an
         // Animator still show while editing.

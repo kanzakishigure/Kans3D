@@ -1,19 +1,22 @@
 #pragma once
+#include <imgui.h>
 #include <array>
 #include <functional>
 #include <optional>
 #include <unordered_map>
 #include <vector>
-#include <imgui.h>
+#include "KansEditorCore/Audio/AudioPreviewCache.h"
 #include "KansEditorCore/EditorPanel.h"
-#include "UI/IniSection.h"
 #include "KansEditorCore/Panels/ContentBrowser/AssetFileOperations.h"
 #include "KansEditorCore/Panels/ContentBrowser/BrowserModel.h"
 #include "KansEditorCore/Panels/ContentBrowser/ThumbnailCache.h"
+#include "UI/IniSection.h"
 #include "UI/ProgressPopup.h"
 
 namespace Kans
 {
+    class AudioClipPreview;
+
     // Browses the project's asset folder: folder tree with favorites, grid or
     // list of the current folder, and a preview with asset details. File
     // operations keep asset identity (see Browser::AssetFileOperations).
@@ -77,6 +80,8 @@ namespace Kans
         // "Extract Materials" of an imported model.
         void SetExtractMaterialsCallback(PathCallback callback) { m_ExtractMaterials = std::move(callback); }
         void SetErrorCallback(std::function<void(const std::string&)> callback) { m_ReportError = std::move(callback); }
+        // Plays imported audio files from the preview; null disables playback.
+        void SetAudioPreview(AudioClipPreview* preview) { m_AudioPreview = preview; }
 
         const std::filesystem::path& GetCurrentFolder() const { return m_Current; }
         // The selected files and folders (absolute paths).
@@ -156,6 +161,14 @@ namespace Kans
         void HandleItem(const Browser::Entry& entry);
         void AcceptDrop(const std::filesystem::path& directory);
         void HandleKeyboard(int columns);
+
+        // ---- audio files (ContentBrowserAudio.cpp) ----
+        // The published clip of an imported audio file: its header and peak envelope.
+        const AudioClipSummary* AudioClipOf(const std::filesystem::path& file);
+        // A waveform tile instead of the file icon; false when the file has no imported clip.
+        bool DrawAudioIcon(const Browser::Entry& entry, ImVec2 min, ImVec2 max);
+        // The waveform with its playhead, transport and the clip's format.
+        void DrawAudioPreview(const AudioClipSummary& clip, float width);
 
         // ---- actions ----
         void Open(const Browser::Entry& entry);
@@ -242,6 +255,10 @@ namespace Kans
         uint64_t                                      m_SourcesGeneration = ~uint64_t(0);
         double                                        m_SourcesTime       = 0.0;
         bool                                          m_SourcesDirty      = true;
+
+        // ---- audio ----
+        AudioClipPreview* m_AudioPreview = nullptr;
+        AudioPreviewCache m_AudioClips;
 
         // ---- preview ----
         std::filesystem::path              m_PreviewPath;

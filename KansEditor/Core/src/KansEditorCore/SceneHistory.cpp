@@ -135,7 +135,10 @@ namespace Kans
             old.PointLight.has_value() != now.PointLight.has_value() ||
             old.AreaLight.has_value() != now.AreaLight.has_value() ||
             old.FogVolume.has_value() != now.FogVolume.has_value() ||
-            old.SpotLight.has_value() != now.SpotLight.has_value() || old.Script.has_value() != now.Script.has_value();
+            old.SpotLight.has_value() != now.SpotLight.has_value() ||
+            old.Script.has_value() != now.Script.has_value() ||
+            old.AudioSource.has_value() != now.AudioSource.has_value() ||
+            old.AudioListener.has_value() != now.AudioListener.has_value();
         if (components)
             return "Change components of " + now.Tag;
         EntitySnapshot onlyTransform = old;

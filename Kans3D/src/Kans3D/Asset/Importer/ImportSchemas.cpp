@@ -303,6 +303,11 @@ namespace Kans
         for (size_t i = 1; i < schema.Settings.size(); ++i)
             schema.Settings[i].Min = 0;
         schema.Settings[1].Max = 4;
+        schema.Presets         = {
+            {"Sound effect", "Short sounds played often: decoded once when loaded.", {{"load_mode", "decompress"}}},
+            {"Music",
+             "Long tracks: decoded while playing, so they start without a long load.",
+             {{"load_mode", "stream"}}}};
         return schema;
     }
     std::variant<std::monostate, AssetError>

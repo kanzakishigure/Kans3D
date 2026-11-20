@@ -4,12 +4,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include "Kans3D/Animation/AnimatorComponent.h"
-#include "Kans3D/Core/Math/Math.h"
-#include "KansEditorCore/DropPlacement.h"
-#include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Core/Input/Input.h"
+#include "Kans3D/Core/Math/Math.h"
+#include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Renderer/RenderWorld.h"
 #include "Kans3D/Scene/Components.h"
+#include "KansEditorCore/Audio/AudioEditing.h"
+#include "KansEditorCore/DropPlacement.h"
 #include "KansEditorCore/Gizmo/ViewCube.h"
 #include "UI/BloomSettingsWidget.h"
 #include "UI/EditorIcons.h"
@@ -595,12 +596,14 @@ namespace Kans
                 return;
             for (Entity child : m_Scene->GetChildren(entity))
                 visit(child);
-            const char* icon = entity.HasComponent<CameraComponent>()     ? ICON_FA_VIDEO :
-                               entity.HasComponent<DirLightComponent>()   ? ICON_FA_SUN :
-                               entity.HasComponent<PointLightComponent>() ? ICON_FA_LIGHTBULB :
-                               entity.HasComponent<SpotLightComponent>()  ? ICON_FA_LIGHTBULB :
-                               entity.HasComponent<AreaLightComponent>()  ? ICON_FA_LIGHTBULB :
-                                                                            nullptr;
+            const char* icon = entity.HasComponent<CameraComponent>()        ? ICON_FA_VIDEO :
+                               entity.HasComponent<DirLightComponent>()      ? ICON_FA_SUN :
+                               entity.HasComponent<PointLightComponent>()    ? ICON_FA_LIGHTBULB :
+                               entity.HasComponent<SpotLightComponent>()     ? ICON_FA_LIGHTBULB :
+                               entity.HasComponent<AreaLightComponent>()     ? ICON_FA_LIGHTBULB :
+                               entity.HasComponent<AudioSourceComponent>()   ? ICON_FA_VOLUME_HIGH :
+                               entity.HasComponent<AudioListenerComponent>() ? ICON_FA_HEADPHONES :
+                                                                               nullptr;
             if (!icon)
                 return;
             const glm::mat4 world  = m_Scene->GetWorldTransform(entity);
@@ -723,6 +726,20 @@ namespace Kans
                     ring(right, aim, range);
                     ring(up, aim, range);
                 }
+            }
+            if (chosen && entity.HasComponent<AudioSourceComponent>())
+            {
+                // Full volume inside the bright sphere, silent (or the floor) past the dim one.
+                const ImU32 audio = ImGui::GetColorU32(EditorTheme::Colors().TypeAudio);
+                const ImU32 faint = (audio & ~IM_COL32_A_MASK) | IM_COL32(0, 0, 0, 110);
+                const ImU32 cone = accent, coneFaint = (accent & ~IM_COL32_A_MASK) | IM_COL32(0, 0, 0, 120);
+                for (const auto& s : AudioEditing::SourceGizmo(entity.GetComponent<AudioSourceComponent>(), world))
+                    segment(s.A,
+                            s.B,
+                            s.Part == AudioEditing::GizmoPart::MinDistance ? audio :
+                            s.Part == AudioEditing::GizmoPart::MaxDistance ? faint :
+                            s.Part == AudioEditing::GizmoPart::InnerCone   ? cone :
+                                                                             coneFaint);
             }
             ImVec2 center;
             if (!ToScreen(origin, center))

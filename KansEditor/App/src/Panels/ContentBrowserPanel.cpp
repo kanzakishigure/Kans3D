@@ -1236,6 +1236,8 @@ namespace Kans
 
     void ContentBrowserPanel::DrawIcon(const Entry& entry, ImVec2 min, ImVec2 max)
     {
+        if (DrawAudioIcon(entry, min, max))
+            return;
         ImDrawList*    draw    = ImGui::GetWindowDrawList();
         Ref<Texture2D> texture = entry.Directory ? EditorResources::FolderIcon : nullptr;
         if (!entry.Directory && Browser::ThumbnailCache::Supports(entry.Path))
@@ -1537,6 +1539,8 @@ namespace Kans
             else
                 ImGui::TextDisabled("Loading preview...");
         }
+        else if (const auto* clip = entry.Directory ? nullptr : AudioClipOf(path))
+            DrawAudioPreview(*clip, width);
         else if (!m_PreviewText.empty())
             ImGui::InputTextMultiline("##text",
                                       m_PreviewText.data(),

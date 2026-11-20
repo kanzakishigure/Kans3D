@@ -15,6 +15,7 @@
 #include "Kans3D/Timeline/TimelineProduct.h"
 #include "Components/ComponentEditors.h"
 #include "EditorLayer.h"
+#include "KansEditorCore/Audio/AudioEditing.h"
 #include "KansEditorCore/Components/MaterialAssignment.h"
 #include "KansEditorCore/Launcher/LauncherModel.h"
 #include "KansEditorCore/Physics/PhysicsEditing.h"
@@ -312,8 +313,8 @@ namespace Kans
                 continue; // Products left behind by a deleted or moved source are not offered.
             else
                 choice.Name = id.GetSourceID().ToString();
-            // Products other than a source's main Model are distinguished by LocalID.
-            if (choice.Type != AssetType::Model)
+            // Products other than a source's main Model are distinguished by LocalID; an audio file has one clip.
+            if (choice.Type != AssetType::Model && choice.Type != AssetType::AudioClip)
                 choice.Name += " #" + std::to_string(id.GetLocalID());
             choices.push_back(std::move(choice));
         }
@@ -362,6 +363,11 @@ namespace Kans
     {
         if (!m_AssetImports || !m_ActiveScene)
             return;
+        if (AudioEditing::IsAudioFile(file))
+        {
+            PlaceAudio(file, parent, position);
+            return;
+        }
         const auto source = FindModelSource(file);
         if (!source)
         {
@@ -381,6 +387,82 @@ namespace Kans
             return;
         }
         StartPendingPlacementBuild();
+    }
+
+    void EditorLayer::PlaceAudio(const std::filesystem::path& file, Entity parent, std::optional<glm::vec3> position)
+    {
+        m_PendingAudio.push_back({file, parent ? parent.GetUUID() : UUID(0), position, false});
+        PlacePendingAudio();
+    }
+
+    void EditorLayer::PlacePendingAudio()
+    {
+        if (!m_AssetImports || !m_ActiveScene)
+            return;
+        auto        snapshot = m_AssetImports->GetSnapshot();
+        const auto* state    = std::get_if<EditorAssetImportSnapshot>(&snapshot);
+        bool        busy     = !state || state->State == EditorAssetImportState::Building;
+        for (auto it = m_PendingAudio.begin(); it != m_PendingAudio.end();)
+        {
+            // The clip keeps its ID through reimports, so a published one is placed at once.
+            if (const AssetID clip = FindPublished(it->File, AssetType::AudioClip); clip.IsValid())
+            {
+                Entity entity = AudioEditing::PlaceAudioSource(*m_ActiveScene,
+                                                               clip,
+                                                               it->File.stem().u8string(),
+                                                               m_ActiveScene->GetEntityByUUID(it->Parent),
+                                                               it->Position);
+                m_HierarchyPanel.SetSelected(entity);
+                it = m_PendingAudio.erase(it);
+                continue;
+            }
+            if (it->Started)
+            {
+                if (busy)
+                {
+                    ++it;
+                    continue;
+                }
+                Record(AssetError {AssetErrorCode::InvalidData,
+                                   it->File.filename().u8string() +
+                                       " could not be imported; the import panel shows why."});
+                it = m_PendingAudio.erase(it);
+                continue;
+            }
+            std::optional<SourceAssetID> source;
+            std::error_code              error;
+            const auto                   dropped = std::filesystem::weakly_canonical(it->File, error);
+            if (auto  sources = m_AssetImports->GetSources();
+                auto* list    = std::get_if<std::vector<SourceAssetMetadata>>(&sources))
+                for (const auto& candidate : *list)
+                    if (candidate.Exists && std::filesystem::weakly_canonical(
+                                                m_AssetImports->ResolveSourcePath(candidate.Path), error) == dropped)
+                        source = candidate.sourceAssetID;
+            if (!source)
+            {
+                Record(
+                    AssetError {AssetErrorCode::NotFound, it->File.filename().u8string() + " is not in the project"});
+                it = m_PendingAudio.erase(it);
+                continue;
+            }
+            if (busy)
+            {
+                ++it; // Imported after the build in progress.
+                continue;
+            }
+            AssetBuildOptions options;
+            options.Target = EditorAssetTarget;
+            auto started   = m_AssetImports->Start(*source, options);
+            if (const auto* failure = std::get_if<AssetError>(&started))
+            {
+                Record(*failure);
+                it = m_PendingAudio.erase(it);
+                continue;
+            }
+            it->Started = true;
+            busy        = true;
+            ++it;
+        }
     }
 
     void EditorLayer::StartPendingPlacementBuild()
@@ -669,7 +751,11 @@ namespace Kans
         scene->OnViewportResize(std::max(1u, viewport.x), std::max(1u, viewport.y));
         // Leaving a playing scene drops its runtime state; the edit-time state is not kept.
         if (m_ActiveScene)
+        {
             m_Play.Discard(*m_ActiveScene);
+            m_ActiveScene->SetAudioEngine(nullptr); // The new scene takes it on the next update.
+        }
+        m_PendingAudio.clear(); // Its parents belong to the scene being left.
         FinishClothPaint();
         m_PendingCloth.clear();
         m_ActiveScene = std::move(scene);

@@ -6,6 +6,7 @@
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Project/Project.h"
 #include <Kans3D.h>
+#include "KansEditorCore/Audio/AudioClipPreview.h"
 #include "KansEditorCore/EditorStartup.h"
 #include "KansEditorCore/ImportProgress.h"
 #include "KansEditorCore/SceneAssetImportQueue.h"
@@ -133,6 +134,20 @@ namespace Kans
         // `parent` (may be null) receives the placed model entity; `position`
         // (world space) is where it goes, the parent's origin otherwise.
         void PlaceAsset(const std::filesystem::path& file, Entity parent = {}, std::optional<glm::vec3> position = {});
+        // An audio file dropped on the scene: an entity with an Audio Source playing it, placed once
+        // the file is imported (importing it first when needed).
+        void PlaceAudio(const std::filesystem::path& file, Entity parent, std::optional<glm::vec3> position);
+        // Places the dropped audio files that are imported and starts the import of one still waiting;
+        // after each finished build.
+        void PlacePendingAudio();
+        struct PendingAudio
+        {
+            std::filesystem::path    File;
+            UUID                     Parent = 0;
+            std::optional<glm::vec3> Position;
+            bool                     Started = false; // Its import was started: no clip after it means it failed.
+        };
+        std::vector<PendingAudio> m_PendingAudio;
         // The source of a model file in the project, if it is one.
         std::optional<SourceAssetID>             FindModelSource(const std::filesystem::path& file);
         void                                     PlacePendingModel();
@@ -345,7 +360,9 @@ namespace Kans
 
         Scope<EditorAssetImportService> m_AssetImports;
         Scope<AssetManager>             m_Assets;
-
+        // Clip auditions outside Play mode (Content Browser, Audio Source card), through the
+        // application's audio engine; unbound before the asset manager goes.
+        AudioClipPreview m_AudioPreview;
 
         Ref<Scene>         m_ActiveScene;
         Scope<ViewportClient> m_Viewport;
