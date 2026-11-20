@@ -134,12 +134,20 @@ vec3 KansAreaFilteredSource(int i, vec3 P, mat3 transform)
     float lod = 0.5 * log2(max(1.0,size.x*size.y*distance*distance/area));
     return KansAreaTexture(i,clamp(uv,vec2(0),vec2(1)),clamp(lod,0.0,max(0.0,size.z-1.0)));
 }
+float KansAreaRangeWindow(int i, vec3 P)
+{
+    vec3 delta = u_Frame.AreaPositionRange[i].xyz - P;
+    vec3 normal = -cross(u_Frame.AreaRightWidth[i].xyz, u_Frame.AreaUpHeight[i].xyz);
+    if (dot(normal, -delta) <= 0.0 && u_Frame.AreaScales[i].z < 0.5) return 0.0;
+    return KansRangeWindow(dot(delta, delta), u_Frame.AreaPositionRange[i].w);
+}
+vec3 KansAreaDiffuseForm(int i, vec3 P, mat3 frame)
+{
+    return u_Frame.AreaScales[i].x * KansAreaIntegral(i, P, frame) * KansAreaFilteredSource(i, P, frame);
+}
 vec3 KansAreaPbr(int i, vec3 albedo, float metallic, float roughness, vec3 N, vec3 V, vec3 P)
 {
-    vec3 delta = u_Frame.AreaPositionRange[i].xyz-P;
-    vec3 normal = -cross(u_Frame.AreaRightWidth[i].xyz,u_Frame.AreaUpHeight[i].xyz);
-    if (dot(normal,-delta) <= 0.0 && u_Frame.AreaScales[i].z < 0.5) return vec3(0);
-    float window = KansRangeWindow(dot(delta,delta),u_Frame.AreaPositionRange[i].w);
+    float window = KansAreaRangeWindow(i, P);
     if (window <= 0.0) return vec3(0);
     mat3 frame = KansAreaFrame(N,V);
     vec2 uv = vec2(roughness,sqrt(1.0-clamp(dot(N,V),0.0,1.0))) * (63.0/64.0) + 0.5/64.0;
@@ -148,8 +156,7 @@ vec3 KansAreaPbr(int i, vec3 albedo, float metallic, float roughness, vec3 N, ve
     mat3 invM = mat3(vec3(t.x,0,t.y),vec3(0,1,0),vec3(t.z,0,t.w));
     mat3 specFrame = invM*frame;
     vec3 F0 = mix(vec3(0.04),albedo,metallic);
-    vec3 diffuse = (1.0-F0)*(1.0-metallic)*albedo * u_Frame.AreaScales[i].x *
-        KansAreaIntegral(i,P,frame) * KansAreaFilteredSource(i,P,frame);
+    vec3 diffuse = (1.0-F0)*(1.0-metallic)*albedo * KansAreaDiffuseForm(i, P, frame);
     vec3 specular = (F0*amplitude.x+(1.0-F0)*amplitude.y) * u_Frame.AreaScales[i].y *
         KansAreaIntegral(i,P,specFrame) * KansAreaFilteredSource(i,P,specFrame);
     // Area emitters are unshadowed in R3b.

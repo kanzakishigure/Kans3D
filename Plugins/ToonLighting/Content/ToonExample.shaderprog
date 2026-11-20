@@ -1,0 +1,4 @@
+KansShaderProgram 1
+vertex=ToonExample.vert
+fragment=ToonExample.frag
+output_space=linear_hdr

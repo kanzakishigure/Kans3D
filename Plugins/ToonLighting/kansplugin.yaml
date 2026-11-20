@@ -1,0 +1,9 @@
+Name: ToonLighting
+FriendlyName: Toon Lighting
+Version: 1.0.0
+Description: Toon ramps and rim lighting for forward lights in custom materials.
+EngineVersion: '>=1.0.0 <2.0.0'
+Type: Runtime
+EnabledByDefault: false
+Shaders: Shaders/ToonLighting
+Content: Content
