@@ -544,39 +544,24 @@ namespace Kans
                 {{source, GraphAccess::TransferRead}, {snapshot, GraphAccess::TransferWrite}},
                 [source, snapshot](auto& c) { c.Commands.CopyTexture(c.Texture(source), {}, c.Texture(snapshot)); });
         }
+        const bool earlyVelocity =
+            ssr || (view.Environment.AmbientOcclusion.Enabled && view.EffectiveAA != AntiAliasing::TAA);
+        if (earlyVelocity)
+            renderer.BuildVelocity(graph, RenderFrame::VelocityPass::Prepass);
         if (ssr)
-        {
-            // The prepass has resolved the same alpha/material descriptors as the opaque draw.
-            renderer.VelocitySurfaceDraws = renderer.PrepassDraws;
-            renderer.BuildVelocity(graph);
             renderer.BuildReflections(graph);
-        }
         else
             renderer.Output.GetTemporalState().ReflectionValid = false;
         if (view.Environment.AmbientOcclusion.Enabled)
-        {
-            if (!ssr) // SSR already generated velocity against prepass visibility.
-            {
-                if (view.EffectiveAA == AntiAliasing::TAA)
-                    renderer.Output.EnsureVelocity(); // TAA generates velocity after opaque draws.
-                else
-                    renderer.BuildVelocity(graph);
-            }
             renderer.BuildGtao(graph);
-        }
         else
             renderer.Output.GetTemporalState().AOValid = false;
         GraphTexture opaqueOnly = uint32_t(-1);
         if (view.EffectiveAA == AntiAliasing::TAA)
         {
             renderer.SceneGraph = &graph;
-            TextureDesc masks;
-            masks.Width       = view.Viewport.x;
-            masks.Height      = view.Viewport.y;
-            masks.PixelFormat = Format::RG8Unorm;
-            masks.Usage       = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled |
-                                RenderHardware::TextureUsage::CopySource;
-            renderer.TemporalMasks = graph.CreateTexture("Temporal material masks", masks);
+            renderer.TemporalMasks =
+                graph.ImportTexture("Temporal material masks", renderer.Output.EnsureTemporalMasks());
             append("Clear temporal material masks",
                    {{renderer.TemporalMasks, GraphAccess::ColorWrite}},
                    [mask = renderer.TemporalMasks](auto& c) {
@@ -645,34 +630,33 @@ namespace Kans
                 for (const auto& image : view.Shadows->Points)
                     sampled(materialUses, image, "PointShadowCube");
             }
-            // Resolve descriptors before declaring resources; recording is deferred until transient allocation.
-            for (const auto& draw : view.Draws)
-                if (const auto* bindings = renderer.GetBindings(draw.Material, draw.ViewMode != SceneViewMode::Lit))
-                    if (const auto* shader = renderer.GetShader(draw.Material, bindings->Shader))
-                    {
-                        const auto* instance =
-                            renderer.Assets()->GetInstanceMaterialBindings(*bindings, draw.Parameters);
-                        bool complete = true;
-                        auto group    = renderer.Assets()->GetMaterialGroup(
-                            *shader, *instance, &complete, renderer.MaterialMipBias);
-                        renderer.Complete &= complete;
-                        const auto index = size_t(&draw - view.Draws.data());
-                        if (renderer.VelocityActive && group)
-                            renderer.VelocitySurfaceDraws[index] =
-                                renderer.PrepassDraws.count(index) ? renderer.PrepassDraws.at(index) :
-                                                                     RenderFrame::PrepassDraw {group, instance->Images};
-                        for (const auto& image : instance->Images)
-                            sampled(materialUses, image, "MaterialTexture");
-                        if (renderer.PrepassDraws.count(index))
-                            for (const auto& image : renderer.PrepassDraws.at(index).Images)
-                                sampled(materialUses, image, "PrepassMaterialTexture");
-                    }
+            // Record Main before planning velocity so only recorded surfaces and retained descriptors contribute.
+            const auto recordMaterials = [&](const char* name, bool transparent) {
+                auto       uses     = materialUses;
+                const auto start    = RenderClockMilliseconds();
+                auto       commands = renderer.GetDevice()->CreateCommandList();
+                // Preserve the HDR transitions these batches used when recorded after Finish.
+                const bool deferToneMapping = renderer.DeferToneMapping;
+                const bool postProcessHDR   = renderer.PostProcessHDR;
+                renderer.DeferToneMapping   = false;
+                renderer.PostProcessHDR     = true;
+                renderer.DrawShaderMaterials(
+                    *commands,
+                    [&](const auto& image) { sampled(uses, image, "MaterialTexture"); },
+                    {},
+                    nullptr,
+                    nullptr,
+                    transparent);
+                renderer.DeferToneMapping = deferToneMapping;
+                renderer.PostProcessHDR   = postProcessHDR;
+                auto pass = graph.AddRecordedPass(name, std::move(uses), commands, RenderClockMilliseconds() - start);
+                if (pass)
+                    graph.OrderAfter(pass, pass - 1);
+            };
             if (!view.MaterialOrder.empty())
-                append("Materials (opaque/mask)", materialUses, [&renderer](auto& c) {
-                    // Graph construction may already have advanced its logical state through tone mapping.
-                    renderer.PostProcessHDR = true;
-                    renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, false);
-                });
+                recordMaterials("Materials (opaque/mask)", false);
+            if (earlyVelocity)
+                renderer.BuildVelocity(graph, RenderFrame::VelocityPass::Uncovered);
             Inject(RenderExtensionPoint::AfterOpaque, featureContext);
             BuildSpotBeamPasses(graph, renderer);
             if (view.EffectiveAA == AntiAliasing::TAA)
@@ -687,12 +671,8 @@ namespace Kans
                     [hdr, opaqueOnly](auto& c) { c.Commands.CopyTexture(c.Texture(hdr), {}, c.Texture(opaqueOnly)); });
             }
             if (!view.MaterialOrder.empty())
-                append("Materials (blend)", materialUses, [&renderer](auto& c) {
-                    renderer.PostProcessHDR = true;
-                    renderer.DrawShaderMaterials(c.Commands, {}, {}, nullptr, nullptr, true);
-                });
-            if (renderer.VelocityActive && !ssr &&
-                (!renderer.AmbientOcclusion || view.EffectiveAA == AntiAliasing::TAA))
+                recordMaterials("Materials (blend)", true);
+            if (renderer.VelocityActive && !earlyVelocity)
                 renderer.BuildVelocity(graph);
         }
         else if (!view.MaterialOrder.empty())
@@ -736,8 +716,7 @@ namespace Kans
                                                   renderer.FinalPostRecordMilliseconds.value_or(0));
             if (pass)
                 graph.OrderAfter(pass, pass - 1);
-            if (renderer.VelocityActive && !ssr &&
-                (!renderer.AmbientOcclusion || view.EffectiveAA == AntiAliasing::TAA))
+            if (renderer.VelocityActive)
                 renderer.BuildVelocity(graph);
             if (post)
             {
@@ -751,9 +730,9 @@ namespace Kans
                 graph.OrderAfter(resolve, resolve - 1);
             }
         }
-        if (renderer.VelocityActive && !ssr && !renderer.AmbientOcclusion && view.MaterialOrder.empty() &&
-            view.EffectiveAA != AntiAliasing::TAA)
+        else if (renderer.VelocityActive)
             renderer.BuildVelocity(graph);
+        renderer.CommitVelocityHistory();
         Inject(RenderExtensionPoint::AfterTransparent, featureContext);
         if (ssr)
             renderer.CaptureReflectionHistory(graph);

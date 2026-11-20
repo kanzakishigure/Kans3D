@@ -130,12 +130,14 @@ void main() {
         if(w>.1) { lo=min(lo,sampleAO.r); hi=max(hi,sampleAO.r); }
     }
     float ao=sum/max(weights,1e-6);
-    vec2 oldUV=uv+textureLod(Velocity,uv,0).rg;
-    if(p.temporal.y>0 && all(greaterThanEqual(oldUV,vec2(0))) && all(lessThanEqual(oldUV,vec2(1)))) {
-        vec4 old=textureLod(History,oldUV,0);
-        float expected=-(p.previousView*p.inverseView*vec4(position(uv),1)).z;
-        if(old.g>0 && abs(old.g-expected)<max(.02,abs(expected)*.02))
-            ao=mix(ao,clamp(old.r,lo,hi),.85);
+    if(p.temporal.y>0) {
+        vec2 oldUV=uv+textureLod(Velocity,uv,0).rg;
+        if(all(greaterThanEqual(oldUV,vec2(0))) && all(lessThanEqual(oldUV,vec2(1)))) {
+            vec4 old=textureLod(History,oldUV,0);
+            float expected=-(p.previousView*p.inverseView*vec4(position(uv),1)).z;
+            if(old.g>0 && abs(old.g-expected)<max(.02,abs(expected)*.02))
+                ao=mix(ao,clamp(old.r,lo,hi),.85);
+        }
     }
     imageStore(Result,id,vec4(ao,center.g,0,1));
 })"};
@@ -167,17 +169,19 @@ void main() {
         uniform->Write(0, &p, sizeof(p));
         auto previous = state.AOHistory[state.AOFrame % 2], result = state.AOHistory[(state.AOFrame + 1) % 2];
         AmbientOcclusion = result;
-        const auto depth = Output.GetDepth(), normal = Output.GetNormalRoughness(), velocity = Output.GetVelocity();
+        const auto depth = Output.GetDepth(), normal = Output.GetNormalRoughness();
+        // TAA accumulates AO as part of the final shading. Its velocity can be produced after Main.
+        const auto velocity = taa ? depth : Output.GetVelocity();
         for (unsigned i = 0; i < 2; ++i)
         {
             const auto                                           output = i ? result : state.AORaw;
             std::vector<GraphUse>                                uses;
             const std::array<Handle<RenderHardware::Texture>, 5> inputs {
                 depth, normal, state.AORaw, previous, velocity};
-            // Raw is unused by the horizon pipeline; bind depth there to avoid read/write aliasing.
+            // The horizon pipeline only reads depth and normals.
             auto bound = inputs;
             if (!i)
-                bound[2] = depth;
+                bound[2] = bound[3] = bound[4] = depth;
             for (auto& image : bound)
             {
                 auto id = graph.ImportTexture("GTAO input", image);

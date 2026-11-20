@@ -39,6 +39,7 @@ namespace Kans
         void                                                                EnsureNormalRoughness();
         RenderHardware::Handle<RenderHardware::Texture>                     EnsureContactDepth();
         void                                                                EnsureVelocity();
+        RenderHardware::Handle<RenderHardware::Texture>                     EnsureTemporalMasks();
         // previousUV - currentUV, unjittered [0,1] UV units, origin top-left; FSR scale (1,1).
         RenderHardware::Handle<RenderHardware::Texture> GetVelocity() const
         {
@@ -100,6 +101,7 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Texture>              m_ContactDepth;
         bool                                                         m_NormalRoughnessValid = false;
         RenderHardware::Handle<RenderHardware::Texture>              m_SceneVelocity;
+        RenderHardware::Handle<RenderHardware::Texture>              m_TemporalMasks;
         bool                                                         m_VelocityValid = false;
         glm::vec2                                                    m_Jitter {0};
         std::shared_ptr<AutoExposurePass>                            m_AutoExposure;

@@ -199,7 +199,6 @@ namespace Kans
                 target.Colors.push_back({SceneGraph->Texture(TemporalMasks), {}, load});
             return target;
         };
-        // TAA material recording is deferred past graph construction's display-space state changes.
         const bool deferToneMapping = DeferToneMapping || writeTemporalMasks;
         bool       rendering        = false,
                    hdr = writeTemporalMasks || ((deferToneMapping || HasBackgroundColor()) && PostProcessHDR);
@@ -410,19 +409,17 @@ namespace Kans
                 pass.MaterialGroup = PrepassDraws.at(item.DrawIndex).Material;
             // Velocity must use the exact alpha descriptor consumed by Main, including
             // the prepass snapshot and instance overrides; asynchronous loads may replace caches.
-            if (VelocityActive && tag.empty() && !suppliedView)
+            const GpuMaterialBindings* instance = nullptr;
+            if (!pass.MaterialGroup && tag.empty() && !suppliedView && (VelocityActive || sampled))
             {
-                const auto* instance = Assets()->GetInstanceMaterialBindings(*bindings, draw.Parameters);
-                bool        complete = true;
-                if (!pass.MaterialGroup && writeTemporalMasks && VelocitySurfaceDraws.count(item.DrawIndex))
-                    pass.MaterialGroup = VelocitySurfaceDraws.at(item.DrawIndex).Material;
-                if (!pass.MaterialGroup)
-                    pass.MaterialGroup = Assets()->GetMaterialGroup(*shader, *instance, &complete, MaterialMipBias);
+                instance           = Assets()->GetInstanceMaterialBindings(*bindings, draw.Parameters);
+                bool complete      = true;
+                pass.MaterialGroup = Assets()->GetMaterialGroup(*shader, *instance, &complete, MaterialMipBias);
                 Complete &= complete;
-                VelocitySurfaceDraws[item.DrawIndex] = {pass.MaterialGroup,
-                                                        pass.PrepassCovered ? PrepassDraws.at(item.DrawIndex).Images :
-                                                                              instance->Images};
             }
+            const auto& images       = pass.PrepassCovered ? PrepassDraws.at(item.DrawIndex).Images :
+                                       instance            ? instance->Images :
+                                                             bindings->Images;
             bool recorded     = false;
             if (tag.empty())
                 Complete &=
@@ -435,10 +432,10 @@ namespace Kans
                         ++Stats.DrawCalls;
                         Stats.Triangles += mesh->Sections[draw.Section].IndexCount / 3;
                     }
-            if (VelocityActive && tag.empty() && !recorded)
-                VelocitySurfaceDraws.erase(item.DrawIndex);
             if (tag.empty() && recorded)
             {
+                if (VelocityActive && !suppliedView && !IsTransparentMaterial(render.AlphaMode))
+                    VelocitySurfaceDraws[item.DrawIndex] = {pass.MaterialGroup, images};
                 View.Culling.Drawn += draw.SectionCount;
                 for (const auto& extra : shader->Passes)
                     if (extra.Tag == "AfterMain" && bindings->PassEnabled(extra.Name))
@@ -449,8 +446,7 @@ namespace Kans
                     }
             }
             if (sampled)
-                for (const auto& image :
-                     pass.PrepassCovered ? PrepassDraws.at(item.DrawIndex).Images : bindings->Images)
+                for (const auto& image : images)
                     sampled(image);
             if (tag.empty())
             {

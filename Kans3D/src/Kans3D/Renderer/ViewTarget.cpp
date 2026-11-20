@@ -148,6 +148,21 @@ namespace Kans
         }
         m_VelocityValid = true;
     }
+    RenderHardware::Handle<RenderHardware::Texture> ViewTarget::EnsureTemporalMasks()
+    {
+        using namespace RenderHardware;
+        if (!m_TemporalMasks)
+        {
+            TextureDesc desc;
+            desc.Width       = m_Size.x;
+            desc.Height      = m_Size.y;
+            desc.PixelFormat = Format::RG8Unorm;
+            desc.Usage       = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled |
+                               RenderHardware::TextureUsage::CopySource;
+            m_TemporalMasks  = m_Device->CreateTexture(desc);
+        }
+        return m_TemporalMasks;
+    }
     void ViewTarget::Resize(glm::uvec2 size)
     {
         if (size == m_Size && m_HDR)
@@ -177,6 +192,7 @@ namespace Kans
         m_NormalRoughness.reset();
         m_ContactDepth.reset();
         m_SceneVelocity.reset();
+        m_TemporalMasks.reset();
         m_VelocityValid = false;
         m_Jitter        = {};
         InvalidateTemporalHistory();

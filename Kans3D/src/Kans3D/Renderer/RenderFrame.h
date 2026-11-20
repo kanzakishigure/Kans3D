@@ -2,6 +2,7 @@
 #include "RenderView.h"
 #include "RenderWorld.h"
 #include "Renderer.h"
+#include "Temporal.h"
 #include "ViewTarget.h"
 
 namespace Kans
@@ -65,11 +66,26 @@ namespace Kans
         std::shared_ptr<FogState>                       Fog;
         FogFrameResources                               FogGrid;
         bool                                            TemporalActive = false, VelocityActive = false;
+        struct VelocityObject
+        {
+            TemporalState::Object                          Current;
+            TemporalState::Object*                         Previous = nullptr;
+            RenderHardware::Handle<RenderHardware::Buffer> SkinPalette;
+            bool Reset = true, Moving = false, UploadedPrevious = false, UploadedCurrent = false;
+        };
+        std::map<TemporalState::Key, VelocityObject> VelocityObjects;
+        enum class VelocityPass
+        {
+            Full,
+            Prepass,
+            Uncovered
+        };
         void                                            PrepareTemporal();
         void                                            ApplyTemporalUniforms(EngineFrameUniforms& frame) const;
         glm::mat4                                       SceneProjection() const;
         Camera                                          SceneCamera() const;
-        void                                            BuildVelocity(RenderGraph& graph);
+        void BuildVelocity(RenderGraph& graph, VelocityPass pass = VelocityPass::Full);
+        void CommitVelocityHistory();
         void                                            BuildDebugBuffer(RenderGraph& graph);
         bool                                            ReconstructsHDR() const
         {

@@ -293,32 +293,45 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
             return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(a[0])) == 0);
         }
     } // namespace
-    void RenderFrame::BuildVelocity(RenderGraph& graph)
+    void RenderFrame::BuildVelocity(RenderGraph& graph, VelocityPass pass)
     {
         using namespace RenderHardware;
-        Output.EnsureSampledDepth();
-        Output.EnsureVelocity();
+        const bool   drawStatic = pass == VelocityPass::Uncovered;
+        const auto&  surfaces   = pass == VelocityPass::Prepass ? PrepassDraws : VelocitySurfaceDraws;
+        const size_t surfaceCount =
+            drawStatic ? std::count_if(surfaces.begin(),
+                                       surfaces.end(),
+                                       [&](const auto& surface) { return !PrepassDraws.count(surface.first); }) :
+                         surfaces.size();
+        if (drawStatic && !surfaceCount)
+            return;
+        if (!drawStatic)
+        {
+            Output.EnsureSampledDepth();
+            Output.EnsureVelocity();
+        }
         auto& state  = Output.GetTemporalState();
         auto  device = GetDevice();
         PrepareResources(state, *device);
         const auto velocity = graph.ImportTexture("SceneVelocity", Output.GetVelocity());
         const auto depth    = graph.ImportTexture("SceneDepthStencil", Output.GetDepth());
-        graph.ExportTexture(velocity);
-        CameraData camera {glm::inverse(state.Current),
-                           state.Previous,
-                           glm::vec4(View.Scene.sceneCamera.Position, 1),
-                           glm::vec4(state.Jitter.z, state.Jitter.w, View.Viewport.x, View.Viewport.y)};
-        // Derive the actual camera position, including callers that only supply a view matrix.
-        camera.CameraPosition = glm::inverse(View.Scene.sceneCamera.viewMatrix)[3];
-        Fullscreen(*this,
-                   graph,
-                   "Camera velocity",
-                   CameraFragment,
-                   &camera,
-                   sizeof(camera),
-                   Output.GetDepth(),
-                   Output.GetVelocity(),
-                   {{depth, GraphAccess::SampledRead}, {velocity, GraphAccess::ColorWrite}});
+        if (!drawStatic)
+        {
+            graph.ExportTexture(velocity);
+            const CameraData camera {glm::inverse(state.Current),
+                                     state.Previous,
+                                     glm::inverse(View.Scene.sceneCamera.viewMatrix)[3],
+                                     glm::vec4(state.Jitter.z, state.Jitter.w, View.Viewport.x, View.Viewport.y)};
+            Fullscreen(*this,
+                       graph,
+                       "Camera velocity",
+                       CameraFragment,
+                       &camera,
+                       sizeof(camera),
+                       Output.GetDepth(),
+                       Output.GetVelocity(),
+                       {{depth, GraphAccess::SampledRead}, {velocity, GraphAccess::ColorWrite}});
+        }
         auto          commands = device->CreateCommandList();
         RenderingDesc target;
         target.Colors.push_back({Output.GetVelocity(), {}, LoadOp::Load});
@@ -342,7 +355,7 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
             glm::vec4 Deformed;
         };
         const auto           stride = frameBytes + objectBytes + align(sizeof(PreviousObject));
-        std::vector<uint8_t> packed(stride * View.MaterialOrder.size());
+        std::vector<uint8_t>  packed(stride * surfaceCount);
         auto   uniforms = packed.empty() ?
                               Handle<RenderHardware::Buffer>() :
                               device->CreateBuffer({packed.size(), BufferUsage::Uniform, MemoryUsage::Upload});
@@ -376,28 +389,56 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
         {
             if (item.Text || item.UI || item.AlwaysOnTop || IsTransparentMaterial(item.Render.AlphaMode))
                 continue;
+            const auto surface = surfaces.find(item.DrawIndex);
+            if (surface == surfaces.end() || (drawStatic && PrepassDraws.count(item.DrawIndex)))
+                continue;
             const auto& draw     = View.Draws[item.DrawIndex];
             const auto* mesh     = GetMesh(draw.Mesh);
             const auto* bindings = GetBindings(draw.Material, draw.ViewMode != SceneViewMode::Lit);
             const auto* shader   = bindings ? GetShader(draw.Material, bindings->Shader) : nullptr;
             if (!draw.Ready || !mesh || draw.Section >= mesh->Sections.size() || !shader ||
-                shader->Domain != ShaderDomain::Surface || !VelocitySurfaceDraws.count(item.DrawIndex))
+                shader->Domain != ShaderDomain::Surface)
                 continue;
-            const bool                   skinned  = bool(mesh->Skin);
-            const bool                   deformed = skinned && bool(Assets()->GetSkinningPalette(draw.SkinPose, mesh));
-            const std::vector<glm::mat4> palette =
-                skinned ? Assets()->GetSkinningPaletteData(draw.SkinPose, mesh) : std::vector<glm::mat4>();
-            const TemporalState::Key key {
-                uint64_t(draw.EntityID), uint64_t(draw.InstanceRoot), draw.Mesh, draw.Section};
-            auto&       history  = state.Objects[key];
-            const auto  identity = World.TemporalIdentity(draw.EntityID, draw.InstanceRoot);
-            const bool  reset    = state.Reset || draw.EntityID == UUID(0) || history.LastSeen + 1 != state.Frame ||
-                                   history.Identity != identity || history.MeshVertices.lock() != mesh->Vertices;
-            const auto  previousTransform = reset ? draw.Transform : history.Transform;
-            const auto& previousPalette   = reset ? palette : history.Palette;
-            const bool  previousDeformed  = reset ? deformed : history.Deformed;
-            const bool  moving = previousTransform != draw.Transform || !SamePalette(previousPalette, palette) ||
-                                 previousDeformed != deformed;
+            const bool     skinned = bool(mesh->Skin);
+            VelocityObject anonymous;
+            auto*          object = &anonymous;
+            bool           first  = true;
+            if (draw.EntityID != UUID(0))
+            {
+                const TemporalState::Key key {
+                    uint64_t(draw.EntityID), uint64_t(draw.InstanceRoot), draw.Mesh, draw.Section};
+                const auto [it, inserted] = VelocityObjects.try_emplace(key);
+                object                    = &it->second;
+                first                     = inserted;
+                if (first)
+                    object->Previous = &state.Objects[key];
+            }
+            auto& current = object->Current;
+            if (first)
+            {
+                current.Transform    = draw.Transform;
+                current.LastSeen     = state.Frame;
+                current.Identity     = World.TemporalIdentity(draw.EntityID, draw.InstanceRoot);
+                current.MeshVertices = mesh->Vertices;
+                if (skinned)
+                {
+                    object->SkinPalette = Assets()->GetSkinningPalette(draw.SkinPose, mesh);
+                    current.Deformed    = bool(object->SkinPalette);
+                    current.Palette     = Assets()->GetSkinningPaletteData(draw.SkinPose, mesh);
+                }
+                if (const auto* history = object->Previous)
+                {
+                    object->Reset           = state.Reset || history->LastSeen + 1 != state.Frame ||
+                                              history->Identity != current.Identity ||
+                                              history->MeshVertices.lock() != mesh->Vertices;
+                    object->Moving          = !object->Reset && (history->Transform != current.Transform ||
+                                                                 !SamePalette(history->Palette, current.Palette) ||
+                                                                 history->Deformed != current.Deformed);
+                    current.PreviousPalette = history->PreviousPalette;
+                    current.CurrentPalette  = history->CurrentPalette;
+                }
+            }
+            const auto& previous = object->Reset ? current : *object->Previous;
             const auto  upload = [&](Handle<RenderHardware::Buffer>& buffer, const std::vector<glm::mat4>& data) {
                 if (rendering)
                 {
@@ -422,20 +463,25 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
                 use({graph.ImportBuffer("Velocity palette", buffer), GraphAccess::StorageReadWrite});
             };
             // Preserve a GPU copy from the first observed pose, even while the object is static.
-            if (skinned && draw.EntityID != UUID(0) && (moving || reset))
-                upload(history.PreviousPalette, previousPalette);
-            if (moving)
+            if (skinned && object->Previous && (object->Moving || object->Reset) && !object->UploadedPrevious)
+            {
+                upload(current.PreviousPalette, previous.Palette);
+                object->UploadedPrevious = true;
+            }
+            if (object->Moving || drawStatic)
             {
                 const bool           standard = IsStandardShader(bindings->Shader);
                 const auto           offset   = range * stride;
-                EngineObjectUniforms object;
-                object.Transform      = draw.Transform;
-                object.MaterialRender = {
+                EngineObjectUniforms objectUniforms;
+                objectUniforms.Transform      = current.Transform;
+                objectUniforms.MaterialRender = {
                     float(item.Render.AlphaMode), item.Render.AlphaCutoff, float(item.Render.DoubleSided), 0};
                 std::memcpy(packed.data() + offset, &frame, sizeof(frame));
-                std::memcpy(packed.data() + offset + frameBytes, &object, sizeof(object));
-                const PreviousObject previous {previousTransform, {float(deformed), float(previousDeformed), 0, 0}};
-                std::memcpy(packed.data() + offset + frameBytes + objectBytes, &previous, sizeof(previous));
+                std::memcpy(packed.data() + offset + frameBytes, &objectUniforms, sizeof(objectUniforms));
+                const PreviousObject previousUniforms {previous.Transform,
+                                                       {float(current.Deformed), float(previous.Deformed), 0, 0}};
+                std::memcpy(
+                    packed.data() + offset + frameBytes + objectBytes, &previousUniforms, sizeof(previousUniforms));
                 Handle<BindGroup> skinGroup;
                 if (skinned)
                 {
@@ -446,21 +492,27 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
                     }
                     // This frame's cache palette is what Main reads; bind it rather than uploading a duplicate.
                     // Only the rest pose (no cache buffer) needs its own upload.
-                    auto current = Assets()->GetSkinningPalette(draw.SkinPose, mesh);
-                    if (!current)
+                    auto palette = object->SkinPalette;
+                    if (!palette)
                     {
-                        upload(history.CurrentPalette, palette);
-                        current = history.CurrentPalette;
+                        if (!object->UploadedCurrent)
+                        {
+                            upload(current.CurrentPalette, current.Palette);
+                            object->UploadedCurrent = true;
+                        }
+                        palette = current.CurrentPalette;
                     }
-                    else
-                        use({graph.ImportBuffer("Velocity current palette", current), GraphAccess::StorageRead});
-                    auto deltas = mesh->MorphDeltas ? mesh->MorphDeltas : current;
+                    // A static object can use its current GPU pose on both sides of the reprojection.
+                    const auto previousPalette = object->Moving ? current.PreviousPalette : palette;
+                    use({graph.ImportBuffer("Velocity current palette", palette), GraphAccess::StorageRead});
+                    use({graph.ImportBuffer("Velocity previous palette", previousPalette), GraphAccess::StorageRead});
+                    auto deltas = mesh->MorphDeltas ? mesh->MorphDeltas : palette;
                     use({graph.ImportBuffer("Velocity morph deltas", deltas), GraphAccess::StorageRead});
-                    skinGroup   = device->CreateBindGroup(
+                    skinGroup = device->CreateBindGroup(
                         {state.SkinLayout,
-                         {{0, current, 0, palette.size() * sizeof(glm::mat4)},
+                         {{0, palette, 0, current.Palette.size() * sizeof(glm::mat4)},
                           {1, deltas, 0, deltas->GetDesc().Bytes},
-                          {2, history.PreviousPalette, 0, previousPalette.size() * sizeof(glm::mat4)}}});
+                          {2, previousPalette, 0, previous.Palette.size() * sizeof(glm::mat4)}}});
                 }
                 begin();
                 PipelineDesc pipeline;
@@ -500,53 +552,61 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
                 pipeline.Blends.resize(1);
                 commands->BindPipeline(Services.CachedPipeline(pipeline));
                 const auto environment = GetMaterialEnvironment();
-                commands->BindGroup(
-                    device->CreateBindGroup({state.ObjectLayout,
-                                             {{0, uniforms, offset, sizeof(frame)},
-                                              {1, uniforms, offset + frameBytes, sizeof(object)},
-                                              {2, {}, 0, 0, environment[0], Services.GetMaterialEnvironmentSampler()},
-                                              {3, {}, 0, 0, environment[1], Services.GetMaterialEnvironmentSampler()},
-                                              {4, {}, 0, 0, environment[2], Services.GetMaterialEnvironmentSampler()},
-                                              {15, uniforms, offset + frameBytes + objectBytes, sizeof(previous)}}}));
+                commands->BindGroup(device->CreateBindGroup(
+                    {state.ObjectLayout,
+                     {{0, uniforms, offset, sizeof(frame)},
+                      {1, uniforms, offset + frameBytes, sizeof(objectUniforms)},
+                      {2, {}, 0, 0, environment[0], Services.GetMaterialEnvironmentSampler()},
+                      {3, {}, 0, 0, environment[1], Services.GetMaterialEnvironmentSampler()},
+                      {4, {}, 0, 0, environment[2], Services.GetMaterialEnvironmentSampler()},
+                      {15, uniforms, offset + frameBytes + objectBytes, sizeof(previousUniforms)}}}));
                 for (const auto& image : environment)
                     use({graph.ImportTexture("Velocity engine input", image), GraphAccess::SampledRead});
                 if (standard)
                 {
-                    const auto& surface = VelocitySurfaceDraws.at(item.DrawIndex);
-                    commands->BindGroup(surface.Material);
-                    for (const auto& image : surface.Images)
+                    commands->BindGroup(surface->second.Material);
+                    for (const auto& image : surface->second.Images)
                         use({graph.ImportTexture("Velocity alpha input", image), GraphAccess::SampledRead});
                 }
                 else
                     commands->BindGroup(device->CreateBindGroup({state.EmptyMaterialLayout, {}}));
+                const auto bindVertices = mesh->BindVertices ? mesh->BindVertices : mesh->Vertices;
+                use({graph.ImportBuffer("Velocity bind vertices", bindVertices), GraphAccess::VertexRead});
                 if (skinned)
                 {
                     commands->BindGroup(skinGroup);
-                    commands->BindVertexBuffers({{0, mesh->Vertices, 0},
-                                                 {1, mesh->Skin, 0},
-                                                 {2, mesh->BindVertices ? mesh->BindVertices : mesh->Vertices, 0}});
+                    use({graph.ImportBuffer("Velocity vertices", mesh->Vertices), GraphAccess::VertexRead});
+                    use({graph.ImportBuffer("Velocity skin vertices", mesh->Skin), GraphAccess::VertexRead});
+                    commands->BindVertexBuffers({{0, mesh->Vertices, 0}, {1, mesh->Skin, 0}, {2, bindVertices, 0}});
                 }
                 else
-                    commands->BindVertexBuffers({{0, mesh->BindVertices ? mesh->BindVertices : mesh->Vertices, 0}});
+                    commands->BindVertexBuffers({{0, bindVertices, 0}});
+                use({graph.ImportBuffer("Velocity indices", mesh->Indices), GraphAccess::IndexRead});
                 commands->BindIndexBuffer(mesh->Indices, IndexType::Uint32);
                 const auto& section = mesh->Sections[draw.Section];
                 commands->DrawIndexed(section.IndexCount, 1, section.FirstIndex);
                 ++Stats.VelocityDrawCalls;
                 ++range;
             }
-            // Retain bytes, never a cache palette handle. Next frame uploads these bytes to a distinct buffer.
-            history.Deformed     = deformed;
-            history.Transform    = draw.Transform;
-            history.Palette      = palette;
-            history.LastSeen     = state.Frame;
-            history.Identity     = identity;
-            history.MeshVertices = mesh->Vertices;
         }
         if (range)
+        {
             uniforms->Write(0, packed.data(), range * stride);
+            use({graph.ImportBuffer("Velocity uniforms", uniforms), GraphAccess::UniformRead});
+        }
         if (rendering)
             commands->EndRendering();
-        Order(graph, graph.AddRecordedPass("Object velocity", std::move(uses), commands));
+        if (!drawStatic || range)
+            Order(graph,
+                  graph.AddRecordedPass(
+                      drawStatic ? "Object velocity (post-opaque)" : "Object velocity", std::move(uses), commands));
+    }
+    void RenderFrame::CommitVelocityHistory()
+    {
+        // Both passes read the same prior pose. Move this frame's CPU palette into history only once.
+        for (auto& [key, object] : VelocityObjects)
+            *object.Previous = std::move(object.Current);
+        VelocityObjects.clear();
     }
     void RenderFrame::BuildDisplayDepth(RenderGraph& graph, RenderFrame& display)
     {
