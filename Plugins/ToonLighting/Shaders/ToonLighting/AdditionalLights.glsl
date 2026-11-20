@@ -17,7 +17,7 @@ struct ToonLightParams
     float Softness;      // Transition width as a fraction of band spacing, in [0,1].
     float RimStrength;   // Linear multiplier for backlighting at the silhouette.
     float RimWidth;      // Silhouette width measured in N dot V, in [0,1]; 0 disables it.
-    float Saturation;    // 0 = luminance only, 1 = full light colour.
+    float Saturation;    // 0 = luminance only, 1 = full light colour, up to 2 = boosted colour.
     float Intensity;     // Linear multiplier applied to the sum.
     float MaxBrightness; // Maximum RGB channel after intensity, before exposure.
 };
@@ -77,7 +77,8 @@ vec3 ToonAdditionalLights(vec3 worldPos, vec3 normal, vec3 viewDir, ToonLightPar
             sum += KansAreaLightDiffuseIrradiance(i, worldPos, L) * backlight;
     }
     float luminance = dot(sum, vec3(0.2126, 0.7152, 0.0722));
-    vec3 color = mix(vec3(luminance), sum, clamp(p.Saturation, 0.0, 1.0)) * max(p.Intensity, 0.0);
+    // Above 1 the tint is pushed away from grey (more stage colour, less whitening); never negative.
+    vec3 color = max(mix(vec3(luminance), sum, clamp(p.Saturation, 0.0, 2.0)), vec3(0.0)) * max(p.Intensity, 0.0);
     float peak = max(color.r, max(color.g, color.b));
     float limit = max(p.MaxBrightness, 0.0);
     return peak > limit ? color * (limit / peak) : color;
