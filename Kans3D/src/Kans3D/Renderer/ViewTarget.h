@@ -8,6 +8,8 @@ namespace Kans
 {
     // Per-viewport allocations. Resources and pool release before the device lease.
     struct ShadowResources;
+    struct StaticBatchCache;
+    struct RenderFrame;
     struct FogState;
     struct TemporalState;
     class Fsr3Upscaler;
@@ -105,6 +107,8 @@ namespace Kans
         std::shared_ptr<TemporalState>                               m_Temporal;
         std::shared_ptr<FogState>                                    m_Fog;
         std::shared_ptr<ShadowResources>                             m_Shadows;
+        std::shared_ptr<StaticBatchCache>                            m_StaticBatches;
+        friend struct RenderFrame;
         TransientTexturePool                                         m_Pool;
         uint64_t                                                     m_FrameNumber = 0;
         FrameProfiler                                                m_Profiler;

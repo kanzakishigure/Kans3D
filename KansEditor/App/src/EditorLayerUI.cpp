@@ -1087,6 +1087,13 @@ namespace Kans
             const auto& sprites = result.SpriteStats;
             PropertyGrid::Text(
                 "2D", std::to_string(sprites.DrawCalls) + " draws, " + std::to_string(sprites.QuadCount) + " quads");
+            const auto& batches = stats.StaticBatches;
+            if (batches.Batches)
+                PropertyGrid::Text("Static batches",
+                                   count(batches.Batches) + " batches, " + count(batches.Sections) + " sections, " +
+                                       count(batches.Rebuilt) + " rebuilt, " +
+                                       std::to_string(batches.BufferBytes / 1024) + " KiB, " +
+                                       ms(batches.PrepareMilliseconds));
             PropertyGrid::Text("Static shadow cache",
                                std::to_string(stats.StaticShadowCacheBytes / 1024) + " KiB, " +
                                    count(stats.CachedShadowCasters) + " cached / " +

@@ -60,6 +60,12 @@ namespace Kans
         uint64_t    CachedCasters = 0, StaticCastersRendered = 0, MovableCastersRendered = 0;
         bool        CacheHit = false, CacheUpdated = false;
     };
+    struct StaticBatchStatistics
+    {
+        size_t   Batches = 0, Sections = 0, Rebuilt = 0;
+        uint64_t BufferBytes         = 0;
+        double   PrepareMilliseconds = 0;
+    };
     struct FrameStatistics
     {
         uint64_t Frame                        = 0;
@@ -72,6 +78,7 @@ namespace Kans
         std::optional<RenderHardware::CommandStatistics> Draws;
         std::optional<CompletedGpuFrame>  Gpu; // Latest complete frame for THIS ViewTarget; never partial.
         CullingStatistics                 Culling;
+        StaticBatchStatistics             StaticBatches;
         uint32_t                          DirectionalLights = 0, PointLights = 0, ShadowedLights = 0;
         std::vector<ShadowPassStatistics> Shadows;
         uint64_t CachedShadowCasters = 0, StaticShadowCastersRendered = 0, MovableShadowCastersRendered = 0;

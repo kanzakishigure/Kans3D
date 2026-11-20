@@ -775,7 +775,8 @@ namespace Kans
                                         proxy.SkinPose,
                                         proxy.Parameters,
                                         proxy.RenderCustomDepth,
-                                        proxy.CustomStencil});
+                                        proxy.CustomStencil,
+                                        proxy.RenderMobility});
         const auto& state = settings.Piplinestate;
         for (const auto& [order, handle] : m_Order)
         {
@@ -804,7 +805,8 @@ namespace Kans
                                         proxy.SkinPose,
                                         proxy.Parameters,
                                         proxy.RenderCustomDepth,
-                                        proxy.CustomStencil});
+                                        proxy.CustomStencil,
+                                        proxy.RenderMobility});
             if (auto root =
                     m_Scene->GetEntityByUUID(submission.InstanceRoot ? submission.InstanceRoot : submission.EntityID);
                 root && root.HasComponent<MaterialParameterDriversComponent>())

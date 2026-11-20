@@ -28,9 +28,12 @@ namespace Kans
         MeshKey(SourceAssetID source, uint64_t local) : Asset(source, local) {}
         MeshKey(Ref<const DynamicVertexStream> stream) : Stream(std::move(stream)) {}
         MeshKey(Ref<const RuntimeMesh> runtime) : Runtime(std::move(runtime)) {}
-        bool IsValid() const { return Stream || Runtime || Asset.IsValid(); }
+        static MeshKey MakeStaticBatch();
+        bool           IsValid() const { return m_StaticBatch || Stream || Runtime || Asset.IsValid(); }
         bool operator==(const MeshKey& b) const
         {
+            if (m_StaticBatch || b.m_StaticBatch)
+                return m_StaticBatch == b.m_StaticBatch;
             if (Stream || b.Stream)
                 return Stream == b.Stream;
             return Runtime || b.Runtime ? Runtime && b.Runtime && Runtime->Identity == b.Runtime->Identity :
@@ -39,11 +42,16 @@ namespace Kans
         bool operator!=(const MeshKey& b) const { return !(*this == b); }
         bool operator<(const MeshKey& b) const
         {
+            if (m_StaticBatch || b.m_StaticBatch)
+                return m_StaticBatch < b.m_StaticBatch;
             if (Stream || b.Stream)
                 return std::less<const DynamicVertexStream*>()(Stream.get(), b.Stream.get());
             if (bool(Runtime) != bool(b.Runtime))
                 return bool(Runtime) < bool(b.Runtime);
             return Runtime ? Runtime->Identity < b.Runtime->Identity : Asset < b.Asset;
         }
+
+    private:
+        uint64_t m_StaticBatch = 0;
     };
 } // namespace Kans

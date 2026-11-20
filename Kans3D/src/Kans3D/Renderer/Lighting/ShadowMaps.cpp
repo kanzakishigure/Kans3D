@@ -619,7 +619,9 @@ void main() {
             shadows->Cookies = fallback->Cookies;
         for (auto& indices : uniforms.PointShadowIndices)
             indices = glm::vec4(-1);
-        const auto proxies     = frame.World.CollectDraws(0, view.HiddenHierarchy);
+        const auto           unbatched   = frame.BatchedShadowDraws ? std::vector<RenderWorld::DrawProxy>() :
+                                                                      frame.World.CollectDraws(0, view.HiddenHierarchy);
+        const auto&          proxies     = frame.BatchedShadowDraws ? *frame.BatchedShadowDraws : unbatched;
         const auto environment = frame.GetMaterialEnvironment();
         std::vector<Frustum> staticFrusta;
         if (view.CacheStaticShadows && std::any_of(proxies.begin(), proxies.end(), [](const auto& p) {
@@ -884,8 +886,8 @@ void main() {
                     continue;
                 if (!frustum.Intersects(proxy.WorldBounds))
                 {
-                    ++view.ShadowStats.CastersCulled;
-                    ++stats.CastersCulled;
+                    view.ShadowStats.CastersCulled += proxy.SectionCount;
+                    stats.CastersCulled += proxy.SectionCount;
                     continue;
                 }
                 auto& entry = prepared[casterIndex];
@@ -977,7 +979,8 @@ void main() {
                 frame.Complete &=
                     RecordMaterialDraw(*frame.Assets(), *commands, *shader, *bindings, *mesh, pass, caster, &recorded);
                 ++view.ShadowStats.DrawCalls;
-                stats.CastersDrawn += recorded;
+                if (recorded)
+                    stats.CastersDrawn += proxy.SectionCount;
                 ++frame.Stats.DrawCalls;
                 frame.Stats.Triangles += mesh->Sections[proxy.Section].IndexCount / 3;
                 for (const auto& image : bindings->Images)

@@ -31,6 +31,7 @@ namespace Kans
             bool                                  RenderCustomDepth = false;
             uint8_t                               CustomStencil     = 0;
             Mobility                              RenderMobility    = Mobility::Movable;
+            uint32_t                              SectionCount      = 1;
         };
         struct Stats
         {

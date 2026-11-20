@@ -152,6 +152,8 @@ namespace Kans
         std::array<RenderHardware::Handle<RenderHardware::Texture>, 3> GetMaterialEnvironment();
         std::shared_ptr<RenderHardware::Device> GetDevice() const { return Services.GetDevice(); }
         bool IncludesSection(UUID entity, UUID instanceRoot, const GpuMesh* mesh, uint32_t section) const;
+        StaticBatchStatistics PrepareStaticBatches(size_t worldDrawCount);
+        std::optional<std::vector<RenderWorld::DrawProxy>> BatchedShadowDraws;
         void                                    PrepareDrawLists();
         bool                                    HasMaterialPass(const RenderView& view, const std::string& tag);
         void                                    DrawShaderMaterials(

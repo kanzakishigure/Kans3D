@@ -16,6 +16,13 @@ namespace Kans
             return id;
         }
     } // namespace
+    MeshKey MeshKey::MakeStaticBatch()
+    {
+        MeshKey key;
+        key.m_StaticBatch = NextMeshIdentity();
+        return key;
+    }
+
     RuntimeMesh::RuntimeMesh(MeshData data) :
         Identity(NextMeshIdentity()), Source(CreateRef<MeshAsset>(std::move(data)))
     {}

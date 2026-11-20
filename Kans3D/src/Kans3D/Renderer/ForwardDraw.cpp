@@ -438,7 +438,7 @@ namespace Kans
                 VelocitySurfaceDraws.erase(item.DrawIndex);
             if (tag.empty() && recorded)
             {
-                ++View.Culling.Drawn;
+                View.Culling.Drawn += draw.SectionCount;
                 for (const auto& extra : shader->Passes)
                     if (extra.Tag == "AfterMain" && bindings->PassEnabled(extra.Name))
                     {

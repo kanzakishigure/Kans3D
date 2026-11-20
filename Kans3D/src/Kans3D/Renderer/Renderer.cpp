@@ -505,9 +505,11 @@ namespace Kans
         }
         if (view.Assets)
             view.Assets->BeginFrame();
+        size_t worldDrawCount = 0;
         if (view.ExtractWorld)
         {
             world.Extract(view, world.Settings, hidden);
+            worldDrawCount          = view.Draws.size();
             const auto spriteOffset = view.Sprites.size();
             for (auto& immediate : view.ImmediateOrder)
                 if (immediate.Kind == ViewImmediateKind::Sprites)
@@ -676,6 +678,7 @@ namespace Kans
         std::shared_ptr<GraphCapture> capture;
         try
         {
+            statistics.StaticBatches = rendering->PrepareStaticBatches(worldDrawCount);
             ParticleRenderFeature particles;
             particles.Prepare(rendering->View, *rendering);
             if (view.Features)

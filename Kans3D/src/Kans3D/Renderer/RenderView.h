@@ -134,6 +134,8 @@ namespace Kans
         Ref<const InstanceMaterialParameters> Parameters;
         bool                                  RenderCustomDepth = false;
         uint8_t                               CustomStencil     = 0;
+        Mobility                              RenderMobility    = Mobility::Movable;
+        uint32_t                              SectionCount      = 1;
     };
     struct ViewGeometryDraw
     {
@@ -296,6 +298,7 @@ namespace Kans
         uint32_t                                          MaxShadowedSpotLights  = 8;
         uint32_t                                          SpotShadowAtlasSize = 2048; // Pixels per side, at most 4096.
         bool                                              CacheStaticShadows     = true;
+        bool                                              BatchStaticMeshes      = true;
         std::shared_ptr<ShadowResources>                  Shadows;
         std::vector<ViewFogVolume>                        FogVolumes;
         std::vector<FieldRecord>                          FogWind;
