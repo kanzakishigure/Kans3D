@@ -128,21 +128,16 @@ namespace Kans
     {
         struct Parameters
         {
-            glm::mat4  InverseView, InverseProjection, ViewProjection, Owner, WorldToGrid;
+            glm::mat4  InverseView, InverseProjection, Projection, Owner, WorldToGrid;
             glm::vec4  Grid, Medium, Albedo, Bounds;
             glm::uvec4 Offsets, Info, Resolution;
         };
-        constexpr const char* Common  = R"(
+        constexpr const char* Common          = R"(
 layout(local_size_x=64) in;
 layout(set=0,binding=0,std140) uniform Parameters {
-    mat4 inverseView,inverseProjection,viewProjection,owner,worldToGrid;
+    mat4 inverseView,inverseProjection,projection,owner,worldToGrid;
     vec4 grid,medium,albedo,bounds; uvec4 offsets,info,resolution;
 } p;
-layout(set=0,binding=1,std430) readonly buffer Attributes { vec4 attributes[]; };
-layout(set=0,binding=2,std430) readonly buffer Flags { uint flags[]; };
-layout(set=0,binding=4,std430) buffer Sums { uvec4 sums[]; };
-layout(set=0,binding=5,rgba16f) uniform image3D media;
-layout(set=0,binding=6,rgba16f) uniform image3D injected;
 // Flatten bounded 2D dispatch rows; large/high-quality views can exceed 65535 groups in X.
 uint invocationIndex(){return gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*gl_WorkGroupSize.x;}
 float sliceDepth(float z){return .1*(exp(log(1+p.grid.w/.1)*z/p.grid.z)-1);}
@@ -159,42 +154,259 @@ vec3 sampleWorld(ivec3 cell){
 }
 uint cellIndex(ivec3 c){return uint((c.z*int(p.grid.y)+c.y)*int(p.grid.x)+c.x);}
 )";
-        constexpr const char* Splat   = R"(
-void main(){
-    uint i=invocationIndex();if(i>=p.info.x)return;
+        constexpr const char* ParticleInputs  = R"(
+layout(set=0,binding=1,std430) readonly buffer Attributes { vec4 attributes[]; };
+layout(set=0,binding=2,std430) readonly buffer Flags { uint flags[]; };
+)";
+        constexpr const char* SumsBinding     = R"(
+layout(set=0,binding=4,std430) buffer Sums { uvec4 sums[]; };
+)";
+        constexpr const char* InjectionImages = R"(
+layout(set=0,binding=5,rgba16f) uniform image3D media;
+layout(set=0,binding=6,rgba16f) uniform image3D injected;
+)";
+        // Keep the std430 strides in sync with the shader structs.
+        constexpr uint32_t    ParticleWorkBytes = 48, SliceWorkBytes = 24;
+        constexpr const char* WorkTypes = R"(
+struct ParticleWork { vec4 sphere,tint; uint end,sliceCount; };
+struct SliceWork { uint x,y,width,height,end,z; };
+// 64 lanes, eight cells per lane. This also bounds the size of the flattened indirect dispatch.
+const uint CellsPerGroup=gl_WorkGroupSize.x*8u;
+)";
+        constexpr const char* Bounds    = R"(
+layout(set=0,binding=7,std430) writeonly buffer Particles { ParticleWork particles[]; };
+layout(set=0,binding=8,std430) writeonly buffer Slices { SliceWork slices[]; };
+
+shared vec4 sphere,tint,viewSphere;
+shared vec2 depthShift,sectionExtent;
+shared uint firstSlice,sliceCount;
+shared uint laneEnds[64];
+
+void loadParticle(uint i){
+    sliceCount=0u;
+    particles[i].end=0u;
     if(flags[i]==0u)return;
-    uint slot=i,cap=p.offsets.w;
-    vec3 center=attributes[p.offsets.x*cap+slot].xyz;
-    vec2 size=attributes[p.offsets.y*cap+slot].xy;
-    vec4 tint=clamp(attributes[p.offsets.z*cap+slot],0,1);
+    uint cap=p.offsets.w;
+    vec3 center=attributes[p.offsets.x*cap+i].xyz;
+    vec2 size=attributes[p.offsets.y*cap+i].xy;
+    tint=clamp(attributes[p.offsets.z*cap+i],0,1);
+    if(tint.a==0||any(isnan(tint)))return;
     if(p.info.y!=0u)center=(p.owner*vec4(center,1)).xyz;
     float radius=max(abs(size.x),abs(size.y))*.5*p.medium.y;
     if(p.info.y!=0u)radius*=max(length(p.owner[0].xyz),max(length(p.owner[1].xyz),length(p.owner[2].xyz)));
-    if(!(radius>0)||isnan(radius)||isinf(radius)||any(isnan(center))||any(isinf(center))||any(isnan(tint)))return;
-    // Conservative projection of the world-space sphere's AABB. Near-plane crossing covers all XY.
-    vec2 lo=vec2(1),hi=vec2(-1);bool crossing=false;
-    for(int c=0;c<8;++c){
-        vec3 corner=center+radius*(vec3(c&1,(c>>1)&1,(c>>2)&1)*2-1);
-        vec4 clip=p.viewProjection*vec4(corner,1);
-        if(clip.w<=0)crossing=true;
-        else{vec2 q=clip.xy/clip.w;lo=min(lo,q);hi=max(hi,q);}
+    if(!(radius>0)||isnan(radius)||isinf(radius)||any(isnan(center))||any(isinf(center)))return;
+
+    mat4 view=inverse(p.inverseView);
+    vec3 v=(view*vec4(center,1)).xyz;
+    float depth=-v.z;
+    // Preserve the original slice limit, including for scaled camera transforms.
+    if(depth+radius<=0||depth-radius>=p.grid.w)return;
+    firstSlice=uint(clamp(floor(depthSlice(depth-radius)),0,p.grid.z-1));
+    uint lastSlice=uint(clamp(floor(depthSlice(depth+radius)),0,p.grid.z-1));
+    sliceCount=lastSlice-firstSlice+1u;
+    sphere=vec4(center,radius);
+
+    // A camera's affine transform maps the world sphere to an ellipsoid. Split each
+    // view-space axis into its component along the depth direction and its tangent.
+    mat3 rows=transpose(mat3(view));
+    float depthScale=length(rows[2]);
+    vec3 axis=-rows[2]/depthScale;
+    vec2 along=vec2(dot(rows[0],axis),dot(rows[1],axis));
+    // Allow for roundoff in sampleWorld's inverse transforms and the view transform.
+    float paddedRadius=radius+1e-6*max(radius,max(max(abs(center.x),abs(center.y)),
+                                               max(abs(center.z),length(p.inverseView[3].xyz))));
+    depthShift=along*paddedRadius;
+    sectionExtent=vec2(length(rows[0]-axis*along.x),length(rows[1]-axis*along.y))*paddedRadius;
+    viewSphere=vec4(v.xy,depth,depthScale*paddedRadius);
+}
+
+void includeProjection(vec2 nLo,vec2 nHi,float wLo,float wHi,inout vec2 lo,inout vec2 hi){
+    lo=min(lo,mix(nLo/wHi,wLo>0?nLo/wLo:vec2(-1),lessThan(nLo,vec2(0))));
+    hi=max(hi,mix(nHi/wHi,wLo>0?nHi/wLo:vec2(1),greaterThan(nHi,vec2(0))));
+}
+
+SliceWork sliceBounds(uint z){
+    SliceWork empty=SliceWork(0,0,0,0,0,z);
+    float nearDepth=sliceDepth(float(z)),farDepth=sliceDepth(float(z+1u));
+    // Fog also samples between the eye and the raster near plane. Clamp to a
+    // positive depth below the earliest jittered sample, including in slice zero.
+    nearDepth=max(mix(nearDepth,farDepth,.25/1024.0),viewSphere.z-viewSphere.w);
+    farDepth=min(farDepth,viewSphere.z+viewSphere.w);
+    if(nearDepth>farDepth)return empty;
+
+    vec2 u=clamp((vec2(nearDepth,farDepth)-viewSphere.z)/viewSphere.w,-1,1);
+    // Maximum sphere cross-section over the slab occurs at its closest depth to the center.
+    float closest=clamp(0,u.x,u.y);
+    vec2 extent=sectionExtent*sqrt(max(0,(1-closest)*(1+closest)));
+    vec2 shift0=depthShift*u.x,shift1=depthShift*u.y;
+    vec2 lo=viewSphere.xy+min(shift0,shift1)-extent;
+    vec2 hi=viewSphere.xy+max(shift0,shift1)+extent;
+    vec2 mid=.5*lo+.5*hi,halfSize=.5*hi-.5*lo;
+
+    // Project the rectangle at both end depths. In perspective, a signed edge
+    // can be extremal at the far depth. Orthographic W is constant.
+    mat4 projection=p.projection;
+    vec4 a=projection*vec4(mid,-nearDepth,1),b=projection*vec4(mid,-farDepth,1);
+    vec2 xyRadius=abs(projection[0].xy)*halfSize.x+abs(projection[1].xy)*halfSize.y;
+    vec2 ndcLo,ndcHi;
+    float wRadius=dot(abs(vec2(projection[0].w,projection[1].w)),halfSize);
+    if(wRadius==0&&min(a.w,b.w)>0){
+        ndcLo=min((a.xy-xyRadius)/a.w,(b.xy-xyRadius)/b.w);
+        ndcHi=max((a.xy+xyRadius)/a.w,(b.xy+xyRadius)/b.w);
+    }else{
+        // Custom projections can also vary W across XY or reverse its sign.
+        // Bound each sign separately, since both can reconstruct samples.
+        float wLo=min(a.w,b.w)-wRadius,wHi=max(a.w,b.w)+wRadius;
+        vec2 nLo=min(a.xy,b.xy)-xyRadius,nHi=max(a.xy,b.xy)+xyRadius;
+        if(!(wHi>0||wLo<0))return SliceWork(0,0,uint(p.grid.x),uint(p.grid.y),0,z);
+        ndcLo=vec2(3.402823466e38);ndcHi=-ndcLo;
+        if(wHi>0)includeProjection(nLo,nHi,wLo,wHi,ndcLo,ndcHi);
+        if(wLo<0)includeProjection(-nHi,-nLo,-wHi,-wLo,ndcLo,ndcHi);
     }
-    if(crossing){lo=vec2(-1);hi=vec2(1);}
-    vec3 viewCenter=(inverse(p.inverseView)*vec4(center,1)).xyz;
-    if(-viewCenter.z+radius<=0||-viewCenter.z-radius>=p.grid.w)return;
-    ivec3 first=ivec3(floor((lo*.5+.5)*p.grid.xy),floor(depthSlice(-viewCenter.z-radius)));
-    ivec3 last=ivec3(floor((hi*.5+.5)*p.grid.xy),floor(depthSlice(-viewCenter.z+radius)));
-    first=clamp(first,ivec3(0),ivec3(p.grid.xyz)-1);last=clamp(last,ivec3(0),ivec3(p.grid.xyz)-1);
-    for(int z=first.z;z<=last.z;++z)for(int y=first.y;y<=last.y;++y)for(int x=first.x;x<=last.x;++x){
-        ivec3 cell=ivec3(x,y,z);float d=length(sampleWorld(cell)-center)/radius;
+    // Saturate infinities before adding an outward rounding margin. An
+    // indeterminate edge still keeps the part of the slice on screen.
+    ndcLo=clamp(mix(ndcLo,vec2(-1),isnan(ndcLo)),-2,2);
+    ndcHi=clamp(mix(ndcHi,vec2(1),isnan(ndcHi)),-2,2);
+    ndcLo-=2e-5*(1+abs(ndcLo));
+    ndcHi+=2e-5*(1+abs(ndcHi));
+    if(any(greaterThan(ndcLo,vec2(1)))||any(lessThan(ndcHi,vec2(-1))))return empty;
+    uvec2 first=uvec2(min((clamp(ndcLo,-1,1)*.5+.5)*p.grid.xy,p.grid.xy-1));
+    uvec2 last=uvec2(min((clamp(ndcHi,-1,1)*.5+.5)*p.grid.xy,p.grid.xy-1));
+    uvec2 size=last-first+1u;
+    return SliceWork(first.x,first.y,size.x,size.y,0,z);
+}
+
+void main(){
+    uint i=gl_WorkGroupID.x,lane=gl_LocalInvocationIndex;
+    if(lane==0u)loadParticle(i);
+    barrier();
+    if(sliceCount==0u)return;
+    // At most 128 fog slices, so each lane computes at most two rectangles.
+    uint perLane=(sliceCount+gl_WorkGroupSize.x-1u)/gl_WorkGroupSize.x;
+    uint start=lane*perLane,stop=min(start+perLane,sliceCount),total=0u;
+    SliceWork work[2];
+    for(uint s=start;s<stop;++s){
+        SliceWork rect=sliceBounds(firstSlice+s);
+        total+=(rect.width*rect.height+CellsPerGroup-1u)/CellsPerGroup;
+        rect.end=total;
+        work[s-start]=rect;
+    }
+    laneEnds[lane]=total;
+    barrier();
+    if(lane==0u){
+        for(uint j=1u;j<gl_WorkGroupSize.x;++j)laneEnds[j]+=laneEnds[j-1u];
+        particles[i]=ParticleWork(sphere,tint,laneEnds[gl_WorkGroupSize.x-1u],sliceCount);
+    }
+    barrier();
+    uint base=lane==0u?0u:laneEnds[lane-1u];
+    for(uint s=start;s<stop;++s){
+        SliceWork rect=work[s-start];
+        rect.end+=base;
+        slices[i*uint(p.grid.z)+s]=rect;
+    }
+}
+)";
+        constexpr const char* Schedule  = R"(
+layout(set=0,binding=7,std430) buffer Particles { ParticleWork particles[]; };
+layout(set=0,binding=9,std430) writeonly buffer Dispatch { uint x,y,z; } args;
+shared uint laneEnds[64];
+
+void main(){
+    // One workgroup prefixes the per-particle group counts in contiguous ranges.
+    uint lane=gl_LocalInvocationIndex;
+    uint perLane=(p.info.x+gl_WorkGroupSize.x-1u)/gl_WorkGroupSize.x;
+    uint start=lane*perLane,stop=min(start+perLane,p.info.x),localEnd=0u;
+    for(uint i=start;i<stop;++i){
+        localEnd+=particles[i].end;
+        particles[i].end=localEnd;
+    }
+    laneEnds[lane]=localEnd;
+    barrier();
+    if(lane==0u){
+        for(uint j=1u;j<gl_WorkGroupSize.x;++j)laneEnds[j]+=laneEnds[j-1u];
+        uint total=laneEnds[gl_WorkGroupSize.x-1u];
+        // A Vulkan storage binding is at most 2^32-1 bytes, hence fewer than
+        // 2^28 froxels at 16 bytes each. With 4096 particles and at most 128
+        // rounded-up chunks per particle, 512 cells per group fit in 65535^2.
+        uint groupsX=min(total,max(64u,(total+65534u)/65535u));
+        args.x=groupsX;
+        args.y=total==0u?1u:(total+groupsX-1u)/groupsX;
+        args.z=1u;
+    }
+    barrier();
+    if(lane!=0u){
+        uint base=laneEnds[lane-1u];
+        for(uint i=start;i<stop;++i)particles[i].end+=base;
+    }
+}
+)";
+        constexpr const char* Splat     = R"(
+layout(set=0,binding=7,std430) readonly buffer Particles { ParticleWork particles[]; };
+layout(set=0,binding=8,std430) readonly buffer Slices { SliceWork slices[]; };
+#ifdef FOG_SPLAT_COUNTERS
+layout(set=0,binding=10,std430) buffer Diagnostics {
+    uint candidates,contributions,maxCellsPerLane;
+};
+#endif
+shared vec4 sphere,tint;
+shared SliceWork rect;
+shared uint firstCell;
+
+void main(){
+    uint group=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x;
+    if(group>=particles[p.info.x-1u].end)return;
+    uint lane=gl_LocalInvocationIndex;
+    if(lane==0u){
+        // Prefix ends allow a group to find its particle and slice even when
+        // many particle slots or slice rectangles have zero work.
+        uint lo=0u,hi=p.info.x;
+        while(lo<hi){
+            uint mid=(lo+hi)/2u;
+            if(particles[mid].end<=group)lo=mid+1u;else hi=mid;
+        }
+        ParticleWork particle=particles[lo];
+        uint localGroup=group-(lo==0u?0u:particles[lo-1u].end);
+        uint base=lo*uint(p.grid.z);
+        lo=0u;hi=particle.sliceCount;
+        while(lo<hi){
+            uint mid=(lo+hi)/2u;
+            if(slices[base+mid].end<=localGroup)lo=mid+1u;else hi=mid;
+        }
+        rect=slices[base+lo];
+        firstCell=(localGroup-(lo==0u?0u:slices[base+lo-1u].end))*CellsPerGroup;
+        sphere=particle.sphere;
+        tint=particle.tint;
+    }
+    barrier();
+    uint stop=min(firstCell+CellsPerGroup,rect.width*rect.height);
+#ifdef FOG_SPLAT_COUNTERS
+    uint visits=0u,writes=0u;
+#endif
+    for(uint i=firstCell+lane;i<stop;i+=gl_WorkGroupSize.x){
+#ifdef FOG_SPLAT_COUNTERS
+        ++visits;
+#endif
+        ivec3 cell=ivec3(rect.x+i%rect.width,rect.y+i/rect.width,rect.z);
+        float d=length(sampleWorld(cell)-sphere.xyz)/sphere.w;
         float fade=1-smoothstep(0,1,d);
+        if(fade==0)continue;
         float density=clamp(p.medium.x,0,100)*tint.a*fade;
         // 4096 candidates * 100 maximum density * 4096 precision stays below UINT32_MAX.
         uvec4 value=uvec4(vec4(clamp(p.albedo.rgb,0,1)*tint.rgb,1)*density*4096+.5);
         uint index=cellIndex(cell);
+#ifdef FOG_SPLAT_COUNTERS
+        ++writes;
+#endif
         atomicAdd(sums[index].x,value.x);atomicAdd(sums[index].y,value.y);
         atomicAdd(sums[index].z,value.z);atomicAdd(sums[index].w,value.w);
     }
+#ifdef FOG_SPLAT_COUNTERS
+    if(visits!=0u){
+        atomicAdd(candidates,visits);
+        atomicMax(maxCellsPerLane,visits);
+    }
+    if(writes!=0u)atomicAdd(contributions,writes);
+#endif
 }
 )";
         constexpr const char* Grid    = R"(
@@ -226,7 +438,16 @@ void main(){
     imageStore(media,cell,min(imageLoad(media,cell)+value,vec4(60000)));
 }
 )";
-        void                  Initialize(Device& device, FogInjectionState& state)
+        Handle<ComputePipeline>
+        MakePipeline(Device& device, const Handle<BindGroupLayout>& layout, const char* name, const std::string& body)
+        {
+            auto result = GetInternalComputeShaderData(name, std::string("#version 450\n") + Common + body);
+            if (auto e = std::get_if<AssetError>(&result))
+                throw std::runtime_error(e->Message);
+            return device.CreateComputePipeline({device.CreateShader(std::get<ShaderData>(result)), {layout}, 0, name});
+        }
+
+        void Initialize(Device& device, FogInjectionState& state)
         {
             state.Layout = device.CreateBindGroupLayout({0,
                                                          {{0, BindingType::UniformBuffer},
@@ -235,23 +456,126 @@ void main(){
                                                           {4, BindingType::StorageBuffer},
                                                           {5, BindingType::StorageTexture},
                                                           {6, BindingType::StorageTexture}}});
-            auto make    = [&](const char* name, const char* body) {
-                auto result = GetInternalComputeShaderData(name, std::string("#version 450\n") + Common + body);
-                if (auto e = std::get_if<AssetError>(&result))
-                    throw std::runtime_error(e->Message);
-                return device.CreateComputePipeline(
-                    {device.CreateShader(std::get<ShaderData>(result)), {state.Layout}, 0, name});
-            };
-            state.Splat   = make("Fog particle splat", Splat);
-            state.Grid    = make("Fog density grid", Grid);
-            state.Resolve = make("Fog particle resolve", Resolve);
+            const auto bindings = std::string(ParticleInputs) + SumsBinding + InjectionImages;
+            state.Grid          = MakePipeline(device, state.Layout, "Fog density grid", bindings + Grid);
+            state.Resolve       = MakePipeline(device, state.Layout, "Fog particle resolve", bindings + Resolve);
+        }
+
+        void InitializeParticles(Device& device, FogInjectionState& state, bool diagnostics)
+        {
+            if (!state.Splat)
+            {
+                state.BoundsLayout   = device.CreateBindGroupLayout({0,
+                                                                     {{0, BindingType::UniformBuffer},
+                                                                      {1, BindingType::ReadOnlyStorageBuffer},
+                                                                      {2, BindingType::ReadOnlyStorageBuffer},
+                                                                      {7, BindingType::StorageBuffer},
+                                                                      {8, BindingType::StorageBuffer}}});
+                state.ScheduleLayout = device.CreateBindGroupLayout({0,
+                                                                     {{0, BindingType::UniformBuffer},
+                                                                      {7, BindingType::StorageBuffer},
+                                                                      {9, BindingType::StorageBuffer}}});
+                state.SplatLayout    = device.CreateBindGroupLayout({0,
+                                                                     {{0, BindingType::UniformBuffer},
+                                                                      {4, BindingType::StorageBuffer},
+                                                                      {7, BindingType::ReadOnlyStorageBuffer},
+                                                                      {8, BindingType::ReadOnlyStorageBuffer}}});
+                state.Bounds         = MakePipeline(device,
+                                                    state.BoundsLayout,
+                                                    "Fog particle bounds",
+                                                    std::string(ParticleInputs) + WorkTypes + Bounds);
+                state.Schedule       = MakePipeline(
+                    device, state.ScheduleLayout, "Fog particle schedule", std::string(WorkTypes) + Schedule);
+                state.Splat = MakePipeline(
+                    device, state.SplatLayout, "Fog particle splat", std::string(SumsBinding) + WorkTypes + Splat);
+            }
+            if (diagnostics && !state.DiagnosticSplat)
+            {
+                auto layout = state.SplatLayout->GetDesc();
+                layout.Entries.push_back({10, BindingType::StorageBuffer});
+                state.DiagnosticLayout = device.CreateBindGroupLayout(layout);
+                state.DiagnosticSplat =
+                    MakePipeline(device,
+                                 state.DiagnosticLayout,
+                                 "Fog particle splat diagnostics",
+                                 std::string(SumsBinding) + WorkTypes + "#define FOG_SPLAT_COUNTERS\n" + Splat);
+            }
+        }
+
+        void AddParticleSplat(RenderGraph&                              graph,
+                              const std::shared_ptr<FogInjectionState>& state,
+                              const FogInjectionSource&                 source,
+                              uint32_t                                  slicesPerParticle,
+                              const Handle<RenderHardware::Buffer>&     uniform,
+                              GraphBuffer                               sums,
+                              const FogInjectionDiagnostics*            diagnostics)
+        {
+            const auto parameters = graph.ImportBuffer("Fog injection parameters", uniform);
+            const auto attributes = graph.ImportBuffer("Fog injection attributes", source.Attributes);
+            const auto flags      = source.Flags ? graph.ImportBuffer("Fog injection flags", source.Flags) : attributes;
+            const auto particles = graph.CreateBuffer("Fog particle work",
+                                                      {size_t(source.Count) * ParticleWorkBytes, BufferUsage::Storage});
+            const auto slices    = graph.CreateBuffer(
+                "Fog slice work", {size_t(source.Count) * slicesPerParticle * SliceWorkBytes, BufferUsage::Storage});
+            const auto dispatch = graph.CreateBuffer(
+                "Fog splat dispatch", {3 * sizeof(uint32_t), BufferUsage::Storage | BufferUsage::Indirect});
+            std::vector<GraphUse> boundsUses {{parameters, GraphAccess::UniformRead},
+                                              {attributes, GraphAccess::StorageRead},
+                                              {particles, GraphAccess::StorageWrite},
+                                              {slices, GraphAccess::StorageWrite}};
+            if (flags != attributes)
+                boundsUses.emplace_back(flags, GraphAccess::StorageRead);
+            const auto boundsPass =
+                graph.AddPass("Fog particle bounds", GraphPassKind::Compute, std::move(boundsUses), [=](auto& c) {
+                    c.Commands.BindComputePipeline(state->Bounds);
+                    c.Commands.BindGroup(c.Device.CreateBindGroup({state->BoundsLayout,
+                                                                   {{0, uniform},
+                                                                    {1, c.Buffer(attributes)},
+                                                                    {2, c.Buffer(flags)},
+                                                                    {7, c.Buffer(particles)},
+                                                                    {8, c.Buffer(slices)}}}));
+                    c.Commands.Dispatch(source.Count);
+                });
+            graph.OrderAfter(boundsPass, boundsPass - 1);
+            graph.AddPass(
+                "Fog particle schedule",
+                GraphPassKind::Compute,
+                {{parameters, GraphAccess::UniformRead},
+                 {particles, GraphAccess::StorageReadWrite},
+                 {dispatch, GraphAccess::StorageWrite}},
+                [=](auto& c) {
+                    c.Commands.BindComputePipeline(state->Schedule);
+                    c.Commands.BindGroup(c.Device.CreateBindGroup(
+                        {state->ScheduleLayout, {{0, uniform}, {7, c.Buffer(particles)}, {9, c.Buffer(dispatch)}}}));
+                    c.Commands.Dispatch(1);
+                });
+            const GraphBuffer     counters = diagnostics ? diagnostics->Counters : GraphBuffer {};
+            std::vector<GraphUse> uses {{parameters, GraphAccess::UniformRead},
+                                        {particles, GraphAccess::StorageRead},
+                                        {slices, GraphAccess::StorageRead},
+                                        {dispatch, GraphAccess::IndirectRead},
+                                        {sums, GraphAccess::StorageReadWrite}};
+            const auto            pipeline = diagnostics ? state->DiagnosticSplat : state->Splat;
+            const auto            layout   = diagnostics ? state->DiagnosticLayout : state->SplatLayout;
+            if (diagnostics)
+                uses.emplace_back(counters, GraphAccess::StorageReadWrite);
+            graph.AddPass("Fog particle injection", GraphPassKind::Compute, std::move(uses), [=](auto& c) {
+                BindGroupDesc bindings {
+                    layout, {{0, uniform}, {4, c.Buffer(sums)}, {7, c.Buffer(particles)}, {8, c.Buffer(slices)}}};
+                if (counters != GraphBuffer {})
+                    bindings.Entries.push_back({10, c.Buffer(counters)});
+                c.Commands.BindComputePipeline(pipeline);
+                c.Commands.BindGroup(c.Device.CreateBindGroup(bindings));
+                c.Commands.DispatchIndirect(c.Buffer(dispatch));
+            });
         }
     } // namespace
     uint32_t AddFogInjection(RenderGraph&                           graph,
                              Device&                                device,
                              const FogFrameResources&               fog,
                              const std::vector<FogInjectionSource>& input,
-                             std::shared_ptr<FogInjectionState>&    storage)
+                             std::shared_ptr<FogInjectionState>&    storage,
+                             FogInjectionDiagnostics*               diagnostics)
     {
         auto sources = SelectFogInjectionSources(input);
         if (sources.empty())
@@ -261,11 +585,21 @@ void main(){
             storage = std::make_shared<FogInjectionState>();
             Initialize(device, *storage);
         }
-        auto           state = storage;
+        auto state = storage;
+        if (std::any_of(sources.begin(), sources.end(), [](const auto& s) { return !s.Resolution.x; }))
+            InitializeParticles(device, *state, diagnostics != nullptr);
         const uint32_t cells = fog.Size.x * fog.Size.y * fog.Size.z;
-        const auto     sums  = graph.CreateBuffer(
-            "Fog particle sums",
-            {size_t(cells) * 16, BufferUsage::Storage | BufferUsage::CopyDestination, MemoryUsage::DeviceLocal});
+        auto           sumsUsage = BufferUsage::Storage | BufferUsage::CopyDestination;
+        if (diagnostics)
+            sumsUsage = sumsUsage | BufferUsage::CopySource;
+        const auto sums = graph.CreateBuffer("Fog particle sums", {size_t(cells) * 16, sumsUsage});
+        if (diagnostics)
+        {
+            diagnostics->Sums     = sums;
+            diagnostics->Counters = graph.CreateBuffer(
+                "Fog particle counters",
+                {3 * sizeof(uint32_t), BufferUsage::Storage | BufferUsage::CopySource | BufferUsage::CopyDestination});
+        }
         TextureDesc desc;
         desc.Dimension      = TextureDimension::Texture3D;
         desc.Width          = fog.Size.x;
@@ -275,18 +609,22 @@ void main(){
         desc.Usage          = RenderHardware::TextureUsage::Storage | RenderHardware::TextureUsage::Sampled |
                               RenderHardware::TextureUsage::CopySource;
         const auto injected = graph.CreateTexture("Fog injected density", desc);
-        auto       clear =
-            graph.AddPass("Fog injection clear",
-                          GraphPassKind::Transfer,
-                          {{sums, GraphAccess::TransferWrite}},
-                          [sums, cells](auto& c) { c.Commands.FillBuffer(c.Buffer(sums), 0, size_t(cells) * 16, 0); });
+        const GraphBuffer     counters = diagnostics ? diagnostics->Counters : GraphBuffer {};
+        std::vector<GraphUse> clearUses {{sums, GraphAccess::TransferWrite}};
+        if (diagnostics)
+            clearUses.emplace_back(counters, GraphAccess::TransferWrite);
+        auto clear = graph.AddPass("Fog injection clear", GraphPassKind::Transfer, std::move(clearUses), [=](auto& c) {
+            c.Commands.FillBuffer(c.Buffer(sums), 0, size_t(cells) * 16, 0);
+            if (counters != GraphBuffer {})
+                c.Commands.FillBuffer(c.Buffer(counters), 0, 3 * sizeof(uint32_t), 0);
+        });
         if (clear)
             graph.OrderAfter(clear, clear - 1);
         auto record = [&](const FogInjectionSource& s, bool resolve) {
             Parameters p {};
             p.InverseView       = fog.InverseView;
             p.InverseProjection = fog.InverseProjection;
-            p.ViewProjection    = glm::inverse(fog.InverseProjection) * glm::inverse(fog.InverseView);
+            p.Projection        = glm::inverse(fog.InverseProjection);
             p.Owner             = s.Owner;
             p.WorldToGrid = glm::inverse(s.LocalSpace ? s.Owner : glm::translate(glm::mat4(1), glm::vec3(s.Owner[3])));
             p.Grid        = {glm::vec3(fog.Size), fog.Distance};
@@ -298,25 +636,25 @@ void main(){
             p.Resolution  = {s.Resolution, s.DensityOffset};
             auto uniform  = device.CreateBuffer({sizeof(p), BufferUsage::Uniform, MemoryUsage::Upload});
             uniform->Write(0, &p, sizeof(p));
+            if (!resolve && !s.Resolution.x)
+            {
+                AddParticleSplat(graph, state, s, fog.Size.z, uniform, sums, diagnostics);
+                return;
+            }
             // Unused descriptors still have valid resources on every backend.
             auto                  attributes = s.Attributes, flags = s.Flags ? s.Flags : s.Attributes;
             std::vector<GraphUse> uses {
                 {graph.ImportBuffer("Fog injection parameters", uniform), GraphAccess::UniformRead},
                 {graph.ImportBuffer("Fog injection attributes", attributes), GraphAccess::StorageRead},
                 {sums, resolve ? GraphAccess::StorageRead : GraphAccess::StorageReadWrite}};
-            // Splats touch only the atomic buffer. Resolve initializes every injected texel before grids read it.
-            if (resolve || s.Resolution.x)
-            {
-                uses.push_back({fog.Media, GraphAccess::StorageReadWrite});
-                uses.push_back({injected, resolve ? GraphAccess::StorageWrite : GraphAccess::StorageReadWrite});
-            }
+            // Resolve initializes every injected texel before grids read it.
+            uses.push_back({fog.Media, GraphAccess::StorageReadWrite});
+            uses.push_back({injected, resolve ? GraphAccess::StorageWrite : GraphAccess::StorageReadWrite});
             if (s.Flags)
                 uses.push_back({graph.ImportBuffer("Fog injection flags", s.Flags), GraphAccess::StorageRead});
-            auto pipeline = resolve ? state->Resolve : s.Resolution.x ? state->Grid : state->Splat;
+            auto pipeline = resolve ? state->Resolve : state->Grid;
             auto pass     = graph.AddPass(
-                resolve        ? "Fog injection resolve" :
-                s.Resolution.x ? "Fog grid injection" :
-                                 "Fog particle injection",
+                resolve ? "Fog injection resolve" : "Fog grid injection",
                 GraphPassKind::Compute,
                 std::move(uses),
                 [=](auto& c) {
@@ -328,8 +666,7 @@ void main(){
                                                                     {4, c.Buffer(sums)},
                                                                     {5, {}, 0, 0, c.Texture(fog.Media)},
                                                                     {6, {}, 0, 0, c.Texture(injected)}}}));
-                    const uint32_t count  = (resolve || s.Resolution.x) ? cells : s.Count;
-                    const uint32_t groups = count / 64 + uint32_t(count % 64 != 0);
+                    const uint32_t groups = cells / 64 + uint32_t(cells % 64 != 0);
                     // Both axes stay within Vulkan's guaranteed 65535-group limit. Small views also
                     // use multiple rows, so ordinary injection tests exercise row addressing.
                     const uint32_t groupsX = std::min(groups, std::max(64u, (groups + 65534u) / 65535u));

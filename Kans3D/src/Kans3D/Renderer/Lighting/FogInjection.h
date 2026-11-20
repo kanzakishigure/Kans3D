@@ -1,4 +1,5 @@
 #pragma once
+#include "Kans3D/Renderer/Graph/RenderGraph.h"
 #include "Fog.h"
 
 namespace Kans
@@ -25,8 +26,14 @@ namespace Kans
     std::vector<FogInjectionSource> SelectFogInjectionSources(std::vector<FogInjectionSource> sources);
     struct FogInjectionState
     {
-        RenderHardware::Handle<RenderHardware::BindGroupLayout> Layout;
-        RenderHardware::Handle<RenderHardware::ComputePipeline> Splat, Grid, Resolve;
+        RenderHardware::Handle<RenderHardware::BindGroupLayout> Layout, BoundsLayout, ScheduleLayout, SplatLayout,
+            DiagnosticLayout;
+        RenderHardware::Handle<RenderHardware::ComputePipeline> Bounds, Schedule, Splat, DiagnosticSplat, Grid, Resolve;
+    };
+    struct FogInjectionDiagnostics
+    {
+        GraphBuffer Sums;
+        GraphBuffer Counters; // uint32_t candidate cells, cells reaching atomics, max candidate cells per lane.
     };
     std::vector<FogInjectionSource> CollectFogInjectionSources(RenderFrame&);
     // Returns the injected-only texture for beam marching, or -1 without allocating/recording work.
@@ -34,5 +41,6 @@ namespace Kans
                              RenderHardware::Device&,
                              const FogFrameResources&,
                              const std::vector<FogInjectionSource>&,
-                             std::shared_ptr<FogInjectionState>&);
+                             std::shared_ptr<FogInjectionState>&,
+                             FogInjectionDiagnostics* diagnostics = nullptr);
 } // namespace Kans
