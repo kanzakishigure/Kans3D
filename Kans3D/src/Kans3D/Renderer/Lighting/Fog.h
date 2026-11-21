@@ -34,10 +34,12 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::Shader>          MarchShader[2], TemporalShader, CompositeShader[2];
     };
     struct FogInjectionState;
+    struct FogLightHistory;
     struct FogState
     {
         std::shared_ptr<BeamState>                                             Beams;
         std::shared_ptr<FogInjectionState>                                     Injection;
+        std::shared_ptr<FogLightHistory>                                       LightHistory;
         std::string                                                            BeamMediumSignature;
         RenderHardware::Handle<RenderHardware::Buffer>                         BeamParameters, VolumeUniforms;
         RenderHardware::Handle<RenderHardware::BindGroup>                      BeamLighting;

@@ -1,17 +1,22 @@
 #pragma once
 namespace Kans::FogShaders
 {
-    inline constexpr const char* Parameters = R"(
+    inline constexpr const char* Parameters     = R"(
 layout(set=1,binding=0,std140) uniform FogParameters {
     mat4 inverseView; mat4 inverseProjection; mat4 previousVP; mat4 previousView;
-    vec4 grid; vec4 medium; vec4 albedoG; vec4 temporal; vec4 noise; vec4 scroll; vec4 previousDepth;
+    vec4 grid; vec4 medium; vec4 albedoG;
+    vec4 temporal; // weight, history mode (0 reset, 1 reproject, 2 stationary), changed-light count, jitter frame
+    vec4 noise; vec4 scroll; vec4 previousDepth;
 } f;
 float sliceDepth(float z) { return .1*(exp(log(1+f.grid.w/.1)*z/f.grid.z)-1); }
-vec3 viewAt(vec2 uv,float depth) {
+vec3 viewAt(vec2 uv,float depth,out float scale) {
     vec4 a=f.inverseProjection*vec4(uv*2-1,0,1), b=f.inverseProjection*vec4(uv*2-1,1,1);
     vec3 lo=a.xyz/a.w, hi=b.xyz/b.w;
-    return mix(lo,hi,(-depth-lo.z)/(hi.z-lo.z));
+    float t=(-depth-lo.z)/(hi.z-lo.z);
+    scale=mix(1/a.w,1/b.w,t);
+    return mix(lo,hi,t);
 }
+vec3 viewAt(vec2 uv,float depth) { float scale; return viewAt(uv,depth,scale); }
 vec3 worldAt(vec2 uv,float depth) { return (f.inverseView*vec4(viewAt(uv,depth),1)).xyz; }
 vec3 jitter(ivec3 cell) {
     uvec3 v=uvec3(cell)*uvec3(1597334677u,3812015801u,2798796415u)+uint(f.temporal.w)*747796405u;
@@ -23,6 +28,59 @@ vec3 sampleWorld(ivec3 cell) {
     vec3 j=jitter(cell);
     float a=sliceDepth(float(cell.z)),b=sliceDepth(float(cell.z+1));
     return worldAt((vec2(cell.xy)+j.xy)/f.grid.xy,mix(a,b,j.z));
+}
+)";
+    inline constexpr const char* FroxelBounds   = R"(
+struct FroxelSphere { vec3 center; float radius; };
+vec2 cellDepths(ivec3 cell) { return vec2(sliceDepth(float(cell.z)),sliceDepth(float(cell.z+1))); }
+FroxelSphere froxelSphere(ivec3 cell,vec2 depths) {
+    vec2 uv=(vec2(cell.xy)+.5)/f.grid.xy;
+    float nearScale,farScale;
+    vec3 front=(f.inverseView*vec4(viewAt(uv,depths.x,nearScale),1)).xyz;
+    vec3 back=(f.inverseView*vec4(viewAt(uv,depths.y,farScale),1)).xyz;
+    vec3 halfDepth=.5*(back-front),center=front+halfDepth;
+    float radius2=0;
+    if(f.inverseProjection[0].zw==vec2(0)&&f.inverseProjection[1].zw==vec2(0)) {
+        // Perspective and orthographic caps have the same axes. Use the larger cap for both ends
+        // and test its opposite corner pairs, including any skew from the inverse view transform.
+        float scale=max(abs(nearScale),abs(farScale));
+        vec3 x=mat3(f.inverseView)*f.inverseProjection[0].xyz*(scale/f.grid.x);
+        vec3 y=mat3(f.inverseView)*f.inverseProjection[1].xyz*(scale/f.grid.y);
+        vec3 a=x+y,b=x-y;
+        radius2=dot(halfDepth,halfDepth)+max(dot(a,a)+2*abs(dot(halfDepth,a)),
+                                             dot(b,b)+2*abs(dot(halfDepth,b)));
+    } else {
+        // With a general projection the caps can be asymmetric. Enclose all eight corners.
+        for(int i=0;i<8;++i) {
+            vec2 corner=(vec2(cell.xy)+vec2(i&1,(i>>1)&1))/f.grid.xy;
+            vec3 d=worldAt(corner,depths[i>>2])-center;
+            radius2=max(radius2,dot(d,d));
+        }
+    }
+    return FroxelSphere(center,sqrt(radius2));
+}
+bool outsideRange(float distance2,float radius,float range) {
+    return range>0&&distance2>(range+radius)*(range+radius);
+}
+// Signed side distance is radial*cos(angle) - axial*sin(angle). Compare the squared
+// radial term against the two sphere tangencies, keeping the sign of the axial terms.
+int classifySpot(FroxelSphere sphere,vec4 positionRange,vec4 directionOuter) {
+    vec3 d=sphere.center-positionRange.xyz;
+    float distance2=dot(d,d),r=sphere.radius;
+    if(outsideRange(distance2,r,positionRange.w))return -1;
+    float axial=dot(d,directionOuter.xyz);
+    if(axial<-r)return -1;
+    float cosine2=directionOuter.w*directionOuter.w,sine2=max(0,1-cosine2);
+    vec3 perpendicular=d-axial*directionOuter.xyz;
+    float radial2=dot(perpendicular,perpendicular);
+    // Behind the side ray's closest point, the nearest point on the cone is the apex.
+    if(axial<0&&distance2>r*r&&axial*axial*cosine2>radial2*sine2)return -1;
+    radial2*=cosine2;
+    float cone=axial*sqrt(sine2);
+    float outer=cone+r;
+    if(outer<0||radial2>outer*outer)return -1;
+    float inner=cone-r;
+    return inner>=0&&radial2<=inner*inner ? 1 : 0;
 }
 )";
     inline constexpr const char* MediumSampling = R"(
@@ -97,6 +155,12 @@ layout(local_size_x=4,local_size_y=4,local_size_z=4) in;
 layout(set=1,binding=1) uniform sampler3D media;
 layout(set=1,binding=2,rgba16f) writeonly uniform image3D scattering;
 layout(set=1,binding=3,std140) uniform FogLights { vec4 pointScale[4]; vec4 spotScale[16]; vec4 areaScale[4]; vec4 directionalScale; };
+vec3 spotContribution(int i,vec3 p,vec3 toCamera,vec3 radiance) {
+    vec3 d=u_Frame.SpotPositionRange[i].xyz-p;
+    float a=KansSpotAttenuation(i,d);
+    if(!(a>0))return vec3(0);
+    return radiance*a*KansSpotCookie(i,p)*phase(dot(-normalize(d),toCamera))*spotShadow(i,p);
+}
 void main() {
     ivec3 cell=ivec3(gl_GlobalInvocationID); if(any(greaterThanEqual(cell,ivec3(f.grid.xyz))))return;
     vec4 m=texelFetch(media,cell,0); if(m.a<=0){imageStore(scattering,cell,vec4(0));return;}
@@ -114,10 +178,34 @@ void main() {
         vec3 d=KansPointLightPosition(i)-p; float d2=max(dot(d,d),.01);
         light+=u_Frame.PointRadiance[i].rgb*pointScale[i/4][i%4]*KansPointAttenuation(i,d2)*phase(dot(-d*inversesqrt(d2),toCamera))*pointShadow(i,p);
     }
-    for(int i=0;i<KansSpotLightCount();++i) {
-        if(spotScale[i/4][i%4]<=0)continue;
-        vec3 d=u_Frame.SpotPositionRange[i].xyz-p; float a=KansSpotAttenuation(i,d);
-        if(a>0)light+=u_Frame.SpotRadianceInner[i].rgb*spotScale[i/4][i%4]*a*KansSpotCookie(i,p)*phase(dot(-normalize(d),toCamera))*spotShadow(i,p);
+    int spotCount=KansSpotLightCount();
+    if(spotCount>0) {
+        vec2 depths=cellDepths(cell);
+        FroxelSphere sphere=froxelSphere(cell,depths);
+        for(int i=0;i<spotCount;++i) {
+            float scale=spotScale[i/4][i%4];
+            if(scale<=0)continue;
+            int coverage=classifySpot(sphere,u_Frame.SpotPositionRange[i],u_Frame.SpotDirectionOuter[i]);
+            if(coverage<0)continue;
+            vec3 radiance=u_Frame.SpotRadianceInner[i].rgb*scale;
+            vec3 contribution=vec3(0);
+            if(coverage>0) {
+                contribution=spotContribution(i,p,toCamera,radiance);
+            } else {
+                // Eight samples split all three axes into halves. Decorrelate each octant's
+                // offset so a narrow cone can accumulate coverage across frames.
+                vec3 j=jitter(cell);
+                for(int s=0;s<8;++s) {
+                    vec3 octant=vec3(s&1,(s>>1)&1,s>>2);
+                    vec3 offset=.5*(octant+fract(j+float(s)*vec3(.754877666,.569840296,.438447187)));
+                    vec3 q=worldAt((vec2(cell.xy)+offset.xy)/f.grid.xy,mix(depths.x,depths.y,offset.z));
+                    vec3 v=f.inverseView[3].xyz-q;
+                    contribution+=spotContribution(i,q,v*inversesqrt(max(dot(v,v),1e-12)),radiance);
+                }
+                contribution*=.125;
+            }
+            light+=contribution;
+        }
     }
     for(int i=0;i<int(u_Frame.LightingInfo.w);++i) {
         if(areaScale[i/4][i%4]<=0)continue;
@@ -132,32 +220,55 @@ void main() {
     imageStore(scattering,cell,vec4(min(light*m.rgb,vec3(60000)),m.a));
 }
 )";
-    inline constexpr const char* Temporal   = R"(
+    inline constexpr const char* Temporal       = R"(
 layout(local_size_x=4,local_size_y=4,local_size_z=4) in;
 layout(set=1,binding=1) uniform sampler3D currentScattering;
 layout(set=1,binding=2) uniform sampler3D history;
 layout(set=1,binding=3,rgba16f) writeonly uniform image3D result;
-void main() {
-    ivec3 cell=ivec3(gl_GlobalInvocationID),size=ivec3(f.grid.xyz); if(any(greaterThanEqual(cell,size)))return;
-    vec4 current=texelFetch(currentScattering,cell,0),value=current;
-    if(f.temporal.y>0) {
-        float z=.5*(sliceDepth(float(cell.z))+sliceDepth(float(cell.z+1)));
-        vec3 p=worldAt((vec2(cell.xy)+.5)/f.grid.xy,z);
+struct Influence { vec4 positionRange; vec4 directionOuter; };
+layout(set=1,binding=4,std430) readonly buffer ChangedLights { Influence changedLights[]; };
+bool lightChanged(ivec3 cell) {
+    int count=int(f.temporal.z);
+    if(count==0)return false;
+    FroxelSphere sphere=froxelSphere(cell,cellDepths(cell));
+    for(int i=0;i<count;++i) {
+        Influence light=changedLights[i];
+        if(light.directionOuter.w>0) {
+            if(classifySpot(sphere,light.positionRange,light.directionOuter)>=0)return true;
+        } else {
+            vec3 d=sphere.center-light.positionRange.xyz;
+            if(!outsideRange(dot(d,d),sphere.radius,light.positionRange.w))return true;
+        }
+    }
+    return false;
+}
+vec4 filterHistory(ivec3 cell,ivec3 size,vec4 current) {
+    if(f.temporal.y==0||lightChanged(cell))return current;
+    vec4 previous;
+    if(f.temporal.y==2) {
+        // An unchanged camera maps to the same froxel. Avoid resampling across logarithmic slices.
+        previous=texelFetch(history,cell,0);
+    } else {
+        vec2 depths=cellDepths(cell);
+        vec3 p=worldAt((vec2(cell.xy)+.5)/f.grid.xy,.5*(depths.x+depths.y));
         vec4 old=f.previousVP*vec4(p,1);
         float depth=-(f.previousView*vec4(p,1)).z;
         float slice=log(1+max(0,depth)/.1)/log(1+f.previousDepth.x/.1);
         vec3 uvw=vec3(old.xy/old.w*.5+.5,slice);
-        if(old.w>0&&depth>0&&all(greaterThanEqual(uvw,vec3(0)))&&all(lessThanEqual(uvw,vec3(1)))) {
-            vec4 lo=current,hi=current;
-            for(int z=-1;z<=1;++z)for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x) {
-                vec4 v=texelFetch(currentScattering,clamp(cell+ivec3(x,y,z),ivec3(0),size-1),0); lo=min(lo,v); hi=max(hi,v);
-            }
-            // Current-cell bounds also reject a moving light's history inside a broad neighbourhood.
-            lo=max(lo,current*.8); hi=min(hi,current*1.2);
-            value=mix(current,clamp(textureLod(history,uvw,0),lo,hi),f.temporal.x);
-        }
+        if(!(old.w>0&&depth>0&&all(greaterThanEqual(uvw,vec3(0)))&&all(lessThanEqual(uvw,vec3(1)))))return current;
+        previous=textureLod(history,uvw,0);
     }
-    imageStore(result,cell,value);
+    if(previous==current)return current;
+    vec4 lo=current,hi=current;
+    for(int z=-1;z<=1;++z)for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x) {
+        vec4 v=texelFetch(currentScattering,clamp(cell+ivec3(x,y,z),ivec3(0),size-1),0); lo=min(lo,v); hi=max(hi,v);
+    }
+    return mix(current,clamp(previous,lo,hi),f.temporal.x);
+}
+void main() {
+    ivec3 cell=ivec3(gl_GlobalInvocationID),size=ivec3(f.grid.xyz); if(any(greaterThanEqual(cell,size)))return;
+    vec4 current=texelFetch(currentScattering,cell,0);
+    imageStore(result,cell,filterHistory(cell,size,current));
 }
 )";
     inline constexpr const char* Integrate  = R"(

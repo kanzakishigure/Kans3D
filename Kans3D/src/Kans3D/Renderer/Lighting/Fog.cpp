@@ -92,6 +92,32 @@ namespace Kans
         return frame.View.Environment.Fog.Enabled &&
                !SelectSpotBeams(frame.View.Scene.spotLights, frame.View.Scene.sceneCamera.Position).empty();
     }
+    struct FogLightHistory
+    {
+        struct Influence
+        {
+            glm::vec4 PositionRange {0}, DirectionOuter {0};
+            bool      operator==(const Influence& b) const
+            {
+                return PositionRange == b.PositionRange && DirectionOuter == b.DirectionOuter;
+            }
+        };
+        static_assert(sizeof(Influence) == 32); // Two std430 vec4s.
+        struct Light
+        {
+            Influence Bounds;
+            glm::vec4 Radiance {0}, AreaRightWidth {0}, AreaUpHeight {0};
+            float     Scale = 0, AreaTwoSided = 0;
+            UUID      EntityID = 0;
+            bool      operator==(const Light& b) const
+            {
+                return Bounds == b.Bounds && Radiance == b.Radiance && AreaRightWidth == b.AreaRightWidth &&
+                       AreaUpHeight == b.AreaUpHeight && Scale == b.Scale && AreaTwoSided == b.AreaTwoSided &&
+                       EntityID == b.EntityID;
+            }
+        };
+        std::vector<Light> Lights;
+    };
     namespace
     {
         struct Parameters
@@ -113,6 +139,74 @@ namespace Kans
         {
             glm::vec4 Points[4] {}, Spots[16] {}, Areas[4] {}, Directional {0};
         };
+        std::vector<FogLightHistory::Light>
+        FogLights(const SceneInfo& scene, const EngineFrameUniforms& frame, const LightScales& scales)
+        {
+            std::vector<FogLightHistory::Light> lights;
+            auto                                add = [&](FogLightHistory::Light light, UUID entity) {
+                light.EntityID = entity;
+                if (light.Scale > 0 && glm::vec3(light.Radiance) != glm::vec3(0))
+                    lights.push_back(light);
+            };
+            auto entityAt = [](const auto& list, size_t i) { return i < list.size() ? list[i].EntityID : UUID(0); };
+            if (frame.DirectionalDirection.w > 0)
+                add({{{0, 0, 0, 0}, {glm::vec3(frame.DirectionalDirection), 0}},
+                     {glm::vec3(frame.DirectionalRadiance), 0},
+                     {},
+                     {},
+                     scales.Directional.x},
+                    scene.dirLight.EntityID);
+            for (int i = 0; i < std::clamp(int(frame.LightingInfo.x), 0, int(EnginePointLightLimit)); ++i)
+                add({{{glm::vec3(frame.PointPositions[i]), frame.PointRanges[i / 4][i % 4]}, {}},
+                     {glm::vec3(frame.PointRadiance[i]), 0},
+                     {},
+                     {},
+                     scales.Points[i / 4][i % 4]},
+                    scene.pointLights.empty() ? scene.pointLight.EntityID : entityAt(scene.pointLights, i));
+            for (int i = 0; i < std::clamp(int(frame.LightingInfo.z), 0, int(EngineSpotLightLimit)); ++i)
+                add({{frame.SpotPositionRange[i], frame.SpotDirectionOuter[i]},
+                     frame.SpotRadianceInner[i],
+                     {},
+                     {},
+                     scales.Spots[i / 4][i % 4]},
+                    entityAt(scene.spotLights, i));
+            for (int i = 0; i < std::clamp(int(frame.LightingInfo.w), 0, int(EngineAreaLightLimit)); ++i)
+                add({{frame.AreaPositionRange[i], {}},
+                     frame.AreaRadiance[i],
+                     frame.AreaRightWidth[i],
+                     frame.AreaUpHeight[i],
+                     scales.Areas[i / 4][i % 4],
+                     frame.AreaScales[i].z},
+                    entityAt(scene.areaLights, i));
+            return lights;
+        }
+        std::vector<FogLightHistory::Influence> ChangedLightBounds(const std::vector<FogLightHistory::Light>& previous,
+                                                                   const std::vector<FogLightHistory::Light>& current)
+        {
+            std::vector<FogLightHistory::Influence> changes;
+            // Compare effective shader inputs exactly (zero tolerance). Match entity IDs across slot reordering.
+            if (previous == current)
+                return changes;
+            auto unmatched = previous;
+            auto add       = [&](const auto& bounds) {
+                if (std::find(changes.begin(), changes.end(), bounds) == changes.end())
+                    changes.push_back(bounds);
+            };
+            for (const auto& light : current)
+            {
+                const auto match = std::find(unmatched.begin(), unmatched.end(), light);
+                if (match == unmatched.end())
+                    add(light.Bounds);
+                else
+                {
+                    *match = unmatched.back();
+                    unmatched.pop_back();
+                }
+            }
+            for (const auto& light : unmatched)
+                add(light.Bounds);
+            return changes;
+        }
         template<class T>
         Handle<RenderHardware::Buffer> Upload(Device& device, const T& value, bool writable = false)
         {
@@ -162,6 +256,8 @@ namespace Kans
                 if (i == 1)
                     source += "#include <Kans3D/Lighting.glsl>\n";
                 source += FogShaders::Parameters;
+                if (i == 1 || i == 2)
+                    source += FogShaders::FroxelBounds;
                 if (i == 0)
                     source += FogShaders::MediumSampling;
                 if (i == 1)
@@ -181,6 +277,8 @@ namespace Kans
                                                                  BindingType::CombinedTextureSampler;
                     layout.Entries.push_back({b, type});
                 }
+                if (i == 2)
+                    layout.Entries.push_back({4, BindingType::ReadOnlyStorageBuffer});
                 state.ComputeLayouts[i] = device.CreateBindGroupLayout(layout);
                 std::vector<Handle<BindGroupLayout>> groups {state.ComputeLayouts[i]};
                 if (i == 1)
@@ -245,10 +343,13 @@ namespace Kans
                 }
             throw std::runtime_error("Spot beam march has no fragment stage");
         }
-        Handle<BindGroup> LightingGroup(RenderFrame& frame, FogState& state, const Parameters& p, bool beam = false)
+        Handle<BindGroup> LightingGroup(RenderFrame&        frame,
+                                        FogState&           state,
+                                        const Parameters&   p,
+                                        EngineFrameUniforms ef,
+                                        bool                beam = false)
         {
             auto device           = frame.GetDevice();
-            auto ef               = frame.View.LightingUniforms.value_or(MakeLightingUniforms(frame.View.Scene));
             ef.View               = glm::inverse(p.InverseView);
             ef.Projection         = glm::inverse(p.InverseProjection);
             ef.ViewProjection     = ef.Projection * ef.View;
@@ -313,6 +414,7 @@ namespace Kans
         {
             auto fresh = std::make_shared<FogState>();
             Initialize(*device, *fresh);
+            fresh->LightHistory = std::make_shared<FogLightHistory>();
             storage = std::move(fresh);
         }
         auto state            = storage;
@@ -341,8 +443,6 @@ namespace Kans
         p.Grid              = {glm::vec3(size), settings.VolumetricFogDistance};
         p.Medium            = {settings.Density, settings.HeightFalloff, settings.BaseHeight, settings.Extinction};
         p.AlbedoG           = {settings.Albedo, settings.Anisotropy};
-        p.Temporal          = {
-            settings.HistoryWeight, valid ? 1 : 0, frame.View.Time, float(frame.Output.GetFrameNumber() % 1024)};
         auto volumes = SelectFogVolumes(frame.View.FogVolumes, frame.View.Scene.sceneCamera.Position);
         std::array<Volume, FogVolumeLimit> packed;
         const auto                         wind = FogWindDisplacement(frame.View.FogWind, frame.View.Time);
@@ -373,7 +473,7 @@ namespace Kans
                                               glm::vec3(0),
                              0);
         p.PreviousDepth = {state->Settings.VolumetricFogDistance, 0, 0, 0};
-        auto        uniform = Upload(*device, p), volumeBuffer = Upload(*device, packed);
+        auto        volumeBuffer = Upload(*device, packed);
         LightScales scales;
         auto        positive = [](float v) { return std::isfinite(v) ? std::max(0.f, v) : 0.f; };
         const auto& scene    = frame.View.Scene;
@@ -390,8 +490,32 @@ namespace Kans
         for (auto i : SelectSpotBeams(scene.spotLights, frame.View.Scene.sceneCamera.Position))
             scales.Spots[i / 4][i % 4] = 0;
         scales.Directional.x   = positive(scene.dirLight.VolumetricScattering);
-        auto       lightBuffer = Upload(*device, scales);
-        auto       engine      = LightingGroup(frame, *state, p);
+        const auto lighting         = frame.View.LightingUniforms.value_or(MakeLightingUniforms(scene));
+        auto       lights           = FogLights(scene, lighting, scales);
+        valid                       = valid && settings.HistoryWeight > 0;
+        auto changes                = valid ? ChangedLightBounds(state->LightHistory->Lights, lights) :
+                                              std::vector<FogLightHistory::Influence> {};
+        state->LightHistory->Lights = std::move(lights);
+        // Directional and zero-range punctual/area lights have global influence. A zero-range spot still has a cone.
+        if (std::any_of(changes.begin(), changes.end(), [](const auto& bound) {
+                return bound.PositionRange.w <= 0 && bound.DirectionOuter.w == 0;
+            }))
+        {
+            valid = false;
+            changes.clear();
+        }
+        p.Temporal = {settings.HistoryWeight,
+                      valid ? (state->PreviousView == view ? 2 : 1) : 0,
+                      float(changes.size()),
+                      float(frame.Output.GetFrameNumber() % 1024)};
+        if (changes.empty())
+            changes.emplace_back(); // A storage binding still needs a buffer when the list is empty.
+        const auto bytes         = changes.size() * sizeof(changes.front());
+        auto       changedLights = device->CreateBuffer({bytes, BufferUsage::Storage, MemoryUsage::Upload});
+        changedLights->Write(0, changes.data(), bytes);
+        auto uniform     = Upload(*device, p);
+        auto lightBuffer = Upload(*device, scales);
+        auto engine      = LightingGroup(frame, *state, p, lighting);
         if (HasSpotBeams(frame))
         {
             state->BeamMediumSignature.clear();
@@ -408,7 +532,7 @@ namespace Kans
             const void* world = &frame.World;
             signature(world);
             state->VolumeUniforms = volumeBuffer;
-            state->BeamLighting   = LightingGroup(frame, *state, p, true);
+            state->BeamLighting   = LightingGroup(frame, *state, p, lighting, true);
         }
         else if (state->Beams)
             state->Beams->Valid = false;
@@ -430,7 +554,8 @@ namespace Kans
                 graph.AddPass(std::move(name),
                               GraphPassKind::Compute,
                               std::move(uses),
-                              [state, uniform, volumeBuffer, lightBuffer, engine, stage, images, size](auto& c) {
+                              [state, uniform, volumeBuffer, lightBuffer, changedLights, engine, stage, images, size](
+                                  auto& c) {
                                   BindGroupDesc group;
                                   group.Layout  = state->ComputeLayouts[stage];
                                   group.Entries = {{0, uniform}};
@@ -448,6 +573,8 @@ namespace Kans
                                                                             state->Linear});
                                   if (stage < 2)
                                       group.Entries.push_back({3, stage == 0 ? volumeBuffer : lightBuffer});
+                                  if (stage == 2)
+                                      group.Entries.push_back({4, changedLights});
                                   c.Commands.BindComputePipeline(state->ComputePipelines[stage]);
                                   if (stage == 1)
                                       c.Commands.BindGroup(engine);
@@ -515,7 +642,10 @@ namespace Kans
                 lightingImage(image);
         }
         add(1, "Fog lighting", std::move(lightingUses), {{1, media}, {2, raw}});
-        std::vector<GraphUse> temporalUses {{raw, GraphAccess::SampledRead}, {filtered, GraphAccess::StorageWrite}};
+        std::vector<GraphUse> temporalUses {
+            {raw, GraphAccess::SampledRead},
+            {filtered, GraphAccess::StorageWrite},
+            {graph.ImportBuffer("Fog changed lights", changedLights), GraphAccess::StorageRead}};
         if (valid)
             temporalUses.push_back({history, GraphAccess::SampledRead});
         add(2, "Fog temporal", std::move(temporalUses), {{1, raw}, {2, valid ? history : raw}, {3, filtered}});
