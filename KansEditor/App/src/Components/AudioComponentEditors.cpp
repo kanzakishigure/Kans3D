@@ -99,7 +99,7 @@ namespace Kans::ComponentEditors
         static const AudioSourceComponent defaults;
         entity.PatchComponent<AudioSourceComponent>([&](AudioSourceComponent& c) {
             // The groups keep this order; later phases add rows to them: the Event under Source (A2b),
-            // Priority under Playback (A2b), the Bus under Output (A2a), the attenuation asset under
+            // Priority under Playback (A2b), the attenuation asset under
             // Spatial (A2c).
             if (PropertyGrid::BeginGroup("Source"))
             {
@@ -134,7 +134,7 @@ namespace Kans::ComponentEditors
             }
             if (PropertyGrid::BeginGroup("Output"))
             {
-                Reserved("Bus", "Master", "Mixer buses arrive in A2a; every source plays to Master until then.");
+                PropertyGrid::InputText("Bus", c.Bus);
                 if (!c.Spatial)
                     PropertyGrid::Float("Pan", c.Pan, 0.01f, -1.0f, 1.0f, "%.2f", &defaults.Pan);
                 PropertyGrid::EndGroup();

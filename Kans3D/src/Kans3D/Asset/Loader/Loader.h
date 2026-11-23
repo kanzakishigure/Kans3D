@@ -20,6 +20,14 @@ namespace Kans
 
     template<typename T>
     class Loader;
+    class AudioBusLayoutAsset;
+    template<>
+    class Loader<AudioBusLayoutAsset>
+    {
+    public:
+        std::variant<Ref<AudioBusLayoutAsset>, AssetError> Load(const AssetLoadContext&) const;
+    };
+
     class MaterialParameterCollectionAsset;
     template<>
     class Loader<MaterialParameterCollectionAsset>

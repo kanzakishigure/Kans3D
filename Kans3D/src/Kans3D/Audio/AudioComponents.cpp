@@ -11,6 +11,7 @@ namespace Kans
         auto Fields(T& c)
         {
             return std::tie(c.Clip,
+                            c.Bus,
                             c.Volume,
                             c.Pitch,
                             c.PlayOnStart,

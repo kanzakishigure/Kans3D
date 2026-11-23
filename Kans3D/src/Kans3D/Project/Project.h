@@ -24,6 +24,7 @@ namespace Kans
     {
     public:
         std::map<std::string, bool> Plugins;
+        AssetID                     AudioBusLayout;
         PhysicsSettings       Physics;
         std::string           Name;
         std::filesystem::path RootDirectory;

@@ -150,6 +150,7 @@ namespace Kans
         }
         r.Acquired = true;
         AudioVoiceDesc desc;
+        desc.Bus     = c.Bus;
         desc.Volume  = c.Volume;
         desc.Pitch   = c.Pitch;
         desc.Pan     = c.Spatial ? 0 : c.Pan;
@@ -173,6 +174,7 @@ namespace Kans
     {
         auto& c = entity.GetComponent<AudioSourceComponent>();
         auto& r = *c.m_Runtime;
+        m_AudioEngine->SetVoiceBus(r.Voice, c.Bus);
         m_AudioEngine->SetVolume(r.Voice, c.Volume * r.Source->GetData().Volume);
         m_AudioEngine->SetPitch(r.Voice, c.Pitch);
         m_AudioEngine->SetPan(r.Voice, r.Spatial ? 0 : c.Pan);

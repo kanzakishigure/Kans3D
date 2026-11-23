@@ -93,6 +93,7 @@ namespace Kans
         {
             Keys(node,
                  {"Clip",
+                  "Bus",
                   "Volume",
                   "Pitch",
                   "PlayOnStart",
@@ -109,6 +110,8 @@ namespace Kans
                   "ConeOuterGain"});
             AudioSourceComponent c;
             c.Clip                 = AssetID::FromString(Text(node["Clip"]));
+            if (node["Bus"])
+                c.Bus = Text(node["Bus"]);
             c.Volume               = Number(node["Volume"]);
             c.Pitch                = Number(node["Pitch"]);
             c.PlayOnStart          = node["PlayOnStart"].as<bool>();
@@ -1634,6 +1637,8 @@ namespace Kans
                 v["ConeInnerAngle"] = c.ConeInnerAngle;
                 v["ConeOuterAngle"] = c.ConeOuterAngle;
                 v["ConeOuterGain"]  = c.ConeOuterGain;
+                if (c.Bus != MasterAudioBus)
+                    v["Bus"] = c.Bus;
             }
             if (entity.HasComponent<AudioListenerComponent>())
                 node["AudioListenerComponent"]["Active"] = entity.GetComponent<AudioListenerComponent>().Active;

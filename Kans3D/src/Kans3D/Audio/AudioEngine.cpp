@@ -2,13 +2,15 @@
 #include "Kans3D/Audio/AudioEngine.h"
 #include "Kans3D/Audio/AudioClipRegistry.h"
 #include "Kans3D/Core/Log/Log.h"
+#include "AudioBusGraph.h"
 
 #include <miniaudio.h>
-#include <glm/geometric.hpp>
 #include <cmath>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
+#include <glm/geometric.hpp>
 
 namespace Kans
 {
@@ -203,6 +205,21 @@ namespace Kans
         ma_engine Engine{};
         bool ContextReady = false, ResourcesReady = false, Ready = false;
         AudioEngineConfig Config;
+        std::unique_ptr<AudioBusGraph>  Buses;
+        std::unordered_set<std::string> WarnedBusNames;
+
+        ma_node* VoiceBusInput(AudioBusGraph& graph, const std::string& name)
+        {
+            if (!name.empty())
+            {
+                if (auto* input = graph.Input(name))
+                    return input;
+                if (WarnedBusNames.insert(name).second)
+                    Warn("Unknown audio bus '" + name + "'; routing to Master");
+            }
+            return graph.Input(MasterAudioBus);
+        }
+
         std::unordered_map<AudioSoundID, Sound> Sounds;
         std::vector<Slot> Slots;
         std::vector<AudioClipRegistry*> ClipRegistries;
@@ -305,6 +322,11 @@ namespace Kans
             return Error("Audio engine init", result);
         }
         p.Ready = true;
+        if (auto error = ApplyBusLayout(AudioBusLayout::Default()))
+        {
+            Shutdown();
+            return error;
+        }
         return std::nullopt;
     }
 
@@ -320,6 +342,8 @@ namespace Kans
                 DestroyVoice({i, p.Slots[i].Generation});
         while (!p.Sounds.empty())
             UnregisterSound(p.Sounds.begin()->first);
+        p.Buses.reset();
+        p.WarnedBusNames.clear();
         if (p.Ready)
             ma_engine_uninit(&p.Engine);
         p.Ready = false;
@@ -349,16 +373,6 @@ namespace Kans
     {
         if (!IsInitialized() || GetMode() != AudioOutputMode::Offline || !out)
             return 0;
-        if (std::none_of(m_Impl->Slots.begin(), m_Impl->Slots.end(), [](const auto& slot) { return bool(slot.Value); }))
-        {
-            // An empty node graph has no input frames. Offline callers still need a full silent
-            // buffer and advancing engine time before the next voice is attached.
-            m_Impl->DrainJobs();
-            std::fill_n(out, frameCount * GetChannels(), 0.f);
-            ma_engine_set_time_in_pcm_frames(&m_Impl->Engine,
-                ma_engine_get_time_in_pcm_frames(&m_Impl->Engine) + frameCount);
-            return frameCount;
-        }
         uint64_t written = 0;
         while (written < frameCount)
         {
@@ -386,6 +400,104 @@ namespace Kans
             if (slot.Value && slot.Value->Desc.AutoRelease && ma_sound_at_end(&slot.Value->Sound))
                 DestroyVoice({i, slot.Generation});
         }
+    }
+
+    std::optional<std::string> AudioEngine::ApplyBusLayout(const AudioBusLayout& layout)
+    {
+        auto& p = *m_Impl;
+        if (!p.Ready)
+            return "Audio engine is unavailable";
+        if (auto error = ValidateAudioBusLayout(layout))
+            return error->Message;
+
+        // Build off the endpoint, then move existing sound nodes without touching their playback state.
+        auto next   = std::make_unique<AudioBusGraph>();
+        auto result = next->Init(p.Engine, layout, p.Buses.get());
+        if (result == MA_SUCCESS)
+            result = next->ConnectEndpoint();
+        if (result != MA_SUCCESS)
+            return Error("Build audio bus graph", result);
+        for (const auto& slot : p.Slots)
+        {
+            if (!slot.Value)
+                continue;
+            auto& voice = *slot.Value;
+            result      = ma_node_attach_output_bus(&voice.Sound, 0, p.VoiceBusInput(*next, voice.Desc.Bus), 0);
+            if (result != MA_SUCCESS)
+            {
+                for (const auto& moved : p.Slots)
+                {
+                    if (&moved == &slot)
+                        break;
+                    if (moved.Value)
+                        ma_node_attach_output_bus(
+                            &moved.Value->Sound, 0, p.VoiceBusInput(*p.Buses, moved.Value->Desc.Bus), 0);
+                }
+                return Error("Reattach audio voice", result);
+            }
+        }
+        p.Buses = std::move(next);
+        return std::nullopt;
+    }
+
+    const std::vector<AudioBusDefinition>& AudioEngine::GetBuses() const
+    {
+        static const std::vector<AudioBusDefinition> empty;
+        return m_Impl->Buses ? m_Impl->Buses->GetBuses() : empty;
+    }
+
+    bool AudioEngine::SetBusVolumeDb(const std::string& bus, float db)
+    {
+        auto* definition = m_Impl->Buses ? m_Impl->Buses->Find(bus) : nullptr;
+        if (!definition || !IsValidAudioBusLevel(db))
+            return false;
+        definition->VolumeDb = db;
+        m_Impl->Buses->UpdateFaders();
+        return true;
+    }
+
+    bool AudioEngine::SetBusMute(const std::string& bus, bool mute)
+    {
+        auto* definition = m_Impl->Buses ? m_Impl->Buses->Find(bus) : nullptr;
+        if (!definition)
+            return false;
+        definition->Mute = mute;
+        m_Impl->Buses->UpdateFaders();
+        return true;
+    }
+
+    bool AudioEngine::SetBusSolo(const std::string& bus, bool solo)
+    {
+        auto* definition = m_Impl->Buses ? m_Impl->Buses->Find(bus) : nullptr;
+        if (!definition)
+            return false;
+        definition->Solo = solo;
+        m_Impl->Buses->UpdateFaders();
+        return true;
+    }
+
+    bool AudioEngine::SetBusBypass(const std::string& bus, bool bypass)
+    {
+        auto* definition = m_Impl->Buses ? m_Impl->Buses->Find(bus) : nullptr;
+        if (!definition)
+            return false;
+        definition->Bypass = bypass;
+        return true;
+    }
+
+    bool AudioEngine::SetBusSendLevelDb(const std::string& bus, size_t sendIndex, float db)
+    {
+        auto* definition = m_Impl->Buses ? m_Impl->Buses->Find(bus) : nullptr;
+        if (!definition || sendIndex >= definition->Sends.size() || !IsValidAudioBusLevel(db))
+            return false;
+        definition->Sends[sendIndex].LevelDb = db;
+        m_Impl->Buses->UpdateSend(bus, sendIndex);
+        return true;
+    }
+
+    std::optional<AudioBusMeter> AudioEngine::GetBusMeter(const std::string& bus) const
+    {
+        return m_Impl->Buses ? m_Impl->Buses->GetMeter(bus) : std::nullopt;
     }
 
     void AudioEngine::AttachClipRegistry(AudioClipRegistry* registry)
@@ -520,6 +632,7 @@ namespace Kans
         }
         auto config = ma_sound_config_init_2(&m_Impl->Engine);
         config.pDataSource = &voice->Source;
+        config.pInitialAttachment = m_Impl->VoiceBusInput(*m_Impl->Buses, desc.Bus);
         if (!desc.Spatial)
             config.flags |= MA_SOUND_FLAG_NO_SPATIALIZATION;
         if (desc.Loop)
@@ -549,6 +662,35 @@ namespace Kans
             SetSpatialParams(handle, {});
         }
         return handle;
+    }
+
+    bool AudioEngine::SetVoiceBus(AudioVoiceHandle handle, const std::string& bus)
+    {
+        auto* voice = m_Impl->Find(handle);
+        if (!voice)
+            return false;
+        if (voice->Desc.Bus == bus)
+            return true;
+        auto& graph = *m_Impl->Buses;
+        auto* input = m_Impl->VoiceBusInput(graph, bus);
+        if (input != m_Impl->VoiceBusInput(graph, voice->Desc.Bus))
+        {
+            if (const auto result = ma_node_attach_output_bus(&voice->Sound, 0, input, 0); result != MA_SUCCESS)
+            {
+                Warn(Error("Move audio voice", result));
+                return false;
+            }
+        }
+        voice->Desc.Bus = bus;
+        return true;
+    }
+
+    std::optional<std::string> AudioEngine::GetVoiceBus(AudioVoiceHandle handle) const
+    {
+        auto* voice = m_Impl->Find(handle);
+        if (!voice)
+            return std::nullopt;
+        return m_Impl->Buses->Input(voice->Desc.Bus) ? voice->Desc.Bus : MasterAudioBus;
     }
 
     void AudioEngine::DestroyVoice(AudioVoiceHandle handle)

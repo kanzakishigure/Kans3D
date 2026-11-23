@@ -7,6 +7,7 @@ namespace Kans
     struct ProjectFile
     {
         std::map<std::string, bool> Plugins;
+        AssetID                     AudioBusLayout;
         PhysicsSettings       Physics;
         std::string           Name;
         uint32_t              FormatVersion = 1;

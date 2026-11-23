@@ -69,6 +69,8 @@ namespace Kans
             project.Name = node["Name"].as<std::string>();
             if (node["FormatVersion"])
                 project.FormatVersion = node["FormatVersion"].as<uint32_t>();
+            if (const auto layout = node["AudioBusLayout"]; layout && layout.IsScalar())
+                project.AudioBusLayout = AssetID::FromString(layout.Scalar());
             if (node["StartupScene"])
                 project.StartupScene = fs::u8path(node["StartupScene"].as<std::string>());
             if (node["AssetDirectory"])
@@ -125,6 +127,8 @@ namespace Kans
             << project.StartupScene.generic_u8string() << YAML::Key << "AssetDirectory" << YAML::Value
             << project.AssetDirectory.generic_u8string() << YAML::Key << "CacheDirectory" << YAML::Value
             << project.CacheDirectory.generic_u8string();
+        if (project.AudioBusLayout.IsValid())
+            out << YAML::Key << "AudioBusLayout" << YAML::Value << project.AudioBusLayout.ToString();
         if (!project.Plugins.empty())
         {
             out << YAML::Key << "Plugins" << YAML::Value << YAML::BeginMap;
@@ -162,6 +166,7 @@ namespace Kans
     {
         ProjectConfig config;
         config.Plugins        = project.Plugins;
+        config.AudioBusLayout = project.AudioBusLayout;
         config.Physics        = project.Physics;
         config.Name           = project.Name;
         config.RootDirectory  = fs::absolute(root).lexically_normal();

@@ -11,6 +11,7 @@
 #include "Kans3D/Timeline/Import/TimelineImporter.h"
 #include "Kans3D/UI/Import/UIImporter.h"
 #include "Kans3D/VFX/Import/VfxImporter.h"
+#include "AudioBusLayoutImporter.h"
 #include "MaterialImporter.h"
 #include "MaterialParameterCollectionImporter.h"
 #include "ModelImporter.h"
@@ -115,6 +116,7 @@ namespace Kans
                 {"TextureImporter",
                  {{".png", ".jpg", ".jpeg", ".bmp", ".tga", ".hdr", ".cube"}, std::make_shared<TextureImporter>()}},
                 {"ShaderImporter", {{".vert", ".frag", ".comp", ".shaderprog"}, std::make_shared<ShaderImporter>()}},
+                {"AudioBusLayoutImporter", {{".audiobus"}, std::make_shared<AudioBusLayoutImporter>()}},
                 {"MaterialParameterCollectionImporter",
                  {{".matparams"}, std::make_shared<MaterialParameterCollectionImporter>()}},
                 {"RenderTextureImporter", {{".rendertexture"}, std::make_shared<RenderTextureImporter>()}},

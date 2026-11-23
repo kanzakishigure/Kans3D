@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <glm/vec3.hpp>
+#include "Kans3D/Audio/AudioBusLayout.h"
 
 namespace Kans
 {
@@ -41,6 +42,7 @@ namespace Kans
         bool Loop = false;
         bool AutoRelease = false;
         bool Spatial = false;
+        std::string   Bus         = MasterAudioBus;
     };
     enum class AudioAttenuationModel { None, Inverse, Linear, Exponential };
     struct AudioSpatialParams
@@ -53,6 +55,16 @@ namespace Kans
     struct AudioListenerState
     {
         glm::vec3 Position{0}, Velocity{0}, Forward{0, 0, -1}, Up{0, 1, 0};
+    };
+
+    struct AudioBusChannelMeter
+    {
+        float Peak = 0, Rms = 0; // Linear full-scale units for the most recent processing block.
+    };
+
+    struct AudioBusMeter
+    {
+        std::vector<AudioBusChannelMeter> Channels;
     };
 
     // All public calls are main-thread only. Handles must be used with their owning engine.
@@ -75,6 +87,16 @@ namespace Kans
         uint64_t Render(float* out, uint64_t frameCount);
         void Update();
 
+        // Runtime settings are copies of the asset. Send indices follow the order in GetBuses().
+        [[nodiscard]] std::optional<std::string> ApplyBusLayout(const AudioBusLayout& layout);
+        const std::vector<AudioBusDefinition>&   GetBuses() const;
+        bool                                     SetBusVolumeDb(const std::string& bus, float db);
+        bool                                     SetBusMute(const std::string& bus, bool mute);
+        bool                                     SetBusSolo(const std::string& bus, bool solo);
+        bool                                     SetBusBypass(const std::string& bus, bool bypass);
+        bool                                     SetBusSendLevelDb(const std::string& bus, size_t sendIndex, float db);
+        std::optional<AudioBusMeter>             GetBusMeter(const std::string& bus) const;
+
         std::optional<std::string> RegisterSound(AudioSoundID id, std::shared_ptr<const std::vector<std::byte>> encodedBytes);
         std::optional<std::string> RegisterSound(AudioSoundID id, std::vector<std::byte> encodedBytes)
         {
@@ -89,6 +111,9 @@ namespace Kans
         uint64_t GetDecodedBytes(AudioSoundID id) const;
 
         AudioVoiceHandle CreateVoice(const AudioVoiceDesc& desc);
+        // Empty or unknown names route to Master. Returns false for an invalid handle or failed attachment.
+        bool                       SetVoiceBus(AudioVoiceHandle handle, const std::string& bus);
+        std::optional<std::string> GetVoiceBus(AudioVoiceHandle handle) const;
         void DestroyVoice(AudioVoiceHandle handle);
         bool IsVoiceValid(AudioVoiceHandle handle) const;
         void Play(AudioVoiceHandle handle);

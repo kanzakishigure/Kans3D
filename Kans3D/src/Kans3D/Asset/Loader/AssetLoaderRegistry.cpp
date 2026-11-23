@@ -6,6 +6,7 @@
 #include "Kans3D/Asset/Runtime/ModelData.h"
 #include "Kans3D/Asset/Runtime/ShaderData.h"
 #include "Kans3D/Asset/Runtime/TextureData.h"
+#include "Kans3D/Audio/AudioBusLayout.h"
 #include "Kans3D/Physics/ClothAsset.h"
 #include "Kans3D/Physics/PhysicsMaterial.h"
 #include "Kans3D/Physics/RagdollAsset.h"
@@ -76,6 +77,7 @@ namespace Kans
     AssetLoaderRegistry AssetLoaderRegistry::CreateDefault()
     {
         AssetLoaderRegistry registry;
+        registry.m_Decoders.emplace(AudioBusLayoutAsset::GetStaticType(), Decode<AudioBusLayoutAsset>);
         registry.m_Decoders.emplace(MaterialParameterCollectionAsset::GetStaticType(),
                                     Decode<MaterialParameterCollectionAsset>);
         registry.m_Decoders.emplace(VfxSystemAsset::GetStaticType(), Decode<VfxSystemAsset>);

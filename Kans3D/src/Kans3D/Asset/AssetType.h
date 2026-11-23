@@ -38,5 +38,6 @@ namespace Kans
         VfxModule           = 24,
         VectorField         = 25,
         MaterialParameterCollection = 26,
+        AudioBusLayout              = 27,
     };
 } // namespace Kans

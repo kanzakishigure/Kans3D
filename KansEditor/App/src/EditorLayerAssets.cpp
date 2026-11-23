@@ -6,6 +6,7 @@
 #include <set>
 #include "Kans3D/Asset/Importer/MaterialSource.h"
 #include "Kans3D/Asset/Storage/AssetProvider.h"
+#include "Kans3D/Audio/AudioSystem.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Project/ProjectFile.h"
@@ -76,6 +77,20 @@ namespace Kans
             return "Cannot open the project: " + error->Message;
         }
         auto project = std::move(std::get<std::unique_ptr<Project>>(opened));
+        // A fresh checkout can have the source and its kmeta before the first Product build.
+        const auto layout = config.AudioBusLayout;
+        if (layout.IsValid() && !project->GetRuntimeAssetRegistry()->Find(layout, EditorAssetTarget))
+        {
+            const auto source = project->GetSourceAssetDatabase().FindByID(layout.GetSourceID());
+            if (source.Exists && source.Path.GetPath().extension() == ".audiobus")
+            {
+                AssetBuildOptions options;
+                options.Target = EditorAssetTarget;
+                auto built     = project->BuildAsset(source.sourceAssetID, options);
+                if (const auto* error = std::get_if<AssetError>(&built))
+                    CORE_ERROR("Cannot import the project's audio bus layout: {}", error->Message);
+            }
+        }
         for (const auto& warning : project->GetAssetWarnings())
             CORE_WARN("Project asset cache: {}", warning.Message);
         for (const auto& panel : project->GetPluginHost().Panels())
@@ -252,6 +267,7 @@ namespace Kans
             auto changed = m_Assets->SetRegistry(std::move(snapshot));
             if (const auto* error = std::get_if<AssetError>(&changed))
                 return *error;
+            AudioSystem::ReloadProjectBusLayout(m_ProjectConfig, *m_Assets, std::get<ProductChangeSet>(changed));
             return std::monostate {};
         }
         auto provider = LooseFileAssetProvider::Open(m_AssetImports->GetProductDirectory());
@@ -261,6 +277,7 @@ namespace Kans
         spec.Target = EditorAssetTarget;
         m_Assets    = CreateScope<AssetManager>(
             std::get<Ref<LooseFileAssetProvider>>(std::move(provider)), std::move(snapshot), std::move(spec));
+        AudioSystem::LoadProjectBusLayout(m_ProjectConfig, *m_Assets);
         m_Viewport->SetAssetManager(m_Assets.get());
         m_RenderTexturePanel.SetResources(m_Viewport->GetAssetCache());
         m_MaterialPreview->SetResources(m_Viewport->GetAssetCache(), m_Viewport->GetEnvironment());
