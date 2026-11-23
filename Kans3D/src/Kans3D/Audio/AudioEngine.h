@@ -24,6 +24,12 @@ namespace Kans
 
     using AudioSoundID = uint64_t;
     enum class AudioLoadMode { Decompress, Stream };
+    enum class AudioFadeCurve
+    {
+        Linear,
+        EqualPower,
+        SCurve
+    };
     struct AudioSoundInfo
     {
         uint32_t Channels, SampleRate;
@@ -67,6 +73,8 @@ namespace Kans
         std::vector<AudioBusChannelMeter> Channels;
     };
 
+    class AudioMusicPlayer;
+
     // All public calls are main-thread only. Handles must be used with their owning engine.
     class AudioEngine
     {
@@ -82,6 +90,14 @@ namespace Kans
         AudioOutputMode GetMode() const;
         uint32_t GetSampleRate() const;
         uint32_t GetChannels() const;
+        // Absolute engine output frames mixed since Init, including Offline renders.
+        uint64_t GetClockFrames() const;
+        // Estimated queued device frames (backend playback period size times periods, in engine frames).
+        // Offline has no device latency.
+        uint64_t GetOutputLatencyFrames() const;
+        // Monotonic listener time in seconds, interpolated between device callbacks and bounded by the
+        // mixed clock. Offline returns the exact rendered time without wall-clock interpolation.
+        double   GetPlaybackClockSeconds() const;
         void SetMasterVolume(float linear);
         float GetMasterVolume() const;
         uint64_t Render(float* out, uint64_t frameCount);
@@ -140,6 +156,15 @@ namespace Kans
         void DestroyVoice(AudioVoiceHandle handle);
         bool IsVoiceValid(AudioVoiceHandle handle) const;
         void Play(AudioVoiceHandle handle);
+        // Schedule playback from the current source position (or zero after EOF). A past start skips
+        // the elapsed engine frames at the voice's current pitch and starts at the first available frame.
+        void ScheduleStart(AudioVoiceHandle handle, uint64_t clockFrame);
+        // Silence begins at clockFrame. An optional fade occupies the preceding fadeFrames engine
+        // frames. Past stop times take effect at the first available frame.
+        void ScheduleStop(AudioVoiceHandle handle,
+                          uint64_t         clockFrame,
+                          uint64_t         fadeFrames = 0,
+                          AudioFadeCurve   curve      = AudioFadeCurve::Linear);
         void Stop(AudioVoiceHandle handle);
         void Pause(AudioVoiceHandle handle);
         bool IsPlaying(AudioVoiceHandle handle) const;
@@ -152,6 +177,11 @@ namespace Kans
         void SeekFrames(AudioVoiceHandle handle, uint64_t frame);
         // Decoder cursor in source frames; may lead audible playback by one processing block.
         uint64_t GetCursorFrames(AudioVoiceHandle handle) const;
+        // Source position on the latency-compensated transport, including pitch and loop wraps.
+        // Before the start or while paused, returns the source position held by the transport.
+        uint64_t GetVoicePositionFrames(AudioVoiceHandle handle) const;
+        // The same transport position in seconds at the source sample rate, retaining fractional frames.
+        double GetVoicePositionSeconds(AudioVoiceHandle handle) const;
         // Target is a multiplier relative to SetVolume; seconds are measured at the engine sample rate.
         void FadeTo(AudioVoiceHandle handle, float targetVolume, float seconds);
         void SetLoopRegion(AudioVoiceHandle handle, uint64_t beginFrame, uint64_t endFrame);
@@ -159,6 +189,10 @@ namespace Kans
         void SetListener(uint32_t index, const AudioListenerState& state);
 
     private:
+        friend class AudioMusicPlayer;
+        AudioVoiceHandle CreateVoice(const AudioVoiceDesc& desc, uint64_t loopStart, uint64_t loopEnd);
+        uint64_t StartVoice(AudioVoiceHandle handle, uint64_t clockFrame, uint64_t fadeFrames, AudioFadeCurve curve);
+        double   GetPlaybackClockFrames() const;
         std::optional<std::string> ReplaceBusGraph(const AudioBusLayout& layout);
         friend class AudioClipRegistry;
         void AttachClipRegistry(AudioClipRegistry* registry);

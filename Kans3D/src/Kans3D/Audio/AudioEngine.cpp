@@ -1,12 +1,17 @@
 #include "kspch.h"
 #include "Kans3D/Audio/AudioEngine.h"
 #include "Kans3D/Audio/AudioClipRegistry.h"
+#include "Kans3D/Audio/AudioMusicPlayer.h"
 #include "Kans3D/Core/Log/Log.h"
 #include "AudioBusGraph.h"
 
 #include <miniaudio.h>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <deque>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -17,6 +22,43 @@ namespace Kans
 {
     namespace
     {
+        constexpr auto NoFrame = std::numeric_limits<uint64_t>::max();
+        using MixClock         = std::chrono::steady_clock;
+        static_assert(std::atomic<uint64_t>::is_always_lock_free);
+
+        uint64_t AddFrames(uint64_t start, uint64_t count) { return start + std::min(NoFrame - start, count); }
+
+        double WrapPosition(double frame, uint64_t begin, uint64_t end, bool loop)
+        {
+            if (frame < end)
+                return frame;
+            return loop ? begin + std::fmod(frame - begin, static_cast<double>(end - begin)) : end;
+        }
+
+        struct VoiceEnvelope
+        {
+            uint64_t       Start = 0, Length = 0;
+            float          From = 1, To = 1;
+            AudioFadeCurve Curve = AudioFadeCurve::Linear;
+
+            float Gain(uint64_t frame) const
+            {
+                if (frame < Start)
+                    return From;
+                if (frame - Start >= Length)
+                    return To;
+                const auto t = static_cast<float>(static_cast<double>(frame - Start) / Length);
+                if (Curve == AudioFadeCurve::EqualPower)
+                {
+                    constexpr float halfPi = 1.57079632679489661923f;
+                    return To >= From ? From + (To - From) * std::sin(t * halfPi) :
+                                        To + (From - To) * std::cos(t * halfPi);
+                }
+                const float weight = Curve == AudioFadeCurve::SCurve ? t * t * (3 - 2 * t) : t;
+                return From + (To - From) * weight;
+            }
+        };
+
         void Warn(const std::string& message)
         {
             if (Log::GetCoreLogger())
@@ -110,71 +152,199 @@ namespace Kans
             std::string EncodedName, DecodedName;
             bool DecodedRegistered = false;
         };
-        // Looping belongs to this public data source, so stream pages contain ordinary source frames.
-        // Changing loop points or disabling looping does not leave old loops in prefetched decoder pages.
+        // A decoder fills a preallocated PCM ring on the worker (synchronously in Offline).
+        // The mixer only reads this ring and publishes seek requests. Music's fixed loop is
+        // decoded on the producer side, so a seam never waits for a seek on the mixer.
         struct VoiceSource
         {
             ma_data_source_base Base{};
             ma_resource_manager_data_source Data{};
-            ma_resource_manager* Resources = nullptr;
-            bool Offline = false, Initialized = false;
+            ma_decoder                      Decoder {};
+            bool                            Offline = false, Initialized = false, Stream = false, DecoderReady = false;
+            AudioSoundInfo                  Info {};
+            uint64_t                        LoopStart = 0, LoopEnd = 0;
+            uint64_t                        DecoderFrame = 0;
+            uint64_t                        Capacity     = 0;
+            std::vector<float>              PCM;
+            std::atomic<uint64_t>           ReadFrame {0}, WriteFrame {0}, Cursor {0};
+            std::atomic<uint64_t>           RequestedSeek {0}, SeekRevision {0}, ReadyRevision {0};
+            std::atomic<bool>               Eof {false};
 
-            void DrainJobs()
+            ma_result Init(ma_resource_manager* resources,
+                           MemoryVFS&           vfs,
+                           const char*          path,
+                           bool                 stream,
+                           bool                 offline,
+                           AudioSoundInfo       info,
+                           uint64_t             loopStart,
+                           uint64_t             loopEnd)
             {
-                if (Offline)
-                    while (ma_resource_manager_process_next_job(Resources) == MA_SUCCESS) {}
-            }
-
-            ma_result Init(ma_resource_manager* resources, const char* path, bool stream, bool offline)
-            {
-                Resources = resources;
                 Offline = offline;
-                auto result = ma_resource_manager_data_source_init(resources, path,
-                    stream ? MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_STREAM : MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_DECODE,
-                    nullptr, &Data);
-                if (result != MA_SUCCESS)
-                    return result;
-                static const ma_data_source_vtable callbacks = {
-                    [](ma_data_source* source, void* out, ma_uint64 count, ma_uint64* read) -> ma_result
-                    {
-                        auto& self = *static_cast<VoiceSource*>(source);
-                        self.DrainJobs();
-                        return ma_data_source_read_pcm_frames(&self.Data, out, count, read);
-                    },
-                    [](ma_data_source* source, ma_uint64 frame) -> ma_result
-                    {
-                        auto& self = *static_cast<VoiceSource*>(source);
-                        auto result = ma_data_source_seek_to_pcm_frame(&self.Data, frame);
-                        self.DrainJobs();
+                Stream    = stream;
+                Info      = info;
+                LoopStart = loopStart;
+                LoopEnd   = loopEnd;
+                ma_result result;
+                if (Stream)
+                {
+                    const auto config = ma_decoder_config_init(ma_format_f32, 0, 0);
+                    result            = ma_decoder_init_vfs(&vfs, path, &config, &Decoder);
+                    if (result != MA_SUCCESS)
                         return result;
+                    DecoderReady = true;
+                    Capacity     = std::max(2048u, Info.SampleRate / 4);
+                    PCM.resize(Capacity * Info.Channels);
+                    Fill();
+                }
+                else
+                {
+                    result = ma_resource_manager_data_source_init(
+                        resources, path, MA_RESOURCE_MANAGER_DATA_SOURCE_FLAG_DECODE, nullptr, &Data);
+                    if (result != MA_SUCCESS)
+                        return result;
+                }
+                static const ma_data_source_vtable callbacks = {
+                    [](ma_data_source* source, void* out, ma_uint64 count, ma_uint64* read) -> ma_result {
+                        auto& self = *static_cast<VoiceSource*>(source);
+                        return self.Stream ? self.Read(out, count, *read) :
+                                             ma_data_source_read_pcm_frames(&self.Data, out, count, read);
                     },
-                    [](ma_data_source* source, ma_format* format, ma_uint32* channels, ma_uint32* rate,
-                       ma_channel* map, size_t capacity) -> ma_result
-                    {
-                        return ma_data_source_get_data_format(&static_cast<VoiceSource*>(source)->Data,
-                            format, channels, rate, map, capacity);
+                    [](ma_data_source* source, ma_uint64 frame) -> ma_result {
+                        auto& self = *static_cast<VoiceSource*>(source);
+                        if (!self.Stream)
+                            return ma_data_source_seek_to_pcm_frame(&self.Data, frame);
+                        if (frame != self.Cursor.load(std::memory_order_relaxed))
+                        {
+                            self.Cursor.store(frame, std::memory_order_relaxed);
+                            self.RequestedSeek.store(frame, std::memory_order_relaxed);
+                            self.SeekRevision.fetch_add(1, std::memory_order_release);
+                        }
+                        return MA_SUCCESS;
                     },
-                    [](ma_data_source* source, ma_uint64* cursor) -> ma_result
-                    {
-                        return ma_data_source_get_cursor_in_pcm_frames(&static_cast<VoiceSource*>(source)->Data, cursor);
+                    [](ma_data_source* source,
+                       ma_format*      format,
+                       ma_uint32*      channels,
+                       ma_uint32*      rate,
+                       ma_channel*     map,
+                       size_t          capacity) -> ma_result {
+                        auto& self = *static_cast<VoiceSource*>(source);
+                        if (!self.Stream)
+                            return ma_data_source_get_data_format(&self.Data, format, channels, rate, map, capacity);
+                        if (format)
+                            *format = ma_format_f32;
+                        if (channels)
+                            *channels = self.Info.Channels;
+                        if (rate)
+                            *rate = self.Info.SampleRate;
+                        ma_channel_map_init_standard(
+                            ma_standard_channel_map_default, map, capacity, self.Info.Channels);
+                        return MA_SUCCESS;
                     },
-                    [](ma_data_source* source, ma_uint64* length) -> ma_result
-                    {
-                        return ma_data_source_get_length_in_pcm_frames(&static_cast<VoiceSource*>(source)->Data, length);
+                    [](ma_data_source* source, ma_uint64* cursor) -> ma_result {
+                        auto& self = *static_cast<VoiceSource*>(source);
+                        if (!self.Stream)
+                            return ma_data_source_get_cursor_in_pcm_frames(&self.Data, cursor);
+                        *cursor = self.Cursor.load(std::memory_order_relaxed);
+                        return MA_SUCCESS;
+                    },
+                    [](ma_data_source* source, ma_uint64* length) -> ma_result {
+                        *length = static_cast<VoiceSource*>(source)->Info.LengthFrames;
+                        return MA_SUCCESS;
                     },
                     nullptr,
-                    0
-                };
+                    0};
                 auto config = ma_data_source_config_init();
                 config.vtable = &callbacks;
                 result = ma_data_source_init(&config, &Base);
-                if (result != MA_SUCCESS)
-                {
+                if (result != MA_SUCCESS && !Stream)
                     ma_resource_manager_data_source_uninit(&Data);
-                    return result;
+                Initialized = result == MA_SUCCESS;
+                return result;
+            }
+
+            void Fill()
+            {
+                const auto revision = SeekRevision.load(std::memory_order_acquire);
+                auto       write    = WriteFrame.load(std::memory_order_relaxed);
+                const bool reset    = ReadyRevision.load(std::memory_order_relaxed) != revision;
+                if (reset)
+                {
+                    ReadFrame.store(write, std::memory_order_relaxed);
+                    const auto target = RequestedSeek.load(std::memory_order_relaxed);
+                    Eof.store(ma_decoder_seek_to_pcm_frame(&Decoder, target) != MA_SUCCESS, std::memory_order_relaxed);
+                    DecoderFrame = target;
                 }
-                Initialized = true;
+                if (!Eof.load(std::memory_order_relaxed))
+                {
+                    auto room = Capacity - (write - ReadFrame.load(std::memory_order_acquire));
+                    while (room != 0)
+                    {
+                        if (LoopEnd != 0 && DecoderFrame == LoopEnd)
+                        {
+                            if (ma_decoder_seek_to_pcm_frame(&Decoder, LoopStart) != MA_SUCCESS)
+                            {
+                                Eof.store(true, std::memory_order_release);
+                                break;
+                            }
+                            DecoderFrame = LoopStart;
+                        }
+                        const auto offset = write % Capacity;
+                        auto       count  = std::min(room, Capacity - offset);
+                        if (LoopEnd != 0)
+                            count = std::min(count, LoopEnd - DecoderFrame);
+                        ma_uint64  read = 0;
+                        const auto result =
+                            ma_decoder_read_pcm_frames(&Decoder, PCM.data() + offset * Info.Channels, count, &read);
+                        DecoderFrame += read;
+                        write += read;
+                        WriteFrame.store(write, std::memory_order_release);
+                        if (read != count || (result != MA_SUCCESS && result != MA_AT_END))
+                        {
+                            Eof.store(true, std::memory_order_release);
+                            break;
+                        }
+                        room -= read;
+                    }
+                }
+                if (reset)
+                    ReadyRevision.store(revision, std::memory_order_release);
+            }
+
+            ma_result Read(void* out, uint64_t count, ma_uint64& read)
+            {
+                if (Offline)
+                    Fill();
+                read = 0;
+                if (SeekRevision.load(std::memory_order_relaxed) != ReadyRevision.load(std::memory_order_acquire))
+                    return MA_BUSY;
+                const bool eof   = Eof.load(std::memory_order_acquire);
+                const auto start = ReadFrame.load(std::memory_order_relaxed);
+                read             = std::min(count, WriteFrame.load(std::memory_order_acquire) - start);
+                if (read == 0)
+                    return eof ? MA_AT_END : MA_BUSY;
+                if (out)
+                {
+                    const auto offset  = start % Capacity;
+                    const auto first   = std::min<uint64_t>(read, Capacity - offset);
+                    auto*      samples = static_cast<float*>(out);
+                    std::memcpy(samples, PCM.data() + offset * Info.Channels, first * Info.Channels * sizeof(float));
+                    std::memcpy(
+                        samples + first * Info.Channels, PCM.data(), (read - first) * Info.Channels * sizeof(float));
+                }
+                const auto next = Cursor.load(std::memory_order_relaxed) + read;
+                Cursor.store(LoopEnd == 0 || next < LoopEnd ? next :
+                                                              LoopStart + (next - LoopEnd) % (LoopEnd - LoopStart),
+                             std::memory_order_relaxed);
+                ReadFrame.store(start + read, std::memory_order_release);
                 return MA_SUCCESS;
+            }
+
+            void WaitForSeek() const
+            {
+                if (Stream && !Offline)
+                    while (SeekRevision.load(std::memory_order_relaxed) !=
+                           ReadyRevision.load(std::memory_order_acquire))
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
 
             ~VoiceSource()
@@ -182,17 +352,143 @@ namespace Kans
                 if (Initialized)
                 {
                     ma_data_source_uninit(&Base);
-                    ma_resource_manager_data_source_uninit(&Data);
+                    if (!Stream)
+                        ma_resource_manager_data_source_uninit(&Data);
                 }
+                if (DecoderReady)
+                    ma_decoder_uninit(&Decoder);
             }
         };
         struct Voice
         {
+            struct Transport
+            {
+                uint64_t Frame = 0;
+                uint64_t Start = NoFrame, Stop = NoFrame;
+                double   Source = 0, Rate = 1;
+                uint64_t LoopBegin = 0, LoopEnd = 0;
+                bool     Loop = false;
+
+                double Position(double clock) const
+                {
+                    const auto elapsed = std::max(0.0, std::min(clock, static_cast<double>(Stop)) - Start);
+                    return WrapPosition(Source + elapsed * Rate, LoopBegin, LoopEnd, Loop);
+                }
+            };
+
+            struct Control
+            {
+                std::atomic<Voice*>   Owner {nullptr};
+                std::atomic<uint64_t> Revision {0};
+            };
+
+            struct Fades
+            {
+                VoiceEnvelope                In;
+                std::optional<VoiceEnvelope> Out;
+
+                float Gain(uint64_t frame) const
+                {
+                    return Out && frame >= Out->Start ? Out->Gain(frame) : In.Gain(frame);
+                }
+            };
+
+            // Only the sound's mixer callback accesses these fields. The inherited ma_sound stays
+            // attached to the usual bus graph and retains miniaudio's volume, pan and spatial DSP.
+            struct Node : ma_sound
+            {
+                Voice*                Owner    = nullptr;
+                const ma_node_vtable* Original = nullptr;
+                uint64_t              Block = NoFrame, Next = 0;
+                Fades                 Envelope;
+
+                static void
+                Process(ma_node* node, const float** in, ma_uint32* inCount, float** out, ma_uint32* outCount)
+                {
+                    auto&      self  = *static_cast<Node*>(static_cast<ma_sound*>(node));
+                    auto&      voice = *self.Owner;
+                    const auto block = ma_engine_get_time_in_pcm_frames(ma_sound_get_engine(&self));
+                    if (block != self.Block)
+                    {
+                        self.Block = block;
+                        self.Next  = std::max<uint64_t>(block, ma_node_get_state_time(node, ma_node_state_started));
+                    }
+                    if (voice.Timed.load(std::memory_order_relaxed))
+                    {
+                        const bool bypass =
+                            !voice.Desc.Spatial &&
+                            self.engineNode.sampleRate == ma_engine_get_sample_rate(ma_sound_get_engine(&self)) &&
+                            ma_sound_get_pitch(&self) == 1;
+                        if (self.engineNode.isPitchDisabled != bypass)
+                        {
+                            self.engineNode.isPitchDisabled = bypass;
+                            self.ResetResampler();
+                        }
+                        if (const auto seek = voice.PendingSeek.exchange(NoFrame); seek != NoFrame)
+                            self.Seek(seek);
+                    }
+                    self.Original->onProcess(node, in, inCount, out, outCount);
+                    const auto channels = ma_node_get_output_channels(node, 0);
+                    if (self.Envelope.Out || self.Envelope.In.From != 1 || self.Envelope.In.To != 1)
+                        for (uint32_t i = 0; i < *outCount; ++i)
+                        {
+                            const auto gain = self.Envelope.Gain(self.Next + i);
+                            for (uint32_t ch = 0; ch < channels; ++ch)
+                                out[0][i * channels + ch] *= gain;
+                        }
+                    self.Next += *outCount;
+                }
+
+                void ResetResampler()
+                {
+                    ma_resampler_reset(&engineNode.resampler);
+                    // miniaudio's linear resampler starts with x0 = x1 = 0. For scheduled playback,
+                    // preload the interpolation pair before emitting the first output frame.
+                    static_cast<ma_linear_resampler*>(engineNode.resampler.pBackend)->inTimeInt = 2;
+                }
+
+                void Seek(uint64_t frame)
+                {
+                    ma_data_source_seek_to_pcm_frame(pDataSource, frame);
+                    processingCacheFramesRemaining = 0;
+                    ResetResampler();
+                }
+            };
+
             VoiceSource Source;
-            ma_sound Sound{};
+            Node                     Sound {};
             AudioVoiceDesc Desc;
-            bool Initialized = false;
+            AudioSoundInfo           Info {};
+            std::deque<Transport>    History;
+            std::atomic<bool>        Timed {false};
+            std::atomic<uint64_t>    PendingSeek {NoFrame};
+            std::shared_ptr<Control> Commands = std::make_shared<Control>();
+            Fades                    Envelope;
+            uint64_t                 PausedAt = NoFrame, RemainingStart = 0, RemainingStop = NoFrame;
+            bool                     Initialized = false, Scheduled = false;
             ~Voice() { if (Initialized) ma_sound_uninit(&Sound); }
+
+            const Transport& Current() const { return History.back(); }
+            double           Position(double clock) const
+            {
+                for (auto it = History.rbegin(); it != History.rend(); ++it)
+                    if (it->Frame <= clock)
+                        return it->Position(clock);
+                return History.front().Source;
+            }
+
+            void Record(Transport state, double heardFrame)
+            {
+                while (History.size() > 1 && History[1].Frame <= heardFrame)
+                    History.pop_front();
+                if (History.back().Frame >= state.Frame)
+                {
+                    state.Frame    = History.back().Frame;
+                    History.back() = state;
+                }
+                else
+                    History.push_back(state);
+            }
         };
         struct Slot
         {
@@ -200,16 +496,147 @@ namespace Kans
             std::unique_ptr<Voice> Value;
         };
 
+        struct Schedule
+        {
+            std::shared_ptr<Voice::Control> Control;
+            uint64_t                        Revision;
+            Voice::Transport                Transport;
+            Voice::Fades                    Envelope;
+            bool                            Replay;
+        };
+
+        struct ScheduleBatch
+        {
+            std::vector<Schedule> Operations;
+            ScheduleBatch*        Next = nullptr;
+            std::atomic<bool>     Applied {false};
+        };
+
+        std::atomic<ScheduleBatch*>                 PendingSchedule {nullptr};
+        std::atomic<bool>                           ApplyingSchedule {false};
+        std::vector<std::unique_ptr<ScheduleBatch>> ScheduleStorage;
+        ScheduleBatch*                              BuildingSchedule = nullptr;
+
+        static void Apply(const Schedule& command)
+        {
+            auto* voice = command.Control->Owner.load();
+            if (!voice || command.Revision != command.Control->Revision.load())
+                return;
+            auto&       sound = voice->Sound;
+            const auto& state = command.Transport;
+            sound.Envelope    = command.Envelope;
+            if (state.Start == NoFrame || state.Stop <= state.Start)
+            {
+                ma_sound_stop(&sound);
+                return;
+            }
+            if (command.Replay)
+            {
+                ma_sound_stop(&sound);
+                ma_sound_start(&sound);
+                if (voice->Timed.load(std::memory_order_relaxed))
+                    sound.Seek(0);
+            }
+            ma_sound_set_start_time_in_pcm_frames(&sound, state.Start);
+            ma_sound_set_stop_time_in_pcm_frames(&sound, state.Stop);
+            ma_node_set_state(&sound, ma_node_state_started);
+        }
+
+        void CollectSchedules()
+        {
+            ScheduleStorage.erase(
+                std::remove_if(ScheduleStorage.begin(),
+                               ScheduleStorage.end(),
+                               [](const auto& batch) { return batch->Applied.load(std::memory_order_acquire); }),
+                ScheduleStorage.end());
+        }
+
+        void Submit(std::unique_ptr<ScheduleBatch> batch)
+        {
+            CollectSchedules();
+            auto* next = batch.get();
+            ScheduleStorage.push_back(std::move(batch));
+            auto* previous = PendingSchedule.load();
+            do
+            {
+                next->Next = previous;
+            } while (!PendingSchedule.compare_exchange_weak(previous, next));
+        }
+
+        void ApplySchedules()
+        {
+            if (!PendingSchedule.load())
+                return;
+            // The main thread can invalidate a voice and wait for this short pass before freeing it.
+            // The mixer never waits on the producer or frees a batch.
+            ApplyingSchedule.store(true);
+            auto*          entries = PendingSchedule.exchange(nullptr);
+            ScheduleBatch* ordered = nullptr;
+            while (entries)
+            {
+                auto* next    = entries->Next;
+                entries->Next = ordered;
+                ordered       = entries;
+                entries       = next;
+            }
+            while (ordered)
+            {
+                auto* current = ordered;
+                ordered       = current->Next;
+                for (const auto& operation : current->Operations)
+                    Apply(operation);
+                current->Applied.store(true, std::memory_order_release);
+            }
+            ApplyingSchedule.store(false);
+        }
+
+        void Queue(Voice& voice, bool replay = false)
+        {
+            voice.Scheduled = true;
+            Schedule command {voice.Commands, ++voice.Commands->Revision, voice.Current(), voice.Envelope, replay};
+            if (Config.Mode == AudioOutputMode::Offline)
+                Apply(command);
+            else if (BuildingSchedule)
+                BuildingSchedule->Operations.push_back(std::move(command));
+            else
+            {
+                auto batch = std::make_unique<ScheduleBatch>();
+                batch->Operations.push_back(std::move(command));
+                Submit(std::move(batch));
+            }
+        }
+
+        void CancelSchedule(Voice& voice)
+        {
+            ++voice.Commands->Revision;
+            while (ApplyingSchedule.load())
+                std::this_thread::yield();
+        }
+
         MemoryVFS VFS;
         ma_context Context{};
         ma_resource_manager Resources{};
         ma_engine Engine{};
+        std::thread                     StreamWorker;
+        std::atomic<bool>               StopWorker {false};
+        std::mutex                      StreamMutex;
+        std::vector<VoiceSource*>       DeviceStreams;
+        std::atomic<uint64_t>           ClockSequence {0}, LastMixedFrame {0}, LastMixedCount {0};
+        std::atomic<uint64_t>           MixEnd {0};
+        std::atomic<int64_t>            LastMixTicks {0};
+        mutable double                  PlaybackFrames = 0;
+        uint64_t                        LatencyFrames  = 0;
         bool ContextReady = false, ResourcesReady = false, Ready = false;
         AudioEngineConfig Config;
         std::unique_ptr<AudioBusGraph>  Buses;
         std::unordered_set<std::string> WarnedBusNames;
         AudioDSPRegistry                DSPRegistry;
         std::unordered_set<std::string> WarnedDSPNames;
+
+        uint64_t WritableClock() const
+        {
+            return std::max<uint64_t>(ma_engine_get_time_in_pcm_frames(&Engine), MixEnd.load());
+        }
 
         void WarnUnknownDSP(const AudioBusEffectParameters& parameters)
         {
@@ -306,11 +733,8 @@ namespace Kans
         auto resourcesConfig = ma_resource_manager_config_init();
         resourcesConfig.decodedFormat = ma_format_f32;
         resourcesConfig.pVFS = &p.VFS;
-        if (config.Mode == AudioOutputMode::Offline)
-        {
-            resourcesConfig.jobThreadCount = 0;
-            resourcesConfig.flags = MA_RESOURCE_MANAGER_FLAG_NO_THREADING;
-        }
+        resourcesConfig.jobThreadCount = 0;
+        resourcesConfig.flags          = MA_RESOURCE_MANAGER_FLAG_NO_THREADING;
         auto result = ma_resource_manager_init(&resourcesConfig, &p.Resources);
         if (result != MA_SUCCESS)
         {
@@ -318,6 +742,29 @@ namespace Kans
             return Error("Resource manager init", result);
         }
         p.ResourcesReady = true;
+        if (config.Mode == AudioOutputMode::Device)
+        {
+            try
+            {
+                p.StopWorker.store(false, std::memory_order_relaxed);
+                p.StreamWorker = std::thread([&p] {
+                    while (!p.StopWorker.load(std::memory_order_relaxed))
+                    {
+                        {
+                            std::lock_guard<std::mutex> lock(p.StreamMutex);
+                            for (auto* source : p.DeviceStreams)
+                                source->Fill();
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+                });
+            }
+            catch (const std::system_error& error)
+            {
+                Shutdown();
+                return error.what();
+            }
+        }
         auto engineConfig = ma_engine_config_init();
         engineConfig.pResourceManager = &p.Resources;
         engineConfig.pContext = p.ContextReady ? &p.Context : nullptr;
@@ -325,6 +772,31 @@ namespace Kans
         engineConfig.channels = config.Channels;
         engineConfig.sampleRate = config.SampleRate;
         engineConfig.listenerCount = config.MaxListeners;
+        engineConfig.noAutoStart      = MA_TRUE;
+        if (config.Mode == AudioOutputMode::Device)
+        {
+            engineConfig.dataCallback = [](ma_device* device, void* output, const void*, ma_uint32 frames) {
+                auto*          engine  = static_cast<ma_engine*>(device->pUserData);
+                auto&          impl    = *static_cast<Impl*>(engine->pProcessUserData);
+                const auto*    graph   = ma_engine_get_node_graph(engine);
+                const uint64_t quantum = std::max(1u, graph->processingSizeInFrames);
+                const uint64_t needed  = frames - std::min(frames, graph->processingCacheFramesRemaining);
+                const auto     first   = ma_engine_get_time_in_pcm_frames(engine);
+                impl.MixEnd.store(AddFrames(first, (needed + quantum - 1) / quantum * quantum));
+                impl.ApplySchedules();
+                ma_engine_read_pcm_frames(engine, output, frames, nullptr);
+                impl.MixEnd.store(ma_engine_get_time_in_pcm_frames(engine));
+            };
+            engineConfig.pProcessUserData = &p;
+            engineConfig.onProcess        = [](void* user, float*, ma_uint64 count) {
+                auto& impl = *static_cast<Impl*>(user);
+                ++impl.ClockSequence;
+                impl.LastMixedFrame.store(ma_engine_get_time_in_pcm_frames(&impl.Engine));
+                impl.LastMixedCount.store(count);
+                impl.LastMixTicks.store(MixClock::now().time_since_epoch().count());
+                ++impl.ClockSequence;
+            };
+        }
         result = ma_engine_init(&engineConfig, &p.Engine);
         if (result != MA_SUCCESS)
         {
@@ -336,6 +808,19 @@ namespace Kans
         {
             Shutdown();
             return error;
+        }
+        if (config.Mode == AudioOutputMode::Device)
+        {
+            const auto&    playback     = ma_engine_get_device(&p.Engine)->playback;
+            const uint64_t deviceFrames = uint64_t {playback.internalPeriodSizeInFrames} * playback.internalPeriods;
+            if (playback.internalSampleRate != 0)
+                p.LatencyFrames = static_cast<uint64_t>(
+                    std::ceil(static_cast<double>(deviceFrames) * GetSampleRate() / playback.internalSampleRate));
+            if (const auto start = ma_engine_start(&p.Engine); start != MA_SUCCESS)
+            {
+                Shutdown();
+                return Error("Audio engine start", start);
+            }
         }
         return std::nullopt;
     }
@@ -358,18 +843,67 @@ namespace Kans
         if (p.Ready)
             ma_engine_uninit(&p.Engine);
         p.Ready = false;
+        if (p.StreamWorker.joinable())
+        {
+            p.StopWorker.store(true, std::memory_order_relaxed);
+            p.StreamWorker.join();
+        }
         if (p.ResourcesReady)
             ma_resource_manager_uninit(&p.Resources);
         p.ResourcesReady = false;
         if (p.ContextReady)
             ma_context_uninit(&p.Context);
         p.ContextReady = false;
+        p.PendingSchedule.store(nullptr);
+        p.ScheduleStorage.clear();
+        p.ClockSequence.store(0);
+        p.LastMixedFrame.store(0);
+        p.LastMixedCount.store(0);
+        p.LastMixTicks.store(0);
+        p.MixEnd.store(0);
+        p.PlaybackFrames = 0;
+        p.LatencyFrames  = 0;
     }
 
     bool AudioEngine::IsInitialized() const { return m_Impl->Ready; }
     AudioOutputMode AudioEngine::GetMode() const { return m_Impl->Config.Mode; }
     uint32_t AudioEngine::GetSampleRate() const { return IsInitialized() ? ma_engine_get_sample_rate(&m_Impl->Engine) : 0; }
     uint32_t AudioEngine::GetChannels() const { return IsInitialized() ? ma_engine_get_channels(&m_Impl->Engine) : 0; }
+    uint64_t AudioEngine::GetClockFrames() const
+    {
+        return IsInitialized() ? ma_engine_get_time_in_pcm_frames(&m_Impl->Engine) : 0;
+    }
+
+    uint64_t AudioEngine::GetOutputLatencyFrames() const { return m_Impl->LatencyFrames; }
+
+    double AudioEngine::GetPlaybackClockFrames() const
+    {
+        auto& p = *m_Impl;
+        if (!IsInitialized() || GetMode() == AudioOutputMode::Offline)
+            return static_cast<double>(GetClockFrames());
+        // Read a consistent mix timestamp. The caller is the main thread, so it may retry if
+        // a device callback is publishing concurrently.
+        uint64_t sequence, mixed, count;
+        int64_t  ticks;
+        do
+        {
+            sequence = p.ClockSequence.load();
+            mixed    = p.LastMixedFrame.load();
+            count    = p.LastMixedCount.load();
+            ticks    = p.LastMixTicks.load();
+        } while (sequence % 2 != 0 || sequence != p.ClockSequence.load());
+        const auto   last    = MixClock::time_point(MixClock::duration(ticks));
+        const double elapsed = std::chrono::duration<double>(MixClock::now() - last).count() * GetSampleRate();
+        const auto   heard =
+            static_cast<double>(mixed) - p.LatencyFrames + std::clamp(elapsed, 0.0, static_cast<double>(count));
+        p.PlaybackFrames = std::clamp(heard, p.PlaybackFrames, static_cast<double>(mixed));
+        return p.PlaybackFrames;
+    }
+
+    double AudioEngine::GetPlaybackClockSeconds() const
+    {
+        return IsInitialized() ? GetPlaybackClockFrames() / GetSampleRate() : 0;
+    }
     void AudioEngine::SetMasterVolume(float linear)
     {
         if (IsInitialized() && std::isfinite(linear))
@@ -404,12 +938,20 @@ namespace Kans
         if (!IsInitialized())
             return;
         m_Impl->DrainJobs();
+        m_Impl->CollectSchedules();
         for (uint32_t i = 0; i < m_Impl->Slots.size(); ++i)
         {
             auto& slot = m_Impl->Slots[i];
             // ma_sound_at_end reads miniaudio's atomic flag; no engine callback runs on the audio thread.
-            if (slot.Value && slot.Value->Desc.AutoRelease && ma_sound_at_end(&slot.Value->Sound))
-                DestroyVoice({i, slot.Generation});
+            if (slot.Value && slot.Value->Desc.AutoRelease)
+            {
+                const auto stop = slot.Value->Current().Stop;
+                if ((ma_sound_at_end(&slot.Value->Sound) &&
+                     (!slot.Value->Timed.load() ||
+                      slot.Value->Position(GetPlaybackClockFrames()) >= slot.Value->Info.LengthFrames)) ||
+                    (stop != NoFrame && GetPlaybackClockFrames() >= stop))
+                    DestroyVoice({i, slot.Generation});
+            }
         }
     }
 
@@ -765,7 +1307,9 @@ namespace Kans
         return it->second.PCM.size() * sizeof(float);
     }
 
-    AudioVoiceHandle AudioEngine::CreateVoice(const AudioVoiceDesc& desc)
+    AudioVoiceHandle AudioEngine::CreateVoice(const AudioVoiceDesc& desc) { return CreateVoice(desc, 0, 0); }
+
+    AudioVoiceHandle AudioEngine::CreateVoice(const AudioVoiceDesc& desc, uint64_t loopStart, uint64_t loopEnd)
     {
         auto it = m_Impl->Sounds.find(desc.Sound);
         if (!IsInitialized() || it == m_Impl->Sounds.end())
@@ -785,8 +1329,21 @@ namespace Kans
         }
         auto voice = std::make_unique<Impl::Voice>();
         voice->Desc = desc;
+        voice->Info = sound.Info;
+        Impl::Voice::Transport transport;
+        transport.Frame     = GetClockFrames();
+        transport.Loop      = desc.Loop;
+        transport.LoopBegin = loopStart;
+        transport.LoopEnd   = loopEnd != 0 ? loopEnd : sound.Info.LengthFrames;
+        voice->History.push_back(transport);
         auto result = voice->Source.Init(&m_Impl->Resources,
-            (stream ? sound.EncodedName : sound.DecodedName).c_str(), stream, GetMode() == AudioOutputMode::Offline);
+                                         m_Impl->VFS,
+                                         (stream ? sound.EncodedName : sound.DecodedName).c_str(),
+                                         stream,
+                                         GetMode() == AudioOutputMode::Offline,
+                                         sound.Info,
+                                         loopStart,
+                                         loopEnd);
         if (result != MA_SUCCESS)
         {
             Warn(Error("Voice source init", result));
@@ -794,11 +1351,16 @@ namespace Kans
         }
         auto config = ma_sound_config_init_2(&m_Impl->Engine);
         config.pDataSource = &voice->Source;
-        config.pInitialAttachment = m_Impl->VoiceBusInput(*m_Impl->Buses, desc.Bus);
+        config.flags |= MA_SOUND_FLAG_NO_DEFAULT_ATTACHMENT;
         if (!desc.Spatial)
             config.flags |= MA_SOUND_FLAG_NO_SPATIALIZATION;
-        if (desc.Loop)
+        if (desc.Loop && !(stream && loopEnd != 0))
             config.flags |= MA_SOUND_FLAG_LOOPING;
+        if (loopEnd != 0 && !stream)
+        {
+            config.loopPointBegInPCMFrames = loopStart;
+            config.loopPointEndInPCMFrames = loopEnd;
+        }
         result = ma_sound_init_ex(&m_Impl->Engine, &config, &voice->Sound);
         if (result != MA_SUCCESS)
         {
@@ -806,6 +1368,18 @@ namespace Kans
             return {};
         }
         voice->Initialized = true;
+        auto& node         = voice->Sound;
+        node.Owner         = voice.get();
+        voice->Commands->Owner.store(voice.get());
+        node.Original                      = node.engineNode.baseNode.vtable;
+        static const ma_node_vtable vtable = {Impl::Voice::Node::Process, nullptr, 0, 1, 0};
+        node.engineNode.baseNode.vtable    = &vtable;
+        result = ma_node_attach_output_bus(&node, 0, m_Impl->VoiceBusInput(*m_Impl->Buses, desc.Bus), 0);
+        if (result != MA_SUCCESS)
+        {
+            Warn(Error("Attach voice", result));
+            return {};
+        }
         uint32_t index = 0;
         for (; index < m_Impl->Slots.size(); ++index)
             if (!m_Impl->Slots[index].Value && m_Impl->Slots[index].Generation != 0)
@@ -813,6 +1387,11 @@ namespace Kans
         if (index == m_Impl->Slots.size())
             m_Impl->Slots.emplace_back();
         auto& slot = m_Impl->Slots[index];
+        if (stream && GetMode() == AudioOutputMode::Device)
+        {
+            std::lock_guard<std::mutex> lock(m_Impl->StreamMutex);
+            m_Impl->DeviceStreams.push_back(&voice->Source);
+        }
         slot.Value = std::move(voice);
         AudioVoiceHandle handle{index, slot.Generation};
         SetVolume(handle, desc.Volume);
@@ -860,6 +1439,14 @@ namespace Kans
         if (!m_Impl->Find(handle))
             return;
         auto& slot = m_Impl->Slots[handle.Index];
+        slot.Value->Commands->Owner.store(nullptr);
+        m_Impl->CancelSchedule(*slot.Value);
+        if (slot.Value->Source.Stream && GetMode() == AudioOutputMode::Device)
+        {
+            std::lock_guard<std::mutex> lock(m_Impl->StreamMutex);
+            auto&                       streams = m_Impl->DeviceStreams;
+            streams.erase(std::find(streams.begin(), streams.end(), &slot.Value->Source));
+        }
         slot.Value.reset();
         // Retire a slot permanently on generation wrap so even ancient handles cannot become live again.
         ++slot.Generation;
@@ -868,25 +1455,195 @@ namespace Kans
     void AudioEngine::Play(AudioVoiceHandle handle)
     {
         if (auto* voice = m_Impl->Find(handle))
+        {
+            auto       state = voice->Current();
+            const auto now   = voice->Scheduled ? m_Impl->WritableClock() : GetClockFrames();
+            const bool ended = ma_sound_at_end(&voice->Sound);
+            if (state.Start != NoFrame && now < state.Stop && !ended)
+                return;
+            if (ended)
+                state.Source = 0;
+            else
+                state.Source = state.Position(static_cast<double>(now));
+            state.Frame = now;
+            state.Start = now;
+            state.Stop  = NoFrame;
+            if (voice->PausedAt != NoFrame)
+            {
+                state.Start = AddFrames(now, voice->RemainingStart);
+                if (voice->RemainingStop != NoFrame)
+                    state.Stop = AddFrames(now, voice->RemainingStop);
+                const auto delay         = now - voice->PausedAt;
+                voice->Envelope.In.Start = AddFrames(voice->Envelope.In.Start, delay);
+                if (voice->Envelope.Out)
+                    voice->Envelope.Out->Start = AddFrames(voice->Envelope.Out->Start, delay);
+                voice->PausedAt = NoFrame;
+            }
+            else
+                voice->Envelope = {};
+            if (voice->Scheduled)
+            {
+                voice->Record(state, GetPlaybackClockFrames());
+                m_Impl->Queue(*voice, ended);
+                return;
+            }
+            ma_sound_set_start_time_in_pcm_frames(&voice->Sound, state.Start);
+            ma_sound_set_stop_time_in_pcm_frames(&voice->Sound, state.Stop);
             ma_sound_start(&voice->Sound);
+            voice->Record(state, GetPlaybackClockFrames());
+        }
     }
+
+    void AudioEngine::ScheduleStart(AudioVoiceHandle handle, uint64_t clockFrame)
+    {
+        StartVoice(handle, clockFrame, 0, AudioFadeCurve::Linear);
+    }
+
+    uint64_t
+    AudioEngine::StartVoice(AudioVoiceHandle handle, uint64_t clockFrame, uint64_t fadeFrames, AudioFadeCurve curve)
+    {
+        auto* voice = m_Impl->Find(handle);
+        if (!voice)
+            return clockFrame;
+        auto& sound = voice->Sound;
+        m_Impl->CancelSchedule(*voice);
+        // Detach on the main thread to prepare the decoder, cache and resampler before arming playback.
+        ma_node_detach_output_bus(&sound, 0);
+        ma_sound_stop(&sound);
+        auto       state  = voice->Current();
+        const auto now    = m_Impl->WritableClock();
+        const auto source = ma_sound_at_end(&sound) ? 0 : state.Position(static_cast<double>(now));
+        const auto late   = !m_Impl->BuildingSchedule && now > clockFrame ? now - clockFrame : 0;
+        const auto frame =
+            static_cast<uint64_t>(WrapPosition(source + late * state.Rate, state.LoopBegin, state.LoopEnd, state.Loop));
+        voice->PendingSeek.store(NoFrame);
+        sound.seekTarget = NoFrame;
+        sound.atEnd      = MA_FALSE;
+        sound.Seek(frame);
+        // A start requested in the past may need a new streamed page. Prepare it here, outside the mixer.
+        voice->Source.WaitForSeek();
+        state.Source    = static_cast<double>(frame);
+        state.Frame     = now;
+        state.Start     = m_Impl->BuildingSchedule ? clockFrame : std::max(m_Impl->WritableClock(), clockFrame);
+        state.Stop      = NoFrame;
+        voice->PausedAt = NoFrame;
+        voice->Timed.store(true);
+        voice->Envelope = {{state.Start, fadeFrames, fadeFrames == 0 ? 1.f : 0.f, 1.f, curve}, std::nullopt};
+        ma_node_attach_output_bus(&sound, 0, m_Impl->VoiceBusInput(*m_Impl->Buses, voice->Desc.Bus), 0);
+        voice->Record(state, GetPlaybackClockFrames());
+        m_Impl->Queue(*voice);
+        return state.Start;
+    }
+
+    void
+    AudioEngine::ScheduleStop(AudioVoiceHandle handle, uint64_t clockFrame, uint64_t fadeFrames, AudioFadeCurve curve)
+    {
+        if (auto* voice = m_Impl->Find(handle))
+        {
+            auto state  = voice->Current();
+            state.Frame = m_Impl->BuildingSchedule ? GetClockFrames() : m_Impl->WritableClock();
+            state.Stop  = m_Impl->BuildingSchedule ? clockFrame : std::max(state.Frame, clockFrame);
+            if (fadeFrames != 0)
+            {
+                const auto earliest = m_Impl->BuildingSchedule ? 0 : state.Frame;
+                const auto start    = std::max(earliest, state.Stop - std::min(state.Stop, fadeFrames));
+                // A superseded future fade should have no bearing on the replacement.
+                if (voice->Envelope.Out && voice->Envelope.Out->Start > state.Frame)
+                    voice->Envelope.Out.reset();
+                const auto from = voice->Envelope.Gain(start);
+                if (voice->Envelope.Out)
+                    voice->Envelope.In = *voice->Envelope.Out;
+                voice->Envelope.Out = VoiceEnvelope {start, state.Stop - start, from, 0, curve};
+            }
+            else
+                voice->Envelope.Out.reset();
+            voice->Record(state, GetPlaybackClockFrames());
+            m_Impl->Queue(*voice);
+        }
+    }
+    uint64_t AudioMusicPlayer::WritableClock() const
+    {
+        return m_Engine.IsInitialized() ? m_Engine.m_Impl->WritableClock() : 0;
+    }
+
+    uint64_t AudioMusicPlayer::ScheduleSwitch(AudioVoiceHandle        incoming,
+                                              uint64_t                frame,
+                                              uint64_t                fade,
+                                              AudioFadeCurve          curve,
+                                              std::optional<uint64_t> superseded)
+    {
+        auto& impl  = *m_Engine.m_Impl;
+        auto  batch = std::make_unique<AudioEngine::Impl::ScheduleBatch>();
+        batch->Operations.reserve(m_Tracks.size() + 1);
+        struct ScheduleScope
+        {
+            AudioEngine::Impl& Engine;
+            ~ScheduleScope() { Engine.BuildingSchedule = nullptr; }
+        } scope {impl};
+        impl.BuildingSchedule = batch.get();
+        const auto start      = m_Engine.StartVoice(incoming, frame, fade, curve);
+        const auto end        = AddFrames(start, fade);
+        for (auto& outgoing : m_Tracks)
+        {
+            if (!m_Engine.IsVoiceValid(outgoing.Voice))
+                continue;
+            if (end < outgoing.End || outgoing.End == NoFrame || (superseded && outgoing.EndFromSwitch == *superseded))
+            {
+                outgoing.End           = end;
+                outgoing.EndFromSwitch = start;
+                m_Engine.ScheduleStop(outgoing.Voice, end, fade, curve);
+            }
+        }
+        if (!batch->Operations.empty())
+            impl.Submit(std::move(batch));
+        return start;
+    }
+
     void AudioEngine::Stop(AudioVoiceHandle handle)
     {
         if (auto* voice = m_Impl->Find(handle))
         {
+            m_Impl->CancelSchedule(*voice);
             ma_sound_stop(&voice->Sound);
-            ma_sound_seek_to_pcm_frame(&voice->Sound, 0);
+            ma_sound_reset_stop_time(&voice->Sound);
+            voice->PausedAt = NoFrame;
+            auto state      = voice->Current();
+            state.Frame     = GetClockFrames();
+            state.Start = state.Stop = NoFrame;
+            state.Source             = 0;
+            voice->Record(state, GetPlaybackClockFrames());
+            if (voice->Timed.load())
+            {
+                voice->Envelope = {};
+                voice->PendingSeek.store(0);
+            }
+            else
+                ma_sound_seek_to_pcm_frame(&voice->Sound, 0);
         }
     }
     void AudioEngine::Pause(AudioVoiceHandle handle)
     {
         if (auto* voice = m_Impl->Find(handle))
+        {
+            auto       state = voice->Current();
+            const auto now   = GetClockFrames();
+            if (state.Start == NoFrame || state.Stop <= now)
+                return;
+            m_Impl->CancelSchedule(*voice);
             ma_sound_stop(&voice->Sound);
+            voice->PausedAt       = now;
+            voice->RemainingStart = state.Start > now ? state.Start - now : 0;
+            voice->RemainingStop  = state.Stop == NoFrame ? NoFrame : state.Stop - now;
+            state.Source          = state.Position(static_cast<double>(now));
+            state.Frame           = now;
+            state.Start = state.Stop = NoFrame;
+            voice->Record(state, GetPlaybackClockFrames());
+        }
     }
     bool AudioEngine::IsPlaying(AudioVoiceHandle handle) const
     {
         auto* voice = m_Impl->Find(handle);
-        return voice && ma_sound_is_playing(&voice->Sound);
+        return voice && GetClockFrames() < voice->Current().Stop && ma_sound_is_playing(&voice->Sound);
     }
     bool AudioEngine::HasEnded(AudioVoiceHandle handle) const
     {
@@ -907,6 +1664,12 @@ namespace Kans
         {
             voice->Desc.Pitch = pitch;
             ma_sound_set_pitch(&voice->Sound, pitch);
+            auto state   = voice->Current();
+            state.Frame  = GetClockFrames();
+            state.Source = state.Position(static_cast<double>(state.Frame));
+            state.Start  = std::max(state.Start, state.Frame);
+            state.Rate   = static_cast<double>(pitch) * voice->Info.SampleRate / GetSampleRate();
+            voice->Record(state, GetPlaybackClockFrames());
         }
     }
     void AudioEngine::SetPan(AudioVoiceHandle handle, float pan)
@@ -923,22 +1686,66 @@ namespace Kans
         {
             voice->Desc.Loop = looping;
             ma_sound_set_looping(&voice->Sound, looping);
+            auto state   = voice->Current();
+            state.Frame  = GetClockFrames();
+            state.Source = state.Position(static_cast<double>(state.Frame));
+            state.Start  = std::max(state.Start, state.Frame);
+            state.Loop   = looping;
+            voice->Record(state, GetPlaybackClockFrames());
         }
     }
     void AudioEngine::SeekFrames(AudioVoiceHandle handle, uint64_t frame)
     {
         if (auto* voice = m_Impl->Find(handle))
         {
-            const auto length = m_Impl->Sounds.at(voice->Desc.Sound).Info.LengthFrames;
-            ma_sound_seek_to_pcm_frame(&voice->Sound, std::min(frame, length));
+            auto state = voice->Current();
+            frame      = std::min(frame, voice->Info.LengthFrames);
+            if (state.Loop && frame >= state.LoopEnd)
+                frame = state.LoopBegin + (frame - state.LoopBegin) % (state.LoopEnd - state.LoopBegin);
+            const bool prepare = voice->Timed.load() && voice->Source.Stream && GetMode() == AudioOutputMode::Device;
+            if (prepare)
+            {
+                m_Impl->CancelSchedule(*voice);
+                ma_node_detach_output_bus(&voice->Sound, 0);
+                ma_sound_stop(&voice->Sound);
+                voice->Sound.Seek(frame);
+                voice->Source.WaitForSeek();
+                ma_node_attach_output_bus(&voice->Sound, 0, m_Impl->VoiceBusInput(*m_Impl->Buses, voice->Desc.Bus), 0);
+            }
+            state.Frame  = prepare ? m_Impl->WritableClock() : GetClockFrames();
+            state.Source = static_cast<double>(frame);
+            state.Start  = std::max(state.Start, state.Frame);
+            voice->Record(state, GetPlaybackClockFrames());
+            if (prepare)
+                m_Impl->Queue(*voice);
+            else if (voice->Timed.load())
+                voice->PendingSeek.store(frame);
+            else
+                ma_sound_seek_to_pcm_frame(&voice->Sound, frame);
         }
     }
     uint64_t AudioEngine::GetCursorFrames(AudioVoiceHandle handle) const
     {
         ma_uint64 cursor = 0;
         if (auto* voice = m_Impl->Find(handle))
+        {
+            if (const auto seek = voice->PendingSeek.load(); seek != NoFrame)
+                return seek;
             ma_sound_get_cursor_in_pcm_frames(&voice->Sound, &cursor);
+        }
         return cursor;
+    }
+
+    uint64_t AudioEngine::GetVoicePositionFrames(AudioVoiceHandle handle) const
+    {
+        const auto* voice = m_Impl->Find(handle);
+        return voice ? static_cast<uint64_t>(voice->Position(GetPlaybackClockFrames())) : 0;
+    }
+
+    double AudioEngine::GetVoicePositionSeconds(AudioVoiceHandle handle) const
+    {
+        const auto* voice = m_Impl->Find(handle);
+        return voice ? voice->Position(GetPlaybackClockFrames()) / voice->Info.SampleRate : 0;
     }
     void AudioEngine::FadeTo(AudioVoiceHandle handle, float targetVolume, float seconds)
     {
@@ -950,7 +1757,7 @@ namespace Kans
     {
         if (auto* voice = m_Impl->Find(handle))
         {
-            const auto length = m_Impl->Sounds.at(voice->Desc.Sound).Info.LengthFrames;
+            const auto length = voice->Info.LengthFrames;
             const auto end = endFrame == 0 ? length : std::min(endFrame, length);
             if (beginFrame < end)
             {
@@ -963,7 +1770,14 @@ namespace Kans
                 // Queue a public seek so that only the current processing block can retain old loop samples.
                 if (ma_sound_is_looping(&voice->Sound) && cursor >= end)
                     ma_sound_seek_to_pcm_frame(&voice->Sound, beginFrame);
-                ma_node_attach_output_bus(&voice->Sound, 0, ma_engine_get_endpoint(&m_Impl->Engine), 0);
+                ma_node_attach_output_bus(&voice->Sound, 0, m_Impl->VoiceBusInput(*m_Impl->Buses, voice->Desc.Bus), 0);
+                auto state      = voice->Current();
+                state.Frame     = GetClockFrames();
+                state.Source    = state.Position(static_cast<double>(state.Frame));
+                state.Start     = std::max(state.Start, state.Frame);
+                state.LoopBegin = beginFrame;
+                state.LoopEnd   = end;
+                voice->Record(state, GetPlaybackClockFrames());
             }
         }
     }
