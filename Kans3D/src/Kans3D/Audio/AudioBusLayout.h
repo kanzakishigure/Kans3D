@@ -6,6 +6,7 @@
 #include <vector>
 #include "Kans3D/Asset/Asset.h"
 #include "Kans3D/Asset/AssetError.h"
+#include "AudioBusEffect.h"
 
 namespace Kans
 {
@@ -31,8 +32,9 @@ namespace Kans
         float       VolumeDb = 0;
         bool        Mute     = false;
         bool        Solo     = false;
-        bool        Bypass   = false; // Reserved for skipping this bus's effect chain. Currently has no audible effect.
+        bool                        Bypass   = false;
         std::vector<AudioBusSend> Sends;
+        std::vector<AudioBusEffect> Effects {};
     };
 
     struct AudioBusLayout
@@ -56,6 +58,8 @@ namespace Kans
 
     // Negative infinity is a closed fader. Other values must convert to a finite gain.
     bool                                     IsValidAudioBusLevel(float db);
+    std::optional<AssetError>                ValidateAudioBusEffect(const AudioBusEffectParameters&        parameters,
+                                                                    const std::vector<AudioBusDefinition>& buses);
     std::optional<AssetError>                ValidateAudioBusLayout(const AudioBusLayout& layout);
     std::variant<AudioBusLayout, AssetError> ParseAudioBusLayout(const std::string& text);
     std::variant<std::string, AssetError>    SerializeAudioBusLayout(const AudioBusLayout& layout);

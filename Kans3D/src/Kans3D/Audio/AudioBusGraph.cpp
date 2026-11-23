@@ -70,12 +70,72 @@ namespace Kans
             rms  = values[1];
         }
 
-        // Stable input for sources, child buses and sends. Effects can be inserted between this node and the fader.
+        // Stable input for sources, child buses and sends.
         const ma_node_vtable InputVtable = {[](ma_node*, const float**, ma_uint32*, float**, ma_uint32*) {},
                                             nullptr,
                                             1,
                                             1,
                                             MA_NODE_FLAG_PASSTHROUGH};
+
+        struct ChainInput : ma_node_base
+        {
+            AudioEffectMix* Mix      = nullptr;
+            uint32_t        Channels = 0;
+
+            static void Process(ma_node*      node,
+                                const float** inputs,
+                                ma_uint32*    inputFrames,
+                                float**       outputs,
+                                ma_uint32*    outputFrames)
+            {
+                auto& split             = *static_cast<ChainInput*>(static_cast<ma_node_base*>(node));
+                split.Mix->BlockEnabled = split.Mix->Enabled.load(std::memory_order_relaxed);
+                *inputFrames = *outputFrames = std::min(*inputFrames, *outputFrames);
+                const size_t bytes           = size_t(*outputFrames) * split.Channels * sizeof(float);
+                std::memcpy(outputs[0], inputs[0], bytes);
+                std::memcpy(outputs[1], inputs[0], bytes);
+            }
+        };
+
+        struct ChainOutput : ma_node_base
+        {
+            AudioEffectMix* Mix      = nullptr;
+            uint32_t        Channels = 0;
+
+            static void Process(ma_node*      node,
+                                const float** inputs,
+                                ma_uint32*    inputFrames,
+                                float**       outputs,
+                                ma_uint32*    outputFrames)
+            {
+                auto& blend  = *static_cast<ChainOutput*>(static_cast<ma_node_base*>(node));
+                *inputFrames = *outputFrames = std::min(*inputFrames, *outputFrames);
+                const bool  enabled          = blend.Mix->BlockEnabled;
+                const auto* source           = blend.Mix->Active(enabled) ? inputs[1] : inputs[0];
+                std::memcpy(outputs[0], source, size_t(*outputFrames) * blend.Channels * sizeof(float));
+                blend.Mix->Blend(inputs[0], outputs[0], *outputFrames, blend.Channels, enabled);
+            }
+        };
+
+        const ma_node_vtable ChainInputVtable  = {ChainInput::Process,
+                                                  nullptr,
+                                                  1,
+                                                  2,
+                                                  MA_NODE_FLAG_CONTINUOUS_PROCESSING};
+        const ma_node_vtable ChainOutputVtable = {ChainOutput::Process,
+                                                  nullptr,
+                                                  2,
+                                                  1,
+                                                  MA_NODE_FLAG_CONTINUOUS_PROCESSING};
+
+        std::shared_ptr<AudioDSPRegistration> ResolveCallback(const AudioBusEffectParameters& params,
+                                                              const AudioDSPRegistry&         registry)
+        {
+            if (const auto* custom = std::get_if<AudioCustomDSP>(&params))
+                if (const auto found = registry.find(custom->Name); found != registry.end())
+                    return found->second;
+            return {};
+        }
 
         struct SendOutput
         {
@@ -86,6 +146,8 @@ namespace Kans
         struct FaderNode : ma_node_base
         {
             GainRamp                                           Fader, PreFader;
+            ma_node_graph*                                     Graph = nullptr;
+            AudioSidechainPeak                                 Sidechain;
             std::unique_ptr<SendOutput[]>                      Sends;
             size_t                                             SendCount  = 0;
             uint32_t                                           RampFrames = 0;
@@ -131,6 +193,8 @@ namespace Kans
                             outputs[i + 1][offset + channel] = source[offset + channel] * tap * level;
                     }
                 }
+                fader.Sidechain.Publish(ma_node_graph_get_time(fader.Graph),
+                                        *std::max_element(peak.begin(), peak.begin() + channels));
                 for (uint32_t channel = 0; channel < channels; ++channel)
                 {
                     const auto rms = frames ? static_cast<float>(std::sqrt(sumSquares[channel] / frames)) : 0.f;
@@ -157,20 +221,38 @@ namespace Kans
         FaderNode             Fader {};
         bool                  InputReady = false, FaderReady = false;
         std::optional<size_t> Parent;
+        AudioEffectMix                                   ChainMix;
+        ChainInput                                       Split {};
+        ChainOutput                                      Blend {};
+        bool                                             SplitReady = false, BlendReady = false;
+        std::vector<std::unique_ptr<AudioBusEffectNode>> Effects;
 
         ~Bus()
         {
             if (FaderReady)
                 ma_node_uninit(static_cast<ma_node_base*>(&Fader), nullptr);
+            if (BlendReady)
+                ma_node_uninit(static_cast<ma_node_base*>(&Blend), nullptr);
+            Effects.clear();
+            if (SplitReady)
+                ma_node_uninit(static_cast<ma_node_base*>(&Split), nullptr);
             if (InputReady)
                 ma_node_uninit(&Input, nullptr);
         }
     };
 
     AudioBusGraph::AudioBusGraph()  = default;
-    AudioBusGraph::~AudioBusGraph() = default;
+    AudioBusGraph::~AudioBusGraph()
+    {
+        // Wait for any endpoint pull before destroying buses referenced by another bus's detector.
+        if (m_Connected)
+            ma_node_detach_output_bus(static_cast<ma_node_base*>(&m_Buses[m_Names.at(MasterAudioBus)]->Fader), 0);
+    }
 
-    ma_result AudioBusGraph::Init(ma_engine& engine, const AudioBusLayout& layout, const AudioBusGraph* previous)
+    ma_result AudioBusGraph::Init(ma_engine&              engine,
+                                  const AudioBusLayout&   layout,
+                                  const AudioBusGraph*    previous,
+                                  const AudioDSPRegistry& registry)
     {
         auto* graph           = ma_engine_get_node_graph(&engine);
         m_Endpoint            = ma_node_graph_get_endpoint(graph);
@@ -192,6 +274,7 @@ namespace Kans
 
             auto& fader    = bus.Fader;
             fader.Channels = m_Channels;
+            fader.Graph    = graph;
             for (uint32_t channel = 0; channel < m_Channels; ++channel)
                 fader.Meters[channel].store(0, std::memory_order_relaxed);
             fader.RampFrames = rampFrames;
@@ -217,9 +300,6 @@ namespace Kans
             if (result != MA_SUCCESS)
                 return result;
             bus.FaderReady = true;
-            result         = ma_node_attach_output_bus(&bus.Input, 0, static_cast<ma_node_base*>(&fader), 0);
-            if (result != MA_SUCCESS)
-                return result;
             m_Names.emplace(definition.Name, m_Buses.size());
             m_Buses.push_back(std::move(storage));
         }
@@ -229,6 +309,9 @@ namespace Kans
             auto&       bus        = *m_Buses[i];
             const auto& definition = m_Layout.Buses[i];
             auto*       fader      = static_cast<ma_node_base*>(&bus.Fader);
+            if (const auto result = InitChain(graph, ma_engine_get_sample_rate(&engine), i, registry);
+                result != MA_SUCCESS)
+                return result;
             if (!definition.Parent.empty())
             {
                 bus.Parent = m_Names.at(definition.Parent);
@@ -266,10 +349,161 @@ namespace Kans
         return MA_SUCCESS;
     }
 
+    const AudioSidechainPeak* AudioBusGraph::Detector(const AudioBusEffectParameters& params) const
+    {
+        if (const auto* ducking = std::get_if<AudioDucking>(&params))
+            return &m_Buses[m_Names.at(ducking->SourceBus)]->Fader.Sidechain;
+        return nullptr;
+    }
+
+    ma_result
+    AudioBusGraph::InitChain(ma_node_graph* graph, uint32_t rate, size_t index, const AudioDSPRegistry& registry)
+    {
+        auto&       bus        = *m_Buses[index];
+        const auto& definition = m_Layout.Buses[index];
+        auto*       fader      = static_cast<ma_node_base*>(&bus.Fader);
+        if (definition.Effects.empty())
+            return ma_node_attach_output_bus(&bus.Input, 0, fader, 0);
+
+        const uint32_t twoPaths[] = {m_Channels, m_Channels};
+        bus.ChainMix.RampFrames   = std::max(1u, rate / 200);
+        bus.ChainMix.BlockEnabled = !definition.Bypass;
+        bus.ChainMix.Enabled.store(!definition.Bypass, std::memory_order_relaxed);
+        bus.ChainMix.Position = definition.Bypass ? 0 : bus.ChainMix.RampFrames;
+        bus.Split.Channels = bus.Blend.Channels = m_Channels;
+        bus.Split.Mix = bus.Blend.Mix = &bus.ChainMix;
+        auto config                   = ma_node_config_init();
+        config.vtable                 = &ChainInputVtable;
+        config.pInputChannels         = &m_Channels;
+        config.pOutputChannels        = twoPaths;
+        auto result                   = ma_node_init(graph, &config, nullptr, static_cast<ma_node_base*>(&bus.Split));
+        if (result != MA_SUCCESS)
+            return result;
+        bus.SplitReady         = true;
+        config.vtable          = &ChainOutputVtable;
+        config.pInputChannels  = twoPaths;
+        config.pOutputChannels = &m_Channels;
+        result                 = ma_node_init(graph, &config, nullptr, static_cast<ma_node_base*>(&bus.Blend));
+        if (result != MA_SUCCESS)
+            return result;
+        bus.BlendReady = true;
+
+        auto* split = static_cast<ma_node_base*>(&bus.Split);
+        auto* blend = static_cast<ma_node_base*>(&bus.Blend);
+        result      = ma_node_attach_output_bus(&bus.Input, 0, split, 0);
+        if (result == MA_SUCCESS)
+            result = ma_node_attach_output_bus(split, 0, blend, 0);
+        if (result == MA_SUCCESS)
+            result = ma_node_attach_output_bus(blend, 0, fader, 0);
+        if (result != MA_SUCCESS)
+            return result;
+
+        ma_node*  previous       = split;
+        ma_uint32 previousOutput = 1;
+        bus.Effects.reserve(definition.Effects.size());
+        for (const auto& effect : definition.Effects)
+        {
+            auto node = std::make_unique<AudioBusEffectNode>();
+            result    = node->Init(graph,
+                                   m_Channels,
+                                   rate,
+                                   effect,
+                                   bus.ChainMix,
+                                   Detector(effect.Parameters),
+                                   ResolveCallback(effect.Parameters, registry));
+            if (result == MA_SUCCESS)
+                result = ma_node_attach_output_bus(previous, previousOutput, node.get(), 0);
+            if (result != MA_SUCCESS)
+                return result;
+            previous       = node.get();
+            previousOutput = 0;
+            bus.Effects.push_back(std::move(node));
+        }
+        return ma_node_attach_output_bus(previous, previousOutput, blend, 1);
+    }
+
+    bool AudioBusGraph::TryUpdate(const AudioBusLayout& layout, const AudioDSPRegistry& registry)
+    {
+        if (layout.Buses.size() != m_Buses.size())
+            return false;
+        for (size_t i = 0; i < m_Buses.size(); ++i)
+        {
+            const auto& next     = layout.Buses[i];
+            const auto& previous = m_Layout.Buses[i];
+            if (next.Name != previous.Name || next.Parent != previous.Parent ||
+                next.Sends.size() != previous.Sends.size() || next.Effects.size() != previous.Effects.size())
+                return false;
+            for (size_t j = 0; j < next.Sends.size(); ++j)
+                if (next.Sends[j].Target != previous.Sends[j].Target || next.Sends[j].Tap != previous.Sends[j].Tap)
+                    return false;
+            for (size_t j = 0; j < next.Effects.size(); ++j)
+            {
+                const auto& params = next.Effects[j].Parameters;
+                if (!m_Buses[i]->Effects[j]->CanUpdate(params, ResolveCallback(params, registry).get()))
+                    return false;
+            }
+        }
+        m_Layout = layout;
+        UpdateFaders();
+        for (size_t i = 0; i < m_Buses.size(); ++i)
+        {
+            const auto& next = m_Layout.Buses[i];
+            UpdateBypass(next.Name, next.Bypass);
+            for (size_t j = 0; j < next.Sends.size(); ++j)
+                UpdateSend(next.Name, j);
+            for (size_t j = 0; j < next.Effects.size(); ++j)
+            {
+                const auto& effect = next.Effects[j];
+                m_Buses[i]->Effects[j]->Update(effect, Detector(effect.Parameters));
+            }
+        }
+        return true;
+    }
+
+    bool AudioBusGraph::SetEffectParameters(const std::string&              bus,
+                                            size_t                          index,
+                                            const AudioBusEffectParameters& params,
+                                            const AudioDSPRegistry&         registry)
+    {
+        auto& node = *m_Buses[m_Names.at(bus)]->Effects[index];
+        if (!node.CanUpdate(params, ResolveCallback(params, registry).get()))
+            return false;
+        auto& effect      = Find(bus)->Effects[index];
+        effect.Parameters = params;
+        node.Update(effect, Detector(params));
+        return true;
+    }
+
+    void AudioBusGraph::UpdateEffectEnabled(const std::string& bus, size_t index, bool enabled)
+    {
+        auto& effect   = Find(bus)->Effects[index];
+        effect.Enabled = enabled;
+        m_Buses[m_Names.at(bus)]->Effects[index]->Update(effect, Detector(effect.Parameters));
+    }
+
+    void AudioBusGraph::UpdateBypass(const std::string& bus, bool bypass)
+    {
+        m_Buses[m_Names.at(bus)]->ChainMix.Enabled.store(!bypass, std::memory_order_relaxed);
+    }
+
+    std::optional<float> AudioBusGraph::GetEffectReductionDb(const std::string& bus, size_t index) const
+    {
+        const auto it = m_Names.find(bus);
+        if (it == m_Names.end() || index >= m_Buses[it->second]->Effects.size())
+            return std::nullopt;
+        const auto& params = m_Layout.Buses[it->second].Effects[index].Parameters;
+        if (!std::holds_alternative<AudioCompressor>(params) && !std::holds_alternative<AudioLimiter>(params) &&
+            !std::holds_alternative<AudioDucking>(params))
+            return std::nullopt;
+        return m_Buses[it->second]->Effects[index]->GetReductionDb();
+    }
+
     ma_result AudioBusGraph::ConnectEndpoint()
     {
         auto& master = m_Buses[m_Names.at(MasterAudioBus)]->Fader;
-        return ma_node_attach_output_bus(static_cast<ma_node_base*>(&master), 0, m_Endpoint, 0);
+        const auto result = ma_node_attach_output_bus(static_cast<ma_node_base*>(&master), 0, m_Endpoint, 0);
+        m_Connected       = result == MA_SUCCESS;
+        return result;
     }
 
     ma_node* AudioBusGraph::Input(const std::string& bus) const

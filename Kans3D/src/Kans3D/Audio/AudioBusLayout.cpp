@@ -1,5 +1,8 @@
 #include "kspch.h"
 #include "AudioBusLayout.h"
+#include "AudioBusEffectFields.h"
+
+#include <algorithm>
 
 #include <cmath>
 #include <limits>
@@ -15,6 +18,14 @@ namespace Kans
         {
             const auto field = node[key];
             return field ? field.as<T>() : fallback;
+        }
+
+        constexpr unsigned BusLayoutVersion = 2;
+
+        template<size_t... I>
+        auto EffectDefaults(std::index_sequence<I...>)
+        {
+            return std::array {AudioBusEffectParameters(std::in_place_index<I>)...};
         }
 
         AssetError Invalid(std::string message) { return {AssetErrorCode::InvalidData, std::move(message)}; }
@@ -34,6 +45,36 @@ namespace Kans
     {
         return db == -std::numeric_limits<float>::infinity() ||
                (std::isfinite(db) && std::isfinite(std::pow(10.f, db / 20.f)));
+    }
+
+    std::optional<AssetError> ValidateAudioBusEffect(const AudioBusEffectParameters&        parameters,
+                                                     const std::vector<AudioBusDefinition>& buses)
+    {
+        if (parameters.valueless_by_exception())
+            return Invalid("Missing audio bus effect parameters");
+        std::optional<AssetError> error;
+        std::visit(
+            [&](const auto& params) {
+                using P = std::decay_t<decltype(params)>;
+                VisitAudioEffectFields(params, [&](const char* name, const auto& value, auto... range) {
+                    if constexpr (sizeof...(range) == 2)
+                    {
+                        const auto [min, max] = std::array {range...};
+                        if (!(value >= min && value <= max))
+                            error = Invalid(std::string("Out-of-range audio bus effect parameter ") + name);
+                    }
+                    else if constexpr (std::is_same_v<P, AudioDucking>)
+                    {
+                        if (std::none_of(
+                                buses.begin(), buses.end(), [&](const auto& bus) { return bus.Name == value; }))
+                            error = Invalid("Unknown sidechain source audio bus: " + value);
+                    }
+                    else if (value.empty())
+                        error = Invalid("Missing custom DSP effect name");
+                });
+            },
+            parameters);
+        return error;
     }
 
     std::optional<AssetError> ValidateAudioBusLayout(const AudioBusLayout& layout)
@@ -66,6 +107,9 @@ namespace Kans
             };
             if (bus.Name == MasterAudioBus ? !bus.Parent.empty() : !addEdge(bus.Parent))
                 return Invalid("Invalid parent for audio bus " + bus.Name + ": " + bus.Parent);
+            for (const auto& effect : bus.Effects)
+                if (auto error = ValidateAudioBusEffect(effect.Parameters, buses))
+                    return Invalid(bus.Name + ": " + error->Message);
             // One miniaudio output per send and one for the primary route.
             if (bus.Sends.size() > 253)
                 return Invalid("Too many sends from audio bus " + bus.Name);
@@ -100,7 +144,8 @@ namespace Kans
             if (documents.size() != 1 || !documents.front().IsMap())
                 return Invalid("Expected one audio bus layout mapping");
             const auto& root = documents.front();
-            if (root["Version"].as<unsigned>() != 1)
+            const auto  version = root["Version"].as<unsigned>();
+            if (version != 1 && version != BusLayoutVersion)
                 return AssetError {AssetErrorCode::UnsupportedVersion, "Unsupported audio bus layout version"};
             const auto buses = root["Buses"];
             if (!buses.IsSequence())
@@ -129,6 +174,35 @@ namespace Kans
                                              tap == "PreFader" ? AudioSendTap::PreFader : AudioSendTap::PostFader});
                     }
                 }
+                if (const auto effects = entry["Effects"]; version >= 2 && effects)
+                {
+                    if (!effects.IsSequence())
+                        return Invalid("Expected an Effects sequence for audio bus " + bus.Name);
+                    for (const auto& node : effects)
+                    {
+                        const auto type  = node["Type"].as<std::string>();
+                        const auto found = std::find(AudioEffectTypes.begin(), AudioEffectTypes.end(), type);
+                        if (found == AudioEffectTypes.end())
+                            return Invalid("Unknown audio bus effect type: " + type);
+                        static const auto defaults =
+                            EffectDefaults(std::make_index_sequence<std::variant_size_v<AudioBusEffectParameters>> {});
+                        AudioBusEffect effect {defaults[found - AudioEffectTypes.begin()],
+                                               ReadOr<bool>(node, "Enabled", true)};
+                        if (const auto parameters = node["Parameters"])
+                        {
+                            if (!parameters.IsMap())
+                                return Invalid("Expected a Parameters mapping for audio bus effect " + type);
+                            std::visit(
+                                [&](auto& params) {
+                                    VisitAudioEffectFields(params, [&](const char* key, auto& value, auto...) {
+                                        value = ReadOr(parameters, key, value);
+                                    });
+                                },
+                                effect.Parameters);
+                        }
+                        bus.Effects.push_back(std::move(effect));
+                    }
+                }
                 layout.Buses.push_back(std::move(bus));
             }
             if (auto error = ValidateAudioBusLayout(layout))
@@ -147,8 +221,8 @@ namespace Kans
             return *error;
         YAML::Emitter out;
         out.SetFloatPrecision(std::numeric_limits<float>::max_digits10);
-        out << YAML::BeginMap << YAML::Key << "Version" << YAML::Value << 1 << YAML::Key << "Buses" << YAML::Value
-            << YAML::BeginSeq;
+        out << YAML::BeginMap << YAML::Key << "Version" << YAML::Value << BusLayoutVersion << YAML::Key << "Buses"
+            << YAML::Value << YAML::BeginSeq;
         for (const auto& bus : layout.Buses)
         {
             out << YAML::BeginMap << YAML::Key << "Name" << YAML::Value << bus.Name << YAML::Key << "Parent"
@@ -159,6 +233,21 @@ namespace Kans
                 out << YAML::BeginMap << YAML::Key << "Target" << YAML::Value << send.Target << YAML::Key << "LevelDb"
                     << YAML::Value << send.LevelDb << YAML::Key << "Tap" << YAML::Value
                     << (send.Tap == AudioSendTap::PreFader ? "PreFader" : "PostFader") << YAML::EndMap;
+            out << YAML::EndSeq << YAML::Key << "Effects" << YAML::Value << YAML::BeginSeq;
+            for (const auto& effect : bus.Effects)
+            {
+                out << YAML::BeginMap << YAML::Key << "Type" << YAML::Value
+                    << std::string(AudioEffectTypes[effect.Parameters.index()]) << YAML::Key << "Enabled" << YAML::Value
+                    << effect.Enabled << YAML::Key << "Parameters" << YAML::Value << YAML::BeginMap;
+                std::visit(
+                    [&](const auto& params) {
+                        VisitAudioEffectFields(params, [&](const char* key, const auto& value, auto...) {
+                            out << YAML::Key << key << YAML::Value << value;
+                        });
+                    },
+                    effect.Parameters);
+                out << YAML::EndMap << YAML::EndMap;
+            }
             out << YAML::EndSeq << YAML::EndMap;
         }
         out << YAML::EndSeq << YAML::EndMap;

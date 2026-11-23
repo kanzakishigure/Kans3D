@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <glm/geometric.hpp>
@@ -207,6 +208,15 @@ namespace Kans
         AudioEngineConfig Config;
         std::unique_ptr<AudioBusGraph>  Buses;
         std::unordered_set<std::string> WarnedBusNames;
+        AudioDSPRegistry                DSPRegistry;
+        std::unordered_set<std::string> WarnedDSPNames;
+
+        void WarnUnknownDSP(const AudioBusEffectParameters& parameters)
+        {
+            if (const auto* custom = std::get_if<AudioCustomDSP>(&parameters))
+                if (DSPRegistry.count(custom->Name) == 0 && WarnedDSPNames.insert(custom->Name).second)
+                    Warn("Unknown custom DSP '" + custom->Name + "'; skipping effect");
+        }
 
         ma_node* VoiceBusInput(AudioBusGraph& graph, const std::string& name)
         {
@@ -344,6 +354,7 @@ namespace Kans
             UnregisterSound(p.Sounds.begin()->first);
         p.Buses.reset();
         p.WarnedBusNames.clear();
+        p.WarnedDSPNames.clear();
         if (p.Ready)
             ma_engine_uninit(&p.Engine);
         p.Ready = false;
@@ -410,9 +421,20 @@ namespace Kans
         if (auto error = ValidateAudioBusLayout(layout))
             return error->Message;
 
+        for (const auto& bus : layout.Buses)
+            for (const auto& effect : bus.Effects)
+                p.WarnUnknownDSP(effect.Parameters);
+        if (p.Buses && p.Buses->TryUpdate(layout, p.DSPRegistry))
+            return std::nullopt;
+        return ReplaceBusGraph(layout);
+    }
+
+    std::optional<std::string> AudioEngine::ReplaceBusGraph(const AudioBusLayout& layout)
+    {
+        auto& p = *m_Impl;
         // Build off the endpoint, then move existing sound nodes without touching their playback state.
         auto next   = std::make_unique<AudioBusGraph>();
-        auto result = next->Init(p.Engine, layout, p.Buses.get());
+        auto result = next->Init(p.Engine, layout, p.Buses.get(), p.DSPRegistry);
         if (result == MA_SUCCESS)
             result = next->ConnectEndpoint();
         if (result != MA_SUCCESS)
@@ -482,6 +504,7 @@ namespace Kans
         if (!definition)
             return false;
         definition->Bypass = bypass;
+        m_Impl->Buses->UpdateBypass(bus, bypass);
         return true;
     }
 
@@ -498,6 +521,130 @@ namespace Kans
     std::optional<AudioBusMeter> AudioEngine::GetBusMeter(const std::string& bus) const
     {
         return m_Impl->Buses ? m_Impl->Buses->GetMeter(bus) : std::nullopt;
+    }
+
+    const std::vector<AudioBusEffect>& AudioEngine::GetBusEffects(const std::string& bus) const
+    {
+        const auto*                              definition = m_Impl->Buses ? m_Impl->Buses->Find(bus) : nullptr;
+        static const std::vector<AudioBusEffect> empty;
+        return definition ? definition->Effects : empty;
+    }
+
+    std::optional<std::string>
+    AudioEngine::AddBusEffect(const std::string& bus, const AudioBusEffect& effect, std::optional<size_t> index)
+    {
+        const auto* definition = m_Impl->Buses ? m_Impl->Buses->Find(bus) : nullptr;
+        if (!definition)
+            return "Unknown audio bus: " + bus;
+        const auto position = index.value_or(definition->Effects.size());
+        if (position > definition->Effects.size())
+            return "Audio bus effect index out of range";
+        AudioBusLayout layout {GetBuses()};
+        auto&          effects = layout.Buses[definition - GetBuses().data()].Effects;
+        effects.insert(effects.begin() + position, effect);
+        return ApplyBusLayout(layout);
+    }
+
+    std::optional<std::string> AudioEngine::RemoveBusEffect(const std::string& bus, size_t index)
+    {
+        const auto* definition = m_Impl->Buses ? m_Impl->Buses->Find(bus) : nullptr;
+        if (!definition || index >= definition->Effects.size())
+            return "Unknown audio bus or effect index";
+        AudioBusLayout layout {GetBuses()};
+        auto&          effects = layout.Buses[definition - GetBuses().data()].Effects;
+        effects.erase(effects.begin() + index);
+        return ApplyBusLayout(layout);
+    }
+
+    std::optional<std::string> AudioEngine::MoveBusEffect(const std::string& bus, size_t from, size_t to)
+    {
+        const auto* definition = m_Impl->Buses ? m_Impl->Buses->Find(bus) : nullptr;
+        if (!definition || from >= definition->Effects.size() || to >= definition->Effects.size())
+            return "Unknown audio bus or effect index";
+        if (from == to)
+            return std::nullopt;
+        AudioBusLayout layout {GetBuses()};
+        auto&          effects = layout.Buses[definition - GetBuses().data()].Effects;
+        auto           effect  = std::move(effects[from]);
+        effects.erase(effects.begin() + from);
+        effects.insert(effects.begin() + to, std::move(effect));
+        return ReplaceBusGraph(layout);
+    }
+
+    std::optional<std::string> AudioEngine::SetBusEffectParameters(const std::string&              bus,
+                                                                   size_t                          index,
+                                                                   const AudioBusEffectParameters& parameters)
+    {
+        auto&       p          = *m_Impl;
+        const auto* definition = p.Buses ? p.Buses->Find(bus) : nullptr;
+        if (!definition || index >= definition->Effects.size())
+            return "Unknown audio bus or effect index";
+        if (definition->Effects[index].Parameters.index() != parameters.index())
+            return "Audio bus effect parameter type does not match its slot";
+        if (auto error = ValidateAudioBusEffect(parameters, GetBuses()))
+            return error->Message;
+        p.WarnUnknownDSP(parameters);
+        if (p.Buses->SetEffectParameters(bus, index, parameters, p.DSPRegistry))
+            return std::nullopt;
+        AudioBusLayout layout {GetBuses()};
+        layout.Buses[definition - GetBuses().data()].Effects[index].Parameters = parameters;
+        return ReplaceBusGraph(layout);
+    }
+
+    bool AudioEngine::SetBusEffectEnabled(const std::string& bus, size_t index, bool enabled)
+    {
+        const auto& effects = GetBusEffects(bus);
+        if (index >= effects.size())
+            return false;
+        m_Impl->Buses->UpdateEffectEnabled(bus, index, enabled);
+        return true;
+    }
+
+    std::optional<float> AudioEngine::GetBusEffectGainReductionDb(const std::string& bus, size_t index) const
+    {
+        return m_Impl->Buses ? m_Impl->Buses->GetEffectReductionDb(bus, index) : std::nullopt;
+    }
+
+    bool AudioEngine::RegisterCustomDSP(const std::string& name, AudioDSPCallback callback, void* user)
+    {
+        auto& p = *m_Impl;
+        if (name.empty() || !callback || p.DSPRegistry.count(name) != 0)
+            return false;
+        auto registration      = std::make_shared<AudioDSPRegistration>();
+        registration->Callback = callback;
+        registration->User     = user;
+        p.DSPRegistry.emplace(name, std::move(registration));
+        p.WarnedDSPNames.erase(name);
+        // Slots that already name this effect were built without a callback (or with an unregistered one).
+        // Rebuilding binds them now instead of leaving them as passthrough until the next layout change.
+        if (p.Buses)
+        {
+            const auto& buses      = GetBuses();
+            const bool  referenced = std::any_of(buses.begin(), buses.end(), [&](const auto& bus) {
+                return std::any_of(bus.Effects.begin(), bus.Effects.end(), [&](const auto& effect) {
+                    const auto* custom = std::get_if<AudioCustomDSP>(&effect.Parameters);
+                    return custom && custom->Name == name;
+                });
+            });
+            if (referenced)
+                if (auto error = ReplaceBusGraph(AudioBusLayout {buses}))
+                    Warn("Bind custom DSP '" + name + "': " + *error);
+        }
+        return true;
+    }
+
+    bool AudioEngine::UnregisterCustomDSP(const std::string& name)
+    {
+        auto&      registry = m_Impl->DSPRegistry;
+        const auto found    = registry.find(name);
+        if (found == registry.end())
+            return false;
+        const auto& registration = found->second;
+        registration->Enabled.store(false);
+        while (registration->InFlight.load() != 0)
+            std::this_thread::yield();
+        registry.erase(found);
+        return true;
     }
 
     void AudioEngine::AttachClipRegistry(AudioClipRegistry* registry)

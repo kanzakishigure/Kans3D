@@ -97,6 +97,25 @@ namespace Kans
         bool                                     SetBusSendLevelDb(const std::string& bus, size_t sendIndex, float db);
         std::optional<AudioBusMeter>             GetBusMeter(const std::string& bus) const;
 
+        // Effect indices follow chain order. Reacquire the view after structural edits or ApplyBusLayout.
+        const std::vector<AudioBusEffect>& GetBusEffects(const std::string& bus) const;
+        [[nodiscard]] std::optional<std::string>
+        AddBusEffect(const std::string& bus, const AudioBusEffect& effect, std::optional<size_t> index = std::nullopt);
+        [[nodiscard]] std::optional<std::string> RemoveBusEffect(const std::string& bus, size_t index);
+        [[nodiscard]] std::optional<std::string> MoveBusEffect(const std::string& bus, size_t from, size_t to);
+        // Replace the typed parameters of the existing effect, preserving its enabled flag.
+        [[nodiscard]] std::optional<std::string>
+             SetBusEffectParameters(const std::string& bus, size_t index, const AudioBusEffectParameters& parameters);
+        bool SetBusEffectEnabled(const std::string& bus, size_t index, bool enabled);
+        // Positive attenuation in dB, excluding compressor makeup gain. Available for dynamics effects.
+        std::optional<float> GetBusEffectGainReductionDb(const std::string& bus, size_t index) const;
+
+        // Registrations are engine-local. Registering a name rebinds every slot that already references it.
+        bool RegisterCustomDSP(const std::string& name, AudioDSPCallback callback, void* user = nullptr);
+        // Disables all existing instances and waits on the main thread for any in-flight invocation.
+        // The callback and user data may be released as soon as this returns.
+        bool UnregisterCustomDSP(const std::string& name);
+
         std::optional<std::string> RegisterSound(AudioSoundID id, std::shared_ptr<const std::vector<std::byte>> encodedBytes);
         std::optional<std::string> RegisterSound(AudioSoundID id, std::vector<std::byte> encodedBytes)
         {
@@ -136,6 +155,7 @@ namespace Kans
         void SetListener(uint32_t index, const AudioListenerState& state);
 
     private:
+        std::optional<std::string> ReplaceBusGraph(const AudioBusLayout& layout);
         friend class AudioClipRegistry;
         void AttachClipRegistry(AudioClipRegistry* registry);
         void DetachClipRegistry(AudioClipRegistry* registry);
