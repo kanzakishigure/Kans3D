@@ -43,6 +43,7 @@ namespace Kans::RenderHardware
             uint64_t        WaitIdleCalls = 0;
             uint64_t        BufferCreations = 0;
             uint64_t        GroupCreations  = 0;
+            uint64_t        CommandBufferAllocations = 0;
             VulkanTestProbes::BufferWriteObserver BufferWrites;
             VulkanTestProbes::BarrierObserver     Barriers;
             DeviceStats     Stats;
@@ -56,6 +57,8 @@ namespace Kans::RenderHardware
                 VkFence       Fence = VK_NULL_HANDLE;
                 std::vector<std::shared_ptr<Commands>> Lists;
                 std::vector<Handle<Texture>>           UIImages;
+                std::vector<VkCommandBuffer>           CommandBuffers;
+                size_t                                 NextCommandBuffer = 0;
             };
             std::vector<Frame>                     Frames;
             Frame                                  Standalone;
@@ -101,6 +104,11 @@ namespace Kans::RenderHardware
                 VkFenceCreateInfo fence {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
                 fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;
                 Check(vkCreateFence(Native.Logical, &fence, nullptr, &frame.Fence));
+            }
+            void ResetCommandPool(Frame& frame)
+            {
+                Check(vkResetCommandPool(Native.Logical, frame.Pool, 0));
+                frame.NextCommandBuffer = 0;
             }
             void DestroyFrames()
             {
@@ -671,7 +679,7 @@ namespace Kans::RenderHardware
         struct Execution
         {
             std::shared_ptr<State>              Owner;
-            VkCommandPool                       Pool;
+            State::Frame*                       Frame;
             VkCommandBuffer                     Native = VK_NULL_HANDLE;
             std::vector<Handle<Resource>>       Temporary;
             std::vector<VkBufferMemoryBarrier2> BufferBarriers;
@@ -694,17 +702,27 @@ namespace Kans::RenderHardware
                 BufferBarriers.clear();
                 ImageBarriers.clear();
             }
-            explicit Execution(std::shared_ptr<State> state) : Owner(std::move(state)), Pool(Owner->Current().Pool)
+            explicit Execution(std::shared_ptr<State> state) : Owner(std::move(state)), Frame(&Owner->Current())
             {
                 Begin();
             }
             void Begin()
             {
-                VkCommandBufferAllocateInfo allocation {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-                allocation.commandPool        = Pool;
-                allocation.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-                allocation.commandBufferCount = 1;
-                Check(vkAllocateCommandBuffers(Owner->Native.Logical, &allocation, &Native));
+                auto& buffers = Frame->CommandBuffers;
+                if (Frame->NextCommandBuffer == buffers.size())
+                {
+                    VkCommandBufferAllocateInfo allocation {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+                    allocation.commandPool        = Frame->Pool;
+                    allocation.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                    allocation.commandBufferCount = 1;
+                    auto&      command            = buffers.emplace_back();
+                    const auto result = vkAllocateCommandBuffers(Owner->Native.Logical, &allocation, &command);
+                    if (result != VK_SUCCESS)
+                        buffers.pop_back();
+                    Check(result);
+                    ++Owner->CommandBufferAllocations;
+                }
+                Native = buffers[Frame->NextCommandBuffer++];
                 VkCommandBufferBeginInfo begin {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
                 begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 Check(vkBeginCommandBuffer(Native, &begin));
@@ -1938,7 +1956,7 @@ namespace Kans::RenderHardware
                     it = DescriptorCache.erase(it);
                 else
                     ++it;
-            Check(vkResetCommandPool(Native.Logical, frame.Pool, 0));
+            ResetCommandPool(frame);
             WindowResourcesReady = true;
         }
         void State::FinishWindowFrame()
@@ -1981,8 +1999,8 @@ namespace Kans::RenderHardware
             Retiring = false;
             // Reset only after all submitted command buffers are known complete.
             for (auto& frame : Frames)
-                Check(vkResetCommandPool(Native.Logical, frame.Pool, 0));
-            Check(vkResetCommandPool(Native.Logical, Standalone.Pool, 0));
+                ResetCommandPool(frame);
+            ResetCommandPool(Standalone);
         }
         class VKDevice final : public Device
         {
@@ -2546,7 +2564,8 @@ namespace Kans::RenderHardware::VulkanTestProbes
                 state.WaitIdleCalls,
                 state.BufferCreations,
                 state.PipelineAttempts,
-                state.GroupCreations};
+                state.GroupCreations,
+                state.CommandBufferAllocations};
     }
     void EmitValidationError(const Device& device, const char* message)
     {

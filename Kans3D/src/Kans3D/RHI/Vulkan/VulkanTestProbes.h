@@ -15,6 +15,7 @@ namespace Kans::RenderHardware::VulkanTestProbes
         uint64_t BufferCreations;
         uint64_t PipelineAttempts;
         uint64_t GroupCreations;
+        uint64_t CommandBufferAllocations;
     };
     using BarrierObserver =
         std::function<void(const std::vector<VkBufferMemoryBarrier2>&, const std::vector<VkImageMemoryBarrier2>&)>;
