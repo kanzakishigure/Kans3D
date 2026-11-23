@@ -6,6 +6,7 @@
 #include "ComponentEditors.h"
 #include "KansEditorCore/Audio/AudioClipPreview.h"
 #include "KansEditorCore/Audio/AudioEditing.h"
+#include "KansEditorCore/Audio/AudioMixerEditing.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
 
@@ -92,6 +93,50 @@ namespace Kans::ComponentEditors
                 ImGui::TextDisabled("%s", Clock(*position).c_str());
             }
         }
+        // The bus a source plays through: a dropdown of the active layout's buses. A name the layout
+        // does not have is kept (it plays through Master) and shown in the warning colour.
+        void DrawBus(AudioSourceComponent& c, ComponentUI& ui)
+        {
+            const AudioEngine* engine = ui.GetScene() ? ui.GetScene()->GetAudioEngine() : nullptr;
+            if (!engine && ui.GetAudioPreview())
+                engine = ui.GetAudioPreview()->GetEngine();
+            static const AudioBusLayout fallback = AudioBusLayout::Default();
+            const auto& buses = engine && !engine->GetBuses().empty() ? engine->GetBuses() : fallback.Buses;
+            const bool  known =
+                std::any_of(buses.begin(), buses.end(), [&](const auto& bus) { return bus.Name == c.Bus; });
+            const bool modified = c.Bus != MasterAudioBus;
+            if (!PropertyGrid::Row("Bus",
+                                   known ? "The mixer bus this source plays through" :
+                                           "Not a bus of the active layout: the source plays through Master",
+                                   modified))
+                return;
+            ImGui::PushID("Bus");
+            if (!known)
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().Warning);
+            char preview[160];
+            std::snprintf(preview,
+                          sizeof(preview),
+                          known ? "%s" : ICON_FA_TRIANGLE_EXCLAMATION " %s (missing)",
+                          c.Bus.empty() ? MasterAudioBus : c.Bus.c_str());
+            const bool open = ImGui::BeginCombo("##value", preview);
+            if (!known)
+                ImGui::PopStyleColor();
+            if (open)
+            {
+                for (const auto& entry : AudioMixerEditing::TreeOrder(AudioBusLayout {buses}))
+                {
+                    const auto& name = buses[entry.Index].Name;
+                    ImGui::Indent(EditorTheme::Px(10.0f) * float(entry.Depth) + 1.0f);
+                    if (ImGui::Selectable(name.c_str(), name == c.Bus))
+                        c.Bus = name;
+                    ImGui::Unindent(EditorTheme::Px(10.0f) * float(entry.Depth) + 1.0f);
+                }
+                ImGui::EndCombo();
+            }
+            if (PropertyGrid::RowReset(modified))
+                c.Bus = MasterAudioBus;
+            ImGui::PopID();
+        }
     } // namespace
 
     void DrawAudioSource(Entity entity, ComponentUI& ui)
@@ -134,7 +179,7 @@ namespace Kans::ComponentEditors
             }
             if (PropertyGrid::BeginGroup("Output"))
             {
-                PropertyGrid::InputText("Bus", c.Bus);
+                DrawBus(c, ui);
                 if (!c.Spatial)
                     PropertyGrid::Float("Pan", c.Pan, 0.01f, -1.0f, 1.0f, "%.2f", &defaults.Pan);
                 PropertyGrid::EndGroup();

@@ -329,14 +329,17 @@ namespace Kans::PropertyGrid
         }
         ImGui::PushFont(Bold(), 0.0f);
         draw->AddText({x, textY}, ImGui::GetColorU32(enabled && !*enabled ? p.TextDim : p.Text), title);
+        const float titleRight = x + ImGui::CalcTextSize(title).x;
         ImGui::PopFont();
-        // "N modified" from last frame's rows, at the right end.
+        // "N modified" from last frame's rows, at the right end (left out where it would cover the title).
         if (const int modified = storage->GetInt(modifiedID, 0))
         {
             char note[32];
             std::snprintf(note, sizeof(note), "%d modified", modified);
-            const float w = ImGui::CalcTextSize(note).x;
-            draw->AddText({at.x + width - w - Px(4.0f) - trailer, textY}, ImGui::GetColorU32(p.AccentHover), note);
+            const float w     = ImGui::CalcTextSize(note).x;
+            const float noteX = at.x + width - w - Px(4.0f) - trailer;
+            if (noteX > titleRight + Px(8.0f))
+                draw->AddText({noteX, textY}, ImGui::GetColorU32(p.AccentHover), note);
         }
         ImGui::SetCursorScreenPos({top.x, at.y + height});
         ImGui::Dummy({0, Px(2.0f)});

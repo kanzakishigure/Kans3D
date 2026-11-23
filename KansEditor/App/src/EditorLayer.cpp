@@ -193,6 +193,8 @@ namespace Kans
         m_TimelinePanel.StopPreview();
         m_TimelinePanel.Bind(nullptr);
         m_PhysicsMaterialPanel.Bind(nullptr);
+        m_AudioMixerPanel.Bind(nullptr, nullptr, {});
+        m_AudioMixerPanel.SetProjectLayoutCallback({});
         m_RenderTexturePanel.SetResources({});
         m_RenderTexturePanel.Bind(nullptr);
         m_MaterialParameterCollectionPanel.Bind(nullptr);

@@ -520,17 +520,24 @@ namespace Kans
 
     std::optional<AudioBusMeter> AudioBusGraph::GetMeter(const std::string& bus) const
     {
+        AudioBusMeter snapshot;
+        if (!ReadMeter(bus, snapshot))
+            return std::nullopt;
+        return snapshot;
+    }
+
+    bool AudioBusGraph::ReadMeter(const std::string& bus, AudioBusMeter& meter) const
+    {
         const auto it = m_Names.find(bus);
         if (it == m_Names.end())
-            return std::nullopt;
-        const auto&   meters = m_Buses[it->second]->Fader.Meters;
-        AudioBusMeter snapshot;
-        snapshot.Channels.resize(m_Channels);
+            return false;
+        const auto& meters = m_Buses[it->second]->Fader.Meters;
+        meter.Channels.resize(m_Channels);
         for (uint32_t channel = 0; channel < m_Channels; ++channel)
             UnpackMeter(meters[channel].load(std::memory_order_relaxed),
-                        snapshot.Channels[channel].Peak,
-                        snapshot.Channels[channel].Rms);
-        return snapshot;
+                        meter.Channels[channel].Peak,
+                        meter.Channels[channel].Rms);
+        return true;
     }
 
     void AudioBusGraph::UpdateFaders()

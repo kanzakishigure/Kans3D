@@ -96,6 +96,8 @@ namespace Kans
         bool                                     SetBusBypass(const std::string& bus, bool bypass);
         bool                                     SetBusSendLevelDb(const std::string& bus, size_t sendIndex, float db);
         std::optional<AudioBusMeter>             GetBusMeter(const std::string& bus) const;
+        // GetBusMeter into a caller-owned meter, reusing its channel storage (no allocation once sized).
+        bool ReadBusMeter(const std::string& bus, AudioBusMeter& meter) const;
 
         // Effect indices follow chain order. Reacquire the view after structural edits or ApplyBusLayout.
         const std::vector<AudioBusEffect>& GetBusEffects(const std::string& bus) const;
@@ -115,6 +117,8 @@ namespace Kans
         // Disables all existing instances and waits on the main thread for any in-flight invocation.
         // The callback and user data may be released as soon as this returns.
         bool UnregisterCustomDSP(const std::string& name);
+        // Names of the registered custom DSP effects, sorted.
+        std::vector<std::string> GetCustomDSPNames() const;
 
         std::optional<std::string> RegisterSound(AudioSoundID id, std::shared_ptr<const std::vector<std::byte>> encodedBytes);
         std::optional<std::string> RegisterSound(AudioSoundID id, std::vector<std::byte> encodedBytes)

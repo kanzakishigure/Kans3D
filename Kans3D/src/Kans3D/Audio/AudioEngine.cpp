@@ -523,6 +523,11 @@ namespace Kans
         return m_Impl->Buses ? m_Impl->Buses->GetMeter(bus) : std::nullopt;
     }
 
+    bool AudioEngine::ReadBusMeter(const std::string& bus, AudioBusMeter& meter) const
+    {
+        return m_Impl->Buses && m_Impl->Buses->ReadMeter(bus, meter);
+    }
+
     const std::vector<AudioBusEffect>& AudioEngine::GetBusEffects(const std::string& bus) const
     {
         const auto*                              definition = m_Impl->Buses ? m_Impl->Buses->Find(bus) : nullptr;
@@ -645,6 +650,16 @@ namespace Kans
             std::this_thread::yield();
         registry.erase(found);
         return true;
+    }
+
+    std::vector<std::string> AudioEngine::GetCustomDSPNames() const
+    {
+        std::vector<std::string> names;
+        names.reserve(m_Impl->DSPRegistry.size());
+        for (const auto& entry : m_Impl->DSPRegistry)
+            names.push_back(entry.first);
+        std::sort(names.begin(), names.end());
+        return names;
     }
 
     void AudioEngine::AttachClipRegistry(AudioClipRegistry* registry)

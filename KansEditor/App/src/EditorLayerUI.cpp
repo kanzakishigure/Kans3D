@@ -128,6 +128,9 @@ namespace Kans
                                PanelDock::Right,
                                false),
                           [this] { m_PhysicsMaterialPanel.Draw(); });
+        m_Panels.Register(
+            spec(PanelID::AudioMixer, "Audio Mixer", ICON_FA_SLIDERS, PanelCategory::Assets, PanelDock::Bottom, false),
+            [this] { m_AudioMixerPanel.Draw(); });
     }
 
     void EditorLayer::OpenImporter(const std::filesystem::path& file)
@@ -429,7 +432,7 @@ namespace Kans
         // The material editor has its own undo, redo and save while it has focus.
         const bool material = m_MaterialEditorPanel.HasFocus() || m_RenderTexturePanel.HasFocus() ||
                               m_MaterialParameterCollectionPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() ||
-                              m_RagdollEditor.HasFocus() ||
+                              m_AudioMixerPanel.HasFocus() || m_RagdollEditor.HasFocus() ||
                               std::any_of(m_VfxModuleEditors.begin(),
                                           m_VfxModuleEditors.end(),
                                           [](const auto& e) { return e->HasFocus(); }) ||

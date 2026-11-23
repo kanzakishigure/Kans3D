@@ -32,6 +32,7 @@ namespace Kans
         AudioBusDefinition* Find(const std::string& bus);
         const std::vector<AudioBusDefinition>& GetBuses() const { return m_Layout.Buses; }
         std::optional<AudioBusMeter>           GetMeter(const std::string& bus) const;
+        bool                                   ReadMeter(const std::string& bus, AudioBusMeter& meter) const;
         void                                   UpdateFaders();
         void                                   UpdateSend(const std::string& bus, size_t index);
 

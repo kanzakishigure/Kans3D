@@ -28,6 +28,8 @@ namespace Kans
 
         void Bind(AudioEngine* engine, AssetManager* assets);
         bool IsAvailable() const { return m_Engine && m_Assets; }
+        // The bound engine (its bus layout names the buses a source can play through).
+        AudioEngine* GetEngine() const { return m_Engine; }
 
         // Replaces whatever plays; the clip starts once it has loaded (see Update).
         void Play(AssetID clip, const Options& options);

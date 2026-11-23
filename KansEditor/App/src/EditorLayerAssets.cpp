@@ -115,6 +115,10 @@ namespace Kans
         m_MaterialEditorPanel.Bind(m_AssetImports.get());
         m_TimelinePanel.Bind(m_AssetImports.get());
         m_PhysicsMaterialPanel.Bind(m_AssetImports.get());
+        m_AudioMixerPanel.Bind(AudioSystem::Get(), m_AssetImports.get(), m_ProjectFile);
+        m_AudioMixerPanel.SetProjectLayout(config.AudioBusLayout);
+        // The panel already plays the layout; the hot reload follows the new reference from now on.
+        m_AudioMixerPanel.SetProjectLayoutCallback([this](AssetID layout) { m_ProjectConfig.AudioBusLayout = layout; });
         m_RenderTexturePanel.Bind(m_AssetImports.get());
         m_MaterialParameterCollectionPanel.Bind(m_AssetImports.get());
         m_ProjectSettingsPanel.Bind(m_ProjectFile);
@@ -141,6 +145,11 @@ namespace Kans
             }
             else if (path.extension() == ".physmat")
                 OpenPhysicsMaterial(path);
+            else if (path.extension() == ".audiobus")
+            {
+                if (m_AudioMixerPanel.Open(path))
+                    m_Panels.Open(PanelID::AudioMixer);
+            }
             else if (path.extension() == ".vfxmodule")
                 OpenVfxModule(path);
             else if (path.extension() == ".vfxsystem" || path.extension() == ".vfxemitter")

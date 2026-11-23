@@ -24,6 +24,7 @@
 #include "KansEditorCore/ViewportClient.h"
 #include "Launcher/ProjectBrowser.h"
 #include "Panels/AnimatorGraphPanel.h"
+#include "Panels/AudioMixerPanel.h"
 #include "Panels/ContentBrowserPanel.h"
 #include "Panels/FrameGraphPanel.h"
 #include "Panels/HierarchyPanel.h"
@@ -68,6 +69,7 @@ namespace Kans
         inline constexpr const char* MaterialParameterCollections = "MaterialParameterCollections";
         inline constexpr const char* RenderTexture   = "RenderTexture";
         inline constexpr const char* PhysicsMaterial = "PhysicsMaterial";
+        inline constexpr const char* AudioMixer                   = "AudioMixer";
     } // namespace PanelID
 
     class EditorLayer : public Kans::Layer
@@ -384,6 +386,7 @@ namespace Kans
         PluginsPanel         m_PluginsPanel;
         ProjectSettingsPanel m_ProjectSettingsPanel;
         PhysicsMaterialPanel m_PhysicsMaterialPanel;
+        AudioMixerPanel                  m_AudioMixerPanel;
         RenderTexturePanel   m_RenderTexturePanel;
         MaterialParameterCollectionPanel m_MaterialParameterCollectionPanel;
         // Keys and text typed while playing with the viewport focused, for the game's UI.
