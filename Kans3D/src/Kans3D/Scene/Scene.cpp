@@ -346,8 +346,9 @@ namespace Kans
         const double animationDelta = m_PhysicsPaused && !m_PhysicsSingleStep ? 0 : double(ts);
         m_DeferIK                   = true;
         m_IKHasSpringPose           = false;
-        UpdateAnimations(animationDelta);
+        UpdateAnimations(animationDelta, false);
         UpdateTimelines(animationDelta);
+        UpdateAnimations(animationDelta, true);
         if (m_PhysicsWorld)
             m_PhysicsWorld->CaptureRagdollTargets(animationDelta);
         UpdatePhysics(double(ts));
@@ -826,6 +827,13 @@ namespace Kans
                 for (auto& [binding, id] : copied.GetComponent<TimelinePlayerComponent>().Bindings)
                     if (auto found = remap.find(id); found != remap.end())
                         id = found->second;
+        for (const auto& [source, target] : remap)
+            if (auto copied = GetEntityByUUID(target); copied.HasComponent<AnimatorComponent>())
+            {
+                auto& clock = copied.GetComponent<AnimatorComponent>().ClockEntity;
+                if (auto found = remap.find(clock); found != remap.end())
+                    clock = found->second;
+            }
         for (const auto& [source, target] : remap)
             if (auto copied = GetEntityByUUID(target); copied.HasComponent<IKComponent>())
                 copied.GetComponent<IKComponent>().RemapEntities([&](uint64_t id) {

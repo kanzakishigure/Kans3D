@@ -41,6 +41,20 @@ namespace Kans
         c.Player = CreateRef<TimelinePlayer>(*this, owner.GetUUID(), c.Source);
         return true;
     }
+    TimelineAudioStats Scene::GetTimelineAudioStats() const
+    {
+        TimelineAudioStats stats;
+        for (auto h : m_Registry.view<TimelinePlayerComponent>())
+            if (const auto& player = m_Registry.get<TimelinePlayerComponent>(h).Player)
+            {
+                const auto current = player->GetAudioStats();
+                stats.ActiveVoices += current.ActiveVoices;
+                if (std::abs(current.DriftSeconds) > std::abs(stats.DriftSeconds))
+                    stats.DriftSeconds = current.DriftSeconds;
+            }
+        return stats;
+    }
+
     void Scene::UpdateTimelines(double seconds)
     {
         // Evaluation can instantiate prefabs and mutate ECS storage. Iterate stable UUIDs.

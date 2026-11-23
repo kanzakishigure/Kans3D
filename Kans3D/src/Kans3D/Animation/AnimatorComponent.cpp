@@ -5,9 +5,9 @@ namespace Kans
 {
     AnimatorComponent::AnimatorComponent(const AnimatorComponent& c) :
         Skeleton(c.Skeleton), Controller(c.Controller), InlineController(c.InlineController), Enabled(c.Enabled),
-        ApplyRootMotion(c.ApplyRootMotion), Speed(c.Speed), Retargets(c.Retargets), Parameters(c.Parameters),
-        SkeletonSource(c.SkeletonSource), ControllerSource(c.ControllerSource), ClipSources(c.ClipSources),
-        ActionSources(c.ActionSources)
+        ApplyRootMotion(c.ApplyRootMotion), Speed(c.Speed), ClockSource(c.ClockSource), ClockEntity(c.ClockEntity),
+        Retargets(c.Retargets), Parameters(c.Parameters), SkeletonSource(c.SkeletonSource),
+        ControllerSource(c.ControllerSource), ClipSources(c.ClipSources), ActionSources(c.ActionSources)
     {}
     AnimatorComponent& AnimatorComponent::operator=(const AnimatorComponent& c)
     {
@@ -21,7 +21,8 @@ namespace Kans
     bool operator==(const AnimatorComponent& a, const AnimatorComponent& b)
     {
         if (a.Skeleton != b.Skeleton || a.Controller != b.Controller || a.Enabled != b.Enabled ||
-            a.ApplyRootMotion != b.ApplyRootMotion || a.Speed != b.Speed || a.Parameters != b.Parameters ||
+            a.ApplyRootMotion != b.ApplyRootMotion || a.Speed != b.Speed || a.ClockSource != b.ClockSource ||
+            a.ClockEntity != b.ClockEntity || a.Parameters != b.Parameters ||
             a.InlineController.has_value() != b.InlineController.has_value())
             return false;
         // Equality is also used by editor undo while joint pickers contain incomplete or duplicate draft rows.

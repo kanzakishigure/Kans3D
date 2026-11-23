@@ -788,6 +788,18 @@ namespace Kans
                 m_Parameters[i] = 0;
         }
     }
+    void Animator::SampleExternalTime(double seconds)
+    {
+        if (!IsPrepared() || !std::isfinite(seconds))
+            return;
+        m_RootDelta = {};
+        if (std::any_of(m_Status.begin(), m_Status.end(), [&](const auto& layer) { return seconds < layer.Time; }))
+            ++DiscontinuityVersion;
+        for (auto& layer : m_Status)
+            layer.Time = layer.TargetTime = seconds;
+        RebuildPose();
+    }
+
     void Animator::Advance(double seconds, const AnimationEventSink& sink, const RootMotionSink& applyMotion)
     {
         if (IsPrepared() && std::isfinite(seconds))

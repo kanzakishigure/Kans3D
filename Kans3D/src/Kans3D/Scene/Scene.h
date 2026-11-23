@@ -128,6 +128,7 @@ namespace Kans
         void                           SetEntityActive(Entity entity, bool active);
         bool                           PrepareTimeline(Entity owner);
         void                           UpdateTimelines(double seconds);
+        TimelineAudioStats             GetTimelineAudioStats() const;
         AssetManager*                  GetAssetManager() const { return m_PrefabAssets; }
         bool                           PrepareAnimator(Entity root);
         void                           UpdateAnimations(double seconds);
@@ -292,6 +293,7 @@ namespace Kans
         void              SetName(const std::string& name) { m_Name = name; }
 
     private:
+        void UpdateAnimations(double seconds, std::optional<bool> externalClock);
         template<typename T>
         void OnComponentAdd(Entity entity, T& component);
         // Removes the entity from its parent's children or the root order.
@@ -305,6 +307,7 @@ namespace Kans
         void              UpdateAudioListener(double seconds);
         void              PrepareAudioSource(Entity entity);
         void              PushAudioSource(Entity entity, double seconds);
+        AudioSpatialParams GetAudioSpatialParams(Entity entity) const;
         AudioEngine*      m_AudioEngine = nullptr;
         AudioClipRegistry m_AudioClips;
         bool              m_AudioRunning = false, m_AudioPaused = false, m_WarnedMultipleListeners = false;

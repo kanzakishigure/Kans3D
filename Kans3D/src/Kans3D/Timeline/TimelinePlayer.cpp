@@ -10,6 +10,7 @@
 #include "Kans3D/Script/ScriptTimeline.h"
 #include "Kans3D/VFX/VfxWorld.h"
 #include "Timeline.h"
+#include "TimelineAudioPlayer.h"
 #include "TimelineProperty.h"
 namespace Kans
 {
@@ -137,7 +138,8 @@ namespace Kans
     };
     TimelinePlayerComponent::TimelinePlayerComponent(const TimelinePlayerComponent& c) :
         Timeline(c.Timeline), Bindings(c.Bindings), PlayOnStart(c.PlayOnStart), Loop(c.Loop), Speed(c.Speed),
-        WrapMode(c.WrapMode), Source(c.Source)
+        WrapMode(c.WrapMode), ClockSource(c.ClockSource), AudioClockTrack(c.AudioClockTrack),
+        AudioOffset(c.AudioOffset), Source(c.Source)
     {}
     TimelinePlayerComponent& TimelinePlayerComponent::operator=(const TimelinePlayerComponent& c)
     {
@@ -151,7 +153,8 @@ namespace Kans
     bool operator==(const TimelinePlayerComponent& a, const TimelinePlayerComponent& b)
     {
         return a.Timeline == b.Timeline && a.Bindings == b.Bindings && a.PlayOnStart == b.PlayOnStart &&
-               a.Loop == b.Loop && a.Speed == b.Speed && a.WrapMode == b.WrapMode;
+               a.Loop == b.Loop && a.Speed == b.Speed && a.WrapMode == b.WrapMode && a.ClockSource == b.ClockSource &&
+               a.AudioClockTrack == b.AudioClockTrack && a.AudioOffset == b.AudioOffset;
     }
     TimelinePlayer::TimelinePlayer(Scene& scene, UUID owner, Ref<const TimelineAsset> source) :
         m_Scene(scene), m_Owner(owner), m_Source(std::move(source))
@@ -313,6 +316,7 @@ namespace Kans
     }
     void TimelinePlayer::RestoreBoundState()
     {
+        m_Audio.reset();
         m_Playing = false;
         m_Scene.ResetTransformConstraints();
         RemoveSpawned();
@@ -1016,6 +1020,7 @@ namespace Kans
             return false;
         m_Playing   = true;
         m_Completed = false;
+        UpdateAudio(true);
         if (!m_Entered)
         {
             m_Entered = true;
@@ -1025,9 +1030,91 @@ namespace Kans
             Finish();
         return true;
     }
-    void TimelinePlayer::Pause() { m_Playing = false; }
+    void TimelinePlayer::Pause()
+    {
+        m_Playing = false;
+        if (m_Audio)
+            m_Audio->Pause();
+    }
+
+    void TimelinePlayer::SetAudioPaused(bool paused)
+    {
+        m_AudioPausedByScene = paused;
+        if (paused)
+        {
+            if (m_Audio)
+                m_Audio->Pause();
+        }
+        else if (m_Playing)
+            UpdateAudio(true);
+    }
+
+    AudioVoiceHandle TimelinePlayer::GetAudioVoice(size_t track) const
+    {
+        return m_Audio ? m_Audio->GetTrackVoice(track) : AudioVoiceHandle {};
+    }
+
+    TimelineAudioStats TimelinePlayer::GetAudioStats() const
+    {
+        return m_Audio ? m_Audio->GetStats() : TimelineAudioStats {};
+    }
+
+    void TimelinePlayer::UpdateAudio(bool seek)
+    {
+        auto* engine    = m_Scene.GetAudioEngine();
+        auto* component = Component();
+        if (!engine || !component || m_Source->GetData().Audio.empty() || m_AudioPausedByScene || m_Scene.m_AudioPaused)
+            return;
+        if (!m_Playing)
+        {
+            if (seek && m_Audio)
+                m_Audio->Scrub(m_Time);
+            return;
+        }
+        if (!m_Audio)
+        {
+            m_Audio = std::make_unique<TimelineAudioPlayer>(
+                *engine,
+                m_Source,
+                [this](AssetID id) -> Ref<const AudioClipAsset> {
+                    if (auto it = AudioClips.find(id); it != AudioClips.end())
+                        return it->second;
+                    if (auto* assets = m_Scene.GetAssetManager())
+                    {
+                        auto clip = assets->Request<AudioClipAsset>(id);
+                        if (clip.IsReady())
+                            return clip.Asset;
+                    }
+                    return {};
+                },
+                [this](const std::string& binding) -> std::optional<AudioSpatialParams> {
+                    UUID id = 0;
+                    if (auto spawned = m_Spawned.find(binding); spawned != m_Spawned.end())
+                        id = spawned->second;
+                    else if (const auto* c = Component())
+                        if (auto bound = c->Bindings.find(binding); bound != c->Bindings.end())
+                            id = bound->second;
+                    const auto entity = m_Scene.GetEntityByUUID(id);
+                    if (!entity || !m_Scene.IsEntityActive(entity))
+                        return std::nullopt;
+                    auto spatial          = m_Scene.GetAudioSpatialParams(entity);
+                    spatial.DopplerFactor = 0;
+                    return spatial;
+                });
+            seek = true;
+        }
+        const auto master = component->ClockSource == TimelineClockSource::Audio ?
+                                std::optional<size_t>(component->AudioClockTrack) :
+                                std::nullopt;
+        if (seek)
+            m_Audio->Play(m_Time, component->Speed, component->AudioOffset, master);
+        else
+            m_Audio->Update(m_Time, component->Speed, component->AudioOffset, master);
+    }
     void TimelinePlayer::Stop()
     {
+        m_Audio.reset();
+        m_AudioPausedByScene = false;
         m_Playing = false;
         auto c    = Component();
         if (c && c->WrapMode == TimelineWrapMode::Reset)
@@ -1097,6 +1184,7 @@ namespace Kans
         if (!Evaluate(to))
             return false;
         m_Time = to;
+        UpdateAudio(true);
         // Per pass dedup survives backward seeks: rewinding alone does not rearm a marker.
         if (m_Playing && to > from)
             CrossEvents(from, to);
@@ -1108,6 +1196,7 @@ namespace Kans
     {
         if (m_Completed)
             return;
+        m_Audio.reset();
         m_Playing   = false;
         m_Completed = true;
         if (Component() && Component()->WrapMode == TimelineWrapMode::Reset)
@@ -1144,6 +1233,33 @@ namespace Kans
             Finish();
             return;
         }
+        const auto evaluate = [&](double time) {
+            if (m_State)
+                m_State->LiveAdvance = true;
+            const bool evaluated = Evaluate(time);
+            if (m_State)
+                m_State->LiveAdvance = false;
+            if (!evaluated)
+            {
+                m_Playing = false;
+                m_Audio.reset();
+            }
+            return evaluated;
+        };
+        if (m_Audio && !m_AudioPausedByScene && c->Speed > 0 && c->ClockSource == TimelineClockSource::Audio)
+            if (auto clock = m_Audio->GetClockTime(c->AudioClockTrack))
+            {
+                const auto target = std::clamp(*clock, 0.0, length);
+                if (target < m_Time)
+                {
+                    m_Time = target;
+                    if (evaluate(m_Time))
+                        UpdateAudio();
+                    return;
+                }
+                remaining = target - m_Time;
+            }
+        bool wrapped = false;
         while (m_Playing && remaining > 0)
         {
             double step = std::min(remaining, length - m_Time), from = m_Time;
@@ -1152,16 +1268,8 @@ namespace Kans
             // Scene advances the live Animator before timelines. Preserve script parameters,
             // state transitions and action clocks during playback; explicit Evaluate/Seek samples
             // the captured baseline for deterministic scrubbing instead.
-            if (m_State)
-                m_State->LiveAdvance = true;
-            const bool evaluated = Evaluate(m_Time);
-            if (m_State)
-                m_State->LiveAdvance = false;
-            if (!evaluated)
-            {
-                m_Playing = false;
+            if (!evaluate(m_Time))
                 return;
-            }
             CrossEvents(from, m_Time);
             if (!m_Playing)
                 return;
@@ -1174,18 +1282,13 @@ namespace Kans
                 }
                 m_Time = 0;
                 m_Fired.clear();
-                if (m_State)
-                    m_State->LiveAdvance = true;
-                const bool evaluatedStart = Evaluate(0);
-                if (m_State)
-                    m_State->LiveAdvance = false;
-                if (!evaluatedStart)
-                {
-                    m_Playing = false;
+                if (!evaluate(0))
                     return;
-                }
+                wrapped = true;
                 CrossEvents(-1, 0, true);
             }
         }
+        if (m_Playing)
+            UpdateAudio(wrapped);
     }
 } // namespace Kans

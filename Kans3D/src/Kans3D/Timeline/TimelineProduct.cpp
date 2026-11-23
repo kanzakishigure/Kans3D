@@ -59,6 +59,10 @@ namespace Kans
                 if (t.Binding == binding.ID)
                     for (const auto& c : t.Clips)
                         add(c.Start);
+            for (const auto& t : d.Audio)
+                if (t.Binding == binding.ID)
+                    for (const auto& c : t.Clips)
+                        add(c.Start);
             for (const auto& t : d.Particles)
                 if (t.Binding == binding.ID)
                     for (const auto& s : t.Sections)
@@ -84,7 +88,7 @@ namespace Kans
             return error("invalid length or frame rate");
         if (d.Bindings.size() > 4096 || d.Transforms.size() + d.Properties.size() + d.Activations.size() +
                                                 d.Animations.size() + d.Particles.size() + d.Events.size() +
-                                                d.CameraCuts.size() >
+                                                d.CameraCuts.size() + d.Audio.size() >
                                             65536)
             return error("too many bindings or tracks");
         std::set<std::string> ids, names;
@@ -165,6 +169,23 @@ namespace Kans
                     (c.ClipOut != 0 && c.ClipOut <= c.ClipIn) || !std::isfinite(c.BlendIn) || c.BlendIn < 0 ||
                     !std::isfinite(c.BlendOut) || c.BlendOut < 0)
                     return error("invalid animation clip/trim/speed/blend");
+        }
+        for (const auto& t : d.Audio)
+        {
+            if ((!t.Binding.empty() && !known(t)) || !text(t.Bus))
+                return error("invalid audio track bus or binding");
+            double previousEnd = 0;
+            for (const auto& c : t.Clips)
+            {
+                const auto fade = [&](const TimelineAudioFade& f) {
+                    return std::isfinite(f.Length) && f.Length >= 0 && f.Length <= c.End - c.Start &&
+                           unsigned(f.Curve) <= unsigned(AudioFadeCurve::SCurve);
+                };
+                if (!c.Clip.IsValid() || !range(c.Start, c.End) || c.Start < previousEnd || !std::isfinite(c.ClipIn) ||
+                    c.ClipIn < 0 || !IsValidAudioBusLevel(c.VolumeDb) || !fade(c.FadeIn) || !fade(c.FadeOut))
+                    return error("invalid or overlapping audio clip");
+                previousEnd = c.End;
+            }
         }
         std::set<std::string> particles;
         for (const auto& t : d.Particles)
@@ -321,8 +342,15 @@ namespace Kans
         YAML::Node n;
         n["Length"]    = d.Length;
         n["FrameRate"] = d.FrameRate;
-        for (auto key :
-             {"Bindings", "Transforms", "Properties", "Activations", "Animations", "Particles", "Events", "CameraCuts"})
+        for (auto key : {"Bindings",
+                         "Transforms",
+                         "Properties",
+                         "Activations",
+                         "Animations",
+                         "Particles",
+                         "Events",
+                         "CameraCuts",
+                         "Audio"})
             n[key] = YAML::Node(YAML::NodeType::Sequence);
         for (const auto& b : d.Bindings)
         {
@@ -443,6 +471,36 @@ namespace Kans
             v["Method"]  = e.Method;
             n["Events"].push_back(v);
         }
+        for (const auto& t : d.Audio)
+        {
+            YAML::Node track;
+            track["Bus"]  = t.Bus;
+            track["Mute"] = t.Mute;
+            if (!t.Binding.empty())
+                track["Binding"] = t.Binding;
+            track["Clips"] = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& c : t.Clips)
+            {
+                YAML::Node clip;
+                clip["Clip"]         = c.Clip.ToString();
+                clip["Start"]        = c.Start;
+                clip["End"]          = c.End;
+                clip["ClipIn"]       = c.ClipIn;
+                clip["VolumeDb"]     = c.VolumeDb;
+                const auto writeFade = [&](const char* key, const TimelineAudioFade& fade) {
+                    if (fade.Length == 0 && fade.Curve == AudioFadeCurve::Linear)
+                        return;
+                    clip[key]["Length"] = fade.Length;
+                    clip[key]["Curve"]  = fade.Curve == AudioFadeCurve::SCurve     ? "SCurve" :
+                                          fade.Curve == AudioFadeCurve::EqualPower ? "EqualPower" :
+                                                                                     "Linear";
+                };
+                writeFade("FadeIn", c.FadeIn);
+                writeFade("FadeOut", c.FadeOut);
+                track["Clips"].push_back(clip);
+            }
+            n["Audio"].push_back(track);
+        }
         for (const auto& c : d.CameraCuts)
         {
             YAML::Node v;
@@ -460,8 +518,15 @@ namespace Kans
         TimelineData d;
         d.Length    = n["Length"].as<double>();
         d.FrameRate = Get(n, "FrameRate", 30.0);
-        for (auto key :
-             {"Bindings", "Transforms", "Properties", "Activations", "Animations", "Particles", "Events", "CameraCuts"})
+        for (auto key : {"Bindings",
+                         "Transforms",
+                         "Properties",
+                         "Activations",
+                         "Animations",
+                         "Particles",
+                         "Events",
+                         "CameraCuts",
+                         "Audio"})
             Sequence(n[key]);
         if (n["Bindings"])
             for (const auto& v : n["Bindings"])
@@ -582,6 +647,38 @@ namespace Kans
                                     Get(v, "Payload", std::string()),
                                     Get(v, "Binding", std::string()),
                                     Get(v, "Method", std::string())});
+        if (n["Audio"])
+            for (const auto& v : n["Audio"])
+            {
+                TimelineAudioTrack track;
+                track.Bus     = Get(v, "Bus", track.Bus);
+                track.Binding = Get(v, "Binding", track.Binding);
+                track.Mute    = Get(v, "Mute", track.Mute);
+                Sequence(v["Clips"]);
+                if (v["Clips"])
+                    for (const auto& c : v["Clips"])
+                    {
+                        const auto fade = [](const YAML::Node& f) -> TimelineAudioFade {
+                            if (!f)
+                                return {};
+                            const auto curve = Get(f, "Curve", std::string("Linear"));
+                            if (curve != "Linear" && curve != "EqualPower" && curve != "SCurve")
+                                throw std::runtime_error("Timeline: unknown audio fade curve");
+                            return {f["Length"].as<double>(),
+                                    curve == "EqualPower" ? AudioFadeCurve::EqualPower :
+                                    curve == "SCurve"     ? AudioFadeCurve::SCurve :
+                                                            AudioFadeCurve::Linear};
+                        };
+                        track.Clips.push_back({ID(c["Clip"]),
+                                               c["Start"].as<double>(),
+                                               c["End"].as<double>(),
+                                               Get(c, "ClipIn", 0.0),
+                                               Get(c, "VolumeDb", 0.f),
+                                               fade(c["FadeIn"]),
+                                               fade(c["FadeOut"])});
+                    }
+                d.Audio.push_back(std::move(track));
+            }
         if (n["CameraCuts"])
             for (const auto& v : n["CameraCuts"])
                 d.CameraCuts.push_back(
@@ -595,7 +692,7 @@ namespace Kans
         {
             YAML::Node n;
             n["magic"]   = "KTLN";
-            n["version"] = 1;
+            n["version"] = 2;
             n["data"]    = EncodeTimelineNode(d);
             YAML::Emitter out;
             out.SetDoublePrecision(17);
@@ -622,8 +719,11 @@ namespace Kans
             if (docs.size() != 1)
                 throw std::runtime_error("Timeline requires one document");
             auto n = docs[0];
-            if (!n.IsMap() || n.size() != 3 || n["magic"].as<std::string>() != "KTLN" || n["version"].as<int>() != 1)
+            if (!n.IsMap() || n.size() != 3 || n["magic"].as<std::string>() != "KTLN")
                 throw std::runtime_error("Invalid Timeline product header");
+            const auto version = n["version"].as<int>();
+            if (version != 1 && version != 2)
+                throw std::runtime_error("Unsupported Timeline product version");
             return DecodeTimelineNode(n["data"]);
         }
         catch (const std::exception& e)

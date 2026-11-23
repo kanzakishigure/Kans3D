@@ -42,6 +42,9 @@ namespace Kans
         for (const auto& t : d.Animations)
             for (const auto& clip : t.Clips)
                 inputs.ProductsWithDependencies.emplace(clip.Clip, AssetType::AnimationClip);
+        for (const auto& t : d.Audio)
+            for (const auto& clip : t.Clips)
+                inputs.ProductsWithDependencies.emplace(clip.Clip, AssetType::AudioClip);
         return inputs;
     }
     std::variant<SourceInventory, AssetError> TimelineImporter::Inspect(const ImportContext& c) const

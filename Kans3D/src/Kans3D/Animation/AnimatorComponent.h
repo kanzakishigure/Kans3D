@@ -4,6 +4,12 @@
 namespace Kans
 {
     struct SkinningPose;
+    enum class AnimatorClockSource : uint8_t
+    {
+        Game,
+        Timeline,
+        AudioSource
+    };
     // Authoring fields are copied/serialized. Evaluation caches are private to each scene instance.
     struct AnimatorComponent
     {
@@ -11,6 +17,8 @@ namespace Kans
         std::optional<AnimationControllerData>           InlineController;
         bool                                             Enabled = true, ApplyRootMotion = false;
         double                                           Speed = 1;
+        AnimatorClockSource                              ClockSource = AnimatorClockSource::Game;
+        UUID                                             ClockEntity = 0; // Zero selects this entity.
         std::vector<ClipRetargetSettings>                Retargets;
         std::map<std::string, double>                    Parameters;
         Ref<const SkeletonAsset>                         SkeletonSource;

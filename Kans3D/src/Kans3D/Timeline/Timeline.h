@@ -1,6 +1,7 @@
 #pragma once
 #include <set>
 #include "Kans3D/Animation/Animation.h"
+#include "Kans3D/Audio/AudioEngine.h"
 #include "Kans3D/Core/UUID.h"
 #include "Kans3D/VFX/ParticleSystemComponent.h"
 
@@ -109,6 +110,24 @@ namespace Kans
         double      Start = 0, End = 0;
         std::string Binding;
     };
+    struct TimelineAudioFade
+    {
+        double         Length = 0;
+        AudioFadeCurve Curve  = AudioFadeCurve::Linear;
+    };
+    struct TimelineAudioClip
+    {
+        AssetID           Clip;
+        double            Start = 0, End = 0, ClipIn = 0;
+        float             VolumeDb = 0;
+        TimelineAudioFade FadeIn, FadeOut;
+    };
+    struct TimelineAudioTrack
+    {
+        std::string                    Bus  = "Music", Binding;
+        bool                           Mute = false;
+        std::vector<TimelineAudioClip> Clips;
+    };
     struct TimelineData
     {
         double                               Length = 0, FrameRate = 30;
@@ -120,6 +139,7 @@ namespace Kans
         std::vector<TimelineParticleTrack>   Particles;
         std::vector<TimelineEvent>           Events;
         std::vector<TimelineCameraCut>       CameraCuts;
+        std::vector<TimelineAudioTrack>      Audio;
     };
     struct TimelineActiveSections
     {
@@ -127,7 +147,7 @@ namespace Kans
         // Outer index is the track; inner indices identify its half-open [Start, End) sections.
         // Curves on transform/property tracks have no sections and are evaluated at every time.
         // Particle tails may remain visible after a section stops emitting.
-        std::vector<std::vector<size_t>> Activations, Animations, Particles;
+        std::vector<std::vector<size_t>> Activations, Animations, Particles, Audio;
         std::vector<size_t>              CameraCuts;
     };
     // Same clamping as Evaluate; loop=true wraps as Advance does, including exact Length -> 0.
@@ -141,6 +161,11 @@ namespace Kans
         Hold,
         Reset
     };
+    enum class TimelineClockSource : uint8_t
+    {
+        Timeline,
+        Audio
+    };
     struct TimelinePlayerComponent
     {
         AssetID                     Timeline;
@@ -148,6 +173,9 @@ namespace Kans
         bool                        PlayOnStart = true, Loop = false;
         double                      Speed    = 1;
         TimelineWrapMode            WrapMode = TimelineWrapMode::Hold;
+        TimelineClockSource         ClockSource     = TimelineClockSource::Timeline;
+        size_t                      AudioClockTrack = 0;
+        double                      AudioOffset     = 0; // Seconds. Positive moves audio later.
         Ref<const TimelineAsset>    Source;
         Ref<class TimelinePlayer>   Player;
         TimelinePlayerComponent() = default;
@@ -159,6 +187,13 @@ namespace Kans
     bool operator==(const TimelinePlayerComponent&, const TimelinePlayerComponent&);
     class Scene;
     struct TimelineBoundState;
+    class TimelineAudioPlayer;
+    class AudioClipAsset;
+    struct TimelineAudioStats
+    {
+        size_t ActiveVoices = 0;
+        double DriftSeconds = 0; // Signed, from the active voice with the largest absolute drift.
+    };
     class TimelinePlayer
     {
     public:
@@ -175,6 +210,10 @@ namespace Kans
         bool   CaptureBoundState(); // Idempotent until restore/Stop. Captures before PrepareAnimator mutates data.
         void   RestoreBoundState();
         bool   SetBinding(const std::string& nameOrID, UUID entity);
+        TimelineAudioStats GetAudioStats() const;
+        AudioVoiceHandle   GetAudioVoice(size_t track) const;
+        // CPU fixtures may provide clips without a scene AssetManager.
+        std::map<AssetID, Ref<const AudioClipAsset>> AudioClips;
         double Time() const { return m_Time; }
         bool   IsPlaying() const { return m_Playing; }
         const std::set<size_t>&          FiredEventIndices() const { return m_Fired; }
@@ -198,6 +237,11 @@ namespace Kans
         void                                      RestoreCameras();
         void                                      CrossEvents(double from, double to, bool includeZero = false);
         void                                      Finish();
+        friend class Scene;
+        void                                      UpdateAudio(bool seek = false);
+        void                                      SetAudioPaused(bool paused);
+        std::unique_ptr<TimelineAudioPlayer>      m_Audio;
+        bool                                      m_AudioPausedByScene = false;
         Scene&                                    m_Scene;
         UUID                                      m_Owner;
         Ref<const TimelineAsset>                  m_Source;

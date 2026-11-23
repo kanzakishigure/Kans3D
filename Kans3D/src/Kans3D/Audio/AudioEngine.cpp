@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -40,14 +41,16 @@ namespace Kans
             uint64_t       Start = 0, Length = 0;
             float          From = 1, To = 1;
             AudioFadeCurve Curve = AudioFadeCurve::Linear;
+            uint64_t       Elapsed = 0;
 
             float Gain(uint64_t frame) const
             {
                 if (frame < Start)
                     return From;
-                if (frame - Start >= Length)
+                const auto progress = AddFrames(frame - Start, Elapsed);
+                if (progress >= Length)
                     return To;
-                const auto t = static_cast<float>(static_cast<double>(frame - Start) / Length);
+                const auto t = static_cast<float>(static_cast<double>(progress) / Length);
                 if (Curve == AudioFadeCurve::EqualPower)
                 {
                     constexpr float halfPi = 1.57079632679489661923f;
@@ -194,7 +197,10 @@ namespace Kans
                     DecoderReady = true;
                     Capacity     = std::max(2048u, Info.SampleRate / 4);
                     PCM.resize(Capacity * Info.Channels);
-                    Fill();
+                    if (Offline)
+                        Fill();
+                    else
+                        SeekRevision.store(1);
                 }
                 else
                 {
@@ -339,14 +345,6 @@ namespace Kans
                 return MA_SUCCESS;
             }
 
-            void WaitForSeek() const
-            {
-                if (Stream && !Offline)
-                    while (SeekRevision.load(std::memory_order_relaxed) !=
-                           ReadyRevision.load(std::memory_order_acquire))
-                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-
             ~VoiceSource()
             {
                 if (Initialized)
@@ -363,15 +361,17 @@ namespace Kans
         {
             struct Transport
             {
-                uint64_t Frame = 0;
+                uint64_t Frame = 0, StreamDelayBase = 0, StreamDelayEnd = NoFrame;
                 uint64_t Start = NoFrame, Stop = NoFrame;
                 double   Source = 0, Rate = 1;
                 uint64_t LoopBegin = 0, LoopEnd = 0;
                 bool     Loop = false;
 
-                double Position(double clock) const
+                double Position(double clock, uint64_t streamDelay = 0) const
                 {
-                    const auto elapsed = std::max(0.0, std::min(clock, static_cast<double>(Stop)) - Start);
+                    const auto delay   = std::min(streamDelay, StreamDelayEnd);
+                    const auto waited  = delay - std::min(delay, StreamDelayBase);
+                    const auto elapsed = std::max(0.0, std::min(clock, static_cast<double>(Stop)) - Start - waited);
                     return WrapPosition(Source + elapsed * Rate, LoopBegin, LoopEnd, Loop);
                 }
             };
@@ -386,10 +386,14 @@ namespace Kans
             {
                 VoiceEnvelope                In;
                 std::optional<VoiceEnvelope> Out;
+                bool                         Multiply = false;
 
                 float Gain(uint64_t frame) const
                 {
-                    return Out && frame >= Out->Start ? Out->Gain(frame) : In.Gain(frame);
+                    const float in = In.Gain(frame);
+                    if (!Out || frame < Out->Start)
+                        return in;
+                    return Multiply ? in * Out->Gain(frame) : Out->Gain(frame);
                 }
             };
 
@@ -427,7 +431,11 @@ namespace Kans
                         if (const auto seek = voice.PendingSeek.exchange(NoFrame); seek != NoFrame)
                             self.Seek(seek);
                     }
+                    const auto requested = *outCount;
                     self.Original->onProcess(node, in, inCount, out, outCount);
+                    if (*outCount < requested && voice.Source->Stream && !voice.Source->Offline &&
+                        !ma_sound_at_end(&self))
+                        voice.StreamDelay.fetch_add(requested - *outCount, std::memory_order_relaxed);
                     const auto channels = ma_node_get_output_channels(node, 0);
                     if (self.Envelope.Out || self.Envelope.In.From != 1 || self.Envelope.In.To != 1)
                         for (uint32_t i = 0; i < *outCount; ++i)
@@ -436,7 +444,7 @@ namespace Kans
                             for (uint32_t ch = 0; ch < channels; ++ch)
                                 out[0][i * channels + ch] *= gain;
                         }
-                    self.Next += *outCount;
+                    self.Next += requested;
                 }
 
                 void ResetResampler()
@@ -455,7 +463,8 @@ namespace Kans
                 }
             };
 
-            VoiceSource Source;
+            std::shared_ptr<VoiceSource> Source = std::make_shared<VoiceSource>();
+            std::atomic<uint64_t>        StreamDelay {0};
             Node                     Sound {};
             AudioVoiceDesc Desc;
             AudioSoundInfo           Info {};
@@ -473,12 +482,13 @@ namespace Kans
             {
                 for (auto it = History.rbegin(); it != History.rend(); ++it)
                     if (it->Frame <= clock)
-                        return it->Position(clock);
+                        return it->Position(clock, StreamDelay.load(std::memory_order_relaxed));
                 return History.front().Source;
             }
 
             void Record(Transport state, double heardFrame)
             {
+                History.back().StreamDelayEnd = StreamDelay.load(std::memory_order_relaxed);
                 while (History.size() > 1 && History[1].Frame <= heardFrame)
                     History.pop_front();
                 if (History.back().Frame >= state.Frame)
@@ -618,9 +628,20 @@ namespace Kans
         ma_resource_manager Resources{};
         ma_engine Engine{};
         std::thread                     StreamWorker;
-        std::atomic<bool>               StopWorker {false};
         std::mutex                      StreamMutex;
-        std::vector<VoiceSource*>       DeviceStreams;
+        std::condition_variable                   StreamWake;
+        bool                                      StopWorker = false, StreamChanged = false;
+        std::vector<std::shared_ptr<VoiceSource>> DeviceStreams;
+        std::atomic<uint64_t>                     StreamWorkerPasses {0};
+
+        void WakeStreams()
+        {
+            {
+                std::lock_guard<std::mutex> lock(StreamMutex);
+                StreamChanged = true;
+            }
+            StreamWake.notify_one();
+        }
         std::atomic<uint64_t>           ClockSequence {0}, LastMixedFrame {0}, LastMixedCount {0};
         std::atomic<uint64_t>           MixEnd {0};
         std::atomic<int64_t>            LastMixTicks {0};
@@ -746,16 +767,30 @@ namespace Kans
         {
             try
             {
-                p.StopWorker.store(false, std::memory_order_relaxed);
+                p.StopWorker    = false;
+                p.StreamChanged = false;
+                p.StreamWorkerPasses.store(0);
                 p.StreamWorker = std::thread([&p] {
-                    while (!p.StopWorker.load(std::memory_order_relaxed))
+                    std::vector<std::shared_ptr<Impl::VoiceSource>> streams;
+                    std::unique_lock<std::mutex>                    lock(p.StreamMutex);
+                    const auto changed = [&] { return p.StopWorker || p.StreamChanged; };
+                    while (!p.StopWorker)
                     {
-                        {
-                            std::lock_guard<std::mutex> lock(p.StreamMutex);
-                            for (auto* source : p.DeviceStreams)
-                                source->Fill();
-                        }
-                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                        if (p.DeviceStreams.empty())
+                            p.StreamWake.wait(lock, changed);
+                        else
+                            p.StreamWake.wait_for(lock, std::chrono::milliseconds(5), changed);
+                        if (p.StopWorker)
+                            break;
+                        p.StreamChanged = false;
+                        streams         = p.DeviceStreams;
+                        ++p.StreamWorkerPasses;
+                        // Neither the main thread nor the mixer waits for decoder work or source destruction.
+                        lock.unlock();
+                        for (const auto& source : streams)
+                            source->Fill();
+                        streams.clear();
+                        lock.lock();
                     }
                 });
             }
@@ -845,7 +880,11 @@ namespace Kans
         p.Ready = false;
         if (p.StreamWorker.joinable())
         {
-            p.StopWorker.store(true, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lock(p.StreamMutex);
+                p.StopWorker = true;
+            }
+            p.StreamWake.notify_one();
             p.StreamWorker.join();
         }
         if (p.ResourcesReady)
@@ -872,6 +911,17 @@ namespace Kans
     uint64_t AudioEngine::GetClockFrames() const
     {
         return IsInitialized() ? ma_engine_get_time_in_pcm_frames(&m_Impl->Engine) : 0;
+    }
+
+    uint64_t AudioEngine::GetSchedulingClockFrames() const { return IsInitialized() ? m_Impl->WritableClock() : 0; }
+
+    uint64_t AudioEngine::GetStreamWorkerPasses() const { return m_Impl->StreamWorkerPasses.load(); }
+
+    bool AudioEngine::IsStreamSeekPending(AudioVoiceHandle handle) const
+    {
+        const auto* voice = m_Impl->Find(handle);
+        return voice && voice->Source->Stream && !voice->Source->Offline &&
+               voice->Source->SeekRevision.load() != voice->Source->ReadyRevision.load();
     }
 
     uint64_t AudioEngine::GetOutputLatencyFrames() const { return m_Impl->LatencyFrames; }
@@ -1336,21 +1386,21 @@ namespace Kans
         transport.LoopBegin = loopStart;
         transport.LoopEnd   = loopEnd != 0 ? loopEnd : sound.Info.LengthFrames;
         voice->History.push_back(transport);
-        auto result = voice->Source.Init(&m_Impl->Resources,
-                                         m_Impl->VFS,
-                                         (stream ? sound.EncodedName : sound.DecodedName).c_str(),
-                                         stream,
-                                         GetMode() == AudioOutputMode::Offline,
-                                         sound.Info,
-                                         loopStart,
-                                         loopEnd);
+        auto result = voice->Source->Init(&m_Impl->Resources,
+                                          m_Impl->VFS,
+                                          (stream ? sound.EncodedName : sound.DecodedName).c_str(),
+                                          stream,
+                                          GetMode() == AudioOutputMode::Offline,
+                                          sound.Info,
+                                          loopStart,
+                                          loopEnd);
         if (result != MA_SUCCESS)
         {
             Warn(Error("Voice source init", result));
             return {};
         }
         auto config = ma_sound_config_init_2(&m_Impl->Engine);
-        config.pDataSource = &voice->Source;
+        config.pDataSource = voice->Source.get();
         config.flags |= MA_SOUND_FLAG_NO_DEFAULT_ATTACHMENT;
         if (!desc.Spatial)
             config.flags |= MA_SOUND_FLAG_NO_SPATIALIZATION;
@@ -1389,8 +1439,11 @@ namespace Kans
         auto& slot = m_Impl->Slots[index];
         if (stream && GetMode() == AudioOutputMode::Device)
         {
-            std::lock_guard<std::mutex> lock(m_Impl->StreamMutex);
-            m_Impl->DeviceStreams.push_back(&voice->Source);
+            {
+                std::lock_guard<std::mutex> lock(m_Impl->StreamMutex);
+                m_Impl->DeviceStreams.push_back(voice->Source);
+            }
+            m_Impl->WakeStreams();
         }
         slot.Value = std::move(voice);
         AudioVoiceHandle handle{index, slot.Generation};
@@ -1441,11 +1494,11 @@ namespace Kans
         auto& slot = m_Impl->Slots[handle.Index];
         slot.Value->Commands->Owner.store(nullptr);
         m_Impl->CancelSchedule(*slot.Value);
-        if (slot.Value->Source.Stream && GetMode() == AudioOutputMode::Device)
+        if (slot.Value->Source->Stream && GetMode() == AudioOutputMode::Device)
         {
             std::lock_guard<std::mutex> lock(m_Impl->StreamMutex);
             auto&                       streams = m_Impl->DeviceStreams;
-            streams.erase(std::find(streams.begin(), streams.end(), &slot.Value->Source));
+            streams.erase(std::find(streams.begin(), streams.end(), slot.Value->Source));
         }
         slot.Value.reset();
         // Retire a slot permanently on generation wrap so even ancient handles cannot become live again.
@@ -1464,7 +1517,8 @@ namespace Kans
             if (ended)
                 state.Source = 0;
             else
-                state.Source = state.Position(static_cast<double>(now));
+                state.Source = state.Position(static_cast<double>(now), voice->StreamDelay.load());
+            state.StreamDelayBase = voice->StreamDelay.load();
             state.Frame = now;
             state.Start = now;
             state.Stop  = NoFrame;
@@ -1481,6 +1535,8 @@ namespace Kans
             }
             else
                 voice->Envelope = {};
+            if (voice->Source->Stream && !voice->Source->Offline)
+                m_Impl->WakeStreams();
             if (voice->Scheduled)
             {
                 voice->Record(state, GetPlaybackClockFrames());
@@ -1499,8 +1555,16 @@ namespace Kans
         StartVoice(handle, clockFrame, 0, AudioFadeCurve::Linear);
     }
 
-    uint64_t
-    AudioEngine::StartVoice(AudioVoiceHandle handle, uint64_t clockFrame, uint64_t fadeFrames, AudioFadeCurve curve)
+    void AudioEngine::ScheduleStart(AudioVoiceHandle handle, uint64_t clockFrame, const AudioVoiceWindow& window)
+    {
+        StartVoice(handle, clockFrame, 0, AudioFadeCurve::Linear, &window);
+    }
+
+    uint64_t AudioEngine::StartVoice(AudioVoiceHandle        handle,
+                                     uint64_t                clockFrame,
+                                     uint64_t                fadeFrames,
+                                     AudioFadeCurve          curve,
+                                     const AudioVoiceWindow* window)
     {
         auto* voice = m_Impl->Find(handle);
         if (!voice)
@@ -1512,7 +1576,8 @@ namespace Kans
         ma_sound_stop(&sound);
         auto       state  = voice->Current();
         const auto now    = m_Impl->WritableClock();
-        const auto source = ma_sound_at_end(&sound) ? 0 : state.Position(static_cast<double>(now));
+        const auto source =
+            ma_sound_at_end(&sound) ? 0 : state.Position(static_cast<double>(now), voice->StreamDelay.load());
         const auto late   = !m_Impl->BuildingSchedule && now > clockFrame ? now - clockFrame : 0;
         const auto frame =
             static_cast<uint64_t>(WrapPosition(source + late * state.Rate, state.LoopBegin, state.LoopEnd, state.Loop));
@@ -1520,8 +1585,9 @@ namespace Kans
         sound.seekTarget = NoFrame;
         sound.atEnd      = MA_FALSE;
         sound.Seek(frame);
-        // A start requested in the past may need a new streamed page. Prepare it here, outside the mixer.
-        voice->Source.WaitForSeek();
+        if (voice->Source->Stream && !voice->Source->Offline)
+            m_Impl->WakeStreams();
+        state.StreamDelayBase = voice->StreamDelay.load();
         state.Source    = static_cast<double>(frame);
         state.Frame     = now;
         state.Start     = m_Impl->BuildingSchedule ? clockFrame : std::max(m_Impl->WritableClock(), clockFrame);
@@ -1529,6 +1595,26 @@ namespace Kans
         voice->PausedAt = NoFrame;
         voice->Timed.store(true);
         voice->Envelope = {{state.Start, fadeFrames, fadeFrames == 0 ? 1.f : 0.f, 1.f, curve}, std::nullopt};
+        if (window)
+        {
+            state.Stop         = AddFrames(clockFrame, window->Duration);
+            voice->Envelope.In = {state.Start,
+                                  window->FadeIn,
+                                  window->FadeIn == 0 ? 1.f : 0.f,
+                                  1.f,
+                                  window->InCurve,
+                                  AddFrames(window->FadeInElapsed, state.Start - clockFrame)};
+            if (window->FadeOut != 0 && state.Stop != NoFrame)
+            {
+                const auto remaining = window->FadeOut - std::min(window->FadeOutElapsed, window->FadeOut);
+                const auto fadeEnd   = AddFrames(clockFrame, window->FadeOutEnd.value_or(window->Duration));
+                const auto begin     = fadeEnd - std::min(remaining, fadeEnd - clockFrame);
+                const auto start     = std::max(begin, state.Start);
+                voice->Envelope.Out  = VoiceEnvelope {
+                    start, window->FadeOut, 1, 0, window->OutCurve, AddFrames(window->FadeOutElapsed, start - begin)};
+                voice->Envelope.Multiply = true;
+            }
+        }
         ma_node_attach_output_bus(&sound, 0, m_Impl->VoiceBusInput(*m_Impl->Buses, voice->Desc.Bus), 0);
         voice->Record(state, GetPlaybackClockFrames());
         m_Impl->Queue(*voice);
@@ -1557,6 +1643,7 @@ namespace Kans
             }
             else
                 voice->Envelope.Out.reset();
+            voice->Envelope.Multiply = false;
             voice->Record(state, GetPlaybackClockFrames());
             m_Impl->Queue(*voice);
         }
@@ -1634,7 +1721,7 @@ namespace Kans
             voice->PausedAt       = now;
             voice->RemainingStart = state.Start > now ? state.Start - now : 0;
             voice->RemainingStop  = state.Stop == NoFrame ? NoFrame : state.Stop - now;
-            state.Source          = state.Position(static_cast<double>(now));
+            state.Source          = state.Position(static_cast<double>(now), voice->StreamDelay.load());
             state.Frame           = now;
             state.Start = state.Stop = NoFrame;
             voice->Record(state, GetPlaybackClockFrames());
@@ -1666,7 +1753,8 @@ namespace Kans
             ma_sound_set_pitch(&voice->Sound, pitch);
             auto state   = voice->Current();
             state.Frame  = GetClockFrames();
-            state.Source = state.Position(static_cast<double>(state.Frame));
+            state.Source          = state.Position(static_cast<double>(state.Frame), voice->StreamDelay.load());
+            state.StreamDelayBase = voice->StreamDelay.load();
             state.Start  = std::max(state.Start, state.Frame);
             state.Rate   = static_cast<double>(pitch) * voice->Info.SampleRate / GetSampleRate();
             voice->Record(state, GetPlaybackClockFrames());
@@ -1688,7 +1776,8 @@ namespace Kans
             ma_sound_set_looping(&voice->Sound, looping);
             auto state   = voice->Current();
             state.Frame  = GetClockFrames();
-            state.Source = state.Position(static_cast<double>(state.Frame));
+            state.Source          = state.Position(static_cast<double>(state.Frame), voice->StreamDelay.load());
+            state.StreamDelayBase = voice->StreamDelay.load();
             state.Start  = std::max(state.Start, state.Frame);
             state.Loop   = looping;
             voice->Record(state, GetPlaybackClockFrames());
@@ -1702,25 +1791,30 @@ namespace Kans
             frame      = std::min(frame, voice->Info.LengthFrames);
             if (state.Loop && frame >= state.LoopEnd)
                 frame = state.LoopBegin + (frame - state.LoopBegin) % (state.LoopEnd - state.LoopBegin);
-            const bool prepare = voice->Timed.load() && voice->Source.Stream && GetMode() == AudioOutputMode::Device;
+            const bool prepare = voice->Source->Stream && !voice->Source->Offline;
             if (prepare)
             {
                 m_Impl->CancelSchedule(*voice);
                 ma_node_detach_output_bus(&voice->Sound, 0);
-                ma_sound_stop(&voice->Sound);
+                if (voice->Scheduled)
+                    ma_sound_stop(&voice->Sound);
+                voice->PendingSeek.store(NoFrame);
+                voice->Sound.seekTarget = NoFrame;
+                voice->Sound.atEnd      = MA_FALSE;
                 voice->Sound.Seek(frame);
-                voice->Source.WaitForSeek();
+                m_Impl->WakeStreams();
                 ma_node_attach_output_bus(&voice->Sound, 0, m_Impl->VoiceBusInput(*m_Impl->Buses, voice->Desc.Bus), 0);
             }
             state.Frame  = prepare ? m_Impl->WritableClock() : GetClockFrames();
+            state.StreamDelayBase = voice->StreamDelay.load();
             state.Source = static_cast<double>(frame);
             state.Start  = std::max(state.Start, state.Frame);
             voice->Record(state, GetPlaybackClockFrames());
-            if (prepare)
+            if (prepare && voice->Scheduled)
                 m_Impl->Queue(*voice);
-            else if (voice->Timed.load())
+            else if (!prepare && voice->Timed.load())
                 voice->PendingSeek.store(frame);
-            else
+            else if (!prepare)
                 ma_sound_seek_to_pcm_frame(&voice->Sound, frame);
         }
     }
@@ -1773,7 +1867,9 @@ namespace Kans
                 ma_node_attach_output_bus(&voice->Sound, 0, m_Impl->VoiceBusInput(*m_Impl->Buses, voice->Desc.Bus), 0);
                 auto state      = voice->Current();
                 state.Frame     = GetClockFrames();
-                state.Source    = state.Position(static_cast<double>(state.Frame));
+                const auto delay      = voice->StreamDelay.load();
+                state.Source          = state.Position(static_cast<double>(state.Frame), delay);
+                state.StreamDelayBase = delay;
                 state.Start     = std::max(state.Start, state.Frame);
                 state.LoopBegin = beginFrame;
                 state.LoopEnd   = end;

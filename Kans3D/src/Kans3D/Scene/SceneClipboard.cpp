@@ -384,6 +384,7 @@ namespace Kans::SceneClipboard
                         reference(binding.second);
                 if (auto animator = node["AnimatorComponent"])
                 {
+                    reference(animator["ClockEntity"]);
                     if (auto joints = animator["JointEntities"])
                         for (size_t i = 0; i < joints.size(); ++i)
                             reference(joints[i]);

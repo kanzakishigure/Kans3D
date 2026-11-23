@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -29,6 +30,14 @@ namespace Kans
         Linear,
         EqualPower,
         SCurve
+    };
+    struct AudioVoiceWindow
+    {
+        // Output frames. FadeInElapsed and FadeOutElapsed preserve the authored envelope after a seek.
+        uint64_t                Duration = std::numeric_limits<uint64_t>::max();
+        uint64_t                FadeIn = 0, FadeOut = 0, FadeInElapsed = 0, FadeOutElapsed = 0;
+        std::optional<uint64_t> FadeOutEnd; // Offset from scheduled start. Defaults to Duration.
+        AudioFadeCurve          InCurve = AudioFadeCurve::Linear, OutCurve = AudioFadeCurve::Linear;
     };
     struct AudioSoundInfo
     {
@@ -92,12 +101,18 @@ namespace Kans
         uint32_t GetChannels() const;
         // Absolute engine output frames mixed since Init, including Offline renders.
         uint64_t GetClockFrames() const;
+        // First output frame available to schedule on the main thread.
+        uint64_t GetSchedulingClockFrames() const;
+        // Completed worker wake-ups, exposed for diagnostics.
+        uint64_t GetStreamWorkerPasses() const;
+        bool     IsStreamSeekPending(AudioVoiceHandle handle) const;
         // Estimated queued device frames (backend playback period size times periods, in engine frames).
         // Offline has no device latency.
         uint64_t GetOutputLatencyFrames() const;
         // Monotonic listener time in seconds, interpolated between device callbacks and bounded by the
         // mixed clock. Offline returns the exact rendered time without wall-clock interpolation.
         double   GetPlaybackClockSeconds() const;
+        double   GetPlaybackClockFrames() const;
         void SetMasterVolume(float linear);
         float GetMasterVolume() const;
         uint64_t Render(float* out, uint64_t frameCount);
@@ -159,6 +174,7 @@ namespace Kans
         // Schedule playback from the current source position (or zero after EOF). A past start skips
         // the elapsed engine frames at the voice's current pitch and starts at the first available frame.
         void ScheduleStart(AudioVoiceHandle handle, uint64_t clockFrame);
+        void ScheduleStart(AudioVoiceHandle handle, uint64_t clockFrame, const AudioVoiceWindow& window);
         // Silence begins at clockFrame. An optional fade occupies the preceding fadeFrames engine
         // frames. Past stop times take effect at the first available frame.
         void ScheduleStop(AudioVoiceHandle handle,
@@ -191,8 +207,11 @@ namespace Kans
     private:
         friend class AudioMusicPlayer;
         AudioVoiceHandle CreateVoice(const AudioVoiceDesc& desc, uint64_t loopStart, uint64_t loopEnd);
-        uint64_t StartVoice(AudioVoiceHandle handle, uint64_t clockFrame, uint64_t fadeFrames, AudioFadeCurve curve);
-        double   GetPlaybackClockFrames() const;
+        uint64_t                   StartVoice(AudioVoiceHandle        handle,
+                                              uint64_t                clockFrame,
+                                              uint64_t                fadeFrames,
+                                              AudioFadeCurve          curve,
+                                              const AudioVoiceWindow* window = nullptr);
         std::optional<std::string> ReplaceBusGraph(const AudioBusLayout& layout);
         friend class AudioClipRegistry;
         void AttachClipRegistry(AudioClipRegistry* registry);

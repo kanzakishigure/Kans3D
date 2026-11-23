@@ -3,6 +3,7 @@
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Scene/Scene.h"
+#include "Kans3D/Timeline/TimelineAudioPlayer.h"
 
 namespace Kans
 {
@@ -58,6 +59,9 @@ namespace Kans
     }
     void Scene::StopAudio()
     {
+        for (auto handle : m_Registry.view<TimelinePlayerComponent>())
+            if (auto& player = m_Registry.get<TimelinePlayerComponent>(handle).Player)
+                player->m_Audio.reset();
         for (auto handle : m_Registry.view<AudioSourceComponent>())
             m_Registry.get<AudioSourceComponent>(handle).m_Runtime.reset();
         for (auto handle : m_Registry.view<AudioListenerComponent>())
@@ -181,23 +185,33 @@ namespace Kans
         m_AudioEngine->SetLooping(r.Voice, c.Loop);
         if (!r.Spatial)
             return;
-        const auto         world = GetWorldTransform(entity);
-        AudioSpatialParams params;
-        params.Position       = glm::vec3(world[3]);
+        auto params           = GetAudioSpatialParams(entity);
         params.Velocity       = Velocity(params.Position, r.PreviousPosition, r.HasPosition, seconds);
-        params.Direction      = Direction(world, {0, 0, -1});
-        params.Attenuation    = c.Attenuation;
-        params.MinDistance    = c.MinDistance;
-        params.MaxDistance    = c.MaxDistance;
-        params.Rolloff        = c.Rolloff;
-        params.DopplerFactor  = c.DopplerFactor;
-        params.ConeInnerAngle = c.ConeInnerAngle;
-        params.ConeOuterAngle = c.ConeOuterAngle;
-        params.ConeOuterGain  = c.ConeOuterGain;
         r.PreviousPosition    = params.Position;
         r.HasPosition         = true;
         m_AudioEngine->SetSpatialParams(r.Voice, params);
     }
+    AudioSpatialParams Scene::GetAudioSpatialParams(Entity entity) const
+    {
+        const auto         world = GetWorldTransform(entity);
+        AudioSpatialParams params;
+        params.Position  = glm::vec3(world[3]);
+        params.Direction = Direction(world, {0, 0, -1});
+        if (entity.HasComponent<AudioSourceComponent>())
+        {
+            const auto& c         = entity.GetComponent<AudioSourceComponent>();
+            params.Attenuation    = c.Attenuation;
+            params.MinDistance    = c.MinDistance;
+            params.MaxDistance    = c.MaxDistance;
+            params.Rolloff        = c.Rolloff;
+            params.DopplerFactor  = c.DopplerFactor;
+            params.ConeInnerAngle = c.ConeInnerAngle;
+            params.ConeOuterAngle = c.ConeOuterAngle;
+            params.ConeOuterGain  = c.ConeOuterGain;
+        }
+        return params;
+    }
+
     void Scene::UpdateAudioListener(double seconds)
     {
         Entity   selected;
@@ -289,6 +303,9 @@ namespace Kans
         if (!m_AudioRunning || m_AudioPaused)
             return;
         m_AudioPaused = true;
+        for (auto handle : m_Registry.view<TimelinePlayerComponent>())
+            if (auto& player = m_Registry.get<TimelinePlayerComponent>(handle).Player)
+                player->SetAudioPaused(true);
         if (!m_AudioEngine)
             return;
         for (auto handle : m_Registry.view<AudioSourceComponent>())
@@ -307,6 +324,9 @@ namespace Kans
         if (!m_AudioRunning || !m_AudioPaused)
             return;
         m_AudioPaused = false;
+        for (auto handle : m_Registry.view<TimelinePlayerComponent>())
+            if (auto& player = m_Registry.get<TimelinePlayerComponent>(handle).Player)
+                player->SetAudioPaused(false);
         if (!m_AudioEngine)
             return;
         m_AudioListener = 0;

@@ -1683,6 +1683,12 @@ namespace Kans
                 v["Loop"]        = c.Loop;
                 v["Speed"]       = c.Speed;
                 v["WrapMode"]    = c.WrapMode == TimelineWrapMode::Reset ? "Reset" : "Hold";
+                if (c.ClockSource == TimelineClockSource::Audio)
+                    v["ClockSource"] = "Audio";
+                if (c.AudioClockTrack != 0)
+                    v["AudioClockTrack"] = c.AudioClockTrack;
+                if (c.AudioOffset != 0)
+                    v["AudioOffset"] = c.AudioOffset;
                 v["Bindings"]    = YAML::Node(YAML::NodeType::Map);
                 for (const auto& [id, entityID] : c.Bindings)
                     v["Bindings"][id] = uint64_t(entityID);
@@ -1702,6 +1708,10 @@ namespace Kans
                 v["Retargets"]       = EncodeClipRetargets(a.Retargets);
                 v["Speed"]           = a.Speed;
                 v["Parameters"]      = a.Parameters;
+                if (a.ClockSource != AnimatorClockSource::Game)
+                    v["ClockSource"] = a.ClockSource == AnimatorClockSource::Timeline ? "Timeline" : "AudioSource";
+                if (a.ClockEntity != UUID(0))
+                    v["ClockEntity"] = uint64_t(a.ClockEntity);
                 if (a.InlineController)
                     v["InlineController"] = EncodeAnimationControllerNode(*a.InlineController);
                 else if (clipboard && a.ControllerSource)
@@ -2380,13 +2390,34 @@ namespace Kans
                 if (node["TimelinePlayerComponent"])
                 {
                     const auto v = node["TimelinePlayerComponent"];
-                    Keys(v, {"Timeline", "PlayOnStart", "Loop", "Speed", "WrapMode", "Bindings"});
+                    Keys(v,
+                         {"Timeline",
+                          "PlayOnStart",
+                          "Loop",
+                          "Speed",
+                          "WrapMode",
+                          "Bindings",
+                          "ClockSource",
+                          "AudioClockTrack",
+                          "AudioOffset"});
                     TimelinePlayerComponent c;
                     c.Timeline    = Identity(v["Timeline"]);
                     c.PlayOnStart = v["PlayOnStart"].as<bool>();
                     c.Loop        = v["Loop"].as<bool>();
                     c.Speed       = v["Speed"].as<double>();
                     Require(std::isfinite(c.Speed) && c.Speed >= 0, "Invalid timeline speed");
+                    if (v["ClockSource"])
+                    {
+                        const auto clock = v["ClockSource"].as<std::string>();
+                        Require(clock == "Timeline" || clock == "Audio", "Invalid timeline clock source");
+                        if (clock == "Audio")
+                            c.ClockSource = TimelineClockSource::Audio;
+                    }
+                    if (v["AudioClockTrack"])
+                        c.AudioClockTrack = v["AudioClockTrack"].as<size_t>();
+                    if (v["AudioOffset"])
+                        c.AudioOffset = v["AudioOffset"].as<double>();
+                    Require(std::isfinite(c.AudioOffset), "Invalid timeline audio offset");
                     const auto wrap = v["WrapMode"].as<std::string>();
                     Require(wrap == "Hold" || wrap == "Reset", "Invalid timeline wrap mode");
                     c.WrapMode = wrap == "Reset" ? TimelineWrapMode::Reset : TimelineWrapMode::Hold;
@@ -2410,6 +2441,8 @@ namespace Kans
                           "Retargets",
                           "Speed",
                           "Parameters",
+                          "ClockSource",
+                          "ClockEntity",
                           "InlineController",
                           "JointEntities"});
                     AnimatorComponent a;
@@ -2420,6 +2453,17 @@ namespace Kans
                     a.Retargets       = DecodeClipRetargets(v["Retargets"]);
                     a.Speed           = v["Speed"].as<double>();
                     Require(std::isfinite(a.Speed), "Non-finite animator speed");
+                    if (v["ClockSource"])
+                    {
+                        const auto clock = v["ClockSource"].as<std::string>();
+                        Require(clock == "Game" || clock == "Timeline" || clock == "AudioSource",
+                                "Invalid animator clock source");
+                        if (clock != "Game")
+                            a.ClockSource =
+                                clock == "Timeline" ? AnimatorClockSource::Timeline : AnimatorClockSource::AudioSource;
+                    }
+                    if (v["ClockEntity"])
+                        a.ClockEntity = UUID(UInt(v["ClockEntity"]));
                     Require(v["Parameters"].IsMap() && v["Parameters"].size() <= 4096, "Invalid animator parameters");
                     a.Parameters = v["Parameters"].as<std::map<std::string, double>>();
                     for (const auto& p : a.Parameters)

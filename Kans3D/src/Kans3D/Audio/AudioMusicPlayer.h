@@ -63,6 +63,7 @@ namespace Kans
         // During a pending switch this is the outgoing track. Once the listener clock reaches
         // the switch frame it is the new track, including during a crossfade.
         std::optional<AudioMusicTrack>        GetCurrentTrack() const;
+        AudioVoiceHandle                      GetCurrentVoice() const;
         uint64_t                              GetPositionFrames() const;
         double                                GetPositionSeconds() const;
         std::optional<AudioMusicBeatPosition> GetBeatPosition() const;

@@ -24,6 +24,8 @@ namespace Kans
             result.Animations.push_back(collect(track.Clips));
         for (const auto& track : data.Particles)
             result.Particles.push_back(collect(track.Sections));
+        for (const auto& track : data.Audio)
+            result.Audio.push_back(collect(track.Clips));
         result.CameraCuts = collect(data.CameraCuts);
         return result;
     }

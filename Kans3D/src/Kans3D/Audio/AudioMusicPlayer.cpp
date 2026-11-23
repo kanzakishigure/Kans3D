@@ -222,6 +222,12 @@ namespace Kans
         return current ? std::optional<AudioMusicTrack>(current->Track) : std::nullopt;
     }
 
+    AudioVoiceHandle AudioMusicPlayer::GetCurrentVoice() const
+    {
+        const auto* current = Current();
+        return current ? current->Voice : AudioVoiceHandle {};
+    }
+
     uint64_t AudioMusicPlayer::GetPositionFrames() const
     {
         const auto* current = Current();

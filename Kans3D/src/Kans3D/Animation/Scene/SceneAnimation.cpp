@@ -436,12 +436,18 @@ namespace Kans
             parent.GetComponent<BoundsComponent>().World = bounds;
         }
     }
-    void Scene::UpdateAnimations(double seconds)
+    void Scene::UpdateAnimations(double seconds) { UpdateAnimations(seconds, std::nullopt); }
+
+    void Scene::UpdateAnimations(double seconds, std::optional<bool> externalClock)
     {
+        bool updatedPose = false;
         for (auto handle : m_Registry.view<AnimatorComponent>())
         {
             Entity root {handle, this};
             auto&  a = root.GetComponent<AnimatorComponent>();
+            const bool external = a.ClockSource != AnimatorClockSource::Game;
+            if (externalClock && *externalClock != external)
+                continue;
             a.Events.clear();
             if (!IsEntityActive(root) || !a.Enabled || !PrepareAnimator(root))
                 continue;
@@ -452,27 +458,45 @@ namespace Kans
             a.Player->SetIKWorldTransform(GetWorldTransform(root));
             a.Player->ExtractRootMotion = a.ApplyRootMotion;
             a.Player->Speed             = a.Speed;
-            a.Player->Advance(
-                seconds,
-                [&](const auto& event) { a.Events.push_back(event); },
-                [this, &root](const auto& delta) {
-                    auto& animator = root.GetComponent<AnimatorComponent>();
-                    if (!animator.ApplyRootMotion)
-                        return;
-                    const auto matrix          = root.GetComponent<TransformComponent>().GetTransform() *
-                                                 glm::translate(glm::mat4(1), delta.Translation) *
-                                                 glm::mat4_cast(delta.Rotation);
-                    const auto local           = JointTransform::FromMatrix(matrix);
-                    auto&      transform       = root.GetComponent<TransformComponent>();
-                    transform.Position         = local.Translation;
-                    transform.Rotation         = glm::eulerAngles(local.Rotation);
-                    transform.Scale            = local.Scale;
-                    transform.ImportedMatrix   = matrix;
-                    transform.ImportedPosition = transform.Position;
-                    transform.ImportedRotation = transform.Rotation;
-                    transform.ImportedScale    = transform.Scale;
-                    animator.Player->SetIKWorldTransform(GetWorldTransform(root));
-                });
+            if (external)
+            {
+                const auto clock = a.ClockEntity == UUID(0) ? root : GetEntityByUUID(a.ClockEntity);
+                if (clock && a.ClockSource == AnimatorClockSource::Timeline &&
+                    clock.HasComponent<TimelinePlayerComponent>())
+                {
+                    if (const auto& player = clock.GetComponent<TimelinePlayerComponent>().Player)
+                        a.Player->SampleExternalTime(player->Time());
+                }
+                else if (clock && a.ClockSource == AnimatorClockSource::AudioSource && m_AudioEngine &&
+                         clock.HasComponent<AudioSourceComponent>())
+                {
+                    const auto voice = clock.GetComponent<AudioSourceComponent>().GetVoiceHandle();
+                    if (m_AudioEngine->IsVoiceValid(voice))
+                        a.Player->SampleExternalTime(m_AudioEngine->GetVoicePositionSeconds(voice));
+                }
+            }
+            else
+                a.Player->Advance(
+                    seconds,
+                    [&](const auto& event) { a.Events.push_back(event); },
+                    [this, &root](const auto& delta) {
+                        auto& animator = root.GetComponent<AnimatorComponent>();
+                        if (!animator.ApplyRootMotion)
+                            return;
+                        const auto matrix          = root.GetComponent<TransformComponent>().GetTransform() *
+                                                     glm::translate(glm::mat4(1), delta.Translation) *
+                                                     glm::mat4_cast(delta.Rotation);
+                        const auto local           = JointTransform::FromMatrix(matrix);
+                        auto&      transform       = root.GetComponent<TransformComponent>();
+                        transform.Position         = local.Translation;
+                        transform.Rotation         = glm::eulerAngles(local.Rotation);
+                        transform.Scale            = local.Scale;
+                        transform.ImportedMatrix   = matrix;
+                        transform.ImportedPosition = transform.Position;
+                        transform.ImportedRotation = transform.Rotation;
+                        transform.ImportedScale    = transform.Scale;
+                        animator.Player->SetIKWorldTransform(GetWorldTransform(root));
+                    });
             // Keep the Advance event sink within std::function's inline storage (one capture).
             if (ScriptEngine::GetSceneContext() == this)
                 for (const auto& event : a.Events)
@@ -483,9 +507,15 @@ namespace Kans
                 ResetSecondaryMotion(root);
             }
             ApplyAnimatorPose(root, a.Player->GetPose(), seconds);
+            updatedPose = true;
         }
-        UpdateModelPoses();
-        UpdateBounds();
+        if (externalClock != true)
+        {
+            UpdateModelPoses();
+            UpdateBounds();
+        }
+        else if (updatedPose)
+            UpdateBounds();
     }
     bool Scene::PreviewAnimation(Entity root, size_t layer, uint32_t state, double time)
     {

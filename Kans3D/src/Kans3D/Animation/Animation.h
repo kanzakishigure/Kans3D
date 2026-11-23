@@ -143,6 +143,8 @@ namespace Kans
         // Applies entity root motion before modifiers/IK, so world-space targets need only one solve.
         using RootMotionSink = std::function<void(const RootMotionDelta&)>;
         void Advance(double seconds, const AnimationEventSink& sink = {}, const RootMotionSink& applyMotion = {});
+        // Silent absolute sampling of the current layers, with no root-motion delta or event replay.
+        void SampleExternalTime(double seconds);
         // Independent preview: samples one state without changing parameters, playback times, triggers or events.
         bool EvaluateState(size_t layer, uint32_t state, double time, AnimationPose& output);
         // Explicit event query for editor scrubbing. Does not change playback state.
