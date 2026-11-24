@@ -5,8 +5,8 @@
 
 namespace Kans::RenderHardware
 {
-    // Backend-private construction policy. Tests always request CPU-only selection,
-    // validation and synchronization validation; applications use Debug validation.
+    // Backend-private construction policy. CPU-only selection is the safe default
+    // for headless callers. Callers can opt into hardware and request validation.
     struct VulkanDeviceOptions
     {
         void*                                   NativeWindow              = nullptr;

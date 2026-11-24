@@ -24,6 +24,8 @@ namespace Kans::RenderHardware::VulkanTestProbes
     using BufferWriteObserver = std::function<void(const BufferDesc&, size_t, const void*, size_t)>;
     void        SetBufferWriteObserver(const Device& device, BufferWriteObserver observer);
     Diagnostics Inspect(const Device& device);
+    VkPhysicalDeviceDriverProperties DriverProperties(const Device& device);
+    void                             ReportDeviceOnce(const Device& device);
     // Test-only injection at the native pipeline creation boundary; empty disables it.
     void        SetPipelineFailure(const Device& device, std::string nameSubstring);
     void        EmitValidationError(const Device& device, const char* message);

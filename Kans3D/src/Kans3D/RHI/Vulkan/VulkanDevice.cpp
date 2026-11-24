@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include <imgui.h>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -2566,6 +2567,28 @@ namespace Kans::RenderHardware::VulkanTestProbes
                 state.PipelineAttempts,
                 state.GroupCreations,
                 state.CommandBufferAllocations};
+    }
+    VkPhysicalDeviceDriverProperties DriverProperties(const Device& device)
+    {
+        const auto&                      context = dynamic_cast<const VKDevice&>(device).GetContext();
+        VkPhysicalDeviceDriverProperties driver {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+        VkPhysicalDeviceProperties2      properties {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
+        vkGetPhysicalDeviceProperties2(context.Physical, &properties);
+        return driver;
+    }
+    void ReportDeviceOnce(const Device& device)
+    {
+        static std::once_flag reported;
+        std::call_once(reported, [&device] {
+            const auto& context = dynamic_cast<const VKDevice&>(device).GetContext();
+            const auto  driver  = DriverProperties(device);
+            std::printf("Vulkan test device: %s | driver: %s (%s, version 0x%08x)\n",
+                        context.Properties.deviceName,
+                        driver.driverName,
+                        driver.driverInfo,
+                        context.Properties.driverVersion);
+            std::fflush(stdout);
+        });
     }
     void EmitValidationError(const Device& device, const char* message)
     {

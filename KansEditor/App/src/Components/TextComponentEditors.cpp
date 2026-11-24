@@ -6,7 +6,7 @@
 
 namespace Kans::ComponentEditors
 {
-    void DrawText(Entity entity, ComponentUI& ui)
+    void DrawTextComponent(Entity entity, ComponentUI& ui)
     {
         static const TextComponent defaults;
         entity.PatchComponent<TextComponent>([&](TextComponent& c) {

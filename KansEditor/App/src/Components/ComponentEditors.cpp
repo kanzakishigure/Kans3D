@@ -71,7 +71,7 @@ namespace Kans
                 c          = style;
             });
         };
-        text.Draw        = DrawText;
+        text.Draw        = DrawTextComponent;
         text.CreateName  = "Text";
         text.CreateOrder = 5;
         text.Create      = text.Add;
