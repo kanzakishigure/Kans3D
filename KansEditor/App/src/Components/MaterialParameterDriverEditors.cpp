@@ -9,17 +9,25 @@ namespace Kans::ComponentEditors
 {
     namespace
     {
-        void ListEntities(Scene& scene, Entity entity, int depth, uint64_t& id, bool& changed)
+        void ListEntities(Scene&                             scene,
+                          Entity                             entity,
+                          int                                depth,
+                          uint64_t&                          id,
+                          bool&                              changed,
+                          const std::function<bool(Entity)>& accept)
         {
             const uint64_t uuid = uint64_t(entity.GetUUID());
-            ImGui::PushID(&uuid);
-            ImGui::Indent(float(depth) * 10.0f);
-            if (ImGui::Selectable(entity.GetComponent<TagComponent>().Tag.c_str(), id == uuid))
-                id = uuid, changed = true;
-            ImGui::Unindent(float(depth) * 10.0f);
-            ImGui::PopID();
+            if (!accept || accept(entity))
+            {
+                ImGui::PushID(&uuid);
+                ImGui::Indent(float(depth) * 10.0f);
+                if (ImGui::Selectable(entity.GetComponent<TagComponent>().Tag.c_str(), id == uuid))
+                    id = uuid, changed = true;
+                ImGui::Unindent(float(depth) * 10.0f);
+                ImGui::PopID();
+            }
             for (Entity child : scene.GetChildren(entity))
-                ListEntities(scene, child, depth + 1, id, changed);
+                ListEntities(scene, child, depth + 1, id, changed, accept);
         }
 
         bool InputParameter(std::string& value)
@@ -36,27 +44,41 @@ namespace Kans::ComponentEditors
 
     bool EntityField(const char* label, uint64_t& id, Scene* scene)
     {
+        return EntityField(label, id, scene, {}, "(none)");
+    }
+
+    bool EntityField(const char*                        label,
+                     uint64_t&                          id,
+                     Scene*                             scene,
+                     const std::function<bool(Entity)>& accept,
+                     const char*                        none)
+    {
         if (!PropertyGrid::Row(label))
             return false;
         Entity      target  = scene && id ? scene->GetEntityByUUID(UUID(id)) : Entity {};
-        std::string current = !id ? "(none)" : target ? target.GetComponent<TagComponent>().Tag : "(missing)";
+        std::string current = !id ? none : target ? target.GetComponent<TagComponent>().Tag : "(missing)";
         bool        changed = false;
         ImGui::PushID(label);
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::BeginCombo("##entity", current.c_str(), ImGuiComboFlags_HeightLarge))
         {
-            if (ImGui::Selectable("(none)", id == 0))
+            if (ImGui::Selectable(none, id == 0))
                 id = 0, changed = true;
             if (scene)
                 for (Entity root : scene->GetRootEntities())
-                    ListEntities(*scene, root, 0, id, changed);
+                    ListEntities(*scene, root, 0, id, changed, accept);
             ImGui::EndCombo();
         }
         if (ImGui::BeginDragDropTarget())
         {
             if (const auto* payload = ImGui::AcceptDragDropPayload("entity_payload");
                 payload && payload->DataSize == sizeof(uint64_t))
-                id = *static_cast<const uint64_t*>(payload->Data), changed = true;
+            {
+                const uint64_t dropped = *static_cast<const uint64_t*>(payload->Data);
+                Entity         entity  = scene ? scene->GetEntityByUUID(UUID(dropped)) : Entity {};
+                if (!accept || (entity && accept(entity)))
+                    id = dropped, changed = true;
+            }
             ImGui::EndDragDropTarget();
         }
         ImGui::PopID();

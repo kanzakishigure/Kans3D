@@ -409,6 +409,42 @@ namespace Kans::ComponentEditors
         if (a.LastError)
             ImGui::TextColored(ErrorColor, "%s", a.LastError->Message.c_str());
 
+        // What the animator's time follows: the game clock, a Timeline Player or an Audio Source.
+        if (PropertyGrid::BeginGroup("Clock", nullptr, nullptr, a.ClockSource != AnimatorClockSource::Game))
+        {
+            const char* clocks[] {"Game", "Timeline", "Audio Source"};
+            int         clock = int(a.ClockSource);
+            if (PropertyGrid::Combo("Clock source", clocks, 3, clock))
+                a.ClockSource = AnimatorClockSource(clock);
+            const bool timeline = a.ClockSource == AnimatorClockSource::Timeline;
+            const bool audio    = a.ClockSource == AnimatorClockSource::AudioSource;
+            ImGui::BeginDisabled(!timeline && !audio);
+            uint64_t   id     = uint64_t(a.ClockEntity);
+            const auto accept = [&](Entity e) {
+                return timeline ? e.HasComponent<TimelinePlayerComponent>() :
+                       audio    ? e.HasComponent<AudioSourceComponent>() :
+                                  true;
+            };
+            if (EntityField("Clock entity", id, scene, accept, "(this entity)"))
+                a.ClockEntity = UUID(id);
+            ImGui::EndDisabled();
+            if (timeline || audio)
+            {
+                Entity clockEntity = a.ClockEntity == UUID(0) ? entity :
+                                     scene                    ? scene->GetEntityByUUID(a.ClockEntity) :
+                                                                Entity {};
+                if (!clockEntity || !accept(clockEntity))
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().Warning);
+                    PropertyGrid::Text("Status",
+                                       timeline ? "No Timeline Player there: the animator holds its pose" :
+                                                  "No Audio Source there: the animator holds its pose");
+                    ImGui::PopStyleColor();
+                }
+            }
+            PropertyGrid::EndGroup();
+        }
+
         // Folded unless used; the toggle on the heading applies root motion.
         bool toggled = false;
         if (PropertyGrid::BeginGroup("Root motion", &a.ApplyRootMotion, &toggled, a.ApplyRootMotion))

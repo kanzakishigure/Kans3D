@@ -221,6 +221,7 @@ namespace Kans
         m_PropertiesPanel.SetAudioPreview(nullptr);
         m_ContentBrowserPanel.SetAudioPreview(nullptr);
         m_AudioPreview.Bind(nullptr, nullptr);
+        m_TimelinePanel.SetAudioEngine(nullptr);
         m_PendingAudio.clear();
         // The ragdoll editor's preview scene and its renderer hold asset leases.
         m_RagdollEditor.SetPreviewRenderer({});
@@ -321,6 +322,7 @@ namespace Kans
         m_ActiveScene->SetAudioEngine(AudioSystem::Get());
         m_AudioPreview.Bind(AudioSystem::Get(), m_Assets.get());
         m_AudioPreview.Update();
+        m_TimelinePanel.SetAudioEngine(AudioSystem::Get()); // Its preview's audio tracks.
 
         // The scene only runs in play mode; IK and saved shape keys of models without an
         // Animator still show while editing.

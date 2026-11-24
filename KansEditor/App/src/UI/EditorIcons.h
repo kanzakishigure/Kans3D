@@ -139,5 +139,6 @@
 #define ICON_FA_LOCK                   "\xef\x80\xa3" // U+F023
 #define ICON_FA_CIRCLE_EXCLAMATION     "\xef\x81\xaa" // U+F06A
 #define ICON_FA_VOLUME_HIGH "\xef\x80\xa8"            // U+F028
+#define ICON_FA_VOLUME_XMARK "\xef\x9a\xa9"           // U+F6A9
 #define ICON_FA_HEADPHONES "\xef\x80\xa5"             // U+F025
 #define ICON_FA_MUSIC "\xef\x80\x81"                  // U+F001

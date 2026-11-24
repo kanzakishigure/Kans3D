@@ -81,6 +81,12 @@ namespace Kans::ComponentEditors
     void DrawMaterialParameterDrivers(Entity entity, ComponentUI& ui);
     // Picks an entity of the scene (or one dragged from the Hierarchy); 0 = none. True when changed.
     bool        EntityField(const char* label, uint64_t& id, Scene* scene);
+    // Only entities `accept` takes are listed (and dropped); `none` names the 0 entry.
+    bool        EntityField(const char*                        label,
+                            uint64_t&                          id,
+                            Scene*                             scene,
+                            const std::function<bool(Entity)>& accept,
+                            const char*                        none);
     const char* ShapeName(ShapeType type);
     // Adds a generated shape resting on the ground plane at the entity's position.
     void CreateShape(Entity entity, ShapeType type);

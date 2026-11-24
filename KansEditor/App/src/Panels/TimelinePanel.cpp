@@ -6,13 +6,16 @@
 #include <misc/cpp/imgui_stdlib.h>
 #include <yaml-cpp/yaml.h>
 #include "Kans3D/Asset/Manager/AssetManager.h"
+#include "Kans3D/Asset/Runtime/AudioClipData.h"
 #include "Kans3D/Asset/Runtime/MaterialParameterCollection.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Scene.h"
+#include "Kans3D/Timeline/TimelineAudioPlayer.h"
 #include "Kans3D/Timeline/TimelineProduct.h"
 #include "Kans3D/Timeline/TimelineProperty.h"
+#include "KansEditorCore/Audio/AudioMixerEditing.h"
 #include "KansEditorCore/EditorAssetImportService.h"
 #include "KansEditorCore/UI/SourceBuild.h"
 #include "UI/EditorIcons.h"
@@ -92,6 +95,21 @@ namespace Kans
         constexpr const char* ReadOnlyReason =
             "Read-only while the scene plays: the timeline shows the running player.\nStop Play to edit, key or preview.";
 
+        // The gain of a fade at `x` (0..1 of its length), as the engine shapes it.
+        float FadeGain(AudioFadeCurve curve, float x)
+        {
+            x = std::clamp(x, 0.0f, 1.0f);
+            switch (curve)
+            {
+                case AudioFadeCurve::EqualPower:
+                    return std::sin(x * 1.5707963f);
+                case AudioFadeCurve::SCurve:
+                    return x * x * (3.0f - 2.0f * x);
+                default:
+                    return x;
+            }
+        }
+
         // A tooltip on the last item (also when disabled) explaining why it is locked.
         void LockedTooltip(bool locked)
         {
@@ -99,6 +117,192 @@ namespace Kans
                 ImGui::SetTooltip("%s", ReadOnlyReason);
         }
     } // namespace
+
+    TimelinePanel::TimelinePanel(HierarchyPanel& hierarchy) : m_Hierarchy(hierarchy) {}
+    TimelinePanel::~TimelinePanel() { StopPreviewAudio(); }
+
+    void TimelinePanel::SetAudioEngine(AudioEngine* engine)
+    {
+        if (engine == m_Engine)
+            return;
+        StopPreviewAudio();
+        m_Engine = engine;
+    }
+
+    void TimelinePanel::StopPreviewAudio()
+    {
+        m_Audio.reset(); // Stops and releases its voices.
+        m_AudioPlaying = false;
+        m_AudioSeek    = false;
+    }
+
+    TimelineAudioStats TimelinePanel::GetPreviewAudioStats() const
+    {
+        return m_Audio ? m_Audio->GetStats() : TimelineAudioStats {};
+    }
+
+    bool TimelinePanel::Undo()
+    {
+        if (m_Follow.ReadOnly() || !m_History.Undo(m_Data))
+            return false;
+        m_Selected    = {};
+        m_Drag        = DragKind::None;
+        m_Dirty       = true;
+        m_PlayerDirty = m_NeedsEvaluate = m_AudioDirty = true;
+        m_AudioError.clear();
+        return true;
+    }
+
+    bool TimelinePanel::Redo()
+    {
+        if (m_Follow.ReadOnly() || !m_History.Redo(m_Data))
+            return false;
+        m_Selected    = {};
+        m_Drag        = DragKind::None;
+        m_Dirty       = true;
+        m_PlayerDirty = m_NeedsEvaluate = m_AudioDirty = true;
+        m_AudioError.clear();
+        return true;
+    }
+
+    size_t TimelinePanel::AddAudioTrack(const std::string& binding)
+    {
+        const size_t track = TimelineAudioEditing::AddTrack(m_Data, binding);
+        m_Selected         = {RowKind::Audio, track, SIZE_MAX, 0};
+        Changed();
+        return track;
+    }
+
+    std::optional<std::string> TimelinePanel::AddAudioClip(size_t track, AssetID clip, double start)
+    {
+        auto added = TimelineAudioEditing::AddClip(m_Data, track, clip, std::max(0.0, start), AudioSourceSeconds(clip));
+        if (auto* error = std::get_if<std::string>(&added))
+        {
+            m_AudioError = *error;
+            m_Status     = "Not added: " + *error;
+            return *error;
+        }
+        m_Selected = {RowKind::Audio, track, std::get<size_t>(added), start};
+        m_AudioError.clear();
+        Changed();
+        return std::nullopt;
+    }
+
+    void TimelinePanel::SelectAudioClip(size_t track, size_t clip)
+    {
+        if (track < m_Data.Audio.size())
+            m_Selected = {RowKind::Audio, track, clip < m_Data.Audio[track].Clips.size() ? clip : SIZE_MAX, 0};
+    }
+
+    void TimelinePanel::SetPlaying(bool playing)
+    {
+        m_Playing = playing;
+        if (!playing)
+            return;
+        if (m_Time >= m_Data.Length)
+            SetPlayhead(0);
+        SetPreview(true); // Playing shows the timeline in the scene.
+    }
+
+    const AudioClipData* TimelinePanel::AudioClipInfo(AssetID clip)
+    {
+        if (!clip.IsValid())
+            return nullptr;
+        if (const auto found = AudioClips.find(clip); found != AudioClips.end() && found->second)
+            return &found->second->GetData();
+        if (m_Service)
+            if (const auto registry = m_Service->GetRuntimeAssetRegistry())
+                if (const auto* summary =
+                        m_AudioSummaries.Find(registry, m_Service->GetProductDirectory(), clip.GetSourceID()))
+                    return &summary->Data;
+        return nullptr;
+    }
+
+    double TimelinePanel::AudioSourceSeconds(AssetID clip)
+    {
+        const auto* info = AudioClipInfo(clip);
+        return info && info->Info.SampleRate ? double(info->Info.LengthFrames) / info->Info.SampleRate : 0.0;
+    }
+
+    const std::vector<uint8_t>&
+    TimelinePanel::WaveformColumns(const TimelineAudioClip& clip, double from, double to, size_t columns)
+    {
+        static const std::vector<uint8_t> none;
+        const auto*                       info = AudioClipInfo(clip.Clip);
+        if (!info || info->Waveform.empty() || !info->Info.SampleRate)
+            return none;
+        const WaveformKey key {clip.Clip, from, to, columns};
+        if (const auto found = m_Waveforms.find(key); found != m_Waveforms.end())
+            return found->second;
+        if (m_Waveforms.size() > 512)
+            m_Waveforms.clear();
+        const double seconds    = double(info->Info.LengthFrames) / info->Info.SampleRate;
+        return m_Waveforms[key] = TimelineAudioEditing::EnvelopeColumns(info->Waveform, seconds, from, to, columns);
+    }
+
+    AssetID TimelinePanel::AudioChoice(const ImGuiPayload& payload) const
+    {
+        const auto file =
+            Canonical(std::filesystem::u8path(std::string(static_cast<const char*>(payload.Data), payload.DataSize)));
+        for (const auto& choice : m_Choices)
+            if (choice.Type == AssetType::AudioClip && Canonical(choice.SourcePath) == file)
+                return choice.ID;
+        return {};
+    }
+
+    void TimelinePanel::UpdatePreviewAudio()
+    {
+        auto*      c      = Component();
+        const bool wanted = m_Previewing && c && m_Engine && m_Engine->IsInitialized() && !m_Data.Audio.empty() &&
+                            !m_Follow.ReadOnly() && !(m_PlayMode && m_PlayMode());
+        if (!wanted)
+        {
+            StopPreviewAudio();
+            return;
+        }
+        // An edit plays from the playhead with the edited timeline.
+        if (m_AudioDirty)
+        {
+            m_Audio.reset();
+            m_AudioPlaying = false;
+            m_AudioDirty   = false;
+        }
+        if (!m_Playing)
+        {
+            // Paused: silent, and scrubbing stays silent (the player's Scrub).
+            if (m_Audio && m_AudioPlaying)
+                m_Audio->Pause();
+            m_AudioPlaying = false;
+            if (m_Audio && m_AudioSeek)
+                m_Audio->Scrub(m_Time);
+            m_AudioSeek = false;
+            return;
+        }
+        // Bound tracks play as 2D here: edit mode has no listener on the scene's camera.
+        if (!m_Audio)
+        {
+            auto heard = m_Data;
+            for (auto& track : heard.Audio)
+                track.Binding.clear();
+            m_Audio = std::make_unique<TimelineAudioPlayer>(
+                *m_Engine, CreateRef<TimelineAsset>(std::move(heard)), [this](AssetID id) -> Ref<const AudioClipAsset> {
+                    if (const auto found = AudioClips.find(id); found != AudioClips.end())
+                        return found->second;
+                    if (m_Assets)
+                        if (auto clip = m_Assets->Request<AudioClipAsset>(id); clip.IsReady())
+                            return clip.Asset;
+                    return {};
+                });
+        }
+        const auto master =
+            c->ClockSource == TimelineClockSource::Audio ? std::optional<size_t>(c->AudioClockTrack) : std::nullopt;
+        if (!m_AudioPlaying || m_AudioSeek)
+            m_Audio->Play(m_Time, c->Speed, c->AudioOffset, master);
+        else
+            m_Audio->Update(m_Time, c->Speed, c->AudioOffset, master);
+        m_AudioPlaying = true;
+        m_AudioSeek    = false;
+    }
 
     TimelinePlayerComponent* TimelinePanel::Component() const
     {
@@ -141,6 +345,11 @@ namespace Kans
         m_Data  = {};
         m_Dirty = false;
         m_Status.clear();
+        StopPreviewAudio();
+        m_AudioDirty = true;
+        m_AudioError.clear();
+        m_Waveforms.clear();
+        m_History.Reset(m_Data);
         for (const auto& choice : m_Choices)
             if (choice.ID == m_Asset && choice.Type == AssetType::Timeline)
                 m_File = choice.SourcePath;
@@ -150,6 +359,7 @@ namespace Kans
         {
             m_Data   = DecodeTimelineNode(YAML::LoadFile(m_File.string()));
             m_Loaded = true;
+            m_History.Reset(m_Data);
         }
         catch (const std::exception& e)
         {
@@ -208,6 +418,7 @@ namespace Kans
         m_Data        = data;
         m_Loaded      = true;
         m_Dirty       = false;
+        m_History.Reset(m_Data);
         Save(); // Builds it; the asset is assigned once the build publishes it.
     }
 
@@ -215,13 +426,15 @@ namespace Kans
     {
         m_Dirty       = true;
         m_PlayerDirty = true;
+        m_AudioDirty  = true;
+        m_History.MarkChanged();
     }
 
     void TimelinePanel::SetPlayhead(double time)
     {
         const double clamped = std::clamp(time, 0.0, m_Data.Length);
         if (clamped != m_Time)
-            m_NeedsEvaluate = true;
+            m_NeedsEvaluate = m_AudioSeek = true;
         m_Time = clamped;
     }
 
@@ -247,6 +460,7 @@ namespace Kans
 
     void TimelinePanel::StopPreview()
     {
+        StopPreviewAudio();
         m_Playing = false;
         if (m_Player)
             m_Player->RestoreBoundState();
@@ -260,6 +474,7 @@ namespace Kans
 
     void TimelinePanel::DiscardPreview()
     {
+        StopPreviewAudio();
         m_Playing = false;
         m_Player.reset();
         m_Bases.clear();
@@ -363,10 +578,20 @@ namespace Kans
             for (size_t i = 0; i < m_Data.Properties.size(); ++i)
                 if (m_Data.Properties[i].Binding == id)
                     rows.push_back({RowKind::Property, i, id});
+            for (size_t i = 0; i < m_Data.Audio.size(); ++i)
+                if (m_Data.Audio[i].Binding == id)
+                    rows.push_back({RowKind::Audio, i, id});
         }
         for (size_t i = 0; i < m_Data.Properties.size(); ++i)
             if (m_Data.Properties[i].Binding.empty())
                 rows.push_back({RowKind::Property, i, {}});
+        // Audio tracks bound to an entity sit under it; 2D ones after the bindings.
+        for (size_t i = 0; i < m_Data.Audio.size(); ++i)
+            if (m_Data.Audio[i].Binding.empty() ||
+                std::none_of(m_Data.Bindings.begin(), m_Data.Bindings.end(), [&](const auto& b) {
+                    return b.ID == m_Data.Audio[i].Binding;
+                }))
+                rows.push_back({RowKind::Audio, i, {}});
         rows.push_back({RowKind::Events, 0, {}});
         rows.push_back({RowKind::Cuts, 0, {}});
         return rows;
@@ -383,10 +608,12 @@ namespace Kans
     void TimelinePanel::Draw()
     {
         m_LastDrawnFrame = ImGui::GetFrameCount();
+        m_Focused        = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         Scene* scene     = GetScene();
         if (scene != m_Scene)
         {
             // The project or scene changed: the old owner and its preview are gone.
+            StopPreviewAudio();
             m_Player.reset();
             m_Previewing = false;
             m_Owner      = 0;
@@ -410,6 +637,7 @@ namespace Kans
         if (!c)
         {
             m_Owner = 0;
+            StopPreviewAudio();
             ImGui::TextDisabled("Select an entity with a Timeline Player to edit its timeline.");
             return;
         }
@@ -448,14 +676,49 @@ namespace Kans
         const bool readOnly = m_Follow.ReadOnly();
         m_Active = m_Follow.GetMode() == TimelineFollow::Mode::Following ? TimelineSectionsAt(m_Data, m_Follow.Time()) :
                                                                           TimelineActiveSections {};
+        const auto& io = ImGui::GetIO();
+        if (m_Focused && !readOnly && io.KeyCtrl && !io.WantTextInput)
+        {
+            if (ImGui::IsKeyPressed(ImGuiKey_Z, true))
+                io.KeyShift ? Redo() : Undo();
+            else if (ImGui::IsKeyPressed(ImGuiKey_Y, true))
+                Redo();
+        }
         if (m_Playing && !readOnly)
         {
-            double next = m_Time + ImGui::GetIO().DeltaTime * std::max(0.0, c->Speed);
+            // Playing is not a seek: the audio keeps its schedule unless the playhead wraps.
+            const bool seek = m_AudioSeek;
+            double     next = m_Time + io.DeltaTime * std::max(0.0, c->Speed);
+            // With audio as the clock, the playhead follows the music as the running player does.
+            if (m_Audio && m_AudioPlaying && c->ClockSource == TimelineClockSource::Audio && c->Speed > 0)
+                if (const auto clock = m_Audio->GetClockTime(c->AudioClockTrack))
+                    next = *clock;
+            bool wrapped = false;
             if (next >= m_Data.Length)
+            {
+                wrapped = c->Loop;
                 next = c->Loop ? std::fmod(next, std::max(m_Data.Length, 1e-6)) : m_Data.Length, m_Playing = c->Loop;
+            }
             SetPlayhead(next);
+            m_AudioSeek = seek || wrapped;
         }
         DrawToolbar();
+        if (!readOnly)
+        {
+            if (ImGui::Button(ICON_FA_MUSIC "  Audio track"))
+                AddAudioTrack();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("A 2D audio track (drop an audio clip here to add one with it)");
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const auto* payload = ImGui::AcceptDragDropPayload("asset_payload"))
+                    if (const AssetID clip = AudioChoice(*payload); clip.IsValid())
+                        AddAudioClip(AddAudioTrack(), clip, Snap(m_Time));
+                ImGui::EndDragDropTarget();
+            }
+            if (scene && !scene->GetMaterialParameterCollections().empty())
+                ImGui::SameLine();
+        }
         if (scene && !scene->GetMaterialParameterCollections().empty() && !readOnly)
         {
             if (ImGui::Button(ICON_FA_PLUS "  Material parameter track"))
@@ -534,8 +797,12 @@ namespace Kans
             if (ImGui::IsKeyPressed(ImGuiKey_Delete))
                 DeleteSelection();
             if (ImGui::IsKeyPressed(ImGuiKey_Space))
-                m_Playing = !m_Playing, SetPreview(true);
+                SetPlaying(!m_Playing);
         }
+        // After the frame's edits and playhead moves: the preview's audio follows them, and the
+        // frame's edits become one undo step once no drag or field is active.
+        UpdatePreviewAudio();
+        m_History.Settle(m_Data, m_Drag != DragKind::None || ImGui::IsAnyItemActive());
     }
 
     void TimelinePanel::DrawToolbar()
@@ -562,12 +829,7 @@ namespace Kans
         LockedTooltip(locked);
         ImGui::SameLine();
         if (ImGui::Button(m_Playing ? ICON_FA_PAUSE "##PlayPause" : ICON_FA_PLAY "##PlayPause"))
-        {
-            m_Playing = !m_Playing;
-            if (m_Playing && m_Time >= m_Data.Length)
-                SetPlayhead(0);
-            SetPreview(true); // Playing shows the timeline in the scene.
-        }
+            SetPlaying(!m_Playing);
         LockedTooltip(locked);
         ImGui::SameLine();
         if (ImGui::Button(ICON_FA_FORWARD_FAST))
@@ -722,6 +984,12 @@ namespace Kans
                             label += " (Timeline time)";
                     }
                     break;
+                case RowKind::Audio: {
+                    const auto& track = m_Data.Audio[row.Track];
+                    label = (row.Binding.empty() ? std::string(ICON_FA_MUSIC "  Audio") : std::string("    Audio")) +
+                            "  " + (track.Bus.empty() ? std::string(MasterAudioBus) : track.Bus);
+                    break;
+                }
                 case RowKind::Events:
                     label = ICON_FA_FLAG "  Events";
                     break;
@@ -757,8 +1025,33 @@ namespace Kans
                 else if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Key the entity's transform at the playhead");
             }
+            bool overButton = false;
+            if (row.Kind == RowKind::Audio)
+            {
+                // Mute toggles at once (one undo step); a click elsewhere on the row selects the track.
+                const bool muted = m_Data.Audio[row.Track].Mute;
+                ImGui::SameLine(w - ImGui::GetFrameHeight());
+                ImGui::BeginDisabled(locked);
+                ImGui::PushStyleColor(ImGuiCol_Text, muted ? p.Warning : p.TextDim);
+                if (ImGui::SmallButton(muted ? ICON_FA_VOLUME_XMARK "##mute" : ICON_FA_VOLUME_HIGH "##mute"))
+                {
+                    auto settings = m_Data.Audio[row.Track];
+                    settings.Mute = !muted;
+                    if (!TimelineAudioEditing::SetTrack(m_Data, row.Track, settings))
+                        Changed();
+                }
+                ImGui::PopStyleColor();
+                overButton = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+                ImGui::EndDisabled();
+                if (locked)
+                    LockedTooltip(locked);
+                else if (overButton)
+                    ImGui::SetTooltip(muted ? "Unmute the track" : "Mute the track");
+            }
             ImGui::SetCursorScreenPos(min);
             ImGui::InvisibleButton("##row", {w, rowHeight}, ImGuiButtonFlags_MouseButtonRight);
+            if (row.Kind == RowKind::Audio && !locked && !overButton && ImGui::IsItemClicked(ImGuiMouseButton_Left))
+                m_Selected = {RowKind::Audio, row.Track, SIZE_MAX, 0};
             if (!locked && ImGui::BeginPopupContextItem("##rowmenu"))
             {
                 if (row.Kind == RowKind::Binding)
@@ -780,7 +1073,7 @@ namespace Kans
                                          tracks.end());
                         };
                         erase(m_Data.Transforms), erase(m_Data.Animations), erase(m_Data.Activations),
-                            erase(m_Data.Properties), erase(m_Data.Particles);
+                            erase(m_Data.Properties), erase(m_Data.Particles), erase(m_Data.Audio);
                         m_Data.Bindings.erase(m_Data.Bindings.begin() + long(row.Track));
                         m_Selected = {};
                         Changed();
@@ -806,6 +1099,9 @@ namespace Kans
                         case RowKind::Property:
                             m_Data.Properties.erase(m_Data.Properties.begin() + long(row.Track));
                             break;
+                        case RowKind::Audio:
+                            m_Data.Audio.erase(m_Data.Audio.begin() + long(row.Track));
+                            break;
                         default:
                             break;
                     }
@@ -827,6 +1123,10 @@ namespace Kans
                 "Drop entities here to animate them");
         if (!locked && ImGui::BeginDragDropTarget())
         {
+            // An audio clip from the Content Browser starts a 2D audio track at the playhead.
+            if (const auto* payload = ImGui::AcceptDragDropPayload("asset_payload"))
+                if (const AssetID clip = AudioChoice(*payload); clip.IsValid())
+                    AddAudioClip(AddAudioTrack(), clip, Snap(m_Time));
             if (const auto* payload = ImGui::AcceptDragDropPayload("entity_payload");
                 payload && payload->DataSize == sizeof(uint64_t))
                 if (Entity e = GetScene()->GetEntityByUUID(UUID(*static_cast<const uint64_t*>(payload->Data))))
@@ -857,6 +1157,8 @@ namespace Kans
             m_Data.Animations.push_back({binding}), Changed();
         if (ImGui::MenuItem(ICON_FA_EYE "  Activation track"))
             m_Data.Activations.push_back({binding, {{0, m_Data.Length}}}), Changed();
+        if (ImGui::MenuItem(ICON_FA_MUSIC "  Audio track"))
+            AddAudioTrack(binding);
         if (ImGui::BeginMenu(ICON_FA_SLIDERS "  Property track"))
         {
             ImGui::SetNextItemWidth(EditorTheme::Px(200.0f));
@@ -926,6 +1228,7 @@ namespace Kans
         const ImVec2   origin = ImGui::GetCursorScreenPos();
         const float width = ImGui::GetContentRegionAvail().x, height = std::max(ImGui::GetContentRegionAvail().y, 1.0f);
         m_CanvasX = origin.x + EditorTheme::Px(8.0f);
+        m_AudioBoxes.clear();
         const bool locked    = m_Follow.ReadOnly();
         const bool following = m_Follow.GetMode() == TimelineFollow::Mode::Following;
         if (locked)
@@ -991,8 +1294,9 @@ namespace Kans
                 SetPlayhead(Snap(ToTime(io.MousePos.x)));
             else if (io.MouseDelta.x != 0)
             {
-                const double t    = std::clamp(Snap(ToTime(io.MousePos.x) - m_DragOffset), 0.0, m_Data.Length);
-                auto&        sel  = m_DragTarget;
+                const double t     = std::clamp(Snap(ToTime(io.MousePos.x) - m_DragOffset), 0.0, m_Data.Length);
+                auto&        sel   = m_DragTarget;
+                bool         moved = true;
                 const auto   move = [&](double& start, double& end) {
                     const double length = end - start;
                     start               = std::clamp(t, 0.0, m_Data.Length - length);
@@ -1048,10 +1352,37 @@ namespace Kans
                             cut.End = t;
                         break;
                     }
+                    case RowKind::Audio: {
+                        // Applied from the clip as the drag began; a refused position (an overlap) keeps
+                        // the last valid one and says why.
+                        using Edge       = TimelineAudioEditing::Edge;
+                        const Edge edge  = m_Drag == DragKind::Start   ? Edge::Start :
+                                           m_Drag == DragKind::End     ? Edge::End :
+                                           m_Drag == DragKind::FadeIn  ? Edge::FadeIn :
+                                           m_Drag == DragKind::FadeOut ? Edge::FadeOut :
+                                                                         Edge::Move;
+                        size_t     index = sel.Item;
+                        if (auto error = TimelineAudioEditing::DragClip(
+                                m_Data, sel.Track, index, m_DragAudio, edge, t, AudioSourceSeconds(m_DragAudio.Clip)))
+                        {
+                            m_AudioError = *error;
+                            m_Status     = "Refused: " + *error;
+                            moved        = false;
+                        }
+                        else
+                        {
+                            sel.Item = m_Selected.Item = index;
+                            m_AudioError.clear();
+                            if (m_Status.rfind("Refused", 0) == 0)
+                                m_Status.clear();
+                        }
+                        break;
+                    }
                     default:
                         break;
                 }
-                Changed();
+                if (moved)
+                    Changed();
             }
         }
         // The playhead over everything; in the play tone while it follows the running player.
@@ -1249,6 +1580,104 @@ namespace Kans
                         press({RowKind::Cuts, 0, i, cut.Start}, part, part == DragKind::End ? cut.End : cut.Start);
                 }
                 break;
+            case RowKind::Audio: {
+                const auto& track = m_Data.Audio[row.Track];
+                const float top = mid - half * 1.4f, bottom = mid + half * 1.4f;
+                for (size_t i = 0; i < track.Clips.size(); ++i)
+                {
+                    const auto& clip = track.Clips[i];
+                    const bool  selected =
+                        m_Selected.Kind == RowKind::Audio && m_Selected.Track == row.Track && m_Selected.Item == i;
+                    std::string name = "Audio";
+                    for (const auto& choice : m_Choices)
+                        if (choice.ID == clip.Clip)
+                            name = choice.Name;
+                    if (track.Mute)
+                        name += "  (muted)";
+                    auto part =
+                        bar(clip.Start, clip.End, p.TypeAudio, selected, nullptr, active(m_Active.Audio, row.Track, i));
+                    const float  a = ToX(clip.Start), b = ToX(clip.End);
+                    AudioClipBox box;
+                    box.Track = row.Track;
+                    box.Clip  = i;
+                    box.Bar   = {{a, top}, {b, bottom}};
+                    // The waveform of the visible part, from the clip's cached peak envelope.
+                    const float left = std::max(a, min.x), right = std::min(b, max.x);
+                    if (right - left >= 1.0f)
+                    {
+                        const size_t columns = size_t(right - left);
+                        const double from    = clip.ClipIn + (ToTime(left) - clip.Start);
+                        const double to      = clip.ClipIn + (ToTime(left + float(columns)) - clip.Start);
+                        const auto&  peaks   = WaveformColumns(clip, from, to, columns);
+                        const float  centre = (top + bottom) * 0.5f, reach = (bottom - top) * 0.5f - 2.0f;
+                        const ImU32  wave = Color(p.Text, track.Mute ? 0.2f : 0.5f);
+                        for (size_t x = 0; x < peaks.size(); ++x)
+                        {
+                            const float h = std::max(0.5f, peaks[x] / 255.0f * reach);
+                            draw->AddRectFilled({left + x, centre - h}, {left + x + 1, centre + h}, wave);
+                        }
+                        box.WaveformColumns = peaks.size();
+                    }
+                    // Fade ramps: the attenuated part above each curve is shaded.
+                    const auto ramp = [&](double from, double to, AudioFadeCurve curve, bool in) {
+                        if (to <= from)
+                            return;
+                        constexpr int steps = 16;
+                        ImVec2        previous;
+                        for (int k = 0; k <= steps; ++k)
+                        {
+                            const float  f = float(k) / steps;
+                            const float  g = FadeGain(curve, in ? f : 1.0f - f);
+                            const ImVec2 at {ToX(from + (to - from) * f), bottom - (bottom - top) * g};
+                            if (k)
+                            {
+                                draw->AddQuadFilled(
+                                    {previous.x, top}, {at.x, top}, at, previous, Color(p.Panel, 0.55f));
+                                draw->AddLine(previous, at, Color(p.Text, 0.9f), EditorTheme::Px(1.5f));
+                            }
+                            previous = at;
+                        }
+                    };
+                    ramp(clip.Start, clip.Start + clip.FadeIn.Length, clip.FadeIn.Curve, true);
+                    ramp(clip.End - clip.FadeOut.Length, clip.End, clip.FadeOut.Curve, false);
+                    // Fade handles at the top of the bar, dragged inwards.
+                    const float handle = EditorTheme::Px(3.5f);
+                    box.FadeIn         = {ToX(clip.Start + clip.FadeIn.Length), top + handle + 1.0f};
+                    box.FadeOut        = {ToX(clip.End - clip.FadeOut.Length), top + handle + 1.0f};
+                    for (const ImVec2 at : {box.FadeIn, box.FadeOut})
+                        draw->AddRectFilled({at.x - handle, at.y - handle},
+                                            {at.x + handle, at.y + handle},
+                                            Color(selected ? p.Accent : p.Text, 0.95f),
+                                            EditorTheme::Px(1.0f));
+                    // The name over the waveform, with a shadow so it stays readable.
+                    draw->PushClipRect({a, top}, {b, bottom}, true);
+                    const ImVec2 label {a + EditorTheme::Px(4.0f) + handle * 2.0f, mid - ImGui::GetFontSize() * 0.5f};
+                    draw->AddText({label.x + 1.0f, label.y + 1.0f}, Color(p.Panel, 0.9f), name.c_str());
+                    draw->AddText(label, Color(p.Text), name.c_str());
+                    draw->PopClipRect();
+                    const auto near = [&](ImVec2 at) {
+                        return hovered && std::abs(io.MousePos.x - at.x) <= handle + 3.0f &&
+                               std::abs(io.MousePos.y - at.y) <= handle + 3.0f;
+                    };
+                    if (near(box.FadeIn))
+                        part = DragKind::FadeIn;
+                    else if (near(box.FadeOut))
+                        part = DragKind::FadeOut;
+                    if (part != DragKind::None && clicked)
+                    {
+                        const double anchor = part == DragKind::End     ? clip.End :
+                                              part == DragKind::FadeIn  ? clip.Start + clip.FadeIn.Length :
+                                              part == DragKind::FadeOut ? clip.End - clip.FadeOut.Length :
+                                                                          clip.Start;
+                        press({RowKind::Audio, row.Track, i, clip.Start}, part, anchor);
+                        m_DragAudio = clip;
+                    }
+                    if (part != DragKind::None && part != DragKind::Move)
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                    m_AudioBoxes.push_back(box);
+                }
+                break;
+            }
             case RowKind::Binding:
                 if (const auto& b = m_Data.Bindings[row.Track]; b.Kind == TimelineBindingKind::Spawnable)
                 {
@@ -1267,6 +1696,14 @@ namespace Kans
         {
             m_Selected = {};
             m_Drag     = DragKind::Playhead;
+        }
+        // An audio clip dropped from the Content Browser lands where it is dropped.
+        if (row.Kind == RowKind::Audio && ImGui::BeginDragDropTarget())
+        {
+            if (const auto* payload = ImGui::AcceptDragDropPayload("asset_payload"))
+                if (const AssetID clip = AudioChoice(*payload); clip.IsValid())
+                    AddAudioClip(row.Track, clip, Snap(std::max(0.0, ToTime(io.MousePos.x))));
+            ImGui::EndDragDropTarget();
         }
         if (ImGui::BeginPopupContextItem("##add"))
         {
@@ -1311,6 +1748,22 @@ namespace Kans
                                 m_Data.Animations[row.Track].Clips.push_back(clip);
                                 Changed();
                             }
+                        ImGui::EndMenu();
+                    }
+                    break;
+                case RowKind::Audio:
+                    if (ImGui::BeginMenu(ICON_FA_PLUS "  Add audio clip here"))
+                    {
+                        bool any = false;
+                        for (const auto& choice : m_Choices)
+                            if (choice.Type == AssetType::AudioClip)
+                            {
+                                any = true;
+                                if (ImGui::MenuItem(choice.Name.c_str()))
+                                    AddAudioClip(row.Track, choice.ID, t);
+                            }
+                        if (!any)
+                            ImGui::TextDisabled("Import an audio file to add it.");
                         ImGui::EndMenu();
                     }
                     break;
@@ -1409,7 +1862,7 @@ namespace Kans
         };
         if (!s.Valid())
         {
-            ImGui::TextDisabled("Select a key, clip, range, event or cut.");
+            ImGui::TextDisabled("Select a key, clip, range, event, cut or audio clip.");
             ImGui::Spacing();
             if (PropertyGrid::BeginGroup("Bindings"))
             {
@@ -1527,6 +1980,9 @@ namespace Kans
                         PropertyGrid::EndGroup();
                     }
                     break;
+                case RowKind::Audio:
+                    DrawAudioInspector();
+                    break;
                 case RowKind::Cuts:
                     if (PropertyGrid::BeginGroup("Camera cut"))
                     {
@@ -1592,10 +2048,146 @@ namespace Kans
             case RowKind::Cuts:
                 m_Data.CameraCuts.erase(m_Data.CameraCuts.begin() + long(s.Item));
                 break;
+            case RowKind::Audio:
+                if (s.Track >= m_Data.Audio.size())
+                    break;
+                if (s.Item < m_Data.Audio[s.Track].Clips.size())
+                    m_Data.Audio[s.Track].Clips.erase(m_Data.Audio[s.Track].Clips.begin() + long(s.Item));
+                else
+                    m_Data.Audio.erase(m_Data.Audio.begin() + long(s.Track));
+                break;
             default:
                 break;
         }
         s = {};
+        m_AudioError.clear();
         Changed();
+    }
+
+    bool TimelinePanel::BusCombo(std::string& bus)
+    {
+        // The active layout's buses (as the Audio Source card lists them); a name the layout does not
+        // have is kept, in the warning colour.
+        static const AudioBusLayout fallback = AudioBusLayout::Default();
+        const auto& buses = m_Engine && !m_Engine->GetBuses().empty() ? m_Engine->GetBuses() : fallback.Buses;
+        const bool  known = std::any_of(buses.begin(), buses.end(), [&](const auto& b) { return b.Name == bus; });
+        if (!known)
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().Warning);
+        char preview[160];
+        std::snprintf(preview,
+                      sizeof(preview),
+                      known ? "%s" : ICON_FA_TRIANGLE_EXCLAMATION " %s (missing)",
+                      bus.empty() ? MasterAudioBus : bus.c_str());
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const bool open = ImGui::BeginCombo("##bus", preview);
+        if (!known)
+            ImGui::PopStyleColor();
+        bool changed = false;
+        if (open)
+        {
+            for (const auto& entry : AudioMixerEditing::TreeOrder(AudioBusLayout {buses}))
+            {
+                const auto& name = buses[entry.Index].Name;
+                ImGui::Indent(EditorTheme::Px(10.0f) * float(entry.Depth) + 1.0f);
+                if (ImGui::Selectable(name.c_str(), name == bus) && name != bus)
+                    bus = name, changed = true;
+                ImGui::Unindent(EditorTheme::Px(10.0f) * float(entry.Depth) + 1.0f);
+            }
+            ImGui::EndCombo();
+        }
+        return changed;
+    }
+
+    void TimelinePanel::DrawAudioInspector()
+    {
+        auto& s = m_Selected;
+        if (s.Track >= m_Data.Audio.size())
+        {
+            s = {};
+            return;
+        }
+        const char* curves[] {"Linear", "Equal power", "S-curve"};
+        // Edits apply to a copy; one that does not validate (an overlap, a range outside the
+        // timeline) is not applied and its reason shows below.
+        if (s.Item < m_Data.Audio[s.Track].Clips.size() && PropertyGrid::BeginGroup("Audio clip"))
+        {
+            auto       clip    = m_Data.Audio[s.Track].Clips[s.Item];
+            bool       edit    = false;
+            const auto seconds = [&](const char* label, double& value, const char* format = "%.3f s") {
+                float v = float(value);
+                if (PropertyGrid::Float(label, v, 0.01f, 0.0f, 36000.0f, format))
+                    value = double(v), edit = true;
+            };
+            edit |= AssetCombo("Clip", AssetType::AudioClip, clip.Clip);
+            seconds("Start", clip.Start);
+            seconds("End", clip.End);
+            seconds("Clip in", clip.ClipIn);
+            float volume = clip.VolumeDb;
+            if (PropertyGrid::Float("Volume", volume, 0.1f, -80.0f, 24.0f, "%.1f dB"))
+                clip.VolumeDb = volume, edit = true;
+            seconds("Fade in", clip.FadeIn.Length);
+            int in = int(clip.FadeIn.Curve), out = int(clip.FadeOut.Curve);
+            if (PropertyGrid::Combo("Fade in curve", curves, 3, in))
+                clip.FadeIn.Curve = AudioFadeCurve(in), edit = true;
+            seconds("Fade out", clip.FadeOut.Length);
+            if (PropertyGrid::Combo("Fade out curve", curves, 3, out))
+                clip.FadeOut.Curve = AudioFadeCurve(out), edit = true;
+            if (edit)
+            {
+                size_t index = s.Item;
+                if (auto error = TimelineAudioEditing::SetClip(m_Data, s.Track, index, clip))
+                    m_AudioError = *error;
+                else
+                {
+                    s.Item = index;
+                    m_AudioError.clear();
+                    Changed();
+                }
+            }
+            PropertyGrid::EndGroup();
+        }
+        if (PropertyGrid::BeginGroup("Audio track"))
+        {
+            auto settings = m_Data.Audio[s.Track];
+            bool edit     = false;
+            if (PropertyGrid::Row("Bus", "The mixer bus the track plays through"))
+                edit |= BusCombo(settings.Bus);
+            edit |= PropertyGrid::Checkbox("Mute", settings.Mute);
+            if (PropertyGrid::Row("Binding", "2D, or the bound entity the track plays from"))
+            {
+                std::string current = "(2D)";
+                for (const auto& b : m_Data.Bindings)
+                    if (b.ID == settings.Binding)
+                        current = b.Name;
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                if (ImGui::BeginCombo("##binding", current.c_str()))
+                {
+                    if (ImGui::Selectable("(2D)", settings.Binding.empty()) && !settings.Binding.empty())
+                        settings.Binding.clear(), edit = true;
+                    for (const auto& b : m_Data.Bindings)
+                        if (ImGui::Selectable(b.Name.c_str(), b.ID == settings.Binding) && b.ID != settings.Binding)
+                            settings.Binding = b.ID, edit = true;
+                    ImGui::EndCombo();
+                }
+            }
+            PropertyGrid::Text("Clips", std::to_string(settings.Clips.size()), true);
+            if (edit)
+            {
+                if (auto error = TimelineAudioEditing::SetTrack(m_Data, s.Track, settings))
+                    m_AudioError = *error;
+                else
+                {
+                    m_AudioError.clear();
+                    Changed();
+                }
+            }
+            PropertyGrid::EndGroup();
+        }
+        if (!m_AudioError.empty())
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().Danger);
+            ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION "  %s", m_AudioError.c_str());
+            ImGui::PopStyleColor();
+        }
     }
 } // namespace Kans
