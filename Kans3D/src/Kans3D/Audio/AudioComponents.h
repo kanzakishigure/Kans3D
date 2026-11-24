@@ -12,6 +12,8 @@ namespace Kans
     {
         AssetID               Clip;
         std::string           Bus    = MasterAudioBus;
+        uint8_t               Priority = DefaultAudioVoicePriority;
+        std::string           ConcurrencyGroup;
         float                 Volume = 1, Pitch = 1;
         bool                  PlayOnStart = true, Loop = false, Spatial = true;
         float                 Pan         = 0;

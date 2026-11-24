@@ -94,6 +94,8 @@ namespace Kans
             Keys(node,
                  {"Clip",
                   "Bus",
+                  "Priority",
+                  "ConcurrencyGroup",
                   "Volume",
                   "Pitch",
                   "PlayOnStart",
@@ -112,6 +114,14 @@ namespace Kans
             c.Clip                 = AssetID::FromString(Text(node["Clip"]));
             if (node["Bus"])
                 c.Bus = Text(node["Bus"]);
+            if (node["Priority"])
+            {
+                const auto priority = node["Priority"].as<int>();
+                Require(priority >= 0 && priority <= 255, "Invalid audio voice priority");
+                c.Priority = static_cast<uint8_t>(priority);
+            }
+            if (node["ConcurrencyGroup"])
+                c.ConcurrencyGroup = Text(node["ConcurrencyGroup"]);
             c.Volume               = Number(node["Volume"]);
             c.Pitch                = Number(node["Pitch"]);
             c.PlayOnStart          = node["PlayOnStart"].as<bool>();
@@ -1639,6 +1649,10 @@ namespace Kans
                 v["ConeOuterGain"]  = c.ConeOuterGain;
                 if (c.Bus != MasterAudioBus)
                     v["Bus"] = c.Bus;
+                if (c.Priority != DefaultAudioVoicePriority)
+                    v["Priority"] = static_cast<unsigned>(c.Priority);
+                if (!c.ConcurrencyGroup.empty())
+                    v["ConcurrencyGroup"] = c.ConcurrencyGroup;
             }
             if (entity.HasComponent<AudioListenerComponent>())
                 node["AudioListenerComponent"]["Active"] = entity.GetComponent<AudioListenerComponent>().Active;

@@ -103,6 +103,27 @@ namespace Kans
         if (m_AudioEngine && m_AudioRunning && OwnsAudioSource(entity))
             entity.GetComponent<AudioSourceComponent>().m_Runtime.reset();
     }
+
+    AudioVoiceHandle Scene::PlayOneShot(AssetID clip, const AudioOneShotParams& params)
+    {
+        if (!m_AudioEngine || !m_AudioRunning || m_AudioPaused || !m_PrefabAssets || !clip.IsValid())
+            return {};
+        auto loaded = m_PrefabAssets->Request<AudioClipAsset>(clip);
+        return loaded.IsReady() ? m_AudioEngine->PlayOneShot(m_AudioClips, loaded.Asset, params) : AudioVoiceHandle {};
+    }
+
+    AudioVoiceHandle Scene::PlayOneShot(Entity entity, AssetID clip, AudioOneShotParams params)
+    {
+        if (entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle))
+            return {};
+        return PlayOneShot(glm::vec3(GetWorldTransform(entity)[3]), clip, std::move(params));
+    }
+
+    AudioVoiceHandle Scene::PlayOneShot(glm::vec3 position, AssetID clip, AudioOneShotParams params)
+    {
+        params.Position = position;
+        return PlayOneShot(clip, params);
+    }
     void Scene::PauseAudioSource(Entity entity)
     {
         if (!m_AudioEngine || !m_AudioRunning || !OwnsAudioSource(entity))
@@ -155,6 +176,8 @@ namespace Kans
         r.Acquired = true;
         AudioVoiceDesc desc;
         desc.Bus     = c.Bus;
+        desc.Priority         = c.Priority;
+        desc.ConcurrencyGroup = c.ConcurrencyGroup;
         desc.Volume  = c.Volume;
         desc.Pitch   = c.Pitch;
         desc.Pan     = c.Spatial ? 0 : c.Pan;
@@ -172,13 +195,21 @@ namespace Kans
         }
         r.PendingStart = false;
         PushAudioSource(entity, 0);
-        m_AudioEngine->Play(r.Voice);
+        if (!m_AudioEngine->Play(r.Voice))
+        {
+            m_AudioEngine->DestroyVoice(r.Voice);
+            r.Voice = {};
+            m_AudioClips.Release(r.Source->assetID);
+            r.Acquired = false;
+            r.Source.reset();
+        }
     }
     void Scene::PushAudioSource(Entity entity, double seconds)
     {
         auto& c = entity.GetComponent<AudioSourceComponent>();
         auto& r = *c.m_Runtime;
         m_AudioEngine->SetVoiceBus(r.Voice, c.Bus);
+        m_AudioEngine->SetVoicePriority(r.Voice, c.Priority);
         m_AudioEngine->SetVolume(r.Voice, c.Volume * r.Source->GetData().Volume);
         m_AudioEngine->SetPitch(r.Voice, c.Pitch);
         m_AudioEngine->SetPan(r.Voice, r.Spatial ? 0 : c.Pan);

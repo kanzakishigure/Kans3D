@@ -93,6 +93,7 @@ namespace Kans
         desc.LoadMode    = AudioLoadMode::Stream;
         desc.Loop        = track.LoopEnd != 0;
         desc.AutoRelease = true;
+        desc.NeverVirtualize = true;
         desc.Volume      = m_Volume;
         desc.Bus         = m_Bus;
         auto voice       = m_Engine.CreateVoice(desc, track.LoopStart, track.LoopEnd);

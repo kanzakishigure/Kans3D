@@ -219,6 +219,7 @@ namespace Kans
     {
         ma_node_base          Input {};
         FaderNode             Fader {};
+        float                                            Audibility = -1;
         bool                  InputReady = false, FaderReady = false;
         std::optional<size_t> Parent;
         AudioEffectMix                                   ChainMix;
@@ -542,6 +543,7 @@ namespace Kans
 
     void AudioBusGraph::UpdateFaders()
     {
+        m_AudibilityDirty       = true;
         const auto& definitions = m_Layout.Buses;
         const bool  soloActive =
             std::any_of(definitions.begin(), definitions.end(), [](const auto& bus) { return bus.Solo; });
@@ -567,8 +569,37 @@ namespace Kans
 
     void AudioBusGraph::UpdateSend(const std::string& bus, size_t index)
     {
+        m_AudibilityDirty = true;
         const auto i = m_Names.at(bus);
         m_Buses[i]->Fader.Sends[index].Level.Target.store(Gain(m_Layout.Buses[i].Sends[index].LevelDb),
                                                           std::memory_order_relaxed);
+    }
+
+    float AudioBusGraph::AudibilityGain(const std::string& bus)
+    {
+        if (m_AudibilityDirty)
+        {
+            for (auto& entry : m_Buses)
+                entry->Audibility = -1;
+            m_AudibilityDirty = false;
+        }
+        const auto found = m_Names.find(bus);
+        return ResolveAudibilityGain(found == m_Names.end() ? m_Names.at(MasterAudioBus) : found->second);
+    }
+
+    float AudioBusGraph::ResolveAudibilityGain(size_t index)
+    {
+        auto& bus = *m_Buses[index];
+        if (bus.Audibility >= 0)
+            return bus.Audibility;
+        const auto post = bus.Fader.Fader.Target.load(std::memory_order_relaxed);
+        const auto pre  = bus.Fader.PreFader.Target.load(std::memory_order_relaxed);
+        // Routing is an acyclic graph. Estimate gain using the strongest path to the output.
+        float gain = bus.Parent ? post * ResolveAudibilityGain(*bus.Parent) : post;
+        for (const auto& send : m_Layout.Buses[index].Sends)
+            gain = std::max(gain,
+                            (send.Tap == AudioSendTap::PreFader ? pre : post) * Gain(send.LevelDb) *
+                                ResolveAudibilityGain(m_Names.at(send.Target)));
+        return bus.Audibility = gain;
     }
 } // namespace Kans

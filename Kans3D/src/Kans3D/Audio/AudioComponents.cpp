@@ -12,6 +12,8 @@ namespace Kans
         {
             return std::tie(c.Clip,
                             c.Bus,
+                            c.Priority,
+                            c.ConcurrencyGroup,
                             c.Volume,
                             c.Pitch,
                             c.PlayOnStart,

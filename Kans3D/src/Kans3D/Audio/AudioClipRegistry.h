@@ -16,6 +16,7 @@ namespace Kans
         [[nodiscard]] std::optional<AudioSoundID> Acquire(AudioEngine& engine, const Ref<const AudioClipAsset>& clip);
         void                                      Release(AssetID id);
         void                                      Clear();
+        uint64_t                                  GetUserCount(AssetID id) const;
         // Requires an existing Acquire by the owner; creating a voice does not add a user.
         // The owner's last Release unregisters the sound and destroys any remaining voices.
         // Volume is a multiplier of the imported default. Sound/LoadMode always come from the clip.

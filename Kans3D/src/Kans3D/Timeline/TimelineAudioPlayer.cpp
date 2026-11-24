@@ -224,6 +224,7 @@ namespace Kans
         desc.Sound        = sound->second;
         desc.Bus          = track.Bus;
         desc.LoadMode     = AudioLoadMode::Stream;
+        desc.NeverVirtualize = true;
         desc.Pitch        = float(m_Speed);
         const auto volume = std::pow(10.f, clip.VolumeDb / 20.f);
         desc.Spatial      = !track.Binding.empty();

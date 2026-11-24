@@ -286,6 +286,10 @@ namespace Kans
         void SetAudioEngine(AudioEngine* engine);
         void PlayAudioSource(Entity entity);
         void StopAudioSource(Entity entity);
+        // The clip must be ready in this scene's AssetManager. An invalid handle means no start.
+        AudioVoiceHandle PlayOneShot(AssetID clip, const AudioOneShotParams& params = {});
+        AudioVoiceHandle PlayOneShot(Entity entity, AssetID clip, AudioOneShotParams params = {});
+        AudioVoiceHandle PlayOneShot(glm::vec3 position, AssetID clip, AudioOneShotParams params = {});
         bool PlayVideo(Entity);
         void PauseVideo(Entity);
         void StopVideo(Entity);

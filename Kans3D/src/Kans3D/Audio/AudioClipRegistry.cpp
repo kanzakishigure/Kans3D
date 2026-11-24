@@ -41,24 +41,34 @@ namespace Kans
             return;
         if (--found->second.Users)
             return;
-        m_Engine->UnregisterSound(found->second.Sound);
+        const auto sound = found->second.Sound;
         m_Clips.erase(found);
+        auto* engine = m_Engine;
         if (m_Clips.empty())
         {
             m_Engine->DetachClipRegistry(this);
             m_Engine = nullptr;
         }
+        engine->UnregisterSound(sound);
     }
 
     void AudioClipRegistry::Clear()
     {
         if (!m_Engine)
             return;
-        for (const auto& [id, entry] : m_Clips)
-            m_Engine->UnregisterSound(entry.Sound);
+        auto* engine = std::exchange(m_Engine, nullptr);
+        engine->DetachClipRegistry(this);
+        // Unregistering destroys the registry's one-shots. Their releases see an empty registry.
+        auto clips = std::move(m_Clips);
         m_Clips.clear();
-        m_Engine->DetachClipRegistry(this);
-        m_Engine = nullptr;
+        for (const auto& [id, entry] : clips)
+            engine->UnregisterSound(entry.Sound);
+    }
+
+    uint64_t AudioClipRegistry::GetUserCount(AssetID id) const
+    {
+        const auto entry = m_Clips.find(id);
+        return entry == m_Clips.end() ? 0 : entry->second.Users;
     }
 
     AudioVoiceHandle

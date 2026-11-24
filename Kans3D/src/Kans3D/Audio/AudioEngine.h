@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -13,6 +14,8 @@
 namespace Kans
 {
     class AudioClipRegistry;
+    class AudioClipAsset;
+    inline constexpr uint8_t DefaultAudioVoicePriority = 128;
     enum class AudioOutputMode { Device, Offline };
     struct AudioEngineConfig
     {
@@ -21,6 +24,8 @@ namespace Kans
         uint32_t Channels = 2;
         uint32_t MaxListeners = 1;
         bool UseNullDevice = false; // Device mode: real-time silent playback without opening hardware.
+        uint32_t        MaxRealVoices = 64;
+        float           VirtualizationThreshold = 0.001f; // Linear amplitude (-60 dB). Zero disables the threshold.
     };
 
     using AudioSoundID = uint64_t;
@@ -58,6 +63,39 @@ namespace Kans
         bool AutoRelease = false;
         bool Spatial = false;
         std::string   Bus         = MasterAudioBus;
+        uint8_t       Priority    = DefaultAudioVoicePriority; // 255 is highest.
+        std::string   ConcurrencyGroup;
+        bool          NeverVirtualize = false;
+    };
+
+    enum class AudioConcurrencyRule
+    {
+        StopOldest,
+        StopQuietest,
+        StopLowestPriority,
+        RejectNew
+    };
+    struct AudioConcurrencyGroup
+    {
+        uint32_t             MaxCount       = 1;
+        AudioConcurrencyRule Rule           = AudioConcurrencyRule::RejectNew;
+        float                ReleaseSeconds = 0.02f;
+    };
+
+    struct AudioOneShotParams
+    {
+        std::optional<glm::vec3> Position;
+        float                    Volume = 1, Pitch = 1;
+        std::string              Bus      = MasterAudioBus;
+        uint8_t                  Priority = DefaultAudioVoicePriority;
+        std::string              ConcurrencyGroup;
+    };
+
+    struct AudioVoiceStats
+    {
+        uint32_t                        RealVoices = 0, VirtualVoices = 0, AllocatedVoices = 0;
+        uint64_t                        StolenThisFrame = 0, TotalStolen = 0, RejectedStarts = 0;
+        std::map<std::string, uint32_t> GroupActiveCounts;
     };
     enum class AudioAttenuationModel { None, Inverse, Linear, Exponential };
     struct AudioSpatialParams
@@ -117,6 +155,20 @@ namespace Kans
         float GetMasterVolume() const;
         uint64_t Render(float* out, uint64_t frameCount);
         void Update();
+        void     SetMaxRealVoices(uint32_t count);
+        void     SetVirtualizationThreshold(float linear);
+        // Counts are published by Update. Groups count admitted starts, including virtual and scheduled voices.
+        const AudioVoiceStats& GetVoiceStats() const;
+        // Configure before playing. Reducing a group's limit applies on subsequent starts.
+        bool DefineConcurrencyGroup(const std::string& name, const AudioConcurrencyGroup& group);
+        bool IsVoiceVirtual(AudioVoiceHandle handle) const;
+        void SetVoicePriority(AudioVoiceHandle handle, uint8_t priority);
+
+        // Auto-releases the voice and the registry reference. Stop(handle) also releases it.
+        // Returns an invalid handle for an unavailable clip or a rejected start.
+        AudioVoiceHandle PlayOneShot(AudioClipRegistry&                           registry,
+                                     const std::shared_ptr<const AudioClipAsset>& clip,
+                                     const AudioOneShotParams&                    params = {});
 
         // Runtime settings are copies of the asset. Send indices follow the order in GetBuses().
         [[nodiscard]] std::optional<std::string> ApplyBusLayout(const AudioBusLayout& layout);
@@ -170,11 +222,13 @@ namespace Kans
         std::optional<std::string> GetVoiceBus(AudioVoiceHandle handle) const;
         void DestroyVoice(AudioVoiceHandle handle);
         bool IsVoiceValid(AudioVoiceHandle handle) const;
-        void Play(AudioVoiceHandle handle);
+        // Returns false for an invalid handle or a start rejected by its concurrency group.
+        bool Play(AudioVoiceHandle handle);
         // Schedule playback from the current source position (or zero after EOF). A past start skips
         // the elapsed engine frames at the voice's current pitch and starts at the first available frame.
-        void ScheduleStart(AudioVoiceHandle handle, uint64_t clockFrame);
-        void ScheduleStart(AudioVoiceHandle handle, uint64_t clockFrame, const AudioVoiceWindow& window);
+        // Explicit starts reserve a real voice through their first output frame.
+        bool ScheduleStart(AudioVoiceHandle handle, uint64_t clockFrame);
+        bool ScheduleStart(AudioVoiceHandle handle, uint64_t clockFrame, const AudioVoiceWindow& window);
         // Silence begins at clockFrame. An optional fade occupies the preceding fadeFrames engine
         // frames. Past stop times take effect at the first available frame.
         void ScheduleStop(AudioVoiceHandle handle,
@@ -206,13 +260,15 @@ namespace Kans
 
     private:
         friend class AudioMusicPlayer;
-        AudioVoiceHandle CreateVoice(const AudioVoiceDesc& desc, uint64_t loopStart, uint64_t loopEnd);
+        AudioVoiceHandle
+        CreateVoice(const AudioVoiceDesc& desc, uint64_t loopStart, uint64_t loopEnd, bool oneShot = false);
         uint64_t                   StartVoice(AudioVoiceHandle        handle,
                                               uint64_t                clockFrame,
                                               uint64_t                fadeFrames,
                                               AudioFadeCurve          curve,
                                               const AudioVoiceWindow* window = nullptr);
         std::optional<std::string> ReplaceBusGraph(const AudioBusLayout& layout);
+        bool                       AdmitVoice(AudioVoiceHandle handle, uint64_t now);
         friend class AudioClipRegistry;
         void AttachClipRegistry(AudioClipRegistry* registry);
         void DetachClipRegistry(AudioClipRegistry* registry);
