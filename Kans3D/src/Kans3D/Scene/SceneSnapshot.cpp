@@ -73,8 +73,9 @@ namespace Kans
                     x->second.SphereCollider != y->second.SphereCollider ||
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
-                    x->second.ForceField != y->second.ForceField || x->second.Ragdoll != y->second.Ragdoll ||
-                    x->second.Particles != y->second.Particles || x->second.Vehicle != y->second.Vehicle ||
+                    !(x->second.AudioSource == y->second.AudioSource) || x->second.ForceField != y->second.ForceField ||
+                    x->second.Ragdoll != y->second.Ragdoll || x->second.Particles != y->second.Particles ||
+                    x->second.Vehicle != y->second.Vehicle ||
                     x->second.CharacterController != y->second.CharacterController ||
                     x->second.AimConstraint != y->second.AimConstraint || x->second.Joint != y->second.Joint ||
                     x->second.SpringBone != y->second.SpringBone || x->second.Cloth != y->second.Cloth ||

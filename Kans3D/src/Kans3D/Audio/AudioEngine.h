@@ -15,6 +15,7 @@ namespace Kans
 {
     class AudioClipRegistry;
     class AudioClipAsset;
+    class AudioEventPlayer;
     inline constexpr uint8_t DefaultAudioVoicePriority = 128;
     enum class AudioOutputMode { Device, Offline };
     struct AudioEngineConfig
@@ -159,6 +160,9 @@ namespace Kans
         void     SetVirtualizationThreshold(float linear);
         // Counts are published by Update. Groups count admitted starts, including virtual and scheduled voices.
         const AudioVoiceStats& GetVoiceStats() const;
+        AudioEventPlayer&       GetEventPlayer();
+        const AudioEventPlayer& GetEventPlayer() const;
+        bool                    IsVoiceReleasing(AudioVoiceHandle handle) const;
         // Configure before playing. Reducing a group's limit applies on subsequent starts.
         bool DefineConcurrencyGroup(const std::string& name, const AudioConcurrencyGroup& group);
         bool IsVoiceVirtual(AudioVoiceHandle handle) const;
@@ -260,6 +264,17 @@ namespace Kans
 
     private:
         friend class AudioMusicPlayer;
+        friend class AudioEventPlayer;
+        void             DefineEventGroup(AssetID id, const AudioConcurrencyGroup& group);
+        uint32_t         CountEventInstances(AssetID id) const;
+        bool             PlayVoice(AudioVoiceHandle handle, bool* rejectedByLimit);
+        AudioVoiceHandle PlayRegisteredOneShot(AudioClipRegistry&                           registry,
+                                               const std::shared_ptr<const AudioClipAsset>& clip,
+                                               AudioVoiceDesc&                              desc,
+                                               const AudioSpatialParams*                    spatial,
+                                               double                                       startOffsetSeconds,
+                                               bool*                                        rejectedByLimit,
+                                               AssetID                                      eventGroup = {});
         AudioVoiceHandle
         CreateVoice(const AudioVoiceDesc& desc, uint64_t loopStart, uint64_t loopEnd, bool oneShot = false);
         uint64_t                   StartVoice(AudioVoiceHandle        handle,
@@ -274,5 +289,6 @@ namespace Kans
         void DetachClipRegistry(AudioClipRegistry* registry);
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        std::unique_ptr<AudioEventPlayer> m_EventPlayer;
     };
 }

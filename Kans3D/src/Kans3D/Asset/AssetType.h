@@ -40,5 +40,6 @@ namespace Kans
         MaterialParameterCollection = 26,
         AudioBusLayout              = 27,
         VideoClip                   = 28,
+        AudioEvent                  = 29,
     };
 } // namespace Kans

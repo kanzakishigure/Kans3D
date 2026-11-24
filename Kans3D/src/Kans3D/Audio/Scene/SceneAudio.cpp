@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include <cmath>
 #include "Kans3D/Asset/Manager/AssetManager.h"
+#include "Kans3D/Audio/AudioEventPlayer.h"
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Scene/Scene.h"
 #include "Kans3D/Timeline/TimelineAudioPlayer.h"
@@ -76,8 +77,22 @@ namespace Kans
         if (!m_AudioEngine || !m_AudioRunning || !OwnsAudioSource(entity))
             return;
         auto& c = entity.GetComponent<AudioSourceComponent>();
-        if (c.m_Runtime && c.m_Runtime->RequestedClip != c.Clip)
+        if (c.m_Runtime &&
+            (c.m_Runtime->RequestedEvent != c.Event || (!c.Event.IsValid() && c.m_Runtime->RequestedClip != c.Clip)))
             c.m_Runtime.reset();
+        if (c.Event.IsValid())
+        {
+            if (!c.m_Runtime)
+                c.m_Runtime = std::make_unique<AudioSourceComponent::Runtime>();
+            auto& r          = *c.m_Runtime;
+            r.RequestedEvent = c.Event;
+            r.Engine         = m_AudioEngine;
+            r.PendingStart   = true;
+            r.LastError.reset();
+            if (!m_AudioPaused)
+                PrepareAudioSource(entity);
+            return;
+        }
         if (c.m_Runtime && m_AudioEngine->IsVoiceValid(c.m_Runtime->Voice) &&
             !m_AudioEngine->HasEnded(c.m_Runtime->Voice))
         {
@@ -102,6 +117,26 @@ namespace Kans
     {
         if (m_AudioEngine && m_AudioRunning && OwnsAudioSource(entity))
             entity.GetComponent<AudioSourceComponent>().m_Runtime.reset();
+    }
+
+    AudioEventTriggerResult Scene::PlayEvent(AssetID event, const AudioEventParams& params)
+    {
+        if (!m_AudioEngine || !m_AudioRunning || m_AudioPaused || !m_PrefabAssets)
+            return {};
+        return m_AudioEngine->GetEventPlayer().Trigger(*m_PrefabAssets, m_AudioClips, event, params);
+    }
+
+    AudioEventTriggerResult Scene::PlayEvent(Entity emitter, AssetID event, AudioEventParams params)
+    {
+        if (emitter.m_Scene != this || !m_Registry.valid(emitter.m_EntityHandle))
+            return {};
+        return PlayEvent(glm::vec3(GetWorldTransform(emitter)[3]), event, std::move(params));
+    }
+
+    AudioEventTriggerResult Scene::PlayEvent(glm::vec3 position, AssetID event, AudioEventParams params)
+    {
+        params.Position = position;
+        return PlayEvent(event, params);
     }
 
     AudioVoiceHandle Scene::PlayOneShot(AssetID clip, const AudioOneShotParams& params)
@@ -153,6 +188,51 @@ namespace Kans
             r.PendingStart = false;
             Warn("source " + std::to_string(uint64_t(entity.GetUUID())) + ": " + r.LastError->Message);
         };
+        if (c.Event.IsValid())
+        {
+            // Event playback snapshots gain, pitch, routing and loop settings at Play.
+            // Component volume and pitch multiply. Master and default priority inherit.
+            // The component can disable spatial playback or enable looping. When spatial,
+            // the component supplies its A1 attenuation and follows the entity transform.
+            AudioEventParams params;
+            params.Volume = c.Volume;
+            params.Pitch  = c.Pitch;
+            if (!c.Bus.empty() && c.Bus != MasterAudioBus)
+                params.Bus = c.Bus;
+            if (c.Priority != DefaultAudioVoicePriority)
+                params.Priority = c.Priority;
+            if (!c.Spatial)
+                params.Spatial = false;
+            if (c.Loop)
+                params.Loop = true;
+            params.Pan                      = c.Pan;
+            params.Emitter                  = GetAudioSpatialParams(entity);
+            params.FallbackConcurrencyGroup = c.ConcurrencyGroup;
+            const auto result               = PlayEvent(c.Event, params);
+            r.PendingStart                  = false;
+            switch (result.Status)
+            {
+                case AudioEventTriggerStatus::Started:
+                    // A stolen voice owns its clip through the fade, even after this source restarts.
+                    if (!m_AudioEngine->IsVoiceReleasing(r.Voice))
+                        m_AudioEngine->DestroyVoice(r.Voice);
+                    r.Voice       = result.Voice;
+                    r.HasPosition = r.ResumeOnUnpause = false;
+                    return;
+                case AudioEventTriggerStatus::Cooldown:
+                    r.LastError = AssetError {AssetErrorCode::InvalidArgument, "Audio event is on cooldown"};
+                    return;
+                case AudioEventTriggerStatus::InstanceLimit:
+                    r.LastError = AssetError {AssetErrorCode::InvalidArgument, "Audio event instance limit reached"};
+                    return;
+                case AudioEventTriggerStatus::MissingClip:
+                    fail({AssetErrorCode::NotFound, "Audio event clip load failed"});
+                    return;
+                case AudioEventTriggerStatus::Invalid:
+                    fail({AssetErrorCode::InvalidData, "Audio event playback failed"});
+                    return;
+            }
+        }
         if (!c.Clip.IsValid() || !m_PrefabAssets)
         {
             fail({AssetErrorCode::InvalidData, "Audio clip or scene AssetManager is missing"});
@@ -208,13 +288,18 @@ namespace Kans
     {
         auto& c = entity.GetComponent<AudioSourceComponent>();
         auto& r = *c.m_Runtime;
-        m_AudioEngine->SetVoiceBus(r.Voice, c.Bus);
-        m_AudioEngine->SetVoicePriority(r.Voice, c.Priority);
-        m_AudioEngine->SetVolume(r.Voice, c.Volume * r.Source->GetData().Volume);
-        m_AudioEngine->SetPitch(r.Voice, c.Pitch);
-        m_AudioEngine->SetPan(r.Voice, r.Spatial ? 0 : c.Pan);
-        m_AudioEngine->SetLooping(r.Voice, c.Loop);
-        if (!r.Spatial)
+        if (!r.RequestedEvent.IsValid())
+        {
+            m_AudioEngine->SetVoiceBus(r.Voice, c.Bus);
+            m_AudioEngine->SetVoicePriority(r.Voice, c.Priority);
+            m_AudioEngine->SetVolume(r.Voice, c.Volume * r.Source->GetData().Volume);
+            m_AudioEngine->SetPitch(r.Voice, c.Pitch);
+            m_AudioEngine->SetPan(r.Voice, r.Spatial ? 0 : c.Pan);
+            m_AudioEngine->SetLooping(r.Voice, c.Loop);
+            if (!r.Spatial)
+                return;
+        }
+        else if (!c.Spatial)
             return;
         auto params           = GetAudioSpatialParams(entity);
         params.Velocity       = Velocity(params.Position, r.PreviousPosition, r.HasPosition, seconds);
@@ -300,7 +385,8 @@ namespace Kans
         for (auto handle : m_Registry.view<AudioSourceComponent>())
         {
             auto& c = m_Registry.get<AudioSourceComponent>(handle);
-            if (c.m_Runtime && c.m_Runtime->RequestedClip != c.Clip)
+            if (c.m_Runtime && (c.m_Runtime->RequestedEvent != c.Event ||
+                                (!c.Event.IsValid() && c.m_Runtime->RequestedClip != c.Clip)))
             {
                 const bool pending = c.m_Runtime->PendingStart;
                 c.m_Runtime.reset();
@@ -324,7 +410,8 @@ namespace Kans
                 if (m_AudioEngine->HasEnded(c.m_Runtime->Voice))
                     c.m_Runtime.reset();
             }
-            else if (c.m_Runtime->Acquired)
+            else if (c.m_Runtime->Acquired ||
+                     (c.Event.IsValid() && !c.m_Runtime->LastError && !c.m_Runtime->PendingStart))
                 c.m_Runtime.reset();
         }
     }

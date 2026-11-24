@@ -10,6 +10,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include "Kans3D/Asset/Asset.h"
 #include "Kans3D/Audio/AudioClipRegistry.h"
+#include "Kans3D/Audio/AudioEvent.h"
 #include "Kans3D/Core/Math/Bounds.h"
 #include "Kans3D/Core/TimeStep.h"
 #include "Kans3D/Core/UUID.h"
@@ -287,6 +288,9 @@ namespace Kans
         void PlayAudioSource(Entity entity);
         void StopAudioSource(Entity entity);
         // The clip must be ready in this scene's AssetManager. An invalid handle means no start.
+        AudioEventTriggerResult PlayEvent(AssetID event, const AudioEventParams& params = {});
+        AudioEventTriggerResult PlayEvent(Entity emitter, AssetID event, AudioEventParams params = {});
+        AudioEventTriggerResult PlayEvent(glm::vec3 position, AssetID event, AudioEventParams params = {});
         AudioVoiceHandle PlayOneShot(AssetID clip, const AudioOneShotParams& params = {});
         AudioVoiceHandle PlayOneShot(Entity entity, AssetID clip, AudioOneShotParams params = {});
         AudioVoiceHandle PlayOneShot(glm::vec3 position, AssetID clip, AudioOneShotParams params = {});

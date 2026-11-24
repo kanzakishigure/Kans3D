@@ -43,6 +43,7 @@ namespace Kans::Browser
             {".glsl", AssetKind::Shader},
             {".kans", AssetKind::Scene},
             {".wav", AssetKind::Audio},
+            {".audioevent", AssetKind::AudioEvent},
             {".ogg", AssetKind::Audio},
             {".mp3", AssetKind::Audio},
             {".flac", AssetKind::Audio},
@@ -85,6 +86,8 @@ namespace Kans::Browser
                 return "Scene";
             case AssetKind::Audio:
                 return "Audio";
+            case AssetKind::AudioEvent:
+                return "Audio Event";
             case AssetKind::Font:
                 return "Font";
             case AssetKind::UI:

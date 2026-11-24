@@ -31,8 +31,9 @@ namespace Kans
                     x->second.SphereCollider != y->second.SphereCollider ||
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
-                    x->second.ForceField != y->second.ForceField || x->second.Ragdoll != y->second.Ragdoll ||
-                    x->second.Particles != y->second.Particles || x->second.Vehicle != y->second.Vehicle ||
+                    !(x->second.AudioSource == y->second.AudioSource) || x->second.ForceField != y->second.ForceField ||
+                    x->second.Ragdoll != y->second.Ragdoll || x->second.Particles != y->second.Particles ||
+                    x->second.Vehicle != y->second.Vehicle ||
                     x->second.CharacterController != y->second.CharacterController ||
                     x->second.AimConstraint != y->second.AimConstraint || x->second.Joint != y->second.Joint ||
                     x->second.SpringBone != y->second.SpringBone || x->second.Cloth != y->second.Cloth ||
@@ -177,6 +178,9 @@ namespace Kans
             change.GlobalWind = part.HasComponent<WindZoneComponent>() ?
                                     std::optional<WindZoneComponent>(part.GetComponent<WindZoneComponent>()) :
                                     std::nullopt;
+            change.AudioSource = part.HasComponent<AudioSourceComponent>() ?
+                                     std::optional<AudioSourceComponent>(part.GetComponent<AudioSourceComponent>()) :
+                                     std::nullopt;
             change.ForceField = part.HasComponent<ForceFieldComponent>() ?
                                     std::optional<ForceFieldComponent>(part.GetComponent<ForceFieldComponent>()) :
                                     std::nullopt;
@@ -446,6 +450,15 @@ namespace Kans
             }
             else if (entity.HasComponent<WindZoneComponent>())
                 entity.RemoveComponent<WindZoneComponent>();
+            if (change != instance.Overrides.end() && change->second.AudioSource)
+            {
+                if (!entity.HasComponent<AudioSourceComponent>())
+                    entity.AddComponent<AudioSourceComponent>(*change->second.AudioSource);
+                else if (!(entity.GetComponent<AudioSourceComponent>() == *change->second.AudioSource))
+                    entity.SetComponent<AudioSourceComponent>(*change->second.AudioSource);
+            }
+            else if (entity.HasComponent<AudioSourceComponent>())
+                entity.RemoveComponent<AudioSourceComponent>();
             if (change != instance.Overrides.end() && change->second.ForceField)
             {
                 if (!entity.HasComponent<ForceFieldComponent>())

@@ -10,7 +10,7 @@ namespace Kans
 
     struct AudioSourceComponent
     {
-        AssetID               Clip;
+        AssetID               Clip, Event;
         std::string           Bus    = MasterAudioBus;
         uint8_t               Priority = DefaultAudioVoicePriority;
         std::string           ConcurrencyGroup;
@@ -36,7 +36,7 @@ namespace Kans
         {
             ~Runtime();
             Ref<const AudioClipAsset> Source;
-            AssetID                   RequestedClip;
+            AssetID                   RequestedClip, RequestedEvent;
             AudioEngine*              Engine   = nullptr;
             AudioClipRegistry*        Registry = nullptr;
             AudioVoiceHandle          Voice;

@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "Kans3D/Audio/AudioEngine.h"
 #include "Kans3D/Audio/AudioClipRegistry.h"
+#include "Kans3D/Audio/AudioEventPlayer.h"
 #include "Kans3D/Audio/AudioMusicPlayer.h"
 #include "Kans3D/Core/Log/Log.h"
 #include "AudioBusGraph.h"
@@ -495,7 +496,7 @@ namespace Kans
             AudioSpatialParams           Spatial;
             float                        ConeInnerCos = -1, ConeOuterCos = -1;
             AudioClipRegistry*           OneShotRegistry = nullptr;
-            AssetID                      OneShotClip;
+            AssetID                      OneShotClip, EventGroup;
             uint64_t                     PlayOrder = 0, PinnedStart = NoFrame;
             bool                         Attached = false, Virtual = false, CountedReal = false, Stolen = false;
             bool                         Poolable = false;
@@ -743,6 +744,13 @@ namespace Kans
         std::vector<AudioClipRegistry*> ClipRegistries;
         std::array<AudioListenerState, 4>            Listeners;
         std::map<std::string, AudioConcurrencyGroup> Groups;
+        std::map<AssetID, AudioConcurrencyGroup>     EventGroups;
+        struct ConcurrencyVictim
+        {
+            AudioVoiceHandle Handle;
+            float            ReleaseSeconds;
+        };
+        std::vector<ConcurrencyVictim>               ConcurrencyVictims;
         AudioVoiceStats                              Stats;
         uint64_t                                     PlaySequence = 0, PendingSteals = 0;
         struct Candidate
@@ -944,7 +952,10 @@ namespace Kans
         }
     };
 
-    AudioEngine::AudioEngine() : m_Impl(std::make_unique<Impl>()) {}
+    AudioEngine::AudioEngine() : m_Impl(std::make_unique<Impl>()), m_EventPlayer(new AudioEventPlayer(*this)) {}
+
+    AudioEventPlayer&       AudioEngine::GetEventPlayer() { return *m_EventPlayer; }
+    const AudioEventPlayer& AudioEngine::GetEventPlayer() const { return *m_EventPlayer; }
     AudioEngine::~AudioEngine() { Shutdown(); }
 
     std::optional<std::string> AudioEngine::Init(const AudioEngineConfig& config)
@@ -1125,6 +1136,9 @@ namespace Kans
         p.LatencyFrames  = 0;
         p.Listeners      = {};
         p.Groups.clear();
+        p.EventGroups.clear();
+        p.ConcurrencyVictims.clear();
+        m_EventPlayer->Clear();
         p.Stats        = {};
         p.PlaySequence = p.PendingSteals = 0;
         p.Candidates.clear();
@@ -1312,6 +1326,25 @@ namespace Kans
         m_Impl->Groups.insert_or_assign(name, group);
         m_Impl->Stats.GroupActiveCounts.try_emplace(name, 0);
         return true;
+    }
+
+    void AudioEngine::DefineEventGroup(AssetID id, const AudioConcurrencyGroup& group)
+    {
+        m_Impl->EventGroups.insert_or_assign(id, group);
+    }
+
+    uint32_t AudioEngine::CountEventInstances(AssetID id) const
+    {
+        const auto now = GetClockFrames();
+        return static_cast<uint32_t>(std::count_if(m_Impl->Slots.begin(), m_Impl->Slots.end(), [&](const auto& slot) {
+            return slot.Value && slot.Value->EventGroup == id && !slot.Value->Stolen && slot.Value->Active(now);
+        }));
+    }
+
+    bool AudioEngine::IsVoiceReleasing(AudioVoiceHandle handle) const
+    {
+        const auto* voice = m_Impl->Find(handle);
+        return voice && voice->Stolen;
     }
 
     bool AudioEngine::IsVoiceVirtual(AudioVoiceHandle handle) const
@@ -1742,7 +1775,7 @@ namespace Kans
             node.ResumeAt                            = NoFrame;
             node.Block                               = NoFrame;
             node.engineNode.isPitchDisabled          = false;
-            ma_sound_set_looping(&node, false);
+            ma_sound_set_looping(&node, desc.Loop);
             ma_data_source_set_loop_point_in_pcm_frames(voice->Source.get(), 0, sound.Info.LengthFrames);
             node.Seek(0);
             ma_resampler_reset(&node.engineNode.resampler);
@@ -1821,21 +1854,36 @@ namespace Kans
                                               const std::shared_ptr<const AudioClipAsset>& clip,
                                               const AudioOneShotParams&                    params)
     {
-        const auto sound = registry.Acquire(*this, clip);
-        if (!sound)
-            return {};
         AudioVoiceDesc desc;
-        desc.Sound            = *sound;
-        desc.LoadMode         = clip->GetData().LoadMode;
-        desc.Volume           = params.Volume * clip->GetData().Volume;
+        desc.Volume           = params.Volume;
         desc.Pitch            = params.Pitch;
         desc.Bus              = params.Bus;
         desc.Priority         = params.Priority;
         desc.ConcurrencyGroup = params.ConcurrencyGroup;
-        desc.Spatial          = params.Position.has_value();
-        desc.AutoRelease      = true;
-        const auto handle     = CreateVoice(desc, 0, 0, true);
-        auto*      voice      = m_Impl->Find(handle);
+        AudioSpatialParams spatial;
+        if (params.Position)
+            spatial.Position = *params.Position;
+        return PlayRegisteredOneShot(registry, clip, desc, params.Position ? &spatial : nullptr, 0, nullptr);
+    }
+
+    AudioVoiceHandle AudioEngine::PlayRegisteredOneShot(AudioClipRegistry&                           registry,
+                                                        const std::shared_ptr<const AudioClipAsset>& clip,
+                                                        AudioVoiceDesc&                              desc,
+                                                        const AudioSpatialParams*                    spatial,
+                                                        double                                       startOffsetSeconds,
+                                                        bool*                                        rejectedByLimit,
+                                                        AssetID                                      eventGroup)
+    {
+        const auto sound = registry.Acquire(*this, clip);
+        if (!sound)
+            return {};
+        desc.Sound    = *sound;
+        desc.LoadMode = clip->GetData().LoadMode;
+        desc.Volume *= clip->GetData().Volume;
+        desc.Spatial      = spatial != nullptr;
+        desc.AutoRelease  = true;
+        const auto handle = CreateVoice(desc, 0, 0, true);
+        auto*      voice  = m_Impl->Find(handle);
         if (!voice)
         {
             registry.Release(clip->assetID);
@@ -1843,13 +1891,19 @@ namespace Kans
         }
         voice->OneShotRegistry = &registry;
         voice->OneShotClip     = clip->assetID;
-        if (params.Position)
+        voice->EventGroup      = eventGroup;
+        if (spatial)
+            SetSpatialParams(handle, *spatial);
+        if (desc.Loop)
+            SetLoopRegion(handle, clip->GetData().LoopBegin, clip->GetData().LoopEnd);
+        if (startOffsetSeconds > 0 && voice->Info.LengthFrames > 0)
         {
-            AudioSpatialParams spatial;
-            spatial.Position = *params.Position;
-            SetSpatialParams(handle, spatial);
+            // Keep an out-of-range offset on a playable source frame, including an authored loop region.
+            const auto   end    = desc.Loop ? voice->Current().LoopEnd : voice->Info.LengthFrames;
+            const double offset = std::round(startOffsetSeconds * voice->Info.SampleRate);
+            SeekFrames(handle, offset >= end ? end - 1 : static_cast<uint64_t>(offset));
         }
-        if (Play(handle))
+        if (PlayVoice(handle, rejectedByLimit))
             return handle;
         DestroyVoice(handle);
         return {};
@@ -1923,10 +1977,10 @@ namespace Kans
     {
         auto&      p     = *m_Impl;
         auto&      voice = *p.Find(handle);
-        const auto group = p.Groups.find(voice.Desc.ConcurrencyGroup);
-        if (group != p.Groups.end())
-        {
-            const auto& definition = group->second;
+        auto&      victims = p.ConcurrencyVictims;
+        victims.clear();
+        // Plan both groups before touching any voice. Local victims also free space in the shared group.
+        const auto plan = [&](const AudioConcurrencyGroup& definition, const auto& belongs) {
             for (;;)
             {
                 size_t           count = 0;
@@ -1936,8 +1990,9 @@ namespace Kans
                 for (uint32_t i = 0; i < p.Slots.size(); ++i)
                 {
                     const auto& slot = p.Slots[i];
-                    if (!slot.Value || i == handle.Index || slot.Value->Stolen ||
-                        slot.Value->Desc.ConcurrencyGroup != group->first || !slot.Value->Active(now))
+                    if (!slot.Value || i == handle.Index || slot.Value->Stolen || !belongs(*slot.Value) ||
+                        !slot.Value->Active(now) ||
+                        std::any_of(victims.begin(), victims.end(), [i](const auto& v) { return v.Handle.Index == i; }))
                         continue;
                     ++count;
                     const auto& member = *slot.Value;
@@ -1954,30 +2009,41 @@ namespace Kans
                     }
                 }
                 if (count < definition.MaxCount)
-                    break;
-                if (definition.MaxCount == 0 || definition.Rule == AudioConcurrencyRule::RejectNew)
-                {
-                    ++p.Stats.RejectedStarts;
+                    return true;
+                if (!victim.IsValid() || definition.Rule == AudioConcurrencyRule::RejectNew || definition.MaxCount == 0)
                     return false;
-                }
-                auto& stolen  = *p.Find(victim);
-                stolen.Stolen = true;
-                ++p.PendingSteals;
-                ++p.Stats.TotalStolen;
-                const auto release = static_cast<uint64_t>(
-                    std::min(static_cast<double>(definition.ReleaseSeconds) * GetSampleRate(), double(NoFrame / 2)));
-                if (release == 0 || stolen.Virtual || p.WritableClock() <= stolen.Current().Start)
-                {
-                    if (stolen.Desc.AutoRelease)
-                        DestroyVoice(victim);
-                    else
-                        Stop(victim);
-                }
+                victims.push_back({victim, definition.ReleaseSeconds});
+            }
+        };
+        const auto event  = p.EventGroups.find(voice.EventGroup);
+        const auto shared = p.Groups.find(voice.Desc.ConcurrencyGroup);
+        if ((event != p.EventGroups.end() &&
+             !plan(event->second, [&](const auto& member) { return member.EventGroup == event->first; })) ||
+            (shared != p.Groups.end() &&
+             !plan(shared->second, [&](const auto& member) { return member.Desc.ConcurrencyGroup == shared->first; })))
+        {
+            ++p.Stats.RejectedStarts;
+            return false;
+        }
+        for (const auto& victim : victims)
+        {
+            auto& stolen  = *p.Find(victim.Handle);
+            stolen.Stolen = true;
+            ++p.PendingSteals;
+            ++p.Stats.TotalStolen;
+            const auto release = static_cast<uint64_t>(
+                std::min(static_cast<double>(victim.ReleaseSeconds) * GetSampleRate(), double(NoFrame / 2)));
+            if (release == 0 || stolen.Virtual || p.WritableClock() <= stolen.Current().Start)
+            {
+                if (stolen.Desc.AutoRelease)
+                    DestroyVoice(victim.Handle);
                 else
-                {
-                    const auto stop = std::min(stolen.Current().Stop, AddFrames(p.WritableClock(), release));
-                    ScheduleStop(victim, stop, release);
-                }
+                    Stop(victim.Handle);
+            }
+            else
+            {
+                const auto stop = std::min(stolen.Current().Stop, AddFrames(p.WritableClock(), release));
+                ScheduleStop(victim.Handle, stop, release);
             }
         }
         voice.Stolen    = false;
@@ -1985,7 +2051,9 @@ namespace Kans
         return true;
     }
 
-    bool AudioEngine::Play(AudioVoiceHandle handle)
+    bool AudioEngine::Play(AudioVoiceHandle handle) { return PlayVoice(handle, nullptr); }
+
+    bool AudioEngine::PlayVoice(AudioVoiceHandle handle, bool* rejectedByLimit)
     {
         if (auto* voice = m_Impl->Find(handle))
         {
@@ -1995,7 +2063,11 @@ namespace Kans
             if (voice->Active(now) && !voice->Stolen)
                 return true;
             if (!AdmitVoice(handle, now))
+            {
+                if (rejectedByLimit)
+                    *rejectedByLimit = true;
                 return false;
+            }
             if (ended)
                 state.Source = 0;
             else

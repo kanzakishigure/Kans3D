@@ -92,6 +92,10 @@ namespace Kans
         m_Registry.on_update<MotionColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_construct<MotionColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_destroy<MotionColliderComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        // This callback marks prefab-owned nodes for override capture.
+        m_Registry.on_construct<AudioSourceComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_update<AudioSourceComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_destroy<AudioSourceComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_update<TransformComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
         m_Registry.on_update<RelationshipComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
 

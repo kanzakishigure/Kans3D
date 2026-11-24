@@ -89,10 +89,40 @@ namespace Kans
             Require(std::isfinite(value), "Non-finite Scene number");
             return value;
         }
+        YAML::Node EncodeAudioSource(const AudioSourceComponent& c)
+        {
+            YAML::Node v;
+            v["Clip"] = c.Clip.ToString();
+            if (c.Event.IsValid())
+                v["Event"] = c.Event.ToString();
+            v["Attenuation"]    = int(c.Attenuation);
+            v["Volume"]         = c.Volume;
+            v["Pitch"]          = c.Pitch;
+            v["PlayOnStart"]    = c.PlayOnStart;
+            v["Loop"]           = c.Loop;
+            v["Spatial"]        = c.Spatial;
+            v["Pan"]            = c.Pan;
+            v["MinDistance"]    = c.MinDistance;
+            v["MaxDistance"]    = c.MaxDistance;
+            v["Rolloff"]        = c.Rolloff;
+            v["DopplerFactor"]  = c.DopplerFactor;
+            v["ConeInnerAngle"] = c.ConeInnerAngle;
+            v["ConeOuterAngle"] = c.ConeOuterAngle;
+            v["ConeOuterGain"]  = c.ConeOuterGain;
+            if (c.Bus != MasterAudioBus)
+                v["Bus"] = c.Bus;
+            if (c.Priority != DefaultAudioVoicePriority)
+                v["Priority"] = static_cast<unsigned>(c.Priority);
+            if (!c.ConcurrencyGroup.empty())
+                v["ConcurrencyGroup"] = c.ConcurrencyGroup;
+            return v;
+        }
+
         AudioSourceComponent DecodeAudioSource(const YAML::Node& node)
         {
             Keys(node,
                  {"Clip",
+                  "Event",
                   "Bus",
                   "Priority",
                   "ConcurrencyGroup",
@@ -110,8 +140,12 @@ namespace Kans
                   "ConeInnerAngle",
                   "ConeOuterAngle",
                   "ConeOuterGain"});
+            Require(node["Clip"] || node["Event"], "AudioSourceComponent requires Clip or Event");
             AudioSourceComponent c;
-            c.Clip                 = AssetID::FromString(Text(node["Clip"]));
+            if (node["Clip"])
+                c.Clip = AssetID::FromString(Text(node["Clip"]));
+            if (node["Event"])
+                c.Event = AssetID::FromString(Text(node["Event"]));
             if (node["Bus"])
                 c.Bus = Text(node["Bus"]);
             if (node["Priority"])
@@ -1005,6 +1039,8 @@ namespace Kans
                     item["JointComponent"] = PhysicsYaml::Encode(*change.Joint);
                 if (change.GlobalWind)
                     item["WindZoneComponent"] = PhysicsYaml::Encode(*change.GlobalWind);
+                if (change.AudioSource)
+                    item["AudioSourceComponent"] = EncodeAudioSource(*change.AudioSource);
                 if (change.ForceField)
                     item["ForceFieldComponent"] = PhysicsYaml::Encode(*change.ForceField);
                 if (change.Ragdoll)
@@ -1067,6 +1103,7 @@ namespace Kans
                       "CapsuleColliderComponent",
                       "MeshColliderComponent",
                       "WindZoneComponent",
+                      "AudioSourceComponent",
                       "ForceFieldComponent",
                       "RagdollComponent",
                       "ParticleSystemComponent",
@@ -1131,6 +1168,8 @@ namespace Kans
                     PhysicsYaml::Decode(item["WindZoneComponent"], c);
                     change.GlobalWind = c;
                 }
+                if (item["AudioSourceComponent"])
+                    change.AudioSource = DecodeAudioSource(item["AudioSourceComponent"]);
                 if (item["ForceFieldComponent"])
                 {
                     ForceFieldComponent c;
@@ -1629,31 +1668,7 @@ namespace Kans
             if (entity.HasComponent<ClothComponent>())
                 node["ClothComponent"] = PhysicsYaml::Encode(entity.GetComponent<ClothComponent>());
             if (entity.HasComponent<AudioSourceComponent>())
-            {
-                const auto& c       = entity.GetComponent<AudioSourceComponent>();
-                auto        v       = node["AudioSourceComponent"];
-                v["Clip"]           = c.Clip.ToString();
-                v["Attenuation"]    = int(c.Attenuation);
-                v["Volume"]         = c.Volume;
-                v["Pitch"]          = c.Pitch;
-                v["PlayOnStart"]    = c.PlayOnStart;
-                v["Loop"]           = c.Loop;
-                v["Spatial"]        = c.Spatial;
-                v["Pan"]            = c.Pan;
-                v["MinDistance"]    = c.MinDistance;
-                v["MaxDistance"]    = c.MaxDistance;
-                v["Rolloff"]        = c.Rolloff;
-                v["DopplerFactor"]  = c.DopplerFactor;
-                v["ConeInnerAngle"] = c.ConeInnerAngle;
-                v["ConeOuterAngle"] = c.ConeOuterAngle;
-                v["ConeOuterGain"]  = c.ConeOuterGain;
-                if (c.Bus != MasterAudioBus)
-                    v["Bus"] = c.Bus;
-                if (c.Priority != DefaultAudioVoicePriority)
-                    v["Priority"] = static_cast<unsigned>(c.Priority);
-                if (!c.ConcurrencyGroup.empty())
-                    v["ConcurrencyGroup"] = c.ConcurrencyGroup;
-            }
+                node["AudioSourceComponent"] = EncodeAudioSource(entity.GetComponent<AudioSourceComponent>());
             if (entity.HasComponent<AudioListenerComponent>())
                 node["AudioListenerComponent"]["Active"] = entity.GetComponent<AudioListenerComponent>().Active;
             if (entity.HasComponent<MaterialParameterDriversComponent>())
