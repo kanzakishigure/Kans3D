@@ -640,7 +640,7 @@ float KansSpotShadow(int light, vec3 worldPos, vec3 normal)
 }
 )"
                  // MSVC caps one string literal at 16380 characters (C2026); adjacent literals concatenate.
-                 R"(float KansCascadeShadow(int cascade, vec3 worldPos, vec3 normal)
+                 R"(float KansCascadeShadow(int cascade, vec3 worldPos, vec3 normal, bool referenceSample)
 {
     vec2 gradient = KansReceiverGradient(cascade, KansReceiverNormal(worldPos, normal));
     vec3 q = worldPos + normal * u_Frame.ShadowInfo.z *
@@ -668,7 +668,8 @@ float KansSpotShadow(int light, vec3 worldPos, vec3 normal)
     // Stable world-space rotation; no screen-space noise on translucent vertex receivers.
     float angle = 0.0;
     #else
-    float angle = 6.28318530718 * fract(52.9829189 * fract(dot(floor(gl_FragCoord.xy), vec2(.06711056,.00583715))));
+    float angle = referenceSample ? 0.0 :
+        6.28318530718 * fract(52.9829189 * fract(dot(floor(gl_FragCoord.xy), vec2(.06711056,.00583715))));
     #endif
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
     vec4 texel = u_Frame.CascadeTexel[cascade];
@@ -702,21 +703,23 @@ int KansShadowCascade(vec3 worldPos)
         if (depth <= u_Frame.CascadeSplits[i]) return i;
     return -1;
 }
-float KansShadow(vec3 worldPos, vec3 normal)
+float KansShadow(vec3 worldPos, vec3 normal, bool referenceSample)
 {
     if (u_Frame.ShadowInfo.x == 0.0 || u_Object.MaterialRender.w != 0.0) return 1.0;
     int cascade = KansShadowCascade(worldPos);
     if (cascade < 0) return 1.0;
-    float result = KansCascadeShadow(cascade, worldPos, normal);
+    float result = KansCascadeShadow(cascade, worldPos, normal, referenceSample);
     float depth = dot(u_Frame.ShadowCameraDepth, vec4(worldPos, 1));
     float start = u_Frame.CascadeBlendStarts[cascade], end = u_Frame.CascadeSplits[cascade];
     if (end > start && depth > start)
     {
-        float next = cascade + 1 < int(u_Frame.ShadowInfo.x) ? KansCascadeShadow(cascade + 1, worldPos, normal) : 1.0;
+        float next = cascade + 1 < int(u_Frame.ShadowInfo.x) ?
+            KansCascadeShadow(cascade + 1, worldPos, normal, referenceSample) : 1.0;
         result = mix(result, next, smoothstep(start, end, depth));
     }
     return result;
 }
+float KansShadow(vec3 worldPos, vec3 normal) { return KansShadow(worldPos, normal, false); }
 float KansCubeCompare(int shadow, vec3 direction, float depth)
 {
     if (shadow == 0) return texture(u_PointShadow0, vec4(direction, depth));
@@ -806,20 +809,24 @@ float KansContactShadow(vec3 worldPos, vec3 normal, vec3 toLight, vec2 settings)
 // Each visibility is min(shadow-map visibility, contact visibility). Contact
 // shadows use the forward screen-depth ray and the same material receive rules;
 // outside that fragment path only the shadow map contributes. The directional
-// visibility includes cascade blending.
-KansLightSample KansPointIncident(int i, vec3 worldPos, vec3 normal)
+// visibility includes cascade blending. A reference sample uses a draw-constant
+// position, a plane facing the light and no screen-space contact or PCSS dither.
+KansLightSample KansPointIncident(int i, vec3 worldPos, vec3 normal, bool referenceSample)
 {
     vec3 toLight = KansPointLightPosition(i) - worldPos;
     float d2 = dot(toLight, toLight);
     if (d2 <= 1e-8)
         return KansLightSample(vec3(0), sqrt(d2), vec3(0), 1.0, u_Frame.PointDiffuseScales[i/4][i%4]);
 
+    vec3 L = normalize(toLight);
     vec3 radiance = KansPointLightRadiance(i) * KansPointAttenuation(i, d2);
-    float visibility = min(KansPointShadow(i, worldPos, normal),
-        KansContactShadow(worldPos, normal, toLight, vec2(u_Frame.PointRadiance[i].w, u_Frame.PointSpecular[i].w)));
-    return KansLightSample(normalize(toLight), sqrt(d2), radiance, visibility, u_Frame.PointDiffuseScales[i/4][i%4]);
+    float visibility = KansPointShadow(i, worldPos, referenceSample ? L : normal);
+    if (!referenceSample)
+        visibility = min(visibility,
+            KansContactShadow(worldPos, normal, toLight, vec2(u_Frame.PointRadiance[i].w, u_Frame.PointSpecular[i].w)));
+    return KansLightSample(L, sqrt(d2), radiance, visibility, u_Frame.PointDiffuseScales[i/4][i%4]);
 }
-KansLightSample KansSpotIncident(int i, vec3 worldPos, vec3 normal)
+KansLightSample KansSpotIncident(int i, vec3 worldPos, vec3 normal, bool referenceSample)
 {
     vec3 toLight = u_Frame.SpotPositionRange[i].xyz - worldPos;
     float d2 = dot(toLight, toLight);
@@ -829,19 +836,34 @@ KansLightSample KansSpotIncident(int i, vec3 worldPos, vec3 normal)
         return KansLightSample(L, sqrt(d2), vec3(0), 1.0, u_Frame.SpotScales[i].x);
 
     vec3 radiance = u_Frame.SpotRadianceInner[i].rgb * attenuation * KansSpotCookie(i, worldPos);
-    float visibility = min(KansSpotShadow(i, worldPos, normal),
-        KansContactShadow(worldPos, normal, toLight, u_Frame.SpotScales[i].zw));
+    float visibility = KansSpotShadow(i, worldPos, referenceSample ? L : normal);
+    if (!referenceSample)
+        visibility = min(visibility, KansContactShadow(worldPos, normal, toLight, u_Frame.SpotScales[i].zw));
     return KansLightSample(L, sqrt(d2), radiance, visibility, u_Frame.SpotScales[i].x);
 }
-KansLightSample KansDirectionalIncident(vec3 worldPos, vec3 normal)
+KansLightSample KansDirectionalIncident(vec3 worldPos, vec3 normal, bool referenceSample)
 {
     if (u_Frame.DirectionalDirection.w == 0.0)
         return KansLightSample(vec3(0), 0.0, vec3(0), 1.0, 0.0);
 
     vec3 L = KansDirectionalToLight();
-    float visibility = min(KansShadow(worldPos, normal), KansContactShadow(worldPos, normal, L * 1e6,
-        vec2(u_Frame.DirectionalRadiance.w, u_Frame.DirectionalSpecular.w)));
+    float visibility = KansShadow(worldPos, referenceSample ? L : normal, referenceSample);
+    if (!referenceSample)
+        visibility = min(visibility, KansContactShadow(worldPos, normal, L * 1e6,
+            vec2(u_Frame.DirectionalRadiance.w, u_Frame.DirectionalSpecular.w)));
     return KansLightSample(L, 0.0, KansDirectionalRadiance(), visibility, u_Frame.DirectionalScales.x);
+}
+KansLightSample KansPointIncident(int i, vec3 worldPos, vec3 normal)
+{
+    return KansPointIncident(i, worldPos, normal, false);
+}
+KansLightSample KansSpotIncident(int i, vec3 worldPos, vec3 normal)
+{
+    return KansSpotIncident(i, worldPos, normal, false);
+}
+KansLightSample KansDirectionalIncident(vec3 worldPos, vec3 normal)
+{
+    return KansDirectionalIncident(worldPos, normal, false);
 }
 
 int KansPunctualLightCount() { return KansPointLightCount() + KansSpotLightCount(); }
