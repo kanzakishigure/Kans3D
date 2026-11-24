@@ -72,4 +72,9 @@ namespace Kans
     std::variant<VideoClipInfo, AssetError> ProbeVideo(const VideoBytes&);
     std::variant<VideoBytes, AssetError>    EncodeVideoProduct(const VideoClipData&);
     std::variant<VideoClipData, AssetError> DecodeVideoProduct(const std::byte*, size_t);
+    // The first bytes of a product always hold its whole header (metadata without the stream).
+    inline constexpr size_t VideoProductInfoBytes = 112;
+    // The metadata of a product from its first bytes (at most VideoProductInfoBytes are read), so an editor
+    // can show it without loading the stream.
+    std::variant<VideoClipInfo, AssetError> DecodeVideoProductInfo(const std::byte*, size_t);
 } // namespace Kans

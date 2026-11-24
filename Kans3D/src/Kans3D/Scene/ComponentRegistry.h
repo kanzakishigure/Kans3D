@@ -1,5 +1,6 @@
 #pragma once
 #include <any>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <typeindex>
@@ -15,6 +16,7 @@ namespace Kans
     class AudioClipPreview;
     class Scene;
     class Texture2D;
+    class VideoPreviewSession;
     namespace SecondaryMotionEditing
     {
         class ChainPicker;
@@ -38,6 +40,19 @@ namespace Kans
         virtual void          Select(Entity entity) = 0;
         // Picks a published asset of `type` (also by dropping its source file); true when `id` changed.
         virtual bool AssetPicker(const char* label, AssetType type, AssetID& id) = 0;
+        // Only lists (and accepts drops of) the assets whose source file `accept` takes.
+        virtual bool FilteredAssetPicker(const char*                                              label,
+                                         AssetType                                                type,
+                                         AssetID&                                                 id,
+                                         const std::function<bool(const std::filesystem::path&)>& accept)
+        {
+            (void)accept;
+            return AssetPicker(label, type, id);
+        }
+        // The source file an asset was imported from; empty when unknown.
+        virtual std::filesystem::path AssetSource(AssetID) { return {}; }
+        // The GPU texture of a texture asset for an inspector thumbnail; null when unavailable.
+        virtual Ref<Texture2D> TexturePreview(AssetID) { return nullptr; }
         // Picks a replacement material; true with an invalid ID to restore the imported one.
         virtual bool        MaterialPicker(const char* label, AssetID imported, AssetID current, AssetID& chosen) = 0;
         virtual std::string MaterialName(AssetID material)                                                        = 0;
@@ -87,6 +102,11 @@ namespace Kans
         virtual void SelectWheel(Entity, int /*wheel*/) {}
         // Edit-mode audition of clips through the editor's audio engine (null: unavailable).
         virtual AudioClipPreview* GetAudioPreview() { return nullptr; }
+        // Video players: writes a Video render texture sized to the entity's clip (beside the clip's source,
+        // or in the Content Browser's open folder) and assigns it as the target once imported.
+        virtual void CreateVideoTarget(Entity, bool /*browserFolder*/) {}
+        // The edit-mode preview of a video player (null: unavailable).
+        virtual VideoPreviewSession* GetVideoPreview() { return nullptr; }
     };
 
     // Everything the editor knows about one component type: how it is named, shown,

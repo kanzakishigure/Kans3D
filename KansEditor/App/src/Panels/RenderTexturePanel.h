@@ -18,6 +18,8 @@ namespace Kans
         bool HasFocus() const { return m_Focused; }
         const std::filesystem::path&      GetFile() const { return m_File; }
         const RenderTextureSpecification& GetValues() const { return m_Values; }
+        // The open file's published Texture (invalid until it is imported or without a project).
+        AssetID TextureID() const;
 
     private:
         EditorAssetImportService*         m_Service = nullptr;

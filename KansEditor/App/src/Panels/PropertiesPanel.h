@@ -6,11 +6,12 @@
 #include <typeindex>
 #include <vector>
 #include "Kans3D/Asset/Manager/AssetManager.h"
-#include "KansEditorCore/EditorAssetChoice.h"
 #include "Kans3D/Renderer/RenderView.h"
+#include "Kans3D/Renderer/Resource/RenderAssetCache.h"
 #include "Kans3D/Scene/Components.h"
 #include "Components/ComponentRegistry.h"
 #include "HierarchyPanel.h"
+#include "KansEditorCore/EditorAssetChoice.h"
 #include "KansEditorCore/Physics/SecondaryMotionEditing.h"
 
 namespace Kans
@@ -68,6 +69,10 @@ namespace Kans
         void SetVfxHandles(VfxGizmos::SceneHandles* handles) { m_VfxHandles = handles; }
         // Edit-mode clip previews of the Audio Source card; may be null.
         void SetAudioPreview(AudioClipPreview* preview) { m_AudioPreview = preview; }
+        // The Video Player card: its edit-mode preview, the target thumbnails and "Create target".
+        void SetVideoPreview(VideoPreviewSession* preview) { m_VideoPreview = preview; }
+        void SetRenderAssets(std::shared_ptr<RenderAssetCache> cache) { m_RenderAssets = std::move(cache); }
+        void SetCreateVideoTarget(std::function<void(Entity, bool)> create) { m_CreateVideoTarget = std::move(create); }
         // Adds the slot rows' hovered, highlighted and isolated parts to the viewport's highlights.
         void AppendSlotHighlights(ViewHighlights& highlights) const;
 
@@ -76,6 +81,18 @@ namespace Kans
         AssetManager* GetAssets() override { return m_Assets; }
         void          Select(Entity entity) override { m_Hierarchy.SetSelected(entity); }
         bool          AssetPicker(const char* label, AssetType type, AssetID& id) override;
+        bool          FilteredAssetPicker(const char*                                              label,
+                                          AssetType                                                type,
+                                          AssetID&                                                 id,
+                                          const std::function<bool(const std::filesystem::path&)>& accept) override;
+        std::filesystem::path AssetSource(AssetID asset) override { return SourceOf(asset); }
+        Ref<Texture2D>        TexturePreview(AssetID texture) override;
+        void                  CreateVideoTarget(Entity entity, bool browserFolder) override
+        {
+            if (m_CreateVideoTarget)
+                m_CreateVideoTarget(entity, browserFolder);
+        }
+        VideoPreviewSession* GetVideoPreview() override { return m_VideoPreview; }
         bool        MaterialPicker(const char* label, AssetID imported, AssetID current, AssetID& chosen) override;
         std::string MaterialName(AssetID material) override;
         bool           MaterialCombo(AssetID imported, AssetID current, AssetID& chosen) override;
@@ -183,6 +200,9 @@ namespace Kans
         std::function<void(AssetID)>                        m_OpenVfxSystem;
         VfxGizmos::SceneHandles*                            m_VfxHandles = nullptr;
         AudioClipPreview*                                   m_AudioPreview = nullptr;
+        VideoPreviewSession*                                m_VideoPreview = nullptr;
+        std::shared_ptr<RenderAssetCache>                   m_RenderAssets;
+        std::function<void(Entity, bool)>                   m_CreateVideoTarget;
         // The Vehicle card's selected wheel row (the viewport highlights it).
         UUID m_WheelOwner    = 0;
         int  m_SelectedWheel = -1;

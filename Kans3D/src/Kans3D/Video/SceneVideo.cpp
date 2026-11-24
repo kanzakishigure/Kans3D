@@ -202,20 +202,37 @@ namespace Kans
         cache.EndVideoTextures();
     }
 
+    namespace
+    {
+        template<typename Playback>
+        void AddVideoStats(VideoPlayerStats& result, const Playback& playback)
+        {
+            if (!playback.Decoder)
+                return;
+            const auto stats = playback.Decoder->Stats();
+            ++result.ActivePlayers;
+            result.RingFill += stats.RingFill;
+            result.RingCapacity += VideoDecoder::RingSize;
+            result.DecodedFPS += stats.DecodedFPS;
+            result.DroppedFrames += stats.Dropped;
+            result.UploadMilliseconds += playback.UploadMilliseconds;
+        }
+    } // namespace
+
     VideoPlayerStats Scene::GetVideoPlayerStats() const
     {
         VideoPlayerStats result;
         for (const auto& [id, playback] : m_VideoPlayers)
-            if (playback.Decoder)
-            {
-                const auto stats = playback.Decoder->Stats();
-                ++result.ActivePlayers;
-                result.RingFill += stats.RingFill;
-                result.RingCapacity += VideoDecoder::RingSize;
-                result.DecodedFPS += stats.DecodedFPS;
-                result.DroppedFrames += stats.Dropped;
-                result.UploadMilliseconds += playback.UploadMilliseconds;
-            }
+            AddVideoStats(result, playback);
+        return result;
+    }
+
+    VideoPlayerStats Scene::GetVideoPlayerStats(Entity entity) const
+    {
+        VideoPlayerStats result;
+        if (entity && entity.m_Scene == this && m_Registry.valid(entity.m_EntityHandle))
+            if (const auto found = m_VideoPlayers.find(entity.GetUUID()); found != m_VideoPlayers.end())
+                AddVideoStats(result, found->second);
         return result;
     }
 

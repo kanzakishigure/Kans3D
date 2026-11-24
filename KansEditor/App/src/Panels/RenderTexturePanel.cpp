@@ -8,6 +8,7 @@
 #include "Kans3D/Scene/Scene.h"
 #include "KansEditorCore/EditorAssetImportService.h"
 #include "KansEditorCore/UI/SourceBuild.h"
+#include "KansEditorCore/Video/VideoEditing.h"
 #include "UI/PropertyGrid.h"
 namespace Kans
 {
@@ -60,6 +61,22 @@ namespace Kans
         m_Dirty  = false;
         m_Status = BuildSavedSource(m_Service, m_File);
     }
+    AssetID RenderTexturePanel::TextureID() const
+    {
+        AssetID id;
+        if (m_Service && m_Cache)
+            if (auto sources = m_Service->GetSources();
+                std::holds_alternative<std::vector<SourceAssetMetadata>>(sources))
+                for (const auto& source : std::get<std::vector<SourceAssetMetadata>>(sources))
+                    if (source.Path.GetPath() == m_File.lexically_relative(m_Service->GetConfig().RootDirectory /
+                                                                           m_Service->GetConfig().AssetDirectory))
+                        for (const auto& p : m_Cache->GetAssetManager().GetRegistry()->GetAllProducts())
+                            if (p.Metadata.Type == AssetType::Texture &&
+                                p.Metadata.assetID.GetSourceID() == source.sourceAssetID)
+                                id = p.Metadata.assetID;
+        return id;
+    }
+
     void RenderTexturePanel::Draw(const Scene* scene)
     {
         m_Focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -81,9 +98,13 @@ namespace Kans
         ImGui::EndDisabled();
         if (!m_Status.empty())
             ImGui::TextDisabled("%s", m_Status.c_str());
+        const bool video = m_Values.Update == RenderTextureUpdate::Video;
         if (PropertyGrid::BeginGroup("Texture"))
         {
-            if (PropertyGrid::Row("Material"))
+            // A Video target's image comes from a Video Player, not from a material.
+            if (video)
+                PropertyGrid::Text("Material", "Not used: a Video Player writes the frames", true);
+            else if (PropertyGrid::Row("Material"))
             {
                 const auto registry = m_Service ? m_Service->GetRuntimeAssetRegistry() : nullptr;
                 const auto label    = m_Values.Material.IsValid() ? m_Values.Material.ToString() : std::string("None");
@@ -137,14 +158,27 @@ namespace Kans
         if (PropertyGrid::BeginGroup("Update"))
         {
             int         mode    = int(m_Values.Update);
-            const char* modes[] = {"On Load", "Realtime", "On Demand"};
-            m_Dirty |= PropertyGrid::Combo("Mode", modes, 3, mode);
+            const char* modes[] = {"On Load", "Realtime", "On Demand", "Video"};
+            m_Dirty |= PropertyGrid::Combo("Mode", modes, 4, mode);
             m_Values.Update = RenderTextureUpdate(mode);
             if (m_Values.Update == RenderTextureUpdate::Realtime)
             {
                 float rate = float(m_Values.Rate);
                 m_Dirty |= PropertyGrid::Float("Rate (Hz)", rate, 1, 0, 1000, "%.2f");
                 m_Values.Rate = rate;
+            }
+            else if (m_Values.Update == RenderTextureUpdate::Video)
+            {
+                // Which players of the open scene write into it (the first one to render owns it).
+                const auto players =
+                    scene ? VideoEditing::PlayersTargeting(*scene, TextureID()) : std::vector<std::string> {};
+                std::string names;
+                for (const auto& name : players)
+                    names += (names.empty() ? "" : ", ") + name;
+                PropertyGrid::Text("Driven by",
+                                   players.empty() ? std::string("No Video Player in the scene targets it") :
+                                                     "Video Player: " + names,
+                                   players.empty());
             }
             PropertyGrid::EndGroup();
         }
@@ -153,22 +187,13 @@ namespace Kans
             PropertyGrid::BeginFree();
             if (m_Cache)
             {
-                AssetID id;
-                if (m_Service)
-                    if (auto sources = m_Service->GetSources();
-                        std::holds_alternative<std::vector<SourceAssetMetadata>>(sources))
-                        for (const auto& source : std::get<std::vector<SourceAssetMetadata>>(sources))
-                            if (source.Path.GetPath() ==
-                                m_File.lexically_relative(m_Service->GetConfig().RootDirectory /
-                                                          m_Service->GetConfig().AssetDirectory))
-                                for (const auto& p : m_Cache->GetAssetManager().GetRegistry()->GetAllProducts())
-                                    if (p.Metadata.Type == AssetType::Texture &&
-                                        p.Metadata.assetID.GetSourceID() == source.sourceAssetID)
-                                        id = p.Metadata.assetID;
-                const auto texture = id.IsValid() ? m_Cache->GetTexture(id) : nullptr;
+                const AssetID id      = TextureID();
+                const auto    texture = id.IsValid() ? m_Cache->GetTexture(id) : nullptr;
                 if (texture)
                 {
-                    if (ImGui::Button("Request update"))
+                    if (video)
+                        ImGui::TextDisabled("Shows the frame of the player that owns it.");
+                    else if (ImGui::Button("Request update"))
                         if (const auto cpu = m_Cache->GetAssetManager().GetLoaded<TextureAsset>(id))
                             cpu->RequestUpdate();
                     const auto* app  = Application::TryGet();

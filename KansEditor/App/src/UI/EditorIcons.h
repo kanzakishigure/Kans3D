@@ -68,6 +68,7 @@
 #define ICON_FA_DIAGRAM_PROJECT "\xef\x95\x82"        // U+F542
 #define ICON_FA_BOLT "\xef\x83\xa7"                   // U+F0E7
 #define ICON_FA_FILM "\xef\x80\x88"                   // U+F008
+#define ICON_FA_CLAPPERBOARD "\xee\x84\xb1"           // U+E131
 #define ICON_FA_KEY "\xef\x82\x84"                    // U+F084
 #define ICON_FA_FLAG "\xef\x80\xa4"                   // U+F024
 #define ICON_FA_DESKTOP "\xef\x8e\x90"                // U+F390

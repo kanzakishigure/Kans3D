@@ -6,6 +6,7 @@
 #include "Kans3D/Audio/AudioSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Project/RecentProjects.h"
+#include "Components/ComponentEditors.h"
 #include "EditorLayer.h"
 #include "KansEditorCore/Launcher/EditorProcess.h"
 #include "KansEditorCore/Launcher/ProjectGrid.h"
@@ -506,6 +507,7 @@ namespace Kans
             return;
         m_TimelinePanel.StopPreview(); // Play starts from the scene as saved, not a previewed frame.
         m_AudioPreview.Stop();         // The scene's own sources take over.
+        m_VideoPreview.End();          // Before the runtime starts: the players start over from their clock.
         if (!m_Play.IsActive())
         {
             // Play starts clean: no preview state, and painting ends (its strokes saved).
@@ -527,6 +529,7 @@ namespace Kans
             return;
         m_TimelinePanel.StopPreview();
         m_AudioPreview.Stop();
+        m_VideoPreview.End();
         FinishClothPaint();
         SecondaryMotionEditing::SetPreview(*m_ActiveScene, false);
         m_History.Record(*m_ActiveScene);
@@ -1174,6 +1177,10 @@ namespace Kans
             }
             PropertyGrid::EndCard();
         }
+
+        // Video: the scene's players (Play, and the Video Player card's edit-mode preview).
+        if (m_ActiveScene)
+            ComponentEditors::DrawVideoStats(m_ActiveScene->GetVideoPlayerStats());
 
         if (m_ActiveScene)
         {

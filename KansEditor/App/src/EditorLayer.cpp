@@ -30,6 +30,9 @@ namespace Kans
         RegisterPanels();
         m_PropertiesPanel.SetAudioPreview(&m_AudioPreview);
         m_ContentBrowserPanel.SetAudioPreview(&m_AudioPreview);
+        m_PropertiesPanel.SetVideoPreview(&m_VideoPreview);
+        m_PropertiesPanel.SetCreateVideoTarget(
+            [this](Entity player, bool browserFolder) { CreateVideoTarget(player, browserFolder); });
         m_Panels.InstallSettingsHandler();
         m_ContentBrowserPanel.InstallSettingsHandler();
         // The splash keeps the window's own titlebar, so it can be moved and closed while loading.
@@ -212,6 +215,8 @@ namespace Kans
             if (const auto* error = std::get_if<AssetError>(&stopped))
                 CORE_ERROR("Project import shutdown: {}", error->Message);
         }
+        m_VideoPreview.End(); // Its decoder holds the clip.
+        m_PendingVideoTargets.Clear();
         if (m_ActiveScene)
         {
             m_Play.Discard(*m_ActiveScene);
@@ -237,6 +242,7 @@ namespace Kans
                 m_ThumbnailRenderer->SetResources({}, {});
             m_Viewport->SetAssetManager(nullptr);
             m_PropertiesPanel.SetAssetManager(nullptr);
+            m_PropertiesPanel.SetRenderAssets({});
             m_MaterialEditorPanel.SetAssetManager(nullptr);
             m_TimelinePanel.SetAssetManager(nullptr);
             m_MaterialEditorPanel.SetUsageQuery({});
@@ -288,6 +294,7 @@ namespace Kans
                 AssignPendingSlotInstances();
                 AssignPendingCloth();
                 AssignPendingRagdolls();
+                AssignPendingVideoTargets();
                 QueueMissingSceneAssets(); // Includes newly discovered scene sources.
             }
             auto completed = m_AssetImports->Poll();
@@ -302,6 +309,7 @@ namespace Kans
                 AssignPendingSlotInstances();
                 AssignPendingCloth();
                 AssignPendingRagdolls();
+                AssignPendingVideoTargets();
                 if (m_PendingPlacement && m_PendingPlacementWaiting)
                     StartPendingPlacementBuild();
                 else
@@ -355,6 +363,10 @@ namespace Kans
             m_HierarchyPanel.SetSelected({});
             QueueMissingSceneAssets();
         }
+        // The Video Player card's preview: it ends on deselection and in Play, and requests its frame while editing.
+        m_VideoPreview.Sync(m_ActiveScene.get(), m_HierarchyPanel.GetSelected(), m_Play.IsActive());
+        if (!m_Play.IsActive())
+            m_VideoPreview.Update(double(ts));
         if (!updated && !m_Play.IsActive())
         {
             m_ActiveScene->BeginTransformConstraintFrame();

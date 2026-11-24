@@ -10,6 +10,7 @@
 #include "KansEditorCore/Panels/ContentBrowser/AssetFileOperations.h"
 #include "KansEditorCore/Panels/ContentBrowser/BrowserModel.h"
 #include "KansEditorCore/Panels/ContentBrowser/ThumbnailCache.h"
+#include "KansEditorCore/Video/VideoEditing.h"
 #include "UI/IniSection.h"
 #include "UI/ProgressPopup.h"
 
@@ -170,6 +171,14 @@ namespace Kans
         // The waveform with its playhead, transport and the clip's format.
         void DrawAudioPreview(const AudioClipSummary& clip, float width);
 
+        // ---- video files (ContentBrowserVideo.cpp) ----
+        // The published clip of an imported video file: its metadata (the stream stays on disk).
+        const VideoEditing::ClipSummary* VideoClipOf(const std::filesystem::path& file);
+        // A film tile with the clip's length instead of the generic file icon; false for other files.
+        bool DrawVideoIcon(const Browser::Entry& entry, ImVec2 min, ImVec2 max);
+        // The clip's size, rate, length, codec and colour.
+        void DrawVideoPreview(const VideoEditing::ClipSummary& clip);
+
         // ---- actions ----
         void Open(const Browser::Entry& entry);
         // Index of m_ScrollTo in the listing, or -1; ScrolledTo scrolls to the last item and clears it.
@@ -259,6 +268,8 @@ namespace Kans
         // ---- audio ----
         AudioClipPreview* m_AudioPreview = nullptr;
         AudioPreviewCache m_AudioClips;
+        // ---- video ----
+        VideoEditing::ClipInfoCache m_VideoClips;
 
         // ---- preview ----
         std::filesystem::path              m_PreviewPath;

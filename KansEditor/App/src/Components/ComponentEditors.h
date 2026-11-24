@@ -47,6 +47,9 @@ namespace Kans::ComponentEditors
     // Audio (AudioComponentEditors.cpp).
     void DrawAudioSource(Entity entity, ComponentUI& ui);
     void DrawAudioListener(Entity entity, ComponentUI& ui);
+    // Video (VideoPlayerEditors.cpp): the Video Player card and the Stats panel's Video card.
+    void DrawVideoPlayer(Entity entity, ComponentUI& ui);
+    void DrawVideoStats(const VideoPlayerStats& stats);
     // Physics (PhysicsComponentEditors.cpp).
     void DrawRigidBody(Entity entity, ComponentUI& ui);
     void DrawBoxCollider(Entity entity, ComponentUI& ui);

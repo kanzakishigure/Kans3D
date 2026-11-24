@@ -193,6 +193,23 @@ namespace Kans
         sprite.CreateOrder = 4;
         sprite.Create     = sprite.Add;
 
+        // Plays a VideoClip into a Video render texture that materials sample.
+        auto& video    = registry.Register<VideoPlayerComponent>("Video Player", ICON_FA_CLAPPERBOARD, "Rendering");
+        video.IconRank = 6;
+        video.Draw     = DrawVideoPlayer;
+        // Reset keeps the clip and the target: it restores playback and the clock.
+        video.Reset = [](Entity e) {
+            e.PatchComponent<VideoPlayerComponent>([](auto& c) {
+                VideoPlayerComponent playback;
+                playback.Clip   = c.Clip;
+                playback.Target = c.Target;
+                c               = playback;
+            });
+        };
+        video.CreateName  = "Video Player";
+        video.CreateOrder = 6;
+        video.Create      = video.Add;
+
         auto& directional    = registry.Register<DirLightComponent>("Directional Light", ICON_FA_SUN, "Lighting");
         directional.IconRank = 2;
         directional.Add      = [](Entity e) { DefaultDirectionalLight(e.AddComponent<DirLightComponent>()); };

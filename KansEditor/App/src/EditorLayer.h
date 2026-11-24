@@ -11,6 +11,7 @@
 #include "KansEditorCore/ImportProgress.h"
 #include "KansEditorCore/SceneAssetImportQueue.h"
 #include "KansEditorCore/ScriptBuildProgress.h"
+#include "KansEditorCore/Video/VideoEditing.h"
 #include "UI/ProgressPopup.h"
 
 #include "Kans3D/Renderer/MaterialPreviewRenderer.h"
@@ -194,6 +195,13 @@ namespace Kans
             uint32_t              Section = 0;
         };
         std::vector<PendingCloth>            m_PendingCloth;
+        // ---- Video (EditorLayerAssets.cpp) ----
+        // "Create target" of a Video Player: a Video render texture sized to its clip (beside the clip's source,
+        // or in the Content Browser's folder), imported and assigned once published.
+        void                                 CreateVideoTarget(Entity player, bool browserFolder);
+        void                                 AssignPendingVideoTargets();
+        VideoEditing::PendingTargets         m_PendingVideoTargets;
+        VideoPreviewSession                  m_VideoPreview;
         std::optional<std::filesystem::path> m_ClothInfo;
         std::optional<ClothData>             m_ClothInfoData;
         std::string                          m_ClothInfoError;

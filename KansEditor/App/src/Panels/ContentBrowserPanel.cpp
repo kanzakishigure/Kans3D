@@ -193,6 +193,7 @@ namespace Kans
                 case Browser::AssetKind::UI:
                     return p.TypeUI;
                 case Browser::AssetKind::Timeline:
+                case Browser::AssetKind::Video:
                     return p.TypeTimeline;
                 case Browser::AssetKind::Action:
                     return p.TypeAction;
@@ -1236,7 +1237,7 @@ namespace Kans
 
     void ContentBrowserPanel::DrawIcon(const Entry& entry, ImVec2 min, ImVec2 max)
     {
-        if (DrawAudioIcon(entry, min, max))
+        if (DrawAudioIcon(entry, min, max) || DrawVideoIcon(entry, min, max))
             return;
         ImDrawList*    draw    = ImGui::GetWindowDrawList();
         Ref<Texture2D> texture = entry.Directory ? EditorResources::FolderIcon : nullptr;
@@ -1541,6 +1542,14 @@ namespace Kans
         }
         else if (const auto* clip = entry.Directory ? nullptr : AudioClipOf(path))
             DrawAudioPreview(*clip, width);
+        else if (const auto* video = entry.Directory ? nullptr : VideoClipOf(path))
+        {
+            const ImVec2 at   = ImGui::GetCursorScreenPos();
+            const float  side = std::min(width, 96.0f);
+            DrawIcon(entry, at, {at.x + side, at.y + side});
+            ImGui::Dummy({side, side});
+            DrawVideoPreview(*video);
+        }
         else if (!m_PreviewText.empty())
             ImGui::InputTextMultiline("##text",
                                       m_PreviewText.data(),

@@ -1,4 +1,5 @@
 #include "kspch.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -76,43 +77,70 @@ namespace Kans
         return bytes;
     }
 
+    namespace
+    {
+        // The header's metadata and its size (names included); bytes past the header are not read.
+        std::variant<std::pair<VideoClipInfo, size_t>, AssetError> ParseHeader(const std::byte* bytes, size_t size)
+        {
+            if (!bytes || size < HeaderSize)
+                return Invalid();
+            const auto* cursor = bytes;
+            if (Read<uint32_t>(cursor) != Magic)
+                return Invalid();
+            if (Read<uint16_t>(cursor) != 1)
+                return AssetError {AssetErrorCode::UnsupportedVersion, "Unsupported VideoClip product version"};
+            if (Read<uint16_t>(cursor) != uint16_t(AssetType::VideoClip))
+                return Invalid();
+            VideoClipInfo info;
+            info.Width           = Read<uint32_t>(cursor);
+            info.Height          = Read<uint32_t>(cursor);
+            info.RateNumerator   = Read<uint32_t>(cursor);
+            info.RateDenominator = Read<uint32_t>(cursor);
+            const auto duration  = Read<uint64_t>(cursor);
+            std::memcpy(&info.Duration, &duration, sizeof(duration));
+            info.FrameCount       = Read<uint64_t>(cursor);
+            info.Matrix           = VideoMatrix(Read<uint8_t>(cursor));
+            info.Range            = VideoRange(Read<uint8_t>(cursor));
+            info.Transfer         = VideoTransfer(Read<uint8_t>(cursor));
+            const auto flags      = Read<uint8_t>(cursor);
+            info.HasAudio         = (flags & 1) != 0;
+            info.Primaries        = VideoPrimaries(flags >> 1);
+            const auto codecSize  = Read<uint16_t>(cursor);
+            const auto formatSize = Read<uint16_t>(cursor);
+            if (codecSize > MaximumName || formatSize > MaximumName || size < HeaderSize + codecSize + formatSize)
+                return Invalid();
+            info.Codec.assign(reinterpret_cast<const char*>(cursor), codecSize);
+            cursor += codecSize;
+            info.PixelFormat.assign(reinterpret_cast<const char*>(cursor), formatSize);
+            if (!Valid(info))
+                return Invalid();
+            return std::make_pair(std::move(info), HeaderSize + codecSize + formatSize);
+        }
+    } // namespace
+
+    std::variant<VideoClipInfo, AssetError> DecodeVideoProductInfo(const std::byte* bytes, size_t size)
+    {
+        static_assert(VideoProductInfoBytes == HeaderSize + 2 * MaximumName);
+        auto header = ParseHeader(bytes, std::min(size, VideoProductInfoBytes));
+        if (auto* error = std::get_if<AssetError>(&header))
+            return std::move(*error);
+        return std::move(std::get<0>(header).first);
+    }
+
     std::variant<VideoClipData, AssetError> DecodeVideoProduct(const std::byte* bytes, size_t size)
     {
         if (!bytes || size <= HeaderSize || size > VideoProductMaximumBytes)
             return Invalid();
-        const auto* cursor = bytes;
-        if (Read<uint32_t>(cursor) != Magic)
-            return Invalid();
-        if (Read<uint16_t>(cursor) != 1)
-            return AssetError {AssetErrorCode::UnsupportedVersion, "Unsupported VideoClip product version"};
-        if (Read<uint16_t>(cursor) != uint16_t(AssetType::VideoClip))
+        auto header = ParseHeader(bytes, size);
+        if (auto* error = std::get_if<AssetError>(&header))
+            return std::move(*error);
+        auto& [info, used] = std::get<0>(header);
+        // A product holds a stream after its header.
+        if (size <= used)
             return Invalid();
         VideoClipData clip;
-        auto&         info   = clip.Info;
-        info.Width           = Read<uint32_t>(cursor);
-        info.Height          = Read<uint32_t>(cursor);
-        info.RateNumerator   = Read<uint32_t>(cursor);
-        info.RateDenominator = Read<uint32_t>(cursor);
-        const auto duration  = Read<uint64_t>(cursor);
-        std::memcpy(&info.Duration, &duration, sizeof(duration));
-        info.FrameCount       = Read<uint64_t>(cursor);
-        info.Matrix           = VideoMatrix(Read<uint8_t>(cursor));
-        info.Range            = VideoRange(Read<uint8_t>(cursor));
-        info.Transfer         = VideoTransfer(Read<uint8_t>(cursor));
-        const auto flags      = Read<uint8_t>(cursor);
-        info.HasAudio         = (flags & 1) != 0;
-        info.Primaries        = VideoPrimaries(flags >> 1);
-        const auto codecSize  = Read<uint16_t>(cursor);
-        const auto formatSize = Read<uint16_t>(cursor);
-        if (codecSize > MaximumName || formatSize > MaximumName || size <= HeaderSize + codecSize + formatSize)
-            return Invalid();
-        info.Codec.assign(reinterpret_cast<const char*>(cursor), codecSize);
-        cursor += codecSize;
-        info.PixelFormat.assign(reinterpret_cast<const char*>(cursor), formatSize);
-        cursor += formatSize;
-        if (!Valid(info))
-            return Invalid();
-        clip.Encoded = std::make_shared<const VideoBytes>(cursor, bytes + size);
+        clip.Info    = std::move(info);
+        clip.Encoded = std::make_shared<const VideoBytes>(bytes + used, bytes + size);
         return clip;
     }
 } // namespace Kans

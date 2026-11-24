@@ -573,6 +573,14 @@ namespace Kans
 
     bool PropertiesPanel::AssetPicker(const char* label, AssetType type, AssetID& id)
     {
+        return FilteredAssetPicker(label, type, id, {});
+    }
+
+    bool PropertiesPanel::FilteredAssetPicker(const char*                                              label,
+                                              AssetType                                                type,
+                                              AssetID&                                                 id,
+                                              const std::function<bool(const std::filesystem::path&)>& accept)
+    {
         if (!PropertyGrid::Row(label))
             return false;
         ImGui::PushID(label);
@@ -586,7 +594,8 @@ namespace Kans
             FilterBox(m_AssetFilter);
             for (const auto& choice : m_AssetChoices)
             {
-                if (choice.Type != type || !ContainsIgnoreCase(choice.Name, m_AssetFilter.data()))
+                if (choice.Type != type || !ContainsIgnoreCase(choice.Name, m_AssetFilter.data()) ||
+                    (accept && !accept(choice.SourcePath)))
                     continue;
                 const bool selected = choice.ID == id;
                 if (ImGui::Selectable(choice.Name.c_str(), selected) && !selected)
@@ -606,7 +615,7 @@ namespace Kans
                 if (const AssetID dropped = ChoiceFor(std::filesystem::u8path(std::string(
                                                           static_cast<const char*>(payload->Data), payload->DataSize)),
                                                       type);
-                    dropped.IsValid())
+                    dropped.IsValid() && (!accept || accept(SourceOf(dropped))))
                 {
                     changed = dropped != id;
                     id      = dropped;
@@ -701,6 +710,11 @@ namespace Kans
             if (choice.ID == material && choice.Type == AssetType::Material)
                 return m_Thumbnail(choice.SourcePath, 128);
         return nullptr;
+    }
+
+    Ref<Texture2D> PropertiesPanel::TexturePreview(AssetID texture)
+    {
+        return m_RenderAssets && texture.IsValid() ? m_RenderAssets->GetTexture(texture) : nullptr;
     }
 
     std::filesystem::path PropertiesPanel::SourceOf(AssetID asset) const

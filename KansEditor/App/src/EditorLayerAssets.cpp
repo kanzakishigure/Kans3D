@@ -20,6 +20,7 @@
 #include "KansEditorCore/Components/MaterialAssignment.h"
 #include "KansEditorCore/Launcher/LauncherModel.h"
 #include "KansEditorCore/Physics/PhysicsEditing.h"
+#include "KansEditorCore/UI/SourceBuild.h"
 #include "UI/EditorIcons.h"
 
 namespace Kans
@@ -203,11 +204,10 @@ namespace Kans
                 m_Panels.Open(PanelID::MaterialParameterCollections);
             });
         m_ContentBrowserPanel.SetCreateRenderTextureCallback([this](const std::filesystem::path& directory) {
-            const auto file = UniqueFile(directory, "NewRenderTexture", ".rendertexture");
-            const auto text = SerializeRenderTexture(RenderTextureSpecification {});
-            if (const auto* e = std::get_if<AssetError>(&text))
+            auto created = VideoEditing::CreateRenderTextureFile(directory, "NewRenderTexture", {});
+            if (const auto* e = std::get_if<AssetError>(&created))
                 return Record(*e);
-            std::ofstream(file, std::ios::binary) << std::get<std::string>(text);
+            const auto file = std::get<std::filesystem::path>(created);
             if (m_RenderTexturePanel.Open(file))
             {
                 m_RenderTexturePanel.Save();
@@ -292,6 +292,7 @@ namespace Kans
         m_MaterialPreview->SetResources(m_Viewport->GetAssetCache(), m_Viewport->GetEnvironment());
         m_ThumbnailRenderer->SetResources(m_Viewport->GetAssetCache(), m_Viewport->GetEnvironment());
         m_PropertiesPanel.SetAssetManager(m_Assets.get());
+        m_PropertiesPanel.SetRenderAssets(m_Viewport->GetAssetCache());
         m_MaterialEditorPanel.SetAssetManager(m_Assets.get());
         m_TimelinePanel.SetAssetManager(m_Assets.get());
         m_MaterialEditorPanel.SetUsageQuery([this](AssetID material) {
@@ -784,6 +785,8 @@ namespace Kans
         m_PendingAudio.clear(); // Its parents belong to the scene being left.
         FinishClothPaint();
         m_PendingCloth.clear();
+        m_VideoPreview.End();
+        m_PendingVideoTargets.Clear();
         m_ActiveScene = std::move(scene);
         auto visibilityKey = path.empty() ?
                                  std::string {} :
@@ -1249,5 +1252,51 @@ namespace Kans
         m_PendingVfxModules.clear();
         for (const auto& file : pending)
             OpenVfxModule(file);
+    }
+
+    void EditorLayer::CreateVideoTarget(Entity player, bool browserFolder)
+    {
+        if (!m_ActiveScene || !player || !player.HasComponent<VideoPlayerComponent>() || m_Play.IsActive() || !m_Assets)
+            return;
+        const auto& component = player.GetComponent<VideoPlayerComponent>();
+        const auto  clip      = m_Assets->GetLoaded<VideoClipAsset>(component.Clip);
+        if (!clip)
+        {
+            Record(AssetError {AssetErrorCode::NotFound, "The Video Player's clip is not loaded"});
+            return;
+        }
+        const auto            source = SourceFileOf(component.Clip);
+        std::filesystem::path directory =
+            browserFolder || source.empty() ? m_ContentBrowserPanel.GetCurrentFolder() : source.parent_path();
+        if (directory.empty() && m_AssetImports)
+            directory = m_AssetImports->GetConfig().AssetDirectory;
+        if (m_AssetImports && m_AssetImports->IsReadOnly(directory))
+            directory = m_AssetImports->GetConfig().AssetDirectory;
+        // "<clip>_Video.rendertexture", so the file says what plays into it.
+        std::string stem =
+            (source.empty() ? player.GetComponent<TagComponent>().Tag : source.stem().u8string()) + "_Video";
+        for (char& c : stem)
+            if (std::string("\\/:*?\"<>|").find(c) != std::string::npos)
+                c = '_';
+        auto created = VideoEditing::CreateRenderTextureFile(
+            directory, stem, VideoEditing::VideoTargetSpecification(clip->GetData().Info));
+        if (const auto* error = std::get_if<AssetError>(&created))
+            return Record(*error);
+        const auto file = std::get<std::filesystem::path>(created);
+        CORE_INFO("{}: {}", file.filename().u8string(), BuildSavedSource(m_AssetImports.get(), file));
+        m_PendingVideoTargets.Add(file, player.GetUUID());
+        m_ContentBrowserPanel.Refresh();
+    }
+
+    void EditorLayer::AssignPendingVideoTargets()
+    {
+        if (!m_ActiveScene || m_PendingVideoTargets.Empty())
+            return;
+        // The assignment is one undoable step.
+        if (m_PendingVideoTargets.Assign(
+                *m_ActiveScene,
+                [this](const std::filesystem::path& file) { return FindPublished(file, AssetType::Texture); }) &&
+            !m_Play.IsActive())
+            m_History.Record(*m_ActiveScene);
     }
 } // namespace Kans

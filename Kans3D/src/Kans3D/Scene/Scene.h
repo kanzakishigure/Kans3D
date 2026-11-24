@@ -295,6 +295,8 @@ namespace Kans
         bool                  PreviewVideo(Entity, double seconds = 0);
         void                  EndVideoPreview(Entity);
         VideoPlayerStats      GetVideoPlayerStats() const;
+        // One player's stats (all zero when it has no decoder).
+        VideoPlayerStats      GetVideoPlayerStats(Entity) const;
         std::optional<double> GetVideoFrameTime(Entity) const;
         std::string           GetVideoPlayerError(Entity) const;
         void PauseAudioSource(Entity entity);
