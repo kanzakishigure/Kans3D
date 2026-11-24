@@ -22,6 +22,10 @@
 namespace Kans
 {
 
+    template<>
+    void Scene::OnComponentAdd<VideoPlayerComponent>(Entity, VideoPlayerComponent&)
+    {}
+
     Scene::Scene(const std::string& name) : m_Name(name)
     {
         m_RenderWorld = std::make_unique<RenderWorld>(*this);
@@ -113,6 +117,7 @@ namespace Kans
         m_Registry.on_construct<ShapeKeysComponent>().connect<&Scene::OnTransformChanged>(this);
         m_Registry.on_update<ShapeKeysComponent>().connect<&Scene::OnTransformChanged>(this);
         m_Registry.on_destroy<ShapeKeysComponent>().connect<&Scene::OnTransformChanged>(this);
+        m_Registry.on_destroy<VideoPlayerComponent>().connect<&Scene::OnVideoPlayerRemoved>(this);
         connect(static_cast<MeshComponent*>(nullptr));
         connect(static_cast<TextComponent*>(nullptr));
         connect(static_cast<UIScreenComponent*>(nullptr));
@@ -349,6 +354,8 @@ namespace Kans
         UpdateAnimations(animationDelta, false);
         UpdateTimelines(animationDelta);
         UpdateAnimations(animationDelta, true);
+        if (m_PhysicsWorld)
+            UpdateVideoPlayers(animationDelta);
         if (m_PhysicsWorld)
             m_PhysicsWorld->CaptureRagdollTargets(animationDelta);
         UpdatePhysics(double(ts));
@@ -728,6 +735,7 @@ namespace Kans
         CopyComponent<ShapeKeysComponent>(source, copy);
         CopyComponent<MaterialParameterDriversComponent>(source, copy);
         CopyComponent<TimelinePlayerComponent>(source, copy);
+        CopyComponent<VideoPlayerComponent>(source, copy);
         CopyComponent<ActiveComponent>(source, copy);
         CopyComponent<RigidBodyComponent>(source, copy);
         CopyComponent<BoxColliderComponent>(source, copy);
@@ -828,6 +836,13 @@ namespace Kans
                     if (auto found = remap.find(id); found != remap.end())
                         id = found->second;
         for (const auto& [source, target] : remap)
+            if (auto copied = GetEntityByUUID(target); copied.HasComponent<VideoPlayerComponent>())
+            {
+                auto& clock = copied.GetComponent<VideoPlayerComponent>().ClockEntity;
+                if (const auto found = remap.find(clock); found != remap.end())
+                    clock = found->second;
+            }
+        for (const auto& [source, target] : remap)
             if (auto copied = GetEntityByUUID(target); copied.HasComponent<AnimatorComponent>())
             {
                 auto& clock = copied.GetComponent<AnimatorComponent>().ClockEntity;
@@ -918,6 +933,7 @@ namespace Kans
         m_IKPreviewPhysics.reset();
         m_PhysicsWorld                        = std::make_unique<PhysicsWorld>(*this, GetPhysicsSettings());
         StartAudio();
+        m_VideoPlayers.clear();
         m_VfxWorld->Start();
         if (m_RuntimeOptions.RunScripts && ScriptEngine::IsInitialized())
             ScriptEngine::OnRuntimeStart(this);
@@ -937,6 +953,10 @@ namespace Kans
                 auto player = e.GetComponent<TimelinePlayerComponent>().Player;
                 player->Play();
             }
+        for (auto handle : m_Registry.view<VideoPlayerComponent>())
+            if (m_Registry.get<VideoPlayerComponent>(handle).PlayOnStart)
+                PlayVideo(Entity {handle, this});
+        UpdateVideoPlayers(0);
         if (springBones)
         {
             UpdateSpringBones(0);
@@ -959,6 +979,7 @@ namespace Kans
 
     void Scene::OnRuntimeStop()
     {
+        m_VideoPlayers.clear();
         ResetTransformConstraints();
         m_VfxWorld->Clear();
         RestoreSpringBoneTransforms();

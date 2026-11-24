@@ -21,6 +21,7 @@
 #include "Kans3D/Renderer/Lighting/LightUnits.h"
 #include "Kans3D/Timeline/Timeline.h"
 #include "Kans3D/VFX/ParticleSystemComponent.h"
+#include "Kans3D/Video/VideoPlayer.h"
 #include "TransformConstraints.h"
 
 #include "Kans3D/Core/UUID.h"
@@ -417,6 +418,7 @@ namespace Kans
                                          PrefabInstanceComponent,
                                          AnimatorComponent,
                                          TimelinePlayerComponent,
+                                         VideoPlayerComponent,
                                          ActiveComponent,
                                          IKComponent,
                                          AimConstraintComponent,

@@ -504,7 +504,10 @@ namespace Kans
                         glyph.Ready || glyph.Position.x == glyph.Position.z || glyph.Position.y == glyph.Position.w;
         }
         if (view.Assets)
+        {
             view.Assets->BeginFrame();
+            world.PrepareVideoTextures(*view.Assets);
+        }
         size_t worldDrawCount = 0;
         if (view.ExtractWorld)
         {

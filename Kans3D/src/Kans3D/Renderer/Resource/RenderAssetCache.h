@@ -17,6 +17,8 @@ namespace Kans
 {
     class Renderer;
     struct ShadowResources;
+    struct VideoClipInfo;
+    struct VideoFrame;
     struct AreaLightResources;
     struct MaterialParameterUniforms;
     struct GpuMesh
@@ -135,6 +137,15 @@ namespace Kans
                                       double                                                  time,
                                       const std::shared_ptr<const MaterialParameterUniforms>& parameters = {});
         uint64_t GetRenderTextureUpdateCount(AssetID id) const;
+        void     BeginVideoTextures();
+        void     PresentVideoTexture(AssetID,
+                                     uint64_t owner,
+                                     uint64_t stream,
+                                     bool     clear,
+                                     const VideoClipInfo*,
+                                     const VideoFrame*,
+                                     double& uploadMilliseconds);
+        void     EndVideoTextures();
         // Sampling belongs to an independent RHI sampler, never mutable native image state.
         void SetTextureSampler(AssetID id, const RenderHardware::SamplerDesc& desc);
         RenderHardware::Handle<RenderHardware::BindGroup> GetMaterialGroup(const GpuShader&           shader,
@@ -199,6 +210,26 @@ namespace Kans
             RenderHardware::Handle<RenderHardware::Pipeline> Pipeline;
         };
         std::unordered_map<AssetID, RenderTextureState> m_RenderTextures;
+        struct VideoTextureState
+        {
+            struct Staging
+            {
+                RenderHardware::Handle<RenderHardware::Buffer> Buffer;
+                std::weak_ptr<RenderHardware::CommandList>     InFlight;
+            };
+            std::vector<Staging>                              Uploads;
+            RenderHardware::Handle<RenderHardware::Texture>   Y, UV;
+            RenderHardware::Handle<RenderHardware::BindGroup> Planes;
+            RenderHardware::RenderingDesc                     Output;
+            uint64_t                                          Pass = 0, Owner = 0, Stream = 0, Serial = 0;
+        };
+        std::unordered_map<AssetID, VideoTextureState>          m_VideoTextures;
+        uint64_t                                                m_VideoPass = 0;
+        RenderHardware::Handle<RenderHardware::Pipeline>        m_VideoPipeline;
+        RenderHardware::Handle<RenderHardware::BindGroupLayout> m_VideoLayout;
+        RenderHardware::Handle<RenderHardware::Sampler>         m_VideoSampler;
+        void                                                    CreateVideoPipeline();
+        void                                                    ClearVideoTexture(VideoTextureState&);
         std::map<std::weak_ptr<const MaterialParameterUniforms>,
                  RenderHardware::Handle<RenderHardware::Buffer>,
                  std::owner_less<>>

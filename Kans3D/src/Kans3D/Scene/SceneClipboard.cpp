@@ -382,6 +382,8 @@ namespace Kans::SceneClipboard
                 if (auto timeline = node["TimelinePlayerComponent"])
                     for (auto binding : timeline["Bindings"])
                         reference(binding.second);
+                if (auto video = node["VideoPlayerComponent"])
+                    reference(video["ClockEntity"]);
                 if (auto animator = node["AnimatorComponent"])
                 {
                     reference(animator["ClockEntity"]);

@@ -28,6 +28,7 @@ namespace Kans
         std::optional<PrefabInstanceComponent> Prefab;
         std::optional<AnimatorComponent>       Animator;
         std::optional<TimelinePlayerComponent> Timeline;
+        std::optional<VideoPlayerComponent>    Video;
         std::optional<ActiveComponent>         Active;
         std::optional<IKComponent>             IK;
         std::optional<AimConstraintComponent>  AimConstraint;

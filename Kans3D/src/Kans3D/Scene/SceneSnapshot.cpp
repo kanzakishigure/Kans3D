@@ -105,6 +105,7 @@ namespace Kans
         }
         bool Same(const AnimatorComponent& a, const AnimatorComponent& b) { return a == b; }
         bool Same(const TimelinePlayerComponent& a, const TimelinePlayerComponent& b) { return a == b; }
+        bool Same(const VideoPlayerComponent& a, const VideoPlayerComponent& b) { return a == b; }
         bool Same(const ActiveComponent& a, const ActiveComponent& b) { return a == b; }
         bool Same(const AimConstraintComponent& a, const AimConstraintComponent& b) { return a == b; }
         bool Same(const IKComponent& a, const IKComponent& b) { return a == b; }
@@ -162,7 +163,7 @@ namespace Kans
                Same(a.UIWorld, b.UIWorld) && Same(a.Model, b.Model) && Same(a.Editable, b.Editable) &&
                Same(a.Prefab, b.Prefab) && Same(a.PrefabParent, b.PrefabParent) && Same(a.Animator, b.Animator) &&
                Same(a.IK, b.IK) && Same(a.AimConstraint, b.AimConstraint) && Same(a.Timeline, b.Timeline) &&
-               Same(a.Active, b.Active) && Same(a.ShapeKeys, b.ShapeKeys) &&
+               Same(a.Video, b.Video) && Same(a.Active, b.Active) && Same(a.ShapeKeys, b.ShapeKeys) &&
                Same(a.MaterialDrivers, b.MaterialDrivers) && Same(a.DirLight, b.DirLight) &&
                Same(a.AreaLight, b.AreaLight) && Same(a.FogVolume, b.FogVolume) && Same(a.SpotLight, b.SpotLight) &&
                Same(a.PointLight, b.PointLight) && Same(a.Script, b.Script) && Same(a.AudioSource, b.AudioSource) &&
@@ -212,6 +213,7 @@ namespace Kans
             Kans::Capture(entity, item.Prefab);
             Kans::Capture(entity, item.Animator);
             Kans::Capture(entity, item.Timeline);
+            Kans::Capture(entity, item.Video);
             Kans::Capture(entity, item.Active);
             Kans::Capture(entity, item.IK);
             Kans::Capture(entity, item.AimConstraint);
@@ -332,6 +334,7 @@ namespace Kans
             Kans::Restore(entity, item.ShapeKeys);
             Kans::Restore(entity, item.Animator);
             Kans::Restore(entity, item.Timeline);
+            Kans::Restore(entity, item.Video);
             Kans::Restore(entity, item.Active);
             Kans::Restore(entity, item.MaterialDrivers);
             Kans::Restore(entity, item.AudioSource);

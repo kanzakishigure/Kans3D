@@ -17,7 +17,8 @@ namespace Kans
     {
         OnLoad,
         Realtime,
-        OnDemand
+        OnDemand,
+        Video
     };
     // A texture capability: products and handles use AssetType::Texture, including all texture pickers.
     struct RenderTextureSpecification

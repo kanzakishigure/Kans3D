@@ -13,6 +13,7 @@
 #include "Kans3D/Text/FontAsset.h"
 #include "Kans3D/UI/UIAsset.h"
 #include "Kans3D/VFX/VfxSystemAsset.h"
+#include "Kans3D/Video/VideoClip.h"
 
 namespace Kans
 {
@@ -97,6 +98,7 @@ namespace Kans
         registry.m_Decoders.emplace(ExpressionAsset::GetStaticType(), Decode<ExpressionAsset>);
         registry.m_Decoders.emplace(FontAsset::GetStaticType(), Decode<FontAsset>);
         registry.m_Decoders.emplace(AudioClipAsset::GetStaticType(), Decode<AudioClipAsset>);
+        registry.m_Decoders.emplace(VideoClipAsset::GetStaticType(), Decode<VideoClipAsset>);
         registry.m_Decoders.emplace(UIAsset::GetStaticType(), Decode<UIAsset>);
         registry.m_Decoders.emplace(RagdollAsset::GetStaticType(), Decode<RagdollAsset>);
         registry.m_Decoders.emplace(ClothAsset::GetStaticType(), Decode<ClothAsset>);

@@ -7,10 +7,14 @@ namespace Kans
     std::variant<std::monostate, AssetError> ValidateRenderTexture(const RenderTextureSpecification& s)
     {
         if (!s.Width || !s.Height || s.Width > 16384 || s.Height > 16384 || uint32_t(s.Format) > 1 ||
-            uint32_t(s.Update) > 2 || !std::isfinite(s.Rate) || s.Rate < 0 ||
+            uint32_t(s.Update) > uint32_t(RenderTextureUpdate::Video) || !std::isfinite(s.Rate) || s.Rate < 0 ||
             !std::all_of(s.ClearColor.begin(), s.ClearColor.end(), [](float c) { return std::isfinite(c); }))
             return AssetError {AssetErrorCode::InvalidData,
                                "Invalid RenderTexture size, format, update or clear color"};
+        if (s.Update == RenderTextureUpdate::Video &&
+            (s.Material.IsValid() || s.Format != RenderTextureFormat::RGBA8SRGB || s.Rate != 0))
+            return AssetError {AssetErrorCode::InvalidData,
+                               "Video textures require RGBA8SRGB and a video player producer"};
         return std::monostate {};
     }
     std::variant<RenderTextureSpecification, AssetError> ParseRenderTexture(const std::string& text)
@@ -45,10 +49,11 @@ namespace Kans
             if (n["Update"])
             {
                 const auto u = n["Update"].as<std::string>();
-                if (u != "OnLoad" && u != "Realtime" && u != "OnDemand")
+                if (u != "OnLoad" && u != "Realtime" && u != "OnDemand" && u != "Video")
                     throw std::runtime_error("Unknown RenderTexture Update");
                 s.Update = u == "OnLoad"   ? RenderTextureUpdate::OnLoad :
                            u == "OnDemand" ? RenderTextureUpdate::OnDemand :
+                           u == "Video"    ? RenderTextureUpdate::Video :
                                              RenderTextureUpdate::Realtime;
             }
             if (n["ClearColor"])
@@ -80,6 +85,7 @@ namespace Kans
         n["Mips"]          = s.Mips;
         n["Update"]        = s.Update == RenderTextureUpdate::OnLoad   ? "OnLoad" :
                              s.Update == RenderTextureUpdate::OnDemand ? "OnDemand" :
+                             s.Update == RenderTextureUpdate::Video    ? "Video" :
                                                                          "Realtime";
         n["Rate"]          = s.Rate;
         for (float c : s.ClearColor)
@@ -93,7 +99,7 @@ namespace Kans
                                     double                            time,
                                     uint64_t                          requests) const
     {
-        if (LastFrame == frame || !std::isfinite(time))
+        if (s.Update == RenderTextureUpdate::Video || LastFrame == frame || !std::isfinite(time))
             return false;
         if (s.Update == RenderTextureUpdate::OnDemand)
             return requests != LastRequest;

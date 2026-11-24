@@ -8,6 +8,7 @@ file(GLOB_RECURSE EDITOR_SOURCES CONFIGURE_DEPENDS
 )
 
 add_executable(KansEditor ${EDITOR_SOURCES})
+kans_copy_ffmpeg_runtime(KansEditor)
 
 # ---- Windows: application icon (Explorer, taskbar and window class) ----
 if(WIN32)

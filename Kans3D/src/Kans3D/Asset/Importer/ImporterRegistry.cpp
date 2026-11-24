@@ -18,6 +18,7 @@
 #include "RenderTextureImporter.h"
 #include "ShaderImporter.h"
 #include "TextureImporter.h"
+#include "VideoImporter.h"
 
 namespace Kans
 {
@@ -131,6 +132,7 @@ namespace Kans
                 {"ExpressionImporter", {{".expression"}, std::make_shared<ExpressionImporter>()}},
                 {"UIImporter", {{".kui"}, std::make_shared<UIImporter>()}},
                 {"FontImporter", {{".ttf", ".otf", ".ttc", ".otc"}, std::make_shared<FontImporter>()}},
+                {"VideoImporter", {{".mp4", ".mov", ".mkv", ".webm"}, std::make_shared<VideoImporter>()}},
                 {"AudioImporter", {{".wav", ".ogg", ".mp3", ".flac"}, std::make_shared<AudioImporter>()}},
         };
         for (const auto& [name, entry] : importers)

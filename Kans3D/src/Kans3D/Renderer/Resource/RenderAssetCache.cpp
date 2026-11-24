@@ -749,6 +749,7 @@ namespace Kans
                     commands->GenerateMips(image);
                 device->Submit(commands);
                 m_RenderTextures.erase(id);
+                m_VideoTextures.erase(id);
                 uploaded = texture;
             }
             else
@@ -766,8 +767,10 @@ namespace Kans
             }
             return uploaded;
         });
-        if (texture && m_Textures.at(id).Source->GetData().RenderTexture)
-            m_PendingRenderTextures.insert(id);
+        if (texture)
+            if (const auto& spec = m_Textures.at(id).Source->GetData().RenderTexture;
+                spec && spec->Update != RenderTextureUpdate::Video)
+                m_PendingRenderTextures.insert(id);
         return texture ? *texture : nullptr;
     }
     RenderHardware::Handle<RenderHardware::Texture> RenderAssetCache::GetTextureResource(AssetID id)
@@ -1049,6 +1052,8 @@ namespace Kans
         evict(m_Textures);
         for (auto it = m_RenderTextures.begin(); it != m_RenderTextures.end();)
             it = !m_Textures.count(it->first) ? m_RenderTextures.erase(it) : std::next(it);
+        for (auto it = m_VideoTextures.begin(); it != m_VideoTextures.end();)
+            it = !m_Textures.count(it->first) ? m_VideoTextures.erase(it) : std::next(it);
         evict(m_Shaders);
         evict(m_Bindings);
         evict(m_StandardBindings);
@@ -1067,6 +1072,10 @@ namespace Kans
         m_Materials.clear();
         m_Textures.clear();
         m_RenderTextures.clear();
+        m_VideoTextures.clear();
+        m_VideoPipeline.reset();
+        m_VideoLayout.reset();
+        m_VideoSampler.reset();
         m_MaterialParameterBuffers.clear();
         m_EmptyMaterialParameters.reset();
         m_PendingRenderTextures.clear();

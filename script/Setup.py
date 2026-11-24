@@ -13,18 +13,31 @@ The menu uses prompt_toolkit from the pure-Python wheels in script/third_party (
 everything else is the standard library, so it runs on a fresh machine.
 """
 import argparse
+import ctypes
+import hashlib
 import os
 import platform
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 THIRD_PARTY = Path(__file__).resolve().parent / "third_party"
 REQUIRED_CMAKE = (3, 21)
 REQUIRED_DOTNET_MAJOR = 10
+FFMPEG_DIR = ROOT / "Kans3D" / "vendor" / "ffmpeg-bin"
+FFMPEG_ARCHIVE = "ffmpeg-n8.1.3-39-g660b5aa7db-win64-lgpl-shared-8.1"
+FFMPEG_URL = (
+    "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-11-22-12-36/"
+    + FFMPEG_ARCHIVE + ".zip"
+)
+FFMPEG_SHA256 = "fd6d485f1ed515b1ca30c99f934dbb4a9c18de2949d5f5c2a03b069a8420ce38"
+FFMPEG_LIBRARIES = ("avformat", "avcodec", "avutil")
 
 
 def run(command, **kwargs):
@@ -79,6 +92,75 @@ def check_pkgconfig(module):
         code, out = run(["pkg-config", "--modversion", module])
         return code == 0, out.strip() if code == 0 else "not found"
     return check
+
+
+def check_system_ffmpeg():
+    versions = []
+    for library in FFMPEG_LIBRARIES:
+        module = "lib" + library
+        code, version = run(["pkg-config", "--modversion", module])
+        if code != 0:
+            return False, f"{module} development package not found"
+        code, directory = run(["pkg-config", "--variable=libdir", module])
+        try:
+            if code != 0:
+                return False, f"{module} library directory not found"
+            shared = ctypes.CDLL(str(Path(directory.strip()) / (module + ".so")))
+            license_name = getattr(shared, library + "_license")
+            license_name.restype = ctypes.c_char_p
+            if not license_name().startswith(b"LGPL"):
+                return False, f"{module} is not an LGPL build"
+        except (OSError, AttributeError):
+            return False, f"{module} shared library not found"
+        versions.append(version.strip())
+    return True, " / ".join(versions)
+
+
+def ffmpeg_windows_files(directory):
+    return all((directory / "lib" / (library + ".lib")).is_file() and
+               any((directory / "bin").glob(library + "-*.dll")) for library in FFMPEG_LIBRARIES)
+
+
+def check_windows_ffmpeg():
+    stamp = FFMPEG_DIR / ".sha256"
+    if stamp.is_file() and stamp.read_text().strip() == FFMPEG_SHA256 and ffmpeg_windows_files(FFMPEG_DIR):
+        return True, FFMPEG_ARCHIVE
+    return False, "pinned shared build not installed"
+
+
+def install_windows_ffmpeg():
+    if check_windows_ffmpeg()[0]:
+        return True
+    try:
+        with tempfile.TemporaryDirectory(prefix="ffmpeg-", dir=FFMPEG_DIR.parent) as temp:
+            archive = Path(temp) / "ffmpeg.zip"
+            digest = hashlib.sha256()
+            with urllib.request.urlopen(FFMPEG_URL, timeout=60) as response, archive.open("wb") as output:
+                for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    output.write(chunk)
+            if digest.hexdigest() != FFMPEG_SHA256:
+                raise ValueError("FFmpeg archive SHA-256 mismatch")
+            with zipfile.ZipFile(archive) as packed:
+                packed.extractall(temp)
+            extracted = Path(temp) / FFMPEG_ARCHIVE
+            if not ffmpeg_windows_files(extracted):
+                raise ValueError("FFmpeg archive is missing MSVC import libraries or DLLs")
+            (extracted / ".sha256").write_text(FFMPEG_SHA256 + "\n")
+            # Keep an existing usable directory intact until the replacement is ready.
+            previous = Path(temp) / "previous"
+            if FFMPEG_DIR.exists():
+                FFMPEG_DIR.rename(previous)
+            try:
+                extracted.rename(FFMPEG_DIR)
+            except OSError:
+                if previous.exists():
+                    previous.rename(FFMPEG_DIR)
+                raise
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        print(f"Optional FFmpeg install failed: {error}", file=sys.stderr)
+        return False
+    return True
 
 
 def check_library(*names):
@@ -167,6 +249,10 @@ def linux_dependencies():
         Dependency(".NET SDK 10 (C# scripting)", check_dotnet,
                    {"pacman": "dotnet-sdk", "apt": "dotnet-sdk-10.0", "dnf": "dotnet-sdk-10.0"}, required=False,
                    note="without it the engine builds with C# scripting disabled"),
+        Dependency("FFmpeg (video decoding)", check_system_ffmpeg,
+                   {"pacman": "ffmpeg", "apt": "libavformat-dev libavcodec-dev libavutil-dev",
+                    "dnf": "ffmpeg-free-devel"}, required=False,
+                   note="requires a shared LGPL build; some distributions ship GPL builds"),
         Dependency("GoogleTest", check_header("gtest/gtest.h"),
                    {"pacman": "gtest", "apt": "libgtest-dev", "dnf": "gtest-devel"}, tests_only=True),
         Dependency("Software Vulkan (lavapipe)", check_lavapipe,
@@ -184,6 +270,8 @@ def windows_dependencies():
         Dependency("Vulkan SDK", check_vulkan_sdk, {"winget": "KhronosGroup.VulkanSDK"}),
         Dependency(".NET SDK 10 (C# scripting)", check_dotnet, {"winget": "Microsoft.DotNet.SDK.10"}, required=False,
                    note="without it the engine builds with C# scripting disabled"),
+        Dependency("FFmpeg (video decoding)", check_windows_ffmpeg, {}, required=False,
+                   note="downloads the SHA-256-pinned LGPL shared build"),
     ]
 
 
@@ -268,6 +356,14 @@ def packages_for(manager, dependencies):
     return packages
 
 
+def dependency_commands(manager, dependencies):
+    packages = packages_for(manager, dependencies)
+    commands = install_commands(manager, packages) if manager and packages else []
+    if any(d.check is check_windows_ffmpeg for d in dependencies):
+        commands.append(subprocess.list2cmdline([sys.executable, str(Path(__file__).resolve()), "--install-ffmpeg"]))
+    return commands
+
+
 def run_install(commands, windows):
     for command in commands:
         print(bold(f"$ {command}"))
@@ -344,7 +440,7 @@ def interactive(prompts, preset, tests, build):
         selected &= {d.name for d in missing}
         required = [d for d in missing if d.required]
         chosen = [d for d in missing if d.name in selected]
-        commands = install_commands(manager, packages_for(manager, chosen)) if manager and chosen else []
+        commands = dependency_commands(manager, chosen)
 
         if Style.enabled:
             print("\033[2J\033[H", end="")
@@ -403,6 +499,7 @@ def interactive(prompts, preset, tests, build):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--install-ffmpeg", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--check", action="store_true", help="report only, install nothing")
     parser.add_argument("--yes", action="store_true", help="install everything missing without asking")
     parser.add_argument("--tests", action="store_true", help="include test dependencies")
@@ -413,6 +510,8 @@ def main():
     Style.setup()
 
     windows = platform.system() == "Windows"
+    if args.install_ffmpeg:
+        sys.exit(0 if windows and install_windows_ffmpeg() else 1)
     preset = args.preset or ("windows-msvc" if windows else "linux-gcc")
     terminal = sys.stdin.isatty() and sys.stdout.isatty()
     if terminal and not (args.check or args.yes or args.non_interactive):
@@ -441,19 +540,18 @@ def main():
         required_missing = [d for d in missing if d.required] or ([] if submodules_ok else ["submodules"])
         sys.exit(1 if required_missing else 0)
 
-    if missing:
-        if manager is None:
-            print("\nNo supported package manager found; install the packages above manually.")
-        else:
-            commands = install_commands(manager, packages_for(manager, missing))
-            print("\nInstall commands:")
-            for command in commands:
-                print(f"  {command}")
-            if ask("Run them now?", args.yes):
-                if not run_install(commands, windows):
-                    sys.exit(1)
-                if windows:
-                    sys.exit(0)
+    commands = dependency_commands(manager, missing)
+    if missing and manager is None:
+        print("\nNo supported package manager found; install system packages manually.")
+    if commands:
+        print("\nInstall commands:")
+        for command in commands:
+            print(f"  {command}")
+        if ask("Run them now?", args.yes):
+            if not run_install(commands, windows):
+                sys.exit(1)
+            if windows:
+                sys.exit(0)
 
     still_missing = [d.name for d in dependencies if d.required and not d.check()[0]]
     if still_missing:

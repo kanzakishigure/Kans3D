@@ -1694,6 +1694,23 @@ namespace Kans
                     v["Bindings"][id] = uint64_t(entityID);
                 node["TimelinePlayerComponent"] = v;
             }
+            if (entity.HasComponent<VideoPlayerComponent>())
+            {
+                const auto& c = entity.GetComponent<VideoPlayerComponent>();
+                YAML::Node  v;
+                v["Clip"]                    = c.Clip.ToString();
+                v["Target"]                  = c.Target.ToString();
+                v["Loop"]                    = c.Loop;
+                v["Speed"]                   = c.Speed;
+                v["PlayOnStart"]             = c.PlayOnStart;
+                v["EndBehavior"]             = c.EndBehavior == VideoEndBehavior::Hold ? "Hold" : "Clear";
+                v["ClockSource"]             = c.ClockSource == VideoClockSource::Game     ? "Game" :
+                                               c.ClockSource == VideoClockSource::Timeline ? "Timeline" :
+                                                                                             "AudioSource";
+                v["ClockEntity"]             = uint64_t(c.ClockEntity);
+                v["Offset"]                  = c.Offset;
+                node["VideoPlayerComponent"] = v;
+            }
             if (entity.HasComponent<AnimatorComponent>() &&
                 (!entity.HasComponent<PrefabInstanceComponent>() ||
                  !entity.GetComponent<PrefabInstanceComponent>().IsGeneratedAnimator(
@@ -2165,6 +2182,7 @@ namespace Kans
                       "PrefabInstanceComponent",
                       "AnimatorComponent",
                       "TimelinePlayerComponent",
+                      "VideoPlayerComponent",
                       "ActiveComponent",
                       "IKComponent",
                       "ShapeKeysComponent",
@@ -2429,6 +2447,38 @@ namespace Kans
                         c.Bindings[id] = UUID(UInt(b.second));
                     }
                     entity.AddComponent<TimelinePlayerComponent>(std::move(c));
+                }
+                if (const auto v = node["VideoPlayerComponent"])
+                {
+                    Keys(v,
+                         {"Clip",
+                          "Target",
+                          "Loop",
+                          "Speed",
+                          "PlayOnStart",
+                          "EndBehavior",
+                          "ClockSource",
+                          "ClockEntity",
+                          "Offset"});
+                    VideoPlayerComponent c;
+                    c.Clip        = Identity(v["Clip"]);
+                    c.Target      = Identity(v["Target"]);
+                    c.Loop        = v["Loop"].as<bool>();
+                    c.Speed       = v["Speed"].as<double>();
+                    c.PlayOnStart = v["PlayOnStart"].as<bool>();
+                    c.Offset      = v["Offset"].as<double>();
+                    Require(std::isfinite(c.Speed) && std::isfinite(c.Offset), "Invalid video speed or offset");
+                    c.ClockEntity  = UUID(UInt(v["ClockEntity"]));
+                    const auto end = v["EndBehavior"].as<std::string>();
+                    Require(end == "Hold" || end == "Clear", "Invalid video end behavior");
+                    c.EndBehavior    = end == "Hold" ? VideoEndBehavior::Hold : VideoEndBehavior::Clear;
+                    const auto clock = v["ClockSource"].as<std::string>();
+                    Require(clock == "Game" || clock == "Timeline" || clock == "AudioSource",
+                            "Invalid video clock source");
+                    c.ClockSource = clock == "Game"     ? VideoClockSource::Game :
+                                    clock == "Timeline" ? VideoClockSource::Timeline :
+                                                          VideoClockSource::AudioSource;
+                    entity.AddComponent<VideoPlayerComponent>(c);
                 }
                 if (node["AnimatorComponent"])
                 {

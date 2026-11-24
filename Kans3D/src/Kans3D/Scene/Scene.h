@@ -16,6 +16,7 @@
 #include "Kans3D/Physics/PhysicsWorld.h"
 #include "Kans3D/Renderer/Passes/PostProcessSettings.h"
 #include "Kans3D/UI/UIContext.h"
+#include "Kans3D/Video/VideoPlayer.h"
 #include "EnvironmentSettings.h"
 
 namespace Kans
@@ -27,6 +28,10 @@ namespace Kans
     class AssetManager;
     class AssetChangeObserver;
     class RenderWorld;
+    class RenderAssetCache;
+    class VideoDecoder;
+    class VideoClipAsset;
+    struct VideoFrame;
     class MeshAsset;
     class MaterialParameterCollectionAsset;
     struct MaterialParameterUniforms;
@@ -281,6 +286,17 @@ namespace Kans
         void SetAudioEngine(AudioEngine* engine);
         void PlayAudioSource(Entity entity);
         void StopAudioSource(Entity entity);
+        bool PlayVideo(Entity);
+        void PauseVideo(Entity);
+        void StopVideo(Entity);
+        void SeekVideo(Entity, double seconds);
+        // Request through AssetManager first. False means the clip is still loading or invalid.
+        // Subsequent renders poll an accepted preview, even with the edit clock stopped.
+        bool                  PreviewVideo(Entity, double seconds = 0);
+        void                  EndVideoPreview(Entity);
+        VideoPlayerStats      GetVideoPlayerStats() const;
+        std::optional<double> GetVideoFrameTime(Entity) const;
+        std::string           GetVideoPlayerError(Entity) const;
         void PauseAudioSource(Entity entity);
         bool IsAudioSourcePlaying(Entity entity) const;
         AudioEngine* GetAudioEngine() const { return m_AudioEngine; }
@@ -294,6 +310,22 @@ namespace Kans
 
     private:
         void UpdateAnimations(double seconds, std::optional<bool> externalClock);
+        void UpdateVideoPlayers(double seconds);
+        void RenderVideoTextures(RenderAssetCache&);
+        struct VideoPlayback
+        {
+            Ref<const VideoClipAsset> Clip;
+            Ref<VideoDecoder>         Decoder;
+            AssetID                   RequestedClip;
+            double                    GameTime = 0, Time = 0, UploadMilliseconds = 0;
+            uint64_t                  Owner = 0, Stream = 0;
+            bool                      Playing = true, Preview = false, Seek = false, Clear = false, HasTime = false;
+            const VideoFrame*         Frame = nullptr;
+            std::string               Error;
+        };
+        std::unordered_map<UUID, VideoPlayback> m_VideoPlayers;
+        bool                                    PrepareVideo(Entity, VideoPlayback&);
+        void                                    OnVideoPlayerRemoved(entt::registry&, entt::entity);
         template<typename T>
         void OnComponentAdd(Entity entity, T& component);
         // Removes the entity from its parent's children or the root order.

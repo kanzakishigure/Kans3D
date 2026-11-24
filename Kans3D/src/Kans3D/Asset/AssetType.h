@@ -39,5 +39,6 @@ namespace Kans
         VectorField         = 25,
         MaterialParameterCollection = 26,
         AudioBusLayout              = 27,
+        VideoClip                   = 28,
     };
 } // namespace Kans
