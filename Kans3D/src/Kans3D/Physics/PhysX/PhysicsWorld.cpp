@@ -222,6 +222,7 @@ namespace Kans
         std::mutex                                EventMutex;
         std::map<ShapeKey, PhysicsPairEvent>      ContactPairs, TriggerPairs;
         std::map<BodyKey, PhysicsPairEvent>       PreviousContacts, PreviousTriggers;
+        std::map<BodyKey, PhysicsPairEvent>       PairScratch;
         std::map<UUID, std::pair<PxVec3, PxVec3>> StepVelocities;
         std::map<UUID, PxTransform>               KinematicTargets;
         bool                                      Dispatching = false;
@@ -402,7 +403,8 @@ namespace Kans
         {
             const auto&                         shapes   = trigger ? TriggerPairs : ContactPairs;
             auto&                               previous = trigger ? PreviousTriggers : PreviousContacts;
-            std::map<BodyKey, PhysicsPairEvent> current;
+            auto&                               current  = PairScratch;
+            current.clear();
             for (const auto& [key, pair] : shapes)
             {
                 if (!Alive(pair.BodyA) || !Alive(pair.BodyB) || !Alive(pair.ColliderA) || !Alive(pair.ColliderB))
@@ -443,7 +445,8 @@ namespace Kans
                         e.Removed |= !Alive(a) || !Alive(b) || !ColliderOwners.count(a) || !ColliderOwners.count(b);
                     events.push_back(std::move(e));
                 }
-            previous                        = std::move(current);
+            previous.swap(current);
+            current.clear();
             auto&                 listeners = trigger ? Subscribers->Trigger : Subscribers->Collision;
             std::vector<uint64_t> order;
             for (auto& [id, f] : listeners)
@@ -1238,7 +1241,7 @@ namespace Kans
         i.RemovedJoints.clear();
         if (!i.Initialized)
             i.InitializeIndex();
-        auto dirty = std::move(i.DirtyEntities);
+        std::vector<std::pair<UUID, uint8_t>> dirty(i.DirtyEntities.begin(), i.DirtyEntities.end());
         i.DirtyEntities.clear();
         for (const auto& [id, reason] : dirty)
             i.RefreshEntity(id, reason);
@@ -1284,11 +1287,11 @@ namespace Kans
                     i.DirtyBodies.insert(owner->second);
             }
         }
-        auto bodies = std::move(i.DirtyBodies);
+        std::vector<UUID> bodies(i.DirtyBodies.begin(), i.DirtyBodies.end());
         i.DirtyBodies.clear();
         for (auto id : bodies)
             i.RebuildBody(id);
-        auto joints = std::move(i.DirtyJoints);
+        std::vector<UUID> joints(i.DirtyJoints.begin(), i.DirtyJoints.end());
         i.DirtyJoints.clear();
         for (auto id : joints)
             i.RefreshJoint(id);

@@ -74,6 +74,13 @@ namespace Kans
     } // namespace
     struct IKRuntime
     {
+        struct TargetOverrides
+        {
+            TwoBoneIK Limb;
+            IKTarget  Aim;
+            bool      HasLimb = false, HasAim = false;
+        };
+
         const SkeletonData*         Skeleton = nullptr;
         std::vector<IKConstraint>   Constraints;
         std::vector<Animator>       Solvers;
@@ -81,6 +88,7 @@ namespace Kans
         AnimationPose                      Animated, SceneInput;
         std::vector<FootPlacementState>    Feet;
         std::vector<std::vector<Animator>> LegSolvers;
+        std::map<std::string, TargetOverrides> Targets;
     };
     IKComponent::IKComponent(const IKComponent& c) :
         Constraints(c.Constraints), Skeleton(c.Skeleton), SkeletonSource(c.SkeletonSource)
@@ -208,6 +216,7 @@ namespace Kans
                 }
             runtime.Skeleton    = &skeleton;
             runtime.Constraints = component.Constraints;
+            runtime.Targets.clear();
             runtime.Solvers.clear();
             runtime.Solvers.resize(component.Constraints.size());
             runtime.Feet.resize(component.Constraints.size());
@@ -217,11 +226,15 @@ namespace Kans
                 std::visit([&](const auto& ik) { prepare(runtime.Solvers[i], ik); }, component.Constraints[i].Data);
         }
         BuildModelPose(skeleton, pose);
-        runtime.Animated                          = pose;
-        const auto&                      animated = runtime.Animated;
-        std::map<std::string, TwoBoneIK> targets;
-        std::map<std::string, IKTarget>  aimTargets;
-        auto                             resolveTarget = [&](const IKTarget& target, IKTarget& resolved) {
+        runtime.Animated     = pose;
+        const auto& animated = runtime.Animated;
+        // Foot placement overrides last only for this evaluation. Keep their storage for the next frame.
+        for (auto& [name, target] : runtime.Targets)
+        {
+            target.HasLimb = false;
+            target.HasAim  = false;
+        }
+        auto resolveTarget = [&](const IKTarget& target, IKTarget& resolved) {
             glm::mat4 matrix(1);
             if (!target.Joint.empty())
             {
@@ -339,12 +352,16 @@ namespace Kans
                         target.Position = legs[l].Target.Position + rotation * (target.Position - original.Position);
                         target.Rotation = rotation * target.Rotation;
                         target.Joint.clear();
-                        target.Entity              = 0;
-                        aimTargets[candidate.Name] = target;
+                        target.Entity   = 0;
+                        auto& override  = runtime.Targets[candidate.Name];
+                        override.Aim    = target;
+                        override.HasAim = true;
                     }
                     if (!legs[l].Name.empty())
                     {
-                        targets[legs[l].Name] = legs[l];
+                        auto& override   = runtime.Targets[legs[l].Name];
+                        override.Limb    = legs[l];
+                        override.HasLimb = true;
                         if (feet->ContactSource == FootContactSource::Velocity)
                             continue;
                     }
@@ -377,11 +394,14 @@ namespace Kans
             else
             {
                 auto& solver = runtime.Solvers[i];
+                const auto target = runtime.Targets.find(c.Name);
                 // Restore original target each frame before applying this frame's ground adjustment.
                 if (const auto* limb = std::get_if<TwoBoneIK>(&c.Data); limb && !solver.m_TwoBone.empty())
-                    solver.m_TwoBone[0].Data = targets.count(c.Name) ? targets[c.Name] : *limb;
+                    solver.m_TwoBone[0].Data =
+                        target != runtime.Targets.end() && target->second.HasLimb ? target->second.Limb : *limb;
                 if (const auto* aim = std::get_if<LookAtIK>(&c.Data); aim && !solver.m_LookAt.empty())
-                    solver.m_LookAt[0].Data.Target = aimTargets.count(c.Name) ? aimTargets[c.Name] : aim->Target;
+                    solver.m_LookAt[0].Data.Target =
+                        target != runtime.Targets.end() && target->second.HasAim ? target->second.Aim : aim->Target;
                 solve(solver, weight);
             }
         }

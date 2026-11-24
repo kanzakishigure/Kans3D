@@ -263,7 +263,7 @@ struct RoadFilter : PxQueryFilterCallback
 };
 void UpdateVehicles(float dt)
 {
-    std::set<UUID> live;
+    std::vector<UUID> live;
     for (auto h : Owner.m_Registry.view<VehicleComponent, RigidBodyComponent>())
     {
         Entity entity {h, &Owner};
@@ -295,7 +295,7 @@ void UpdateVehicles(float dt)
             Error(id, e.what());
             continue;
         }
-        live.insert(id);
+        live.push_back(id);
         auto& owned     = Vehicles[id];
         auto  config    = c;
         config.Throttle = config.Brake = config.Steer = config.Handbrake = 0;
@@ -446,8 +446,9 @@ void UpdateVehicles(float dt)
             }
         }
     }
+    std::sort(live.begin(), live.end());
     for (auto it = Vehicles.begin(); it != Vehicles.end();)
-        if (!live.count(it->first))
+        if (!std::binary_search(live.begin(), live.end(), it->first))
             it = Vehicles.erase(it);
         else
             ++it;

@@ -329,17 +329,22 @@ namespace Kans::Vfx
                                            const glm::mat4&  previousOwner)
     {
         using Table = std::shared_ptr<const MeshSamplingSnapshot>;
-        std::map<std::string, Table> tables;
-        auto                         bindings = std::make_shared<std::map<const InterfaceBinding*, Table>>();
-        auto                         prepare  = [&](const Program& program) {
+        std::optional<std::map<std::string, Table>>               tables;
+        std::shared_ptr<std::map<const InterfaceBinding*, Table>> bindings;
+        auto                                                      prepare = [&](const Program& program) {
             for (const auto& layout : program.Interfaces)
             {
                 const auto& i = program.Code.at(layout.Instruction);
                 if (!IsMeshOperation(i.Op))
                     continue;
+                if (!tables)
+                {
+                    tables.emplace();
+                    bindings = std::make_shared<std::map<const InterfaceBinding*, Table>>();
+                }
                 const auto& binding = i.Interface;
                 auto        key     = MeshBindingKey(binding);
-                if (auto found = tables.find(key); found != tables.end())
+                if (auto found = tables->find(key); found != tables->end())
                 {
                     (*bindings)[&binding] = found->second;
                     continue;
@@ -402,8 +407,9 @@ namespace Kans::Vfx
                         CORE_WARN("{}", message);
                     state.Warned = true;
                 }
-                tables[key]             = std::make_shared<const MeshSamplingSnapshot>(std::move(frame));
-                (*bindings)[&binding]   = tables[key];
+                auto table = std::make_shared<const MeshSamplingSnapshot>(std::move(frame));
+                tables->emplace(std::move(key), table);
+                bindings->emplace(&binding, std::move(table));
                 state.PreviousTransform = transform;
                 state.PreviousPalette   = std::move(palette);
                 state.Initialized       = valid;
@@ -418,10 +424,11 @@ namespace Kans::Vfx
             for (const auto& handler : emitter.Handlers)
                 prepare(handler.Bytecode);
         }
-        context.MeshTable = [bindings](const InterfaceBinding& binding) -> Table {
-            auto at = bindings->find(&binding);
-            return at == bindings->end() ? nullptr : at->second;
-        };
+        if (bindings)
+            context.MeshTable = [bindings](const InterfaceBinding& binding) -> Table {
+                auto at = bindings->find(&binding);
+                return at == bindings->end() ? nullptr : at->second;
+            };
     }
     void SystemInstance::Step(float dt, const glm::mat4& owner, glm::vec3 camera)
     {
@@ -508,7 +515,7 @@ namespace Kans::Vfx
                 }
                 return value;
             };
-            std::map<std::string, uint32_t> generatedEvents;
+            std::vector<uint32_t> generatedEvents;
             context.WriteEvent = [&](const Instruction& i, const std::vector<Value>& registers) {
                 const auto& channels = e.Compiled->Settings.Channels;
                 auto        c        = std::find_if(
@@ -519,7 +526,9 @@ namespace Kans::Vfx
                 uint32_t    limit     = i.Args.size() == layout.Fields.size() + 2 ?
                                             uint32_t(std::max(0, registers.at(i.Args.back()).Integer)) :
                                             UINT32_MAX;
-                auto&       generated = generatedEvents[c->Name];
+                if (generatedEvents.empty())
+                    generatedEvents.resize(channels.size());
+                auto&       generated = generatedEvents[size_t(c - channels.begin())];
                 uint32_t    bounded   = std::min(requested, limit > generated ? limit - generated : 0u);
                 generated += bounded;
                 uint32_t actual = std::min(bounded, c->Capacity - uint32_t(events.size()));
@@ -789,6 +798,7 @@ namespace Kans::Vfx
         m_Configurations.clear();
         m_FieldTime = 0;
         m_PreviousColliderCenters.clear();
+        m_ColliderCenterScratch.clear();
         Depth.reset();
         m_Playing = false;
     }
@@ -827,7 +837,8 @@ namespace Kans::Vfx
     }
     void VfxWorld::GatherColliders(CollisionSnapshot& snapshot, float delta)
     {
-        std::map<std::pair<UUID, uint32_t>, glm::vec3> centers;
+        auto& centers = m_ColliderCenterScratch;
+        centers.clear();
         bool                                           exceeded = false;
         auto                                           gather   = [&](auto tag) {
             using T = decltype(tag);
@@ -909,7 +920,8 @@ namespace Kans::Vfx
         gather(CapsuleColliderComponent {});
         // Meshes and convex hulls are handled by CPU scene queries. GPU analytic
         // mode skips them; DepthBuffer mode covers their visible geometry.
-        m_PreviousColliderCenters = std::move(centers);
+        m_PreviousColliderCenters.swap(centers);
+        centers.clear();
         if (exceeded && !m_CollisionCapWarned)
         {
             m_CollisionCapWarned = true;
@@ -933,14 +945,14 @@ namespace Kans::Vfx
         if (!m_CollisionGPU)
             m_CollisionGPU = std::make_shared<CollisionGpuStorage>();
         colliders->GPU = m_CollisionGPU;
-        std::set<UUID>    live;
+        std::vector<UUID> live;
         std::vector<UUID> destroy;
         auto              assetManager = m_Scene.GetAssetManager();
         auto              registry     = assetManager ? assetManager->GetRegistry() : nullptr;
         m_Scene.m_Registry.view<ParticleSystemComponent>().each([&](auto handle, const ParticleSystemComponent& c) {
             Entity entity {handle, &m_Scene};
             auto   id = entity.GetUUID();
-            live.insert(id);
+            live.push_back(id);
             if ((preview && !c.PreviewInEditMode) || !m_Scene.IsEntityActive(entity))
             {
                 m_Instances.erase(id);
@@ -1095,8 +1107,9 @@ namespace Kans::Vfx
                     destroy.push_back(id);
             }
         });
+        std::sort(live.begin(), live.end());
         for (auto i = m_Instances.begin(); i != m_Instances.end();)
-            if (!live.count(i->first))
+            if (!std::binary_search(live.begin(), live.end(), i->first))
             {
                 m_Configurations.erase(i->first);
                 m_Overrides.erase(i->first);

@@ -222,36 +222,37 @@ namespace Kans
     void Scene::UpdateTransformConstraints(double seconds)
     {
         m_ConstraintsVisible = true;
-        auto previous        = std::move(m_ConstraintRotations);
-        m_ConstraintRotations.clear();
-        auto oldWarnings = std::move(m_ConstraintWarnings);
-        m_ConstraintWarnings.clear();
-        std::map<UUID, int>  states;
-        std::map<UUID, bool> valid;
         std::vector<UUID>    owners;
         for (auto h : m_Registry.view<AimConstraintComponent, IDComponent>())
             owners.push_back(m_Registry.get<IDComponent>(h).ID);
         // Do not allocate a dependency traversal for scenes that do not use constraints.
-        if (owners.empty() && previous.empty())
+        if (owners.empty() && m_ConstraintRotations.empty())
         {
+            m_ConstraintWarnings.clear();
             m_ResetConstraintSmoothing = false;
             return;
         }
+        auto& previous = m_PreviousConstraintRotations;
+        previous.clear();
+        previous.swap(m_ConstraintRotations);
+        m_ConstraintVisits.clear();
+        auto oldWarnings = std::move(m_ConstraintWarnings);
+        m_ConstraintWarnings.clear();
         std::sort(owners.begin(), owners.end());
         // Parent edges matter even for unconstrained nodes: aiming at one's own child is a cycle.
         std::function<bool(Entity)> visit = [&](Entity e) -> bool {
             if (!e)
                 return true;
             const auto id = e.GetUUID();
-            if (states[id] == 2)
-                return valid[id];
-            if (states[id] == 1)
+            const auto [state, inserted] = m_ConstraintVisits.try_emplace(id, ConstraintVisit::Visiting);
+            if (!inserted)
             {
+                if (state->second != ConstraintVisit::Visiting)
+                    return state->second == ConstraintVisit::Valid;
                 m_ConstraintWarnings.push_back("Transform constraint cycle at entity " + std::to_string(uint64_t(id)));
                 return false;
             }
-            states[id] = 1;
-            bool ok    = visit(GetParent(e));
+            bool ok = visit(GetParent(e));
             if (e.HasComponent<AimConstraintComponent>())
             {
                 const auto& c = e.GetComponent<AimConstraintComponent>();
@@ -343,8 +344,8 @@ namespace Kans
                     }
                 }
             }
-            states[id]       = 2;
-            return valid[id] = ok;
+            state->second = ok ? ConstraintVisit::Valid : ConstraintVisit::Invalid;
+            return ok;
         };
         for (auto id : owners)
             visit(GetEntityByUUID(id));
@@ -352,6 +353,8 @@ namespace Kans
         for (const auto& [id, rotation] : previous)
             if (auto e = GetEntityByUUID(id))
                 DirtySubtree(e);
+        previous.clear();
+        m_ConstraintVisits.clear();
         for (const auto& [id, rotation] : m_ConstraintRotations)
             if (auto e = GetEntityByUUID(id))
                 DirtySubtree(e);

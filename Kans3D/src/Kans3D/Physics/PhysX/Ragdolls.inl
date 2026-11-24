@@ -226,7 +226,7 @@ void CreateRagdoll(UUID id, Ragdoll& r, const RagdollComponent& c, float dt)
 }
 void PrepareRagdolls(float dt)
 {
-    std::set<UUID> live;
+    std::vector<UUID> live;
     for (auto h : Owner.m_Registry.view<RagdollComponent, AnimatorComponent>())
     {
         Entity      e {h, &Owner};
@@ -254,7 +254,7 @@ void PrepareRagdolls(float dt)
             Error(id, "Ragdoll asset unavailable");
             continue;
         }
-        live.insert(id);
+        live.push_back(id);
         auto& r      = Ragdolls[id];
         bool  rebind = source != r.Source || r.SkeletonSource != a.SkeletonSource;
         if (rebind)
@@ -429,8 +429,9 @@ void PrepareRagdolls(float dt)
         if (r.RecoveryDuration > 0)
             r.RecoveryTime = std::min(r.RecoveryDuration, r.RecoveryTime + dt);
     }
+    std::sort(live.begin(), live.end());
     for (auto it = Ragdolls.begin(); it != Ragdolls.end();)
-        if (!live.count(it->first))
+        if (!std::binary_search(live.begin(), live.end(), it->first))
         {
             ReleaseRagdoll(it->second);
             it = Ragdolls.erase(it);

@@ -164,7 +164,7 @@ namespace Kans::Vfx
 
     private:
         void                                            GatherColliders(CollisionSnapshot&, float delta);
-        std::map<std::pair<UUID, uint32_t>, glm::vec3>  m_PreviousColliderCenters;
+        std::map<std::pair<UUID, uint32_t>, glm::vec3>  m_PreviousColliderCenters, m_ColliderCenterScratch;
         std::shared_ptr<CollisionGpuStorage>            m_CollisionGPU;
         bool                                            m_CollisionCapWarned = false;
         std::shared_ptr<FieldGpuStorage>                m_FieldGPU;

@@ -13,6 +13,32 @@ namespace Kans
 {
     namespace
     {
+        // Snapshot each batch before processing it. Registry callbacks can queue more work
+        // or start a nested batch, so keep offsets that survive scratch reallocation.
+        class PrefabUpdateBatch
+        {
+        public:
+            PrefabUpdateBatch(std::unordered_set<entt::entity>& pending, std::vector<entt::entity>& scratch) :
+                m_Scratch(scratch), m_Begin(scratch.size())
+            {
+                scratch.insert(scratch.end(), pending.begin(), pending.end());
+                m_End = scratch.size();
+                pending.clear();
+            }
+            ~PrefabUpdateBatch() { m_Scratch.resize(m_Begin); }
+
+            PrefabUpdateBatch(const PrefabUpdateBatch&)            = delete;
+            PrefabUpdateBatch& operator=(const PrefabUpdateBatch&) = delete;
+
+            size_t       Begin() const { return m_Begin; }
+            size_t       End() const { return m_End; }
+            entt::entity operator[](size_t index) const { return m_Scratch[index]; }
+
+        private:
+            std::vector<entt::entity>& m_Scratch;
+            size_t                     m_Begin, m_End;
+        };
+
         bool Same(const TransformComponent& a, const TransformComponent& b)
         {
             return a.RenderMobility == b.RenderMobility && a.GetTransform() == b.GetTransform();
@@ -100,10 +126,10 @@ namespace Kans
 
     void Scene::CapturePrefabOverrides()
     {
-        auto dirty = std::move(m_CapturePrefabNodes);
-        m_CapturePrefabNodes.clear();
-        for (auto handle : dirty)
+        const PrefabUpdateBatch dirty(m_CapturePrefabNodes, m_PrefabUpdateScratch);
+        for (size_t i = dirty.Begin(); i < dirty.End(); ++i)
         {
+            const auto handle = dirty[i];
             if (!m_Registry.valid(handle) || !m_Registry.all_of<PrefabOwnedComponent, TransformComponent>(handle))
                 continue;
             ++m_RenderWorld->m_PendingStats.PrefabNodesVisited;
@@ -238,8 +264,7 @@ namespace Kans
         const auto& nodes = instance.Source->GetEntities();
         // Require all CPU meshes before migration: a missing material table must not
         // silently discard a pending old-part override.
-        bool meshChanged = false;
-        auto meshSources = instance.MeshSources;
+        std::optional<decltype(instance.MeshSources)> meshSources;
         for (const auto& node : nodes)
             if (node.Mesh.IsValid())
             {
@@ -249,13 +274,17 @@ namespace Kans
                     if (!status.IsReady())
                         return;
                     auto previous = instance.MeshSources.find(node.Mesh);
-                    meshChanged |= previous == instance.MeshSources.end() || previous->second != status.Asset;
-                    meshSources[node.Mesh] = status.Asset;
+                    if (!meshSources && (previous == instance.MeshSources.end() || previous->second != status.Asset))
+                        meshSources.emplace(instance.MeshSources);
+                    if (meshSources)
+                        (*meshSources)[node.Mesh] = status.Asset;
                 }
-                if (!meshSources.count(node.Mesh))
+                else if (!instance.MeshSources.count(node.Mesh))
                     return;
             }
-        instance.MeshSources = std::move(meshSources);
+        const bool meshChanged = meshSources.has_value();
+        if (meshChanged)
+            instance.MeshSources.swap(*meshSources);
         for (auto it = instance.Overrides.begin(); it != instance.Overrides.end();)
             if (it->second.Empty())
                 it = instance.Overrides.erase(it);
@@ -586,10 +615,10 @@ namespace Kans
     {
         PollAssetChanges();
         CapturePrefabOverrides();
-        auto dirty = std::move(m_DirtyPrefabs);
-        m_DirtyPrefabs.clear();
-        for (auto handle : dirty)
+        const PrefabUpdateBatch dirty(m_DirtyPrefabs, m_PrefabUpdateScratch);
+        for (size_t i = dirty.Begin(); i < dirty.End(); ++i)
         {
+            const auto handle = dirty[i];
             if (!m_Registry.valid(handle) || !m_Registry.all_of<PrefabInstanceComponent>(handle))
                 continue;
             ++m_RenderWorld->m_PendingStats.PrefabsVisited;

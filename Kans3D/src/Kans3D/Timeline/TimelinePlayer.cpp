@@ -765,7 +765,13 @@ namespace Kans
         auto* component  = Component();
         if (!component)
             return false;
-        auto bindings = component->Bindings;
+        using Binding = std::pair<std::string, UUID>;
+        std::vector<Binding> bindings(component->Bindings.begin(), component->Bindings.end());
+        auto                 findBinding = [&](const std::string& id) {
+            return std::lower_bound(bindings.begin(), bindings.end(), id, [](const Binding& entry, const auto& key) {
+                return entry.first < key;
+            });
+        };
         for (const auto& b : data.Bindings)
             if (b.Kind == TimelineBindingKind::Spawnable)
             {
@@ -819,14 +825,21 @@ namespace Kans
                     }
                     m_Spawned.erase(b.ID);
                 }
-                if (m_Spawned.count(b.ID))
-                    bindings[b.ID] = m_Spawned.at(b.ID);
-                else
-                    bindings.erase(b.ID);
+                auto       binding          = findBinding(b.ID);
+                const bool existsInBindings = binding != bindings.end() && binding->first == b.ID;
+                if (auto spawned = m_Spawned.find(b.ID); spawned != m_Spawned.end())
+                {
+                    if (existsInBindings)
+                        binding->second = spawned->second;
+                    else
+                        bindings.emplace(binding, b.ID, spawned->second);
+                }
+                else if (existsInBindings)
+                    bindings.erase(binding);
             }
         auto entity = [&](const std::string& b) {
-            auto found = bindings.find(b);
-            return found == bindings.end() ? Entity {} : m_Scene.GetEntityByUUID(found->second);
+            auto found = findBinding(b);
+            return found != bindings.end() && found->first == b ? m_Scene.GetEntityByUUID(found->second) : Entity {};
         };
         for (const auto& b : data.Bindings)
             if (auto e = entity(b.ID); e && e.HasComponent<PrefabInstanceComponent>())
@@ -909,10 +922,15 @@ namespace Kans
                    path.rfind("DirLight.", 0) == 0 || path.rfind("SpotLight.", 0) == 0 ||
                    path.rfind("AreaLight.", 0) == 0;
         };
-        std::set<UUID> restoredLights;
+        std::vector<UUID> restoredLights;
         for (const auto& tr : data.Properties)
             if (lightPath(tr.Path))
-                if (auto e = entity(tr.Binding); e && restoredLights.insert(e.GetUUID()).second)
+                if (auto e = entity(tr.Binding); e)
+                {
+                    const auto id = e.GetUUID();
+                    if (std::find(restoredLights.begin(), restoredLights.end(), id) != restoredLights.end())
+                        continue;
+                    restoredLights.push_back(id);
                     if (auto captured = m_State->Entities.find(e.GetUUID()); captured != m_State->Entities.end())
                     {
                         if (captured->second.Point)
@@ -924,6 +942,7 @@ namespace Kans
                         if (captured->second.Area)
                             e.SetComponent<AreaLightComponent>(*captured->second.Area);
                     }
+                }
         for (const auto& tr : data.Properties)
             if (lightPath(tr.Path))
                 if (auto e = entity(tr.Binding))
@@ -969,12 +988,15 @@ namespace Kans
         if (!m_Scene.m_DeferIK)
         {
             bool           models = false;
-            std::set<UUID> refreshed;
+            std::vector<UUID> refreshed;
             for (const auto& track : data.Properties)
                 if (track.Path.rfind("IK.", 0) == 0)
-                    if (auto e = entity(track.Binding);
-                        e && !m_State->EvaluatedAnimators.count(e.GetUUID()) && refreshed.insert(e.GetUUID()).second)
+                    if (auto e = entity(track.Binding); e && !m_State->EvaluatedAnimators.count(e.GetUUID()))
                     {
+                        const auto id = e.GetUUID();
+                        if (std::find(refreshed.begin(), refreshed.end(), id) != refreshed.end())
+                            continue;
+                        refreshed.push_back(id);
                         if (e.HasComponent<AnimatorComponent>() && m_Scene.PrepareAnimator(e))
                             m_Scene.ApplyAnimatorPose(e, e.GetComponent<AnimatorComponent>().Player->GetPose());
                         else

@@ -130,6 +130,8 @@ namespace Kans
         std::unordered_map<entt::entity, Record> m_Records;
         std::map<Order, entt::entity>            m_Order;
         std::map<size_t, entt::entity>           m_SpriteOrder;
+        std::vector<size_t>                                           m_SpritePositions;
+        std::vector<std::pair<size_t, entt::entity>>                  m_SpriteReplacements;
         std::unordered_set<entt::entity>         m_Lights;
         std::unordered_map<AssetID, std::unordered_set<entt::entity>> m_MeshUsers;
         Stats                                                         m_Stats, m_PendingStats;

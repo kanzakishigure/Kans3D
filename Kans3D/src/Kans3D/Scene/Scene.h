@@ -396,7 +396,14 @@ namespace Kans
         mutable uint64_t                                                              m_EditableMeshBuildCount = 0;
         void                                 OnEditableMeshRemoved(entt::registry&, entt::entity entity);
         glm::mat4                            ConstraintLocalTransform(Entity) const;
-        std::map<UUID, glm::quat>            m_ConstraintRotations;
+        std::map<UUID, glm::quat>            m_ConstraintRotations, m_PreviousConstraintRotations;
+        enum class ConstraintVisit
+        {
+            Visiting,
+            Valid,
+            Invalid
+        };
+        std::map<UUID, ConstraintVisit>      m_ConstraintVisits;
         std::vector<std::string>             m_ConstraintWarnings;
         bool                                 m_ResetConstraintSmoothing = false;
         bool                                 m_ConstraintsVisible       = true;
@@ -411,6 +418,7 @@ namespace Kans
         std::unique_ptr<RenderWorld>         m_RenderWorld;
         std::shared_ptr<AssetChangeObserver> m_AssetChanges;
         std::unordered_set<entt::entity>     m_DirtyPrefabs, m_CapturePrefabNodes, m_DirtyBounds;
+        std::vector<entt::entity>            m_PrefabUpdateScratch;
         std::unordered_map<AssetID, std::unordered_set<entt::entity>> m_PrefabAssetUsers;
         std::unordered_map<entt::entity, std::vector<AssetID>>        m_PrefabDependencies;
         struct ChildBounds

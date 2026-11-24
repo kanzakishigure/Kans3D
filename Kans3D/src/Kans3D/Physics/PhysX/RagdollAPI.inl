@@ -3,7 +3,6 @@ void PhysicsWorld::CaptureRagdollTargets(double frameSeconds)
     auto& i                = *m_Impl;
     i.RagdollFrameStart    = i.Time + i.Owner.m_PhysicsAccumulator;
     i.RagdollFrameDuration = frameSeconds;
-    std::set<UUID> live;
     for (auto h : i.Owner.m_Registry.view<RagdollComponent, AnimatorComponent>())
     {
         Entity      e {h, &i.Owner};
@@ -11,7 +10,6 @@ void PhysicsWorld::CaptureRagdollTargets(double frameSeconds)
         if (!a.Player)
             continue;
         auto id = e.GetUUID();
-        live.insert(id);
         auto& frame         = i.RagdollFrames[id];
         frame.Previous      = frame.Current;
         frame.PreviousWorld = frame.CurrentWorld;
@@ -24,10 +22,13 @@ void PhysicsWorld::CaptureRagdollTargets(double frameSeconds)
         }
     }
     for (auto it = i.RagdollFrames.begin(); it != i.RagdollFrames.end();)
-        if (!live.count(it->first))
+    {
+        const auto e = i.Owner.GetEntityByUUID(it->first);
+        if (!e || !e.HasComponent<RagdollComponent, AnimatorComponent>() || !e.GetComponent<AnimatorComponent>().Player)
             it = i.RagdollFrames.erase(it);
         else
             ++it;
+    }
 }
 void PhysicsWorld::ResetRagdoll(UUID id)
 {

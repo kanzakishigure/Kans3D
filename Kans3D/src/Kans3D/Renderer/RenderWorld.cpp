@@ -480,7 +480,7 @@ namespace Kans
                 return m_Scene->m_Registry.group<TransformComponent>(entt::get<SpriteRendererComponent>);
             return SpriteGroup {};
         }();
-        std::unordered_set<size_t> spritePositions;
+        m_SpritePositions.clear();
         for (auto handle : m_Dirty)
         {
             ++m_Stats.EntitiesVisited;
@@ -534,9 +534,9 @@ namespace Kans
                 (old != m_Records.end() && bool(old->second.Sprite) != bool(next.Sprite)))
             {
                 if (oldSpriteIndex != SIZE_MAX)
-                    spritePositions.insert(oldSpriteIndex);
+                    m_SpritePositions.push_back(oldSpriteIndex);
                 if (next.SpriteIndex != SIZE_MAX)
-                    spritePositions.insert(next.SpriteIndex);
+                    m_SpritePositions.push_back(next.SpriteIndex);
             }
             if (old != m_Records.end())
             {
@@ -569,8 +569,11 @@ namespace Kans
         m_Dirty.clear();
         // A group insertion/removal swaps only the affected packed positions.
         // Preserve its reverse-packed execution order without scanning all sprites.
-        std::vector<std::pair<size_t, entt::entity>> replacements;
-        for (auto index : spritePositions)
+        std::sort(m_SpritePositions.begin(), m_SpritePositions.end());
+        m_SpritePositions.erase(std::unique(m_SpritePositions.begin(), m_SpritePositions.end()),
+                                m_SpritePositions.end());
+        m_SpriteReplacements.clear();
+        for (auto index : m_SpritePositions)
         {
             if (index < sprites.size())
             {
@@ -581,13 +584,13 @@ namespace Kans
                     auto& record = found->second;
                     m_SpriteOrder.erase(record.SpriteIndex);
                     record.SpriteIndex = index;
-                    replacements.emplace_back(index, handle);
+                    m_SpriteReplacements.emplace_back(index, handle);
                     ++m_Stats.SpriteOrderVisits;
                 }
             }
             m_SpriteOrder.erase(index);
         }
-        for (auto [index, handle] : replacements)
+        for (auto [index, handle] : m_SpriteReplacements)
             m_SpriteOrder[index] = handle;
         if (m_Validate)
             Validate();
