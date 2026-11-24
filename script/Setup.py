@@ -38,6 +38,8 @@ FFMPEG_URL = (
 )
 FFMPEG_SHA256 = "fd6d485f1ed515b1ca30c99f934dbb4a9c18de2949d5f5c2a03b069a8420ce38"
 FFMPEG_LIBRARIES = ("avformat", "avcodec", "avutil")
+TEST_DIR = ROOT / "test"
+VENDORED_GTEST = TEST_DIR / "vendor" / "googletest"
 
 
 def run(command, **kwargs):
@@ -184,6 +186,27 @@ def check_header(relative):
     return check
 
 
+def check_googletest():
+    """A system GoogleTest, or the copy Configure pulls into test/vendor/googletest (a tests-repo submodule)."""
+    if platform.system() != "Windows":
+        ok, detail = check_header("gtest/gtest.h")()
+        if ok:
+            return ok, detail  # CMake prefers the system package too.
+    if (VENDORED_GTEST / "CMakeLists.txt").is_file():
+        return True, str(VENDORED_GTEST.relative_to(ROOT))
+    if not (TEST_DIR / "CMakeLists.txt").is_file():
+        return False, "test/ submodule not pulled"
+    return False, "Configure pulls it into test/vendor/googletest"
+
+
+def update_test_vendor():
+    """Once the tests submodule is checked out, pulls its own submodules (GoogleTest) at its pinned commits."""
+    if not (TEST_DIR / "CMakeLists.txt").is_file():
+        return True
+    print(bold("$ git -C test submodule update --init --recursive"))
+    return subprocess.call(["git", "submodule", "update", "--init", "--recursive"], cwd=TEST_DIR) == 0
+
+
 def check_lavapipe():
     for root in ["/usr/share/vulkan/icd.d", "/etc/vulkan/icd.d"]:
         for icd in sorted(Path(root).glob("lvp_icd*.json")):
@@ -253,8 +276,9 @@ def linux_dependencies():
                    {"pacman": "ffmpeg", "apt": "libavformat-dev libavcodec-dev libavutil-dev",
                     "dnf": "ffmpeg-free-devel"}, required=False,
                    note="requires a shared LGPL build; some distributions ship GPL builds"),
-        Dependency("GoogleTest", check_header("gtest/gtest.h"),
-                   {"pacman": "gtest", "apt": "libgtest-dev", "dnf": "gtest-devel"}, tests_only=True),
+        Dependency("GoogleTest", check_googletest,
+                   {"pacman": "gtest", "apt": "libgtest-dev", "dnf": "gtest-devel"}, required=False, tests_only=True,
+                   note="Configure pulls it into test/vendor/googletest when the package is missing"),
         Dependency("Software Vulkan (lavapipe)", check_lavapipe,
                    {"pacman": "vulkan-swrast", "apt": "mesa-vulkan-drivers", "dnf": "mesa-vulkan-drivers"}, tests_only=True,
                    note="GPU tests run on lavapipe; never on the real GPU by default"),
@@ -272,6 +296,8 @@ def windows_dependencies():
                    note="without it the engine builds with C# scripting disabled"),
         Dependency("FFmpeg (video decoding)", check_windows_ffmpeg, {}, required=False,
                    note="downloads the SHA-256-pinned LGPL shared build"),
+        Dependency("GoogleTest", check_googletest, {}, required=False, tests_only=True,
+                   note="Configure pulls it into test/vendor/googletest"),
     ]
 
 
@@ -380,6 +406,9 @@ def configure(preset, build):
         print(bold("$ git submodule update --init --recursive"))
         if subprocess.call(["git", "submodule", "update", "--init", "--recursive"], cwd=ROOT) != 0:
             return False
+    # The engine's submodule check misses a tests checkout that predates its GoogleTest submodule.
+    if not update_test_vendor():
+        return False
     print(bold(f"$ cmake --preset {preset}"))
     if subprocess.call(["cmake", "--preset", preset], cwd=ROOT) != 0:
         return False
