@@ -29,6 +29,19 @@ namespace Kans::AudioEditing
 
     float MaximumDecibels() { return 20.0f * std::log10(4.0f); }
 
+    EventHints EventHintsOf(const AudioSourceComponent& source)
+    {
+        EventHints hints;
+        if (!source.Event.IsValid())
+            return hints;
+        hints.Clip = "Overridden: the Event picks the clip";
+        if (source.Bus.empty() || source.Bus == MasterAudioBus)
+            hints.Bus = "Inherits from the event while left at Master";
+        if (source.Priority == DefaultAudioVoicePriority)
+            hints.Priority = "Inherits from the event while left at the default (128)";
+        return hints;
+    }
+
     void Validate(AudioSourceComponent& c)
     {
         const AudioSourceComponent d;

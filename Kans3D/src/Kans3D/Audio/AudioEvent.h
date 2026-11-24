@@ -81,6 +81,11 @@ namespace Kans
     {
         AudioVoiceHandle        Voice;
         AudioEventTriggerStatus Status = AudioEventTriggerStatus::Invalid;
+        // What a started trigger played: the entry's index and the variation applied to it (base, entry
+        // offset and random draw summed; the params' linear multipliers are not included).
+        size_t Entry    = SIZE_MAX;
+        float  VolumeDb = 0, PitchSemitones = 0;
+        double StartOffsetSeconds = 0;
     };
 
     struct AudioEventStats

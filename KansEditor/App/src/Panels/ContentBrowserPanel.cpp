@@ -1,17 +1,18 @@
 #include "ContentBrowserPanel.h"
-#include "Kans3D/ImGui/EditorTheme.h"
+#include <imgui_internal.h>
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <fstream>
-#include <imgui_internal.h>
 #include "Kans3D/Asset/Importer/ImporterRegistry.h"
-#include "KansEditorCore/EditorResources.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
+#include "Kans3D/ImGui/EditorTheme.h"
+#include "KansEditorCore/Audio/AudioEditing.h"
+#include "KansEditorCore/EditorResources.h"
 #include "UI/EditorIcons.h"
-#include "UI/Widgets.h"
 #include "UI/PropertyGrid.h"
+#include "UI/Widgets.h"
 
 namespace Kans
 {
@@ -592,6 +593,9 @@ namespace Kans
                 m_CreateUI(m_Current), Refresh();
             if (ImGui::MenuItem(Label(ICON_FA_FILM, "Timeline").c_str(), nullptr, false, bool(m_CreateTimeline)))
                 m_CreateTimeline(m_Current), Refresh();
+            if (ImGui::MenuItem(
+                    Label(ICON_FA_LAYER_GROUP, "Audio Event").c_str(), nullptr, false, bool(m_CreateAudioEvent)))
+                m_CreateAudioEvent(m_Current);
             if (ImGui::MenuItem(
                     Label(ICON_FA_ATOM, "Physics Material").c_str(), nullptr, false, bool(m_CreatePhysicsMaterial)))
                 m_CreatePhysicsMaterial(m_Current), Refresh();
@@ -1737,6 +1741,17 @@ namespace Kans
                     ToggleFavorite(targets.front());
                 ImGui::Separator();
             }
+            // Imported audio files: one AudioEvent playing them all.
+            if (m_CreateAudioEventFromClips && !folder &&
+                std::all_of(targets.begin(), targets.end(), [this](const fs::path& target) {
+                    const auto* status = StatusOf(target);
+                    return AudioEditing::IsAudioFile(target) && status && status->Products;
+                }))
+            {
+                if (ImGui::MenuItem(Label(ICON_FA_LAYER_GROUP, "Create Audio Event from selection").c_str()))
+                    m_CreateAudioEventFromClips(targets), Refresh();
+                ImGui::Separator();
+            }
             if (ImGui::MenuItem(Label(ICON_FA_PEN, "Rename").c_str(), "F2", false, single))
                 StartRename(targets.front());
             if (ImGui::MenuItem(Label(ICON_FA_CLONE, "Duplicate").c_str(), "Ctrl+D"))
@@ -1788,6 +1803,8 @@ namespace Kans
                     m_CreateUI(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_FILM, "Timeline").c_str()) && m_CreateTimeline)
                     m_CreateTimeline(folder), Refresh();
+                if (ImGui::MenuItem(Label(ICON_FA_LAYER_GROUP, "Audio Event").c_str()) && m_CreateAudioEvent)
+                    m_CreateAudioEvent(folder);
                 if (ImGui::MenuItem(Label(ICON_FA_ATOM, "Physics Material").c_str()) && m_CreatePhysicsMaterial)
                     m_CreatePhysicsMaterial(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_WAND_MAGIC_SPARKLES, "VFX System").c_str()) && m_CreateVfxSystem)

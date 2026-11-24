@@ -95,6 +95,7 @@ namespace Kans
         });
         m_TimelinePanel.SetViewThroughCamera([this](bool show) { m_ViewportPanel.SetPreviewSceneCamera(show); });
         m_TimelinePanel.SetPlayModeQuery([this] { return m_Play.IsActive(); }); // Follows the running player.
+        m_AudioEventPanel.SetPlayModeQuery([this] { return m_Play.IsActive(); }); // No audition in Play.
         m_Panels.Register(
             spec(
                 PanelID::UIDesigner, "UI Designer", ICON_FA_DESKTOP, PanelCategory::Assets, PanelDock::Floating, false),
@@ -133,6 +134,13 @@ namespace Kans
         m_Panels.Register(
             spec(PanelID::AudioMixer, "Audio Mixer", ICON_FA_SLIDERS, PanelCategory::Assets, PanelDock::Bottom, false),
             [this] { m_AudioMixerPanel.Draw(); });
+        m_Panels.Register(spec(PanelID::AudioEvent,
+                               "Audio Event",
+                               ICON_FA_LAYER_GROUP,
+                               PanelCategory::Assets,
+                               PanelDock::Right,
+                               false),
+                          [this] { m_AudioEventPanel.Draw(); });
     }
 
     void EditorLayer::OpenImporter(const std::filesystem::path& file)
@@ -432,14 +440,16 @@ namespace Kans
         if (io.WantTextInput)
             return;
         // The material editor has its own undo, redo and save while it has focus.
-        const bool material =
-            m_MaterialEditorPanel.HasFocus() || m_RenderTexturePanel.HasFocus() ||
-            m_MaterialParameterCollectionPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() ||
-            m_AudioMixerPanel.HasFocus() || m_TimelinePanel.HasFocus() || m_RagdollEditor.HasFocus() ||
-            std::any_of(
-                m_VfxModuleEditors.begin(), m_VfxModuleEditors.end(), [](const auto& e) { return e->HasFocus(); }) ||
-            std::any_of(
-                m_VfxSystemEditors.begin(), m_VfxSystemEditors.end(), [](const auto& e) { return e->HasFocus(); });
+        const bool material = m_MaterialEditorPanel.HasFocus() || m_RenderTexturePanel.HasFocus() ||
+                              m_MaterialParameterCollectionPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() ||
+                              m_AudioMixerPanel.HasFocus() || m_AudioEventPanel.HasFocus() ||
+                              m_TimelinePanel.HasFocus() || m_RagdollEditor.HasFocus() ||
+                              std::any_of(m_VfxModuleEditors.begin(),
+                                          m_VfxModuleEditors.end(),
+                                          [](const auto& e) { return e->HasFocus(); }) ||
+                              std::any_of(m_VfxSystemEditors.begin(), m_VfxSystemEditors.end(), [](const auto& e) {
+                                  return e->HasFocus();
+                              });
         // Cloth painting has its own stroke undo and saves the .cloth file.
         if (io.KeyCtrl && m_ViewportPanel.IsPaintingCloth() && !material && m_ActiveScene)
         {
@@ -507,6 +517,7 @@ namespace Kans
             return;
         m_TimelinePanel.StopPreview(); // Play starts from the scene as saved, not a previewed frame.
         m_AudioPreview.Stop();         // The scene's own sources take over.
+        m_AudioEventPanel.StopPreview();
         m_VideoPreview.End();          // Before the runtime starts: the players start over from their clock.
         if (!m_Play.IsActive())
         {
@@ -529,6 +540,7 @@ namespace Kans
             return;
         m_TimelinePanel.StopPreview();
         m_AudioPreview.Stop();
+        m_AudioEventPanel.StopPreview();
         m_VideoPreview.End();
         FinishClothPaint();
         SecondaryMotionEditing::SetPreview(*m_ActiveScene, false);
@@ -1158,24 +1170,13 @@ namespace Kans
         {
             const auto timeline = TimelineAudioEditing::CombineStats(TimelineAudioEditing::SceneStats(*m_ActiveScene),
                                                                      m_TimelinePanel.GetPreviewAudioStats());
-            if (PropertyGrid::BeginCard("Audio", ICON_FA_VOLUME_HIGH, "Audio"))
-            {
-                PropertyGrid::Begin("Audio");
-                const auto* engine = AudioSystem::Get();
-                PropertyGrid::Text("Engine",
-                                   engine && engine->IsInitialized() ?
-                                       std::to_string(engine->GetSampleRate()) + " Hz, " +
-                                           std::to_string(engine->GetChannels()) + " channels" :
-                                       std::string("unavailable"),
-                                   !(engine && engine->IsInitialized()));
-                PropertyGrid::Text("Timeline voices", count(timeline.ActiveVoices));
-                char drift[32];
-                std::snprintf(
-                    drift, sizeof(drift), "%+.1f ms", TimelineAudioEditing::Milliseconds(timeline.DriftSeconds));
-                PropertyGrid::Text("Timeline drift", timeline.ActiveVoices ? drift : "-", !timeline.ActiveVoices);
-                PropertyGrid::End();
-            }
-            PropertyGrid::EndCard();
+            ComponentEditors::AudioStatsInput audio;
+            audio.Engine               = AudioSystem::Get();
+            audio.TimelineVoices       = timeline.ActiveVoices;
+            audio.TimelineDriftSeconds = timeline.DriftSeconds;
+            audio.Playing              = m_Play.IsActive();
+            audio.EventName            = [this](AssetID event) { return AudioEventName(event); };
+            ComponentEditors::DrawAudioStats(audio);
         }
 
         // Video: the scene's players (Play, and the Video Player card's edit-mode preview).

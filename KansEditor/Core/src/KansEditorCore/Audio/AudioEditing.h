@@ -19,6 +19,16 @@ namespace Kans::AudioEditing
     // The highest volume a source takes (4, about +12 dB).
     float MaximumDecibels();
 
+    // The Audio Source card's notes on the rows an Event takes over (null: the row is the source's own).
+    // Clip: the Event picks the clip. Bus and Priority: left at their defaults, the Event's apply.
+    struct EventHints
+    {
+        const char* Clip     = nullptr;
+        const char* Bus      = nullptr;
+        const char* Priority = nullptr;
+    };
+    EventHints EventHintsOf(const AudioSourceComponent& source);
+
     // Keeps edited values inside the ranges the scene serializer accepts, so every edit saves.
     void Validate(AudioSourceComponent& source);
 

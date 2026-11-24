@@ -1,11 +1,13 @@
 #include <algorithm>
 #include <cstdio>
 #include "Kans3D/Asset/Manager/AssetManager.h"
+#include "Kans3D/Audio/AudioEventPlayer.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Scene/Scene.h"
 #include "ComponentEditors.h"
 #include "KansEditorCore/Audio/AudioClipPreview.h"
 #include "KansEditorCore/Audio/AudioEditing.h"
+#include "KansEditorCore/Audio/AudioEventEditing.h"
 #include "KansEditorCore/Audio/AudioMixerEditing.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
@@ -93,63 +95,77 @@ namespace Kans::ComponentEditors
                 ImGui::TextDisabled("%s", Clock(*position).c_str());
             }
         }
-        // The bus a source plays through: a dropdown of the active layout's buses. A name the layout
-        // does not have is kept (it plays through Master) and shown in the warning colour.
-        void DrawBus(AudioSourceComponent& c, ComponentUI& ui)
-        {
-            const AudioEngine* engine = ui.GetScene() ? ui.GetScene()->GetAudioEngine() : nullptr;
-            if (!engine && ui.GetAudioPreview())
-                engine = ui.GetAudioPreview()->GetEngine();
-            static const AudioBusLayout fallback = AudioBusLayout::Default();
-            const auto& buses = engine && !engine->GetBuses().empty() ? engine->GetBuses() : fallback.Buses;
-            const bool  known =
-                std::any_of(buses.begin(), buses.end(), [&](const auto& bus) { return bus.Name == c.Bus; });
-            const bool modified = c.Bus != MasterAudioBus;
-            if (!PropertyGrid::Row("Bus",
-                                   known ? "The mixer bus this source plays through" :
-                                           "Not a bus of the active layout: the source plays through Master",
-                                   modified))
-                return;
-            ImGui::PushID("Bus");
-            if (!known)
-                ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().Warning);
-            char preview[160];
-            std::snprintf(preview,
-                          sizeof(preview),
-                          known ? "%s" : ICON_FA_TRIANGLE_EXCLAMATION " %s (missing)",
-                          c.Bus.empty() ? MasterAudioBus : c.Bus.c_str());
-            const bool open = ImGui::BeginCombo("##value", preview);
-            if (!known)
-                ImGui::PopStyleColor();
-            if (open)
-            {
-                for (const auto& entry : AudioMixerEditing::TreeOrder(AudioBusLayout {buses}))
-                {
-                    const auto& name = buses[entry.Index].Name;
-                    ImGui::Indent(EditorTheme::Px(10.0f) * float(entry.Depth) + 1.0f);
-                    if (ImGui::Selectable(name.c_str(), name == c.Bus))
-                        c.Bus = name;
-                    ImGui::Unindent(EditorTheme::Px(10.0f) * float(entry.Depth) + 1.0f);
-                }
-                ImGui::EndCombo();
-            }
-            if (PropertyGrid::RowReset(modified))
-                c.Bus = MasterAudioBus;
-            ImGui::PopID();
-        }
     } // namespace
+
+    bool AudioBusRow(const char* label, std::string& bus, const AudioEngine* engine, const char* inherited)
+    {
+        static const AudioBusLayout fallback = AudioBusLayout::Default();
+        const auto&                 buses = engine && !engine->GetBuses().empty() ? engine->GetBuses() : fallback.Buses;
+        const bool                  known =
+            std::any_of(buses.begin(), buses.end(), [&](const auto& definition) { return definition.Name == bus; });
+        const bool modified = bus != MasterAudioBus;
+        if (!PropertyGrid::Row(label,
+                               !known    ? "Not a bus of the active layout: the sound plays through Master" :
+                               inherited ? inherited :
+                                           "The mixer bus this sound plays through",
+                               modified))
+            return false;
+        ImGui::PushID(label);
+        if (!known)
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().Warning);
+        char preview[160];
+        std::snprintf(preview,
+                      sizeof(preview),
+                      !known    ? ICON_FA_TRIANGLE_EXCLAMATION " %s (missing)" :
+                      inherited ? "%s (from the event)" :
+                                  "%s",
+                      bus.empty() ? MasterAudioBus : bus.c_str());
+        const bool open = ImGui::BeginCombo("##value", preview);
+        if (!known)
+            ImGui::PopStyleColor();
+        bool changed = false;
+        if (open)
+        {
+            for (const auto& entry : AudioMixerEditing::TreeOrder(AudioBusLayout {buses}))
+            {
+                const auto& name = buses[entry.Index].Name;
+                ImGui::Indent(EditorTheme::Px(10.0f) * float(entry.Depth) + 1.0f);
+                if (ImGui::Selectable(name.c_str(), name == bus) && name != bus)
+                    bus = name, changed = true;
+                ImGui::Unindent(EditorTheme::Px(10.0f) * float(entry.Depth) + 1.0f);
+            }
+            ImGui::EndCombo();
+        }
+        if (PropertyGrid::RowReset(modified))
+            bus = MasterAudioBus, changed = true;
+        ImGui::PopID();
+        return changed;
+    }
 
     void DrawAudioSource(Entity entity, ComponentUI& ui)
     {
         static const AudioSourceComponent defaults;
         entity.PatchComponent<AudioSourceComponent>([&](AudioSourceComponent& c) {
-            // The groups keep this order; later phases add rows to them: the Event under Source (A2b),
-            // Priority under Playback (A2b), the attenuation asset under
-            // Spatial (A2c).
+            // The groups keep this order; a later phase adds the attenuation asset under Spatial (A2c).
+            const auto hints = AudioEditing::EventHintsOf(c);
             if (PropertyGrid::BeginGroup("Source"))
             {
+                // An Event picks the clip itself: the Clip row stays editable but dimmed.
+                if (hints.Clip)
+                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.45f);
                 ui.AssetPicker("Clip", AssetType::AudioClip, c.Clip);
-                Reserved("Event", "None", "AudioEvent assets (randomized clips) arrive in A2b.");
+                if (hints.Clip)
+                {
+                    ImGui::PopStyleVar();
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", hints.Clip);
+                }
+                ui.AssetPicker("Event", AssetType::AudioEvent, c.Event);
+                if (hints.Clip && PropertyGrid::Row(""))
+                {
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("%s", hints.Clip);
+                }
                 DrawPlayback(entity, c, ui);
                 if (const auto& error = c.GetLastError(); error && PropertyGrid::Row("Error"))
                 {
@@ -174,12 +190,37 @@ namespace Kans::ComponentEditors
                 PropertyGrid::Float("Pitch", c.Pitch, 0.01f, 0.01f, 4.0f, "%.2fx", &defaults.Pitch);
                 PropertyGrid::Checkbox("Loop", c.Loop, &defaults.Loop);
                 PropertyGrid::Checkbox("Play on start", c.PlayOnStart, &defaults.PlayOnStart);
-                Reserved("Priority", "Default", "Voice priority and limits arrive in A2b.");
+                const bool modified = c.Priority != defaults.Priority;
+                if (PropertyGrid::Row("Priority",
+                                      hints.Priority ? hints.Priority :
+                                                       "Which voices keep playing when too many sound at once (255 "
+                                                       "is highest)",
+                                      modified))
+                {
+                    ImGui::PushID("Priority");
+                    int priority = c.Priority;
+                    if (ImGui::SliderInt("##value",
+                                         &priority,
+                                         0,
+                                         255,
+                                         hints.Priority ? "%d (from the event)" : "%d",
+                                         ImGuiSliderFlags_AlwaysClamp))
+                        c.Priority = uint8_t(priority);
+                    if (PropertyGrid::RowReset(modified))
+                        c.Priority = defaults.Priority;
+                    ImGui::PopID();
+                }
+                PropertyGrid::InputText("Concurrency group", c.ConcurrencyGroup);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Sounds sharing a group are limited together (empty: none)");
                 PropertyGrid::EndGroup();
             }
             if (PropertyGrid::BeginGroup("Output"))
             {
-                DrawBus(c, ui);
+                const AudioEngine* engine = ui.GetScene() ? ui.GetScene()->GetAudioEngine() : nullptr;
+                if (!engine && ui.GetAudioPreview())
+                    engine = ui.GetAudioPreview()->GetEngine();
+                AudioBusRow("Bus", c.Bus, engine, hints.Bus);
                 if (!c.Spatial)
                     PropertyGrid::Float("Pan", c.Pan, 0.01f, -1.0f, 1.0f, "%.2f", &defaults.Pan);
                 PropertyGrid::EndGroup();
@@ -215,6 +256,47 @@ namespace Kans::ComponentEditors
             }
             AudioEditing::Validate(c);
         });
+    }
+
+    void DrawAudioStats(const AudioStatsInput& input)
+    {
+        if (PropertyGrid::BeginCard("Audio", ICON_FA_VOLUME_HIGH, "Audio"))
+        {
+            PropertyGrid::Begin("Audio");
+            const auto* engine = input.Engine && input.Engine->IsInitialized() ? input.Engine : nullptr;
+            PropertyGrid::Text("Engine",
+                               engine ? std::to_string(engine->GetSampleRate()) + " Hz, " +
+                                            std::to_string(engine->GetChannels()) + " channels" :
+                                        std::string("unavailable"),
+                               !engine);
+            if (engine)
+                for (const auto& [label, value] : AudioEventEditing::VoiceStatsRows(engine->GetVoiceStats()))
+                    PropertyGrid::Text(label.c_str(), value);
+            PropertyGrid::Text("Timeline voices", std::to_string(input.TimelineVoices));
+            char drift[32];
+            std::snprintf(drift, sizeof(drift), "%+.1f ms", input.TimelineDriftSeconds * 1000.0);
+            PropertyGrid::Text("Timeline drift", input.TimelineVoices ? drift : "-", !input.TimelineVoices);
+            PropertyGrid::End();
+            // Events triggered in Play, one row each.
+            if (engine && input.Playing && input.EventName)
+            {
+                const auto& player = engine->GetEventPlayer();
+                bool        any    = false;
+                for (const auto& event : player.GetTriggeredEvents())
+                {
+                    const auto name = input.EventName(event);
+                    if (name.empty())
+                        continue;
+                    if (!any && !PropertyGrid::BeginGroup("Events"))
+                        break;
+                    any = true;
+                    PropertyGrid::Text(name.c_str(), AudioEventEditing::EventStatsText(player.GetStats(event)));
+                }
+                if (any)
+                    PropertyGrid::EndGroup();
+            }
+        }
+        PropertyGrid::EndCard();
     }
 
     void DrawAudioListener(Entity entity, ComponentUI&)

@@ -47,6 +47,21 @@ namespace Kans::ComponentEditors
     // Audio (AudioComponentEditors.cpp).
     void DrawAudioSource(Entity entity, ComponentUI& ui);
     void DrawAudioListener(Entity entity, ComponentUI& ui);
+    // The mixer bus a sound plays through as a grid row: a dropdown of `engine`'s buses (the default
+    // layout without one). A name the layout lacks is kept and shown as missing; `inherited` (when not
+    // null) is the hint of a value another asset provides. True when changed.
+    bool AudioBusRow(const char* label, std::string& bus, const AudioEngine* engine, const char* inherited);
+    // The Stats panel's Audio card: the engine, its voices and concurrency groups, timeline audio and,
+    // in Play, the events triggered so far (by the name `eventName` gives; an empty name hides one).
+    struct AudioStatsInput
+    {
+        const AudioEngine*                  Engine               = nullptr;
+        size_t                              TimelineVoices       = 0;
+        double                              TimelineDriftSeconds = 0;
+        bool                                Playing              = false;
+        std::function<std::string(AssetID)> EventName;
+    };
+    void DrawAudioStats(const AudioStatsInput& input);
     // Video (VideoPlayerEditors.cpp): the Video Player card and the Stats panel's Video card.
     void DrawVideoPlayer(Entity entity, ComponentUI& ui);
     void DrawVideoStats(const VideoPlayerStats& stats);

@@ -198,6 +198,9 @@ namespace Kans
         m_PhysicsMaterialPanel.Bind(nullptr);
         m_AudioMixerPanel.Bind(nullptr, nullptr, {});
         m_AudioMixerPanel.SetProjectLayoutCallback({});
+        m_AudioEventPanel.Bind(nullptr, nullptr, nullptr);
+        m_AudioEventPanel.SetAssetChoices({});
+        m_AudioEventNames.clear();
         m_RenderTexturePanel.SetResources({});
         m_RenderTexturePanel.Bind(nullptr);
         m_MaterialParameterCollectionPanel.Bind(nullptr);
@@ -330,6 +333,10 @@ namespace Kans
         m_ActiveScene->SetAudioEngine(AudioSystem::Get());
         m_AudioPreview.Bind(AudioSystem::Get(), m_Assets.get());
         m_AudioPreview.Update();
+        // The AudioEvent editor's audition; it stops once its window is closed.
+        m_AudioEventPanel.Bind(m_AssetImports.get(), AudioSystem::Get(), m_Assets.get());
+        if (!m_Panels.IsOpen(PanelID::AudioEvent))
+            m_AudioEventPanel.StopPreview();
         m_TimelinePanel.SetAudioEngine(AudioSystem::Get()); // Its preview's audio tracks.
 
         // The scene only runs in play mode; IK and saved shape keys of models without an

@@ -134,6 +134,23 @@ namespace Kans
         }
     }
 
+    AudioEventPlayer::State& AudioEventPlayer::StateOf(AssetID event)
+    {
+        auto [it, inserted] = m_Events.try_emplace(event);
+        if (inserted)
+            it->second.Rng.seed(m_Seed);
+        return it->second;
+    }
+
+    namespace
+    {
+        bool ValidParams(const AudioEventParams& params)
+        {
+            return std::isfinite(params.Volume) && params.Volume >= 0 && std::isfinite(params.Pitch) &&
+                   params.Pitch > 0;
+        }
+    } // namespace
+
     AudioEventTriggerResult AudioEventPlayer::Trigger(AssetManager&           assets,
                                                       AudioClipRegistry&      clips,
                                                       AssetID                 event,
@@ -141,23 +158,45 @@ namespace Kans
     {
         if (!m_Engine.IsInitialized() || !event.IsValid())
             return {};
-        auto [it, inserted] = m_Events.try_emplace(event);
-        auto& state         = it->second;
-        if (inserted)
-            state.Rng.seed(m_Seed);
+        auto& state = StateOf(event);
         ++state.Stats.TotalTriggers;
-        if (!std::isfinite(params.Volume) || params.Volume < 0 || !std::isfinite(params.Pitch) || params.Pitch <= 0)
+        if (!ValidParams(params))
             return {};
         // Load by ID each time so a newly published product takes effect on this trigger.
         auto  loadedEvent = assets.Load<AudioEventAsset>(event);
         auto* asset       = std::get_if<Ref<const AudioEventAsset>>(&loadedEvent);
         if (!asset)
             return {};
-        if (state.Event != *asset)
+        return Play(state, assets, clips, event, *asset, params);
+    }
+
+    AudioEventTriggerResult AudioEventPlayer::Trigger(AssetManager&                     assets,
+                                                      AudioClipRegistry&                clips,
+                                                      AssetID                           event,
+                                                      const Ref<const AudioEventAsset>& asset,
+                                                      const AudioEventParams&           params)
+    {
+        if (!m_Engine.IsInitialized() || !event.IsValid() || !asset)
+            return {};
+        auto& state = StateOf(event);
+        ++state.Stats.TotalTriggers;
+        if (!ValidParams(params))
+            return {};
+        return Play(state, assets, clips, event, asset, params);
+    }
+
+    AudioEventTriggerResult AudioEventPlayer::Play(State&                            state,
+                                                   AssetManager&                     assets,
+                                                   AudioClipRegistry&                clips,
+                                                   AssetID                           event,
+                                                   const Ref<const AudioEventAsset>& asset,
+                                                   const AudioEventParams&           params)
+    {
+        if (state.Event != asset)
         {
-            state.Update(*asset);
+            state.Update(asset);
             if (state.Valid)
-                m_Engine.DefineEventGroup(event, (*asset)->GetData().InstanceLimit);
+                m_Engine.DefineEventGroup(event, asset->GetData().InstanceLimit);
         }
         if (!state.Valid)
             return {};
@@ -194,14 +233,10 @@ namespace Kans
         if (params.Position)
             emitter.Position = *params.Position;
 
-        bool rejected = false;
-        auto voice    = m_Engine.PlayRegisteredOneShot(clips,
-                                                       *clip,
-                                                       desc,
-                                                       spatial ? &emitter : nullptr,
-                                                       Sample(state.Rng, data.StartOffsetSeconds),
-                                                       &rejected,
-                                                       event);
+        bool         rejected = false;
+        const double offset   = Sample(state.Rng, data.StartOffsetSeconds);
+        auto         voice =
+            m_Engine.PlayRegisteredOneShot(clips, *clip, desc, spatial ? &emitter : nullptr, offset, &rejected, event);
         if (rejected)
         {
             ++state.Stats.LimitRejections;
@@ -211,8 +246,24 @@ namespace Kans
             return {};
         state.Accept(index);
         state.LastTrigger = m_Engine.GetClockFrames();
-        return {voice, AudioEventTriggerStatus::Started};
+        AudioEventTriggerResult result {voice, AudioEventTriggerStatus::Started};
+        result.Entry              = index;
+        result.VolumeDb           = float(volumeDb);
+        result.PitchSemitones     = float(pitchSemitones);
+        result.StartOffsetSeconds = offset;
+        return result;
     }
+
+    std::vector<AssetID> AudioEventPlayer::GetTriggeredEvents() const
+    {
+        std::vector<AssetID> events;
+        events.reserve(m_Events.size());
+        for (const auto& entry : m_Events)
+            events.push_back(entry.first);
+        return events;
+    }
+
+    void AudioEventPlayer::Forget(AssetID event) { m_Events.erase(event); }
 
     AudioEventStats AudioEventPlayer::GetStats(AssetID event) const
     {

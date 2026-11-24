@@ -17,6 +17,7 @@
 #include "Components/ComponentEditors.h"
 #include "EditorLayer.h"
 #include "KansEditorCore/Audio/AudioEditing.h"
+#include "KansEditorCore/Audio/AudioEventEditing.h"
 #include "KansEditorCore/Components/MaterialAssignment.h"
 #include "KansEditorCore/Launcher/LauncherModel.h"
 #include "KansEditorCore/Physics/PhysicsEditing.h"
@@ -151,6 +152,13 @@ namespace Kans
                 if (m_AudioMixerPanel.Open(path))
                     m_Panels.Open(PanelID::AudioMixer);
             }
+            else if (path.extension() == ".audioevent")
+            {
+                if (m_AudioEventPanel.Open(path))
+                    m_Panels.Open(PanelID::AudioEvent);
+                else
+                    Record(AssetError {AssetErrorCode::InvalidData, m_AudioEventPanel.GetStatus()});
+            }
             else if (path.extension() == ".vfxmodule")
                 OpenVfxModule(path);
             else if (path.extension() == ".vfxsystem" || path.extension() == ".vfxemitter")
@@ -188,6 +196,12 @@ namespace Kans
             out << EncodeTimelineNode(data);
             std::ofstream(UniqueFile(directory, "NewTimeline", ".timeline"), std::ios::binary) << out.c_str() << '\n';
         });
+        m_ContentBrowserPanel.SetCreateAudioEventCallback([this](const std::filesystem::path& directory) {
+            m_AudioEventPanel.OpenNew(directory);
+            m_Panels.Open(PanelID::AudioEvent);
+        });
+        m_ContentBrowserPanel.SetCreateAudioEventFromClipsCallback(
+            [this](const std::vector<std::filesystem::path>& files) { CreateAudioEventFromClips(files); });
         m_ContentBrowserPanel.SetCreateMaterialParameterCollectionCallback(
             [this](const std::filesystem::path& directory) {
                 const auto file = UniqueFile(directory, "NewMaterialParameters", ".matparams");
@@ -270,6 +284,11 @@ namespace Kans
         m_TimelinePanel.SetAssetChoices(choices);
         m_UIDesignerPanel.SetAssetChoices(choices);
         m_RagdollEditor.SetAssetChoices(choices);
+        m_AudioEventPanel.SetAssetChoices(choices);
+        m_AudioEventNames.clear();
+        for (const auto& choice : choices)
+            if (choice.Type == AssetType::AudioEvent)
+                m_AudioEventNames[choice.ID] = std::filesystem::u8path(choice.Name).stem().u8string();
         m_PropertiesPanel.SetAssetChoices(std::move(choices));
         if (m_Assets)
         {
@@ -341,12 +360,54 @@ namespace Kans
             else
                 choice.Name = id.GetSourceID().ToString();
             // Products other than a source's main Model are distinguished by LocalID; an audio file has one clip.
-            if (choice.Type != AssetType::Model && choice.Type != AssetType::AudioClip)
+            if (choice.Type != AssetType::Model && choice.Type != AssetType::AudioClip &&
+                choice.Type != AssetType::AudioEvent)
                 choice.Name += " #" + std::to_string(id.GetLocalID());
             choices.push_back(std::move(choice));
         }
         std::sort(choices.begin(), choices.end(), [](const auto& a, const auto& b) { return a.Name < b.Name; });
         return choices;
+    }
+
+    std::string EditorLayer::AudioEventName(AssetID event) const
+    {
+        const auto found = m_AudioEventNames.find(event);
+        return found == m_AudioEventNames.end() ? std::string() : found->second;
+    }
+
+    void EditorLayer::CreateAudioEventFromClips(const std::vector<std::filesystem::path>& files)
+    {
+        if (!m_AssetImports || files.empty())
+            return;
+        // Each file's published AudioClip, in the order selected.
+        const auto registry = m_AssetImports->GetRuntimeAssetRegistry();
+        if (!registry)
+            return;
+        const auto           choices = CollectAssetChoices(*registry);
+        std::vector<AssetID> clips;
+        for (const auto& file : files)
+        {
+            std::error_code error;
+            const auto      path = std::filesystem::weakly_canonical(file, error);
+            for (const auto& choice : choices)
+                if (choice.Type == AssetType::AudioClip && choice.SourcePath == path)
+                {
+                    clips.push_back(choice.ID);
+                    break;
+                }
+        }
+        if (clips.empty())
+            return Record(
+                AssetError {AssetErrorCode::NotFound, "Import the audio files before making an event of them"});
+        auto created = AudioEventEditing::CreateEventFile(
+            files.front().parent_path(), files.front().stem().u8string(), AudioEventEditing::FromClips(clips));
+        if (const auto* error = std::get_if<AssetError>(&created))
+            return Record(*error);
+        const auto file = std::get<std::filesystem::path>(created);
+        BuildSavedSource(m_AssetImports.get(), file);
+        if (m_AudioEventPanel.Open(file))
+            m_Panels.Open(PanelID::AudioEvent);
+        m_ContentBrowserPanel.Reveal(file);
     }
 
     AssetID EditorLayer::FindPublishedModel(SourceAssetID source) const

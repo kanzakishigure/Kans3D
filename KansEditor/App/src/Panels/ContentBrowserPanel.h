@@ -44,6 +44,13 @@ namespace Kans
         // "Create > UI" and "Create > Timeline" in a folder.
         void SetCreateUICallback(PathCallback callback) { m_CreateUI = std::move(callback); }
         void SetCreateTimelineCallback(PathCallback callback) { m_CreateTimeline = std::move(callback); }
+        // "Create > Audio Event" in a folder, and "Create Audio Event" of selected audio files.
+        void SetCreateAudioEventCallback(PathCallback callback) { m_CreateAudioEvent = std::move(callback); }
+        void
+        SetCreateAudioEventFromClipsCallback(std::function<void(const std::vector<std::filesystem::path>&)> callback)
+        {
+            m_CreateAudioEventFromClips = std::move(callback);
+        }
         void SetCreateMaterialParameterCollectionCallback(std::function<void(const std::filesystem::path&)> callback)
         {
             m_CreateMaterialParameterCollection = std::move(callback);
@@ -201,6 +208,8 @@ namespace Kans
         PathCallback m_OpenFile, m_CreateMaterial, m_Import, m_ImportSettings, m_ExtractMaterials;
         PathCallback m_CreateUI, m_CreateTimeline, m_CreatePhysicsMaterial, m_CreateRagdoll, m_CreateRenderTexture;
         PathCallback m_CreateMaterialParameterCollection;
+        PathCallback m_CreateAudioEvent;
+        std::function<void(const std::vector<std::filesystem::path>&)> m_CreateAudioEventFromClips;
         std::function<void(AssetID)> m_CreateRagdollFromSkeleton;
         PathCallback              m_CreateVfxModule, m_CreateVfxSystem, m_CreateVfxEmitter;
         MaterialThumbnailProvider m_MaterialThumbnail;

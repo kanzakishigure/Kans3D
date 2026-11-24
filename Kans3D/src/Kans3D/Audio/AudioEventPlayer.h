@@ -14,7 +14,18 @@ namespace Kans
     public:
         AudioEventTriggerResult
         Trigger(AssetManager& assets, AudioClipRegistry& clips, AssetID event, const AudioEventParams& params = {});
+        // Plays `asset` under the selection, cooldown, limit and statistics kept for `event`, without
+        // loading `event` (an editor preview of unsaved edits); its clips still load from `assets`.
+        AudioEventTriggerResult Trigger(AssetManager&                     assets,
+                                        AudioClipRegistry&                clips,
+                                        AssetID                           event,
+                                        const Ref<const AudioEventAsset>& asset,
+                                        const AudioEventParams&           params = {});
         AudioEventStats GetStats(AssetID event) const;
+        // The events triggered since the engine started (and not forgotten), in ID order.
+        std::vector<AssetID> GetTriggeredEvents() const;
+        // Drops the selection, cooldown and statistics kept for `event` (playing instances continue).
+        void Forget(AssetID event);
         // Reseed per-event RNGs for their next draw. Existing selection and cooldown state are preserved.
         void SetSeed(uint64_t seed);
 
@@ -22,6 +33,14 @@ namespace Kans
         friend class AudioEngine;
         explicit AudioEventPlayer(AudioEngine& engine);
         void Clear();
+        struct State;
+        State&                  StateOf(AssetID event);
+        AudioEventTriggerResult Play(State&                            state,
+                                     AssetManager&                     assets,
+                                     AudioClipRegistry&                clips,
+                                     AssetID                           event,
+                                     const Ref<const AudioEventAsset>& asset,
+                                     const AudioEventParams&           params);
 
         struct State
         {

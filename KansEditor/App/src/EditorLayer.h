@@ -25,6 +25,7 @@
 #include "KansEditorCore/ViewportClient.h"
 #include "Launcher/ProjectBrowser.h"
 #include "Panels/AnimatorGraphPanel.h"
+#include "Panels/AudioEventEditorPanel.h"
 #include "Panels/AudioMixerPanel.h"
 #include "Panels/ContentBrowserPanel.h"
 #include "Panels/FrameGraphPanel.h"
@@ -71,6 +72,7 @@ namespace Kans
         inline constexpr const char* RenderTexture   = "RenderTexture";
         inline constexpr const char* PhysicsMaterial = "PhysicsMaterial";
         inline constexpr const char* AudioMixer                   = "AudioMixer";
+        inline constexpr const char* AudioEvent                   = "AudioEvent";
     } // namespace PanelID
 
     class EditorLayer : public Kans::Layer
@@ -133,6 +135,10 @@ namespace Kans
         void                                     PollProjectThumbnail();
         std::variant<std::monostate, AssetError> RefreshProductAssets(Ref<const AssetRegistry> snapshot = {});
         std::vector<EditorAssetChoice>           CollectAssetChoices(const AssetRegistry& registry) const;
+        // The name the Stats panel shows for a published AudioEvent; empty for any other ID.
+        std::string AudioEventName(AssetID event) const;
+        // Content Browser: a new AudioEvent playing the selected audio files, opened in its editor.
+        void CreateAudioEventFromClips(const std::vector<std::filesystem::path>& files);
         // Adds a dropped model to the scene, importing it first if needed.
         // `parent` (may be null) receives the placed model entity; `position`
         // (world space) is where it goes, the parent's origin otherwise.
@@ -395,6 +401,8 @@ namespace Kans
         ProjectSettingsPanel m_ProjectSettingsPanel;
         PhysicsMaterialPanel m_PhysicsMaterialPanel;
         AudioMixerPanel                  m_AudioMixerPanel;
+        AudioEventEditorPanel                    m_AudioEventPanel;
+        std::unordered_map<AssetID, std::string> m_AudioEventNames; // Published AudioEvents by ID.
         RenderTexturePanel   m_RenderTexturePanel;
         MaterialParameterCollectionPanel m_MaterialParameterCollectionPanel;
         // Keys and text typed while playing with the viewport focused, for the game's UI.
