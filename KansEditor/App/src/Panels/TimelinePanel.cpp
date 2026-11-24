@@ -1655,13 +1655,13 @@ namespace Kans
                     draw->AddText({label.x + 1.0f, label.y + 1.0f}, Color(p.Panel, 0.9f), name.c_str());
                     draw->AddText(label, Color(p.Text), name.c_str());
                     draw->PopClipRect();
-                    const auto near = [&](ImVec2 at) {
+                    const auto isNearHandle = [&](ImVec2 at) {
                         return hovered && std::abs(io.MousePos.x - at.x) <= handle + 3.0f &&
                                std::abs(io.MousePos.y - at.y) <= handle + 3.0f;
                     };
-                    if (near(box.FadeIn))
+                    if (isNearHandle(box.FadeIn))
                         part = DragKind::FadeIn;
-                    else if (near(box.FadeOut))
+                    else if (isNearHandle(box.FadeOut))
                         part = DragKind::FadeOut;
                     if (part != DragKind::None && clicked)
                     {
