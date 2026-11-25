@@ -180,6 +180,12 @@ namespace Kans
                 Read(limit, "ReleaseSeconds", data.InstanceLimit.ReleaseSeconds);
                 data.InstanceLimit.Rule = ReadEnum(limit, "Rule", data.InstanceLimit.Rule, Rules);
             }
+            if (const auto asset = root["AttenuationAsset"])
+            {
+                data.AttenuationAsset = AssetID::FromString(asset.as<std::string>());
+                if (!data.AttenuationAsset.IsValid())
+                    return Invalid("Invalid AttenuationAsset ID");
+            }
             if (const auto attenuation = root["Attenuation"])
             {
                 data.Attenuation.Attenuation = ReadEnum(attenuation, "Model", data.Attenuation.Attenuation, Models);
@@ -216,6 +222,8 @@ namespace Kans
         limit["MaxCount"]           = data.InstanceLimit.MaxCount;
         limit["Rule"]               = Rules[int(data.InstanceLimit.Rule)];
         limit["ReleaseSeconds"]     = data.InstanceLimit.ReleaseSeconds;
+        if (data.AttenuationAsset.IsValid())
+            root["AttenuationAsset"] = data.AttenuationAsset.ToString();
         auto attenuation            = root["Attenuation"];
         attenuation["Model"]        = Models[int(data.Attenuation.Attenuation)];
         AttenuationFields(data.Attenuation, [&](const char* key, float value) { attenuation[key] = value; });

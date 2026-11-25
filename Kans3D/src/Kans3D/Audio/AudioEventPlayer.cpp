@@ -232,11 +232,29 @@ namespace Kans
         auto emitter          = params.Emitter.value_or(data.Attenuation);
         if (params.Position)
             emitter.Position = *params.Position;
+        if (params.EntityTransform)
+        {
+            emitter.Shape          = params.EntityShape;
+            emitter.ShapeTransform = *params.EntityTransform;
+            if (!params.Position)
+                emitter.Position = glm::vec3((*params.EntityTransform)[3]);
+            if (emitter.Shape.Type != AudioSourceShape::Point || params.AttenuationAsset.IsValid() ||
+                data.AttenuationAsset.IsValid())
+                emitter.Direction = -glm::vec3((*params.EntityTransform)[2]);
+        }
 
         bool         rejected = false;
         const double offset   = Sample(state.Rng, data.StartOffsetSeconds);
-        auto         voice =
-            m_Engine.PlayRegisteredOneShot(clips, *clip, desc, spatial ? &emitter : nullptr, offset, &rejected, event);
+        auto         voice    = m_Engine.PlayRegisteredOneShot(clips,
+                                                               *clip,
+                                                               desc,
+                                                               spatial ? &emitter : nullptr,
+                                                               offset,
+                                                               &rejected,
+                                                               event,
+                                                               &assets,
+                                                               data.AttenuationAsset,
+                                                               params.AttenuationAsset);
         if (rejected)
         {
             ++state.Stats.LimitRejections;

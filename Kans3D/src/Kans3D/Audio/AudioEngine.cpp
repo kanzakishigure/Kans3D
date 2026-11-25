@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include "Kans3D/Audio/AudioEngine.h"
+#include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Audio/AudioClipRegistry.h"
 #include "Kans3D/Audio/AudioEventPlayer.h"
 #include "Kans3D/Audio/AudioMusicPlayer.h"
@@ -20,6 +21,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <glm/common.hpp>
 #include <glm/geometric.hpp>
 
 namespace Kans
@@ -31,6 +33,84 @@ namespace Kans
         constexpr float RadiansPerDegree = 3.14159265358979323846f / 180.f;
         using MixClock         = std::chrono::steady_clock;
         static_assert(std::atomic<uint64_t>::is_always_lock_free);
+        static_assert(std::atomic<uint32_t>::is_always_lock_free);
+        constexpr size_t MaxOutputChannels = 8;
+
+        struct SpatialMix
+        {
+            std::array<float, MaxOutputChannels> Gains {1, 1, 1, 1, 1, 1, 1, 1};
+            float                                FilterCoefficient = 1;
+            bool                                 CustomPan         = false;
+            bool                                 operator==(const SpatialMix& other) const
+            {
+                return Gains == other.Gains && FilterCoefficient == other.FilterCoefficient &&
+                       CustomPan == other.CustomPan;
+            }
+        };
+
+        // One writer and one reader. Each owns a slot, and only the exchange slot
+        // changes hands. The mixer reads a complete set of targets once per block.
+        struct SpatialMixMailbox
+        {
+            static constexpr uint32_t Pending = 4;
+            std::array<SpatialMix, 3> Slots;
+            std::atomic<uint32_t>     Exchanged {2};
+            uint32_t                  WriteSlot = 0, ReadSlot = 1;
+            SpatialMix                Published;
+
+            void Publish(const SpatialMix& mix)
+            {
+                if (Published == mix)
+                    return;
+                Published        = mix;
+                Slots[WriteSlot] = mix;
+                WriteSlot        = Exchanged.exchange(WriteSlot | Pending, std::memory_order_acq_rel) & ~Pending;
+            }
+
+            bool Consume(SpatialMix& mix)
+            {
+                if (!(Exchanged.load(std::memory_order_acquire) & Pending))
+                    return false;
+                ReadSlot = Exchanged.exchange(ReadSlot, std::memory_order_acq_rel) & ~Pending;
+                mix      = Slots[ReadSlot];
+                return true;
+            }
+
+            void Reset()
+            {
+                Exchanged.store(2, std::memory_order_relaxed);
+                WriteSlot = 0;
+                ReadSlot  = 1;
+                Published = {};
+            }
+        };
+
+        float AirFilterCoefficient(float cutoff, uint32_t sampleRate)
+        {
+            if (cutoff <= 0)
+                return 1;
+            constexpr float pi = 3.14159265358979323846f;
+            // Exact digital -3 dB cutoff for y += coefficient * (x - y).
+            const float sine = std::sin(pi * std::min(cutoff / sampleRate, 0.5f));
+            return 2 * sine / (std::sqrt(1 + sine * sine) + sine);
+        }
+
+        float ConeGain(const glm::vec3&            direction,
+                       const glm::vec3&            relative,
+                       float                       distance,
+                       const AudioAttenuationCone& cone)
+        {
+            if (distance <= 0.001f || cone.InnerAngle >= 360)
+                return 1;
+            const float cosine = glm::dot(direction, relative) / distance;
+            const float inner  = std::cos(cone.InnerAngle * RadiansPerDegree * 0.5f);
+            const float outer  = std::cos(cone.OuterAngle * RadiansPerDegree * 0.5f);
+            if (cosine >= inner)
+                return 1;
+            if (cosine <= outer)
+                return cone.OuterGain;
+            return glm::mix(cone.OuterGain, 1.f, (cosine - outer) / (inner - outer));
+        }
 
         uint64_t AddFrames(uint64_t start, uint64_t count) { return start + std::min(NoFrame - start, count); }
 
@@ -409,6 +489,66 @@ namespace Kans
                 bool                  FractionalSeek = false;
                 uint64_t              ResumeAt       = NoFrame;
                 Transport             ResumeTransport;
+                SpatialMixMailbox                    SpatialMailbox;
+                SpatialMix                           SpatialCurrent, SpatialTarget;
+                std::array<float, MaxOutputChannels> AirHistory {};
+                uint32_t                             SpatialRamp    = 0;
+                float                                NativePanFloor = 0;
+                bool                                 HasMixed       = false;
+
+                void SetSpatialTarget()
+                {
+                    if (!SpatialMailbox.Consume(SpatialTarget))
+                        return;
+                    engineNode.spatializer.minSpatializationChannelGain = SpatialTarget.CustomPan ? 1 : NativePanFloor;
+                    if (HasMixed)
+                        SpatialRamp = std::max(1u, ma_engine_get_sample_rate(ma_sound_get_engine(this)) / 100);
+                    else
+                        SpatialCurrent = SpatialTarget;
+                }
+
+                void ApplySpatialMix(float* output, uint32_t frames, uint32_t channels)
+                {
+                    // The mixer leaves legacy PCM untouched, including the original miniaudio gainer.
+                    if (!SpatialRamp && SpatialCurrent == SpatialMix {})
+                        return;
+                    for (uint32_t frame = 0; frame < frames; ++frame)
+                    {
+                        if (SpatialRamp)
+                        {
+                            const float step = 1.f / SpatialRamp;
+                            SpatialCurrent.FilterCoefficient =
+                                glm::mix(SpatialCurrent.FilterCoefficient, SpatialTarget.FilterCoefficient, step);
+                            for (uint32_t ch = 0; ch < channels; ++ch)
+                            {
+                                auto&       gain   = SpatialCurrent.Gains[ch];
+                                const float target = SpatialTarget.Gains[ch];
+                                if (gain != target)
+                                    gain = std::sqrt(glm::mix(gain * gain, target * target, step));
+                            }
+                            if (--SpatialRamp == 0)
+                                SpatialCurrent = SpatialTarget;
+                        }
+                        const float coefficient = SpatialCurrent.FilterCoefficient;
+                        for (uint32_t ch = 0; ch < channels; ++ch)
+                        {
+                            auto& sample  = output[frame * channels + ch];
+                            auto& history = AirHistory[ch];
+                            history       = coefficient == 1 ? sample : glm::mix(history, sample, coefficient);
+                            sample        = history * SpatialCurrent.Gains[ch];
+                        }
+                    }
+                }
+
+                void ResetSpatialMix()
+                {
+                    SpatialMailbox.Reset();
+                    SpatialCurrent = SpatialTarget                      = {};
+                    AirHistory                                          = {};
+                    SpatialRamp                                         = 0;
+                    HasMixed                                            = false;
+                    engineNode.spatializer.minSpatializationChannelGain = NativePanFloor;
+                }
 
                 static void
                 Process(ma_node* node, const float** in, ma_uint32* inCount, float** out, ma_uint32* outCount)
@@ -440,12 +580,19 @@ namespace Kans
                             self.ResetResampler();
                         }
                     }
+                    if (voice.Desc.Spatial)
+                        self.SetSpatialTarget();
                     const auto requested = *outCount;
                     self.Original->onProcess(node, in, inCount, out, outCount);
                     if (*outCount < requested && voice.Source->Stream && !voice.Source->Offline &&
                         !ma_sound_at_end(&self))
                         voice.StreamDelay.fetch_add(requested - *outCount, std::memory_order_relaxed);
                     const auto channels = ma_node_get_output_channels(node, 0);
+                    if (voice.Desc.Spatial)
+                    {
+                        self.ApplySpatialMix(out[0], *outCount, channels);
+                        self.HasMixed |= *outCount != 0;
+                    }
                     if (self.ResumeRemaining || self.Envelope.Out || self.Envelope.In.From != 1 ||
                         self.Envelope.In.To != 1 || self.Envelope.User.From != 1 || self.Envelope.User.To != 1)
                         for (uint32_t i = 0; i < *outCount; ++i)
@@ -495,6 +642,13 @@ namespace Kans
             Fades                    Envelope;
             AudioSpatialParams           Spatial;
             float                        ConeInnerCos = -1, ConeOuterCos = -1;
+            AssetID                            EventAttenuationAsset, AttenuationID;
+            AssetManager*                      AttenuationAssets = nullptr;
+            std::weak_ptr<const int>           AttenuationLifetime;
+            std::weak_ptr<const AssetRegistry> AttenuationRegistry;
+            Ref<const AudioAttenuationAsset>   Attenuation;
+            bool                               AttenuationHasSpread = false;
+            std::optional<float>               SpatialAudibility;
             AudioClipRegistry*           OneShotRegistry = nullptr;
             AssetID                      OneShotClip, EventGroup;
             uint64_t                     PlayOrder = 0, PinnedStart = NoFrame;
@@ -708,6 +862,8 @@ namespace Kans
         uint64_t                        LatencyFrames  = 0;
         bool ContextReady = false, ResourcesReady = false, Ready = false;
         AudioEngineConfig Config;
+        ma_spatializer                  PanProbe {};
+        bool                            PanProbeReady = false;
         std::unique_ptr<AudioBusGraph>  Buses;
         std::unordered_set<std::string> WarnedBusNames;
         AudioDSPRegistry                DSPRegistry;
@@ -810,6 +966,166 @@ namespace Kans
             }
         }
 
+        // Use the same channel map and directional gains as miniaudio. The probe is
+        // initialized once and only used on the main thread.
+        void SetCustomPan(SpatialMix&              mix,
+                          const ma_sound&          sound,
+                          ma_spatializer_listener& listener,
+                          float                    boundary,
+                          float                    spread)
+        {
+            ma_vec3f relative {};
+            ma_spatializer_get_relative_position_and_direction(
+                &sound.engineNode.spatializer, &listener, &relative, nullptr);
+            ma_spatializer_set_position(&PanProbe, relative.x, relative.y, relative.z);
+            std::array<float, MaxOutputChannels> input {}, output {};
+            ma_spatializer_process_pcm_frames(&PanProbe, &listener, output.data(), input.data(), 1);
+            const auto channels = Config.Channels;
+            float      power    = 0;
+            for (uint32_t ch = 0; ch < channels; ++ch)
+            {
+                const float directional = glm::mix(1.f, PanProbe.pNewChannelGainsOut[ch], boundary);
+                mix.Gains[ch]           = directional;
+                power += directional * directional;
+            }
+            // Interpolate channel power. The equal-gain endpoint has the same
+            // total power, and each channel retains its original source signal.
+            if (spread > 0)
+                for (uint32_t ch = 0; ch < channels; ++ch)
+                    mix.Gains[ch] = std::sqrt(glm::mix(mix.Gains[ch] * mix.Gains[ch], power / channels, spread));
+            mix.CustomPan = true;
+        }
+
+        void ApplySpatial(Voice& voice)
+        {
+            auto        params      = voice.Spatial;
+            auto*       sound       = &voice.Sound;
+            const auto* attenuation = voice.Attenuation ? &voice.Attenuation->GetData() : nullptr;
+            const bool  shaped      = params.Shape.Type != AudioSourceShape::Point;
+            const bool  enhanced    = shaped || attenuation;
+            auto        listenerIndex =
+                ma_engine_find_closest_listener(&Engine, params.Position.x, params.Position.y, params.Position.z);
+            if (shaped)
+            {
+                params.ShapeTransform[3] = glm::vec4(params.Position, 1);
+                float closest            = std::numeric_limits<float>::infinity();
+                for (uint32_t index = 0; index < Config.MaxListeners; ++index)
+                {
+                    const auto& listener = Listeners[index].Position;
+                    const auto  point    = ClosestAudioEmitterPoint(params.Shape, params.ShapeTransform, listener);
+                    const auto  delta    = listener - point;
+                    const float squared  = glm::dot(delta, delta);
+                    if (squared < closest)
+                    {
+                        closest         = squared;
+                        listenerIndex   = index;
+                        params.Position = point;
+                    }
+                }
+            }
+            ma_sound_set_positioning(sound, ma_positioning_absolute);
+            ma_sound_set_position(sound, params.Position.x, params.Position.y, params.Position.z);
+            ma_sound_set_pinned_listener_index(sound, listenerIndex);
+            ma_sound_set_velocity(sound, params.Velocity.x, params.Velocity.y, params.Velocity.z);
+            const auto direction = glm::dot(params.Direction, params.Direction) > 0 ? glm::normalize(params.Direction) :
+                                                                                      glm::vec3(0, 0, -1);
+            voice.ConeInnerCos   = std::cos(params.ConeInnerAngle * RadiansPerDegree * 0.5f);
+            voice.ConeOuterCos   = std::cos(params.ConeOuterAngle * RadiansPerDegree * 0.5f);
+            ma_sound_set_direction(sound, direction.x, direction.y, direction.z);
+
+            SpatialMix mix;
+            if (enhanced)
+            {
+                const auto relative = Listeners[listenerIndex].Position - params.Position;
+                const auto distance = glm::length(relative);
+                auto       sample =
+                    attenuation ?
+                        EvaluateAttenuation(*attenuation, distance) :
+                        AudioAttenuationSample {EvaluateAttenuationPreset(
+                            {params.Attenuation, params.MinDistance, params.MaxDistance, params.Rolloff}, distance)};
+                // Over the first quarter metre outside the shape, ease in both
+                // directional panning and cone gain. Interior points are centred.
+                const float                t        = shaped ? std::clamp(distance / 0.25f, 0.f, 1.f) : 1.f;
+                const float                boundary = t * t * (3 - 2 * t);
+                const AudioAttenuationCone fallback {
+                    params.ConeInnerAngle, params.ConeOuterAngle, params.ConeOuterGain};
+                const auto& cone        = attenuation && attenuation->Cone ? *attenuation->Cone : fallback;
+                const float angularGain = glm::mix(1.f, ConeGain(direction, relative, distance, cone), boundary);
+                voice.SpatialAudibility = sample.Gain * angularGain;
+
+                // Point presets use the native A1 distance model, including miniaudio's
+                // listener-space transform and gainer. Curves and shapes use world distance.
+                const auto* nativePreset =
+                    attenuation && !shaped ? std::get_if<AudioAttenuationPreset>(&attenuation->Volume) : nullptr;
+                if (nativePreset)
+                {
+                    params.Attenuation = nativePreset->Model;
+                    params.MinDistance = nativePreset->MinDistance;
+                    params.MaxDistance = nativePreset->MaxDistance;
+                    params.Rolloff     = nativePreset->Rolloff;
+                }
+                else
+                {
+                    params.Attenuation = AudioAttenuationModel::None; // Retain native panning and Doppler.
+                    params.MinDistance = params.MaxDistance = 1;
+                }
+                params.ConeInnerAngle = shaped ? 360 : cone.InnerAngle;
+                params.ConeOuterAngle = shaped ? 360 : cone.OuterAngle;
+                params.ConeOuterGain  = cone.OuterGain;
+                if (attenuation)
+                    params.DopplerFactor = attenuation->DopplerFactor;
+
+                if (shaped || (attenuation && voice.AttenuationHasSpread))
+                    SetCustomPan(mix, *sound, Engine.listeners[listenerIndex], boundary, sample.Spread);
+                const float postGain = (nativePreset ? 1.f : sample.Gain) * (shaped ? angularGain : 1.f);
+                for (auto& gain : mix.Gains)
+                    gain *= postGain;
+                mix.FilterCoefficient = AirFilterCoefficient(sample.CutoffHz, Config.SampleRate);
+            }
+            else
+                voice.SpatialAudibility.reset();
+
+            ma_attenuation_model model = ma_attenuation_model_inverse;
+            if (params.Attenuation == AudioAttenuationModel::Linear)
+                model = ma_attenuation_model_linear;
+            else if (params.Attenuation == AudioAttenuationModel::Exponential)
+                model = ma_attenuation_model_exponential;
+            ma_sound_set_attenuation_model(sound, model);
+            ma_sound_set_min_distance(sound, params.MinDistance);
+            ma_sound_set_max_distance(sound, params.MaxDistance);
+            ma_sound_set_rolloff(sound, params.Attenuation == AudioAttenuationModel::None ? 0.f : params.Rolloff);
+            ma_sound_set_doppler_factor(sound, params.DopplerFactor);
+            ma_sound_set_cone(sound,
+                              params.ConeInnerAngle * RadiansPerDegree,
+                              params.ConeOuterAngle * RadiansPerDegree,
+                              params.ConeOuterGain);
+            sound->SpatialMailbox.Publish(mix);
+        }
+
+        bool RefreshAttenuation(Voice& voice)
+        {
+            if (!voice.AttenuationAssets || voice.AttenuationLifetime.expired())
+                return false;
+            const auto registry = voice.AttenuationAssets->GetRegistry();
+            if (registry == voice.AttenuationRegistry.lock())
+                return false;
+            voice.AttenuationRegistry = registry;
+            auto        loaded        = voice.AttenuationAssets->Load<AudioAttenuationAsset>(voice.AttenuationID);
+            const auto* asset         = std::get_if<Ref<const AudioAttenuationAsset>>(&loaded);
+            auto        next          = asset ? *asset : nullptr;
+            if (voice.Attenuation == next)
+                return false;
+            voice.Attenuation          = std::move(next);
+            voice.AttenuationHasSpread = false;
+            if (voice.Attenuation)
+            {
+                const auto& curve = voice.Attenuation->GetData().Spread;
+                voice.AttenuationHasSpread =
+                    std::any_of(curve.begin(), curve.end(), [](const auto& key) { return key.Value > 0; });
+            }
+            return true;
+        }
+
         float Audibility(const Voice& voice, uint64_t clock)
         {
             const float gain = voice.Desc.Volume * voice.Envelope.Gain(clock) * Buses->AudibilityGain(voice.Desc.Bus) *
@@ -818,6 +1134,8 @@ namespace Kans
                 return 0;
             if (!voice.Desc.Spatial || gain == 0)
                 return gain;
+            if (voice.SpatialAudibility)
+                return gain * *voice.SpatialAudibility;
             const auto& spatial  = voice.Spatial;
             auto        relative = Listeners[0].Position - spatial.Position;
             auto        squared  = glm::dot(relative, relative);
@@ -833,28 +1151,31 @@ namespace Kans
             }
             const float distance    = std::sqrt(squared);
             float       attenuation = 1;
-            const auto  min = spatial.MinDistance, max = spatial.MaxDistance;
-            if (min < max)
+            const auto  minDistance = spatial.MinDistance, maxDistance = spatial.MaxDistance;
+            if (minDistance < maxDistance)
             {
-                const auto d = std::clamp(distance, min, max);
+                const auto d = std::clamp(distance, minDistance, maxDistance);
                 switch (spatial.Attenuation)
                 {
                     case AudioAttenuationModel::None:
                         break;
                     case AudioAttenuationModel::Inverse:
-                        attenuation = min / (min + spatial.Rolloff * (d - min));
+                        attenuation = minDistance / (minDistance + spatial.Rolloff * (d - minDistance));
                         break;
                     case AudioAttenuationModel::Linear:
-                        attenuation = 1 - spatial.Rolloff * (d - min) / (max - min);
+                        attenuation = 1 - spatial.Rolloff * (d - minDistance) / (maxDistance - minDistance);
                         break;
                     case AudioAttenuationModel::Exponential:
-                        attenuation = std::pow(d / min, -spatial.Rolloff);
+                        attenuation = std::pow(d / minDistance, -spatial.Rolloff);
                         break;
                 }
             }
             if (distance > 0.001f && spatial.ConeInnerAngle < 360)
             {
-                const auto dot = glm::dot(spatial.Direction, relative) / distance;
+                const auto direction = glm::dot(spatial.Direction, spatial.Direction) > 0 ?
+                                           glm::normalize(spatial.Direction) :
+                                           glm::vec3(0, 0, -1);
+                const auto dot       = glm::dot(direction, relative) / distance;
                 if (dot <= voice.ConeOuterCos)
                     attenuation *= spatial.ConeOuterGain;
                 else if (dot < voice.ConeInnerCos)
@@ -1071,6 +1392,18 @@ namespace Kans
             return Error("Audio engine init", result);
         }
         p.Ready = true;
+        auto probeConfig          = ma_spatializer_config_init(config.Channels, config.Channels);
+        probeConfig.positioning   = ma_positioning_relative;
+        probeConfig.rolloff       = 0;
+        probeConfig.dopplerFactor = 0;
+        probeConfig.pChannelMapIn = p.Engine.listeners[0].config.pChannelMapOut;
+        result                    = ma_spatializer_init(&probeConfig, nullptr, &p.PanProbe);
+        if (result != MA_SUCCESS)
+        {
+            Shutdown();
+            return Error("Audio spatial probe init", result);
+        }
+        p.PanProbeReady = true;
         if (auto error = ApplyBusLayout(AudioBusLayout::Default()))
         {
             Shutdown();
@@ -1107,6 +1440,11 @@ namespace Kans
         p.Buses.reset();
         p.WarnedBusNames.clear();
         p.WarnedDSPNames.clear();
+        if (p.PanProbeReady)
+        {
+            ma_spatializer_uninit(&p.PanProbe, nullptr);
+            p.PanProbeReady = false;
+        }
         if (p.Ready)
             ma_engine_uninit(&p.Engine);
         p.Ready = false;
@@ -1252,6 +1590,8 @@ namespace Kans
                 DestroyVoice({i, slot.Generation});
                 continue;
             }
+            if (p.RefreshAttenuation(voice))
+                p.ApplySpatial(voice);
             ++p.Stats.AllocatedVoices;
             if (!voice.Active(now))
             {
@@ -1768,6 +2108,11 @@ namespace Kans
             voice->PendingSeek.store(NoFrame);
             voice->Envelope   = {};
             auto& node        = voice->Sound;
+            node.ResetSpatialMix();
+            voice->EventAttenuationAsset = voice->AttenuationID = {};
+            voice->AttenuationAssets                            = nullptr;
+            voice->AttenuationLifetime.reset();
+            voice->AttenuationRegistry.reset();
             node.atEnd        = MA_FALSE;
             node.seekTarget   = NoFrame;
             node.Envelope     = {};
@@ -1822,6 +2167,7 @@ namespace Kans
             voice->Initialized                 = true;
             auto& node                         = voice->Sound;
             node.Owner                         = voice.get();
+            node.NativePanFloor                = node.engineNode.spatializer.minSpatializationChannelGain;
             node.Original                      = node.engineNode.baseNode.vtable;
             static const ma_node_vtable vtable = {Impl::Voice::Node::Process, nullptr, 0, 1, 0};
             node.engineNode.baseNode.vtable    = &vtable;
@@ -1872,7 +2218,10 @@ namespace Kans
                                                         const AudioSpatialParams*                    spatial,
                                                         double                                       startOffsetSeconds,
                                                         bool*                                        rejectedByLimit,
-                                                        AssetID                                      eventGroup)
+                                                        AssetID                                      eventGroup,
+                                                        AssetManager*                                assets,
+                                                        AssetID                                      eventAttenuation,
+                                                        AssetID attenuationOverride)
     {
         const auto sound = registry.Acquire(*this, clip);
         if (!sound)
@@ -1893,7 +2242,11 @@ namespace Kans
         voice->OneShotClip     = clip->assetID;
         voice->EventGroup      = eventGroup;
         if (spatial)
+        {
             SetSpatialParams(handle, *spatial);
+            voice->EventAttenuationAsset = eventAttenuation;
+            SetVoiceAttenuationAsset(handle, assets, attenuationOverride);
+        }
         if (desc.Loop)
             SetLoopRegion(handle, clip->GetData().LoopBegin, clip->GetData().LoopEnd);
         if (startOffsetSeconds > 0 && voice->Info.LengthFrames > 0)
@@ -1964,6 +2317,7 @@ namespace Kans
             if (auto sound = p.Sounds.find(voice->Desc.Sound); sound != p.Sounds.end())
             {
                 auto& pool = sound->second.OneShots[voice->Desc.Spatial];
+                voice->Attenuation.reset();
                 pool.push_back(std::move(voice));
                 ++p.PooledOneShots;
             }
@@ -2493,40 +2847,52 @@ namespace Kans
         auto* voice = m_Impl->Find(handle);
         if (!voice || !voice->Desc.Spatial)
             return;
-        auto* sound = &voice->Sound;
-        // Miniaudio's None bypasses panning, cones and Doppler as well as distance gain.
-        // Inverse with zero rolloff retains spatialization while disabling only distance attenuation.
-        ma_attenuation_model model = ma_attenuation_model_inverse;
-        switch (params.Attenuation)
-        {
-            case AudioAttenuationModel::None: break;
-            case AudioAttenuationModel::Inverse: model = ma_attenuation_model_inverse; break;
-            case AudioAttenuationModel::Linear: model = ma_attenuation_model_linear; break;
-            case AudioAttenuationModel::Exponential: model = ma_attenuation_model_exponential; break;
-        }
-        ma_sound_set_positioning(sound, ma_positioning_absolute);
-        ma_sound_set_position(sound, params.Position.x, params.Position.y, params.Position.z);
-        // 0.11.25's public pin setter rejects MA_LISTENER_INDEX_CLOSEST, so select through the public query.
-        ma_sound_set_pinned_listener_index(sound, ma_engine_find_closest_listener(&m_Impl->Engine,
-            params.Position.x, params.Position.y, params.Position.z));
-        ma_sound_set_velocity(sound, params.Velocity.x, params.Velocity.y, params.Velocity.z);
-        const auto direction = glm::dot(params.Direction, params.Direction) > 0 ?
-            glm::normalize(params.Direction) : glm::vec3(0, 0, -1);
-        voice->Spatial           = params;
-        voice->Spatial.Direction = direction;
-        voice->ConeInnerCos      = std::cos(params.ConeInnerAngle * RadiansPerDegree * 0.5f);
-        voice->ConeOuterCos      = std::cos(params.ConeOuterAngle * RadiansPerDegree * 0.5f);
-        ma_sound_set_direction(sound, direction.x, direction.y, direction.z);
-        ma_sound_set_attenuation_model(sound, model);
-        ma_sound_set_min_distance(sound, params.MinDistance);
-        ma_sound_set_max_distance(sound, params.MaxDistance);
-        ma_sound_set_rolloff(sound, params.Attenuation == AudioAttenuationModel::None ? 0.f : params.Rolloff);
-        ma_sound_set_doppler_factor(sound, params.DopplerFactor);
-        ma_sound_set_cone(sound,
-                          params.ConeInnerAngle * RadiansPerDegree,
-                          params.ConeOuterAngle * RadiansPerDegree,
-                          params.ConeOuterGain);
+        voice->Spatial = params;
+        m_Impl->RefreshAttenuation(*voice);
+        m_Impl->ApplySpatial(*voice);
     }
+
+    void AudioEngine::SetVoiceAttenuationAsset(AudioVoiceHandle handle, AssetManager* assets, AssetID id)
+    {
+        auto* voice = m_Impl->Find(handle);
+        if (!voice || !voice->Desc.Spatial)
+            return;
+        if (!id.IsValid())
+            id = voice->EventAttenuationAsset;
+        if (!id.IsValid())
+            assets = nullptr;
+        if (voice->AttenuationID == id && voice->AttenuationAssets == assets &&
+            (!assets || !voice->AttenuationLifetime.expired()))
+            return;
+        const bool hadAsset        = bool(voice->Attenuation);
+        voice->AttenuationID       = id;
+        voice->AttenuationAssets   = assets;
+        voice->AttenuationLifetime = assets ? assets->m_Lifetime : std::weak_ptr<const int> {};
+        voice->AttenuationRegistry.reset();
+        voice->Attenuation.reset();
+        const bool changed = m_Impl->RefreshAttenuation(*voice);
+        if (changed || hadAsset)
+            m_Impl->ApplySpatial(*voice);
+    }
+
+    void AudioEngine::SetVoiceEmitter(AudioVoiceHandle handle, const AudioSpatialParams& emitter)
+    {
+        auto* voice = m_Impl->Find(handle);
+        if (!voice || !voice->Desc.Spatial)
+            return;
+        if (voice->Spatial.Shape.Type == AudioSourceShape::Point && emitter.Shape.Type == AudioSourceShape::Point &&
+            !voice->AttenuationID.IsValid())
+            return; // Legacy point events snapshot their position at trigger time.
+        auto params           = voice->Spatial;
+        params.Position       = emitter.Position;
+        params.Velocity       = emitter.Velocity;
+        params.Shape          = emitter.Shape;
+        params.ShapeTransform = emitter.ShapeTransform;
+        if (params.Shape.Type != AudioSourceShape::Point || voice->AttenuationID.IsValid())
+            params.Direction = emitter.Direction;
+        SetSpatialParams(handle, params);
+    }
+
     void AudioEngine::SetListener(uint32_t index, const AudioListenerState& state)
     {
         if (!IsInitialized() || index >= m_Impl->Config.MaxListeners)
@@ -2541,6 +2907,11 @@ namespace Kans
         {
             if (slot.Value && slot.Value->Desc.Spatial)
             {
+                if (slot.Value->SpatialAudibility)
+                {
+                    m_Impl->ApplySpatial(*slot.Value);
+                    continue;
+                }
                 auto* sound = &slot.Value->Sound;
                 const auto& position = slot.Value->Spatial.Position;
                 ma_sound_set_pinned_listener_index(sound,

@@ -16,11 +16,13 @@ namespace Kans
             return ParseAudioEvent(std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
         }
 
-        ImportInputs ClipInputs(const AudioEventData& data)
+        ImportInputs EventInputs(const AudioEventData& data)
         {
             ImportInputs inputs;
             for (const auto& entry : data.Entries)
                 inputs.ProductsWithDependencies.emplace(entry.Clip, AssetType::AudioClip);
+            if (data.AttenuationAsset.IsValid())
+                inputs.ProductsWithDependencies.emplace(data.AttenuationAsset, AssetType::AudioAttenuation);
             return inputs;
         }
     } // namespace
@@ -33,7 +35,7 @@ namespace Kans
         auto data = Decode(std::get<std::vector<std::byte>>(read));
         if (auto* error = std::get_if<AssetError>(&data))
             return *error;
-        return ClipInputs(std::get<AudioEventData>(data));
+        return EventInputs(std::get<AudioEventData>(data));
     }
 
     std::variant<ImportResult, AssetError> AudioEventImporter::Import(const ImportContext& context) const
@@ -53,7 +55,7 @@ namespace Kans
         const auto  data  = Decode(bytes);
         if (const auto* error = std::get_if<AssetError>(&data))
             return *error;
-        const auto           inputs = ClipInputs(std::get<AudioEventData>(data));
+        const auto           inputs = EventInputs(std::get<AudioEventData>(data));
         std::vector<AssetID> dependencies;
         // The build coordinator resolves and type-checks the discovered products before staging.
         for (const auto& dependency : inputs.ProductsWithDependencies)

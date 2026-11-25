@@ -67,6 +67,7 @@ namespace Kans
             m_Registry.get<AudioSourceComponent>(handle).m_Runtime.reset();
         for (auto handle : m_Registry.view<AudioListenerComponent>())
             m_Registry.get<AudioListenerComponent>(handle).m_HasPosition = false;
+        m_EntityAudioEvents.clear();
         m_AudioClips.Clear();
         m_AudioRunning = m_AudioPaused = m_WarnedMultipleListeners = false;
         m_AudioListener                                            = 0;
@@ -130,7 +131,19 @@ namespace Kans
     {
         if (emitter.m_Scene != this || !m_Registry.valid(emitter.m_EntityHandle))
             return {};
-        return PlayEvent(glm::vec3(GetWorldTransform(emitter)[3]), event, std::move(params));
+        params.EntityTransform = GetWorldTransform(emitter);
+        params.Position        = glm::vec3((*params.EntityTransform)[3]);
+        if (emitter.HasComponent<AudioSourceComponent>())
+        {
+            const auto& source = emitter.GetComponent<AudioSourceComponent>();
+            params.EntityShape = source.Shape;
+            if (source.AttenuationAsset.IsValid())
+                params.AttenuationAsset = source.AttenuationAsset;
+        }
+        const auto result = PlayEvent(event, params);
+        if (result.Voice.IsValid())
+            m_EntityAudioEvents.push_back({result.Voice, emitter.m_EntityHandle, *params.Position});
+        return result;
     }
 
     AudioEventTriggerResult Scene::PlayEvent(glm::vec3 position, AssetID event, AudioEventParams params)
@@ -207,6 +220,7 @@ namespace Kans
                 params.Loop = true;
             params.Pan                      = c.Pan;
             params.Emitter                  = GetAudioSpatialParams(entity);
+            params.AttenuationAsset         = c.AttenuationAsset;
             params.FallbackConcurrencyGroup = c.ConcurrencyGroup;
             const auto result               = PlayEvent(c.Event, params);
             r.PendingStart                  = false;
@@ -306,6 +320,7 @@ namespace Kans
         r.PreviousPosition    = params.Position;
         r.HasPosition         = true;
         m_AudioEngine->SetSpatialParams(r.Voice, params);
+        m_AudioEngine->SetVoiceAttenuationAsset(r.Voice, m_PrefabAssets, c.AttenuationAsset);
     }
     AudioSpatialParams Scene::GetAudioSpatialParams(Entity entity) const
     {
@@ -316,6 +331,9 @@ namespace Kans
         if (entity.HasComponent<AudioSourceComponent>())
         {
             const auto& c         = entity.GetComponent<AudioSourceComponent>();
+            params.Shape          = c.Shape;
+            if (c.Shape.Type != AudioSourceShape::Point)
+                params.ShapeTransform = world;
             params.Attenuation    = c.Attenuation;
             params.MinDistance    = c.MinDistance;
             params.MaxDistance    = c.MaxDistance;
@@ -397,6 +415,18 @@ namespace Kans
         if (m_AudioPaused)
             return;
         UpdateAudioListener(seconds);
+        const auto expired =
+            std::remove_if(m_EntityAudioEvents.begin(), m_EntityAudioEvents.end(), [&](EntityAudioEvent& instance) {
+                if (!m_AudioEngine->IsVoiceValid(instance.Voice) || !m_Registry.valid(instance.Emitter))
+                    return true;
+                Entity emitter {instance.Emitter, this};
+                auto   spatial            = GetAudioSpatialParams(emitter);
+                spatial.Velocity          = Velocity(spatial.Position, instance.PreviousPosition, true, seconds);
+                instance.PreviousPosition = spatial.Position;
+                m_AudioEngine->SetVoiceEmitter(instance.Voice, spatial);
+                return false;
+            });
+        m_EntityAudioEvents.erase(expired, m_EntityAudioEvents.end());
         for (auto handle : m_Registry.view<AudioSourceComponent>())
         {
             auto& c = m_Registry.get<AudioSourceComponent>(handle);

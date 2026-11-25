@@ -44,6 +44,7 @@ namespace Kans::Browser
             {".kans", AssetKind::Scene},
             {".wav", AssetKind::Audio},
             {".audioevent", AssetKind::AudioEvent},
+            {".audioattenuation", AssetKind::AudioAttenuation},
             {".ogg", AssetKind::Audio},
             {".mp3", AssetKind::Audio},
             {".flac", AssetKind::Audio},
@@ -86,6 +87,8 @@ namespace Kans::Browser
                 return "Scene";
             case AssetKind::Audio:
                 return "Audio";
+            case AssetKind::AudioAttenuation:
+                return "Audio Attenuation";
             case AssetKind::AudioEvent:
                 return "Audio Event";
             case AssetKind::Font:

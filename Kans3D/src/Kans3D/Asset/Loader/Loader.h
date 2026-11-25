@@ -28,6 +28,14 @@ namespace Kans
         std::variant<Ref<VideoClipAsset>, AssetError> Load(const AssetLoadContext&) const;
     };
 
+    class AudioAttenuationAsset;
+    template<>
+    class Loader<AudioAttenuationAsset>
+    {
+    public:
+        std::variant<Ref<AudioAttenuationAsset>, AssetError> Load(const AssetLoadContext&) const;
+    };
+
     class AudioEventAsset;
     template<>
     class Loader<AudioEventAsset>

@@ -40,6 +40,7 @@ namespace Kans
         std::string                  Bus      = MasterAudioBus;
         uint8_t                      Priority = DefaultAudioVoicePriority;
         bool                         Loop = false, Spatial = false;
+        AssetID                      AttenuationAsset;
         AudioSpatialParams           Attenuation; // Only attenuation, cone and Doppler settings are authored.
     };
 
@@ -63,6 +64,9 @@ namespace Kans
         std::optional<std::string> Bus;
         // Used by component playback. Position, when supplied, takes precedence over Emitter.Position.
         std::optional<AudioSpatialParams> Emitter;
+        AssetID                           AttenuationAsset; // Per-trigger override.
+        std::optional<glm::mat4>          EntityTransform;
+        AudioEmitterShape                 EntityShape;
         std::optional<bool>               Spatial, Loop;
         float                             Pan = 0;
         std::string                       FallbackConcurrencyGroup;

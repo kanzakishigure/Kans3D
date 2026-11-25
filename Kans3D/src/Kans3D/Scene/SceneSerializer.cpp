@@ -95,6 +95,19 @@ namespace Kans
             v["Clip"] = c.Clip.ToString();
             if (c.Event.IsValid())
                 v["Event"] = c.Event.ToString();
+            if (c.AttenuationAsset.IsValid())
+                v["AttenuationAsset"] = c.AttenuationAsset.ToString();
+            if (!(c.Shape == AudioEmitterShape {}))
+            {
+                auto shape      = v["Shape"];
+                shape["Type"]   = int(c.Shape.Type);
+                shape["Radius"] = c.Shape.Radius;
+                auto extents    = shape["HalfExtents"];
+                extents.SetStyle(YAML::EmitterStyle::Flow);
+                for (int axis = 0; axis < 3; ++axis)
+                    extents.push_back(c.Shape.HalfExtents[axis]);
+                shape["Length"] = c.Shape.Length;
+            }
             v["Attenuation"]    = int(c.Attenuation);
             v["Volume"]         = c.Volume;
             v["Pitch"]          = c.Pitch;
@@ -123,6 +136,8 @@ namespace Kans
             Keys(node,
                  {"Clip",
                   "Event",
+                  "AttenuationAsset",
+                  "Shape",
                   "Bus",
                   "Priority",
                   "ConcurrencyGroup",
@@ -146,6 +161,28 @@ namespace Kans
                 c.Clip = AssetID::FromString(Text(node["Clip"]));
             if (node["Event"])
                 c.Event = AssetID::FromString(Text(node["Event"]));
+            if (node["AttenuationAsset"])
+                c.AttenuationAsset = AssetID::FromString(Text(node["AttenuationAsset"]));
+            if (const auto shape = node["Shape"])
+            {
+                Keys(shape, {"Type", "Radius", "HalfExtents", "Length"});
+                const int type = shape["Type"].as<int>();
+                Require(type >= 0 && type <= int(AudioSourceShape::Line), "Invalid audio source shape");
+                c.Shape.Type = static_cast<AudioSourceShape>(type);
+                if (shape["Radius"])
+                    c.Shape.Radius = Number(shape["Radius"]);
+                if (shape["Length"])
+                    c.Shape.Length = Number(shape["Length"]);
+                if (const auto extents = shape["HalfExtents"])
+                {
+                    Require(extents.IsSequence() && extents.size() == 3, "Expected three audio box half extents");
+                    for (int axis = 0; axis < 3; ++axis)
+                        c.Shape.HalfExtents[axis] = Number(extents[axis]);
+                }
+                Require(c.Shape.Radius >= 0 && c.Shape.Length >= 0 &&
+                            glm::all(glm::greaterThanEqual(c.Shape.HalfExtents, glm::vec3(0))),
+                        "Audio source shape dimensions must be nonnegative");
+            }
             if (node["Bus"])
                 c.Bus = Text(node["Bus"]);
             if (node["Priority"])

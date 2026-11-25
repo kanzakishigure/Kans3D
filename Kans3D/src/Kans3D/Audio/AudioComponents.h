@@ -10,7 +10,8 @@ namespace Kans
 
     struct AudioSourceComponent
     {
-        AssetID               Clip, Event;
+        AssetID               Clip, Event, AttenuationAsset;
+        AudioEmitterShape     Shape;
         std::string           Bus    = MasterAudioBus;
         uint8_t               Priority = DefaultAudioVoicePriority;
         std::string           ConcurrencyGroup;

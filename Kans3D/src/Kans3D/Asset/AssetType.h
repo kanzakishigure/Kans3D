@@ -41,5 +41,6 @@ namespace Kans
         AudioBusLayout              = 27,
         VideoClip                   = 28,
         AudioEvent                  = 29,
+        AudioAttenuation            = 30,
     };
 } // namespace Kans

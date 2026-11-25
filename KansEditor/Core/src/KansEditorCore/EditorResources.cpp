@@ -117,6 +117,7 @@ namespace Kans
             {".shader", &ShaderFileIcon},
             {".wav", &AudioFileIcon},
             {".audioevent", &AudioFileIcon},
+            {".audioattenuation", &AudioFileIcon},
             {".mp3", &AudioFileIcon},
             {".ogg", &AudioFileIcon},
             {".flac", &AudioFileIcon},

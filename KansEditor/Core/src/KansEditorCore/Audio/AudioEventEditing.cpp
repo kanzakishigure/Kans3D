@@ -118,7 +118,8 @@ namespace Kans::AudioEventEditing
                a.InstanceLimit.MaxCount == b.InstanceLimit.MaxCount && a.InstanceLimit.Rule == b.InstanceLimit.Rule &&
                a.InstanceLimit.ReleaseSeconds == b.InstanceLimit.ReleaseSeconds &&
                a.ConcurrencyGroup == b.ConcurrencyGroup && a.Bus == b.Bus && a.Priority == b.Priority &&
-               a.Loop == b.Loop && a.Spatial == b.Spatial && SameSpatial(a.Attenuation, b.Attenuation);
+               a.Loop == b.Loop && a.Spatial == b.Spatial && a.AttenuationAsset == b.AttenuationAsset &&
+               SameSpatial(a.Attenuation, b.Attenuation);
     }
 
     const char* SelectionName(AudioEventSelection selection)

@@ -33,6 +33,7 @@ namespace Kans::Browser
         Ragdoll,
         Video,
         AudioEvent,
+        AudioAttenuation,
         Other,
     };
     constexpr int AssetKindCount = int(AssetKind::Other) + 1;
@@ -98,9 +99,10 @@ namespace Kans::Browser
 
     struct Filter
     {
-        static_assert(AssetKindCount == 18, "Every kind starts shown: extend Kinds below.");
+        static_assert(AssetKindCount == 19, "Every kind starts shown: extend Kinds below.");
         std::string Text; // Case-insensitive substring of the name.
         bool        Kinds[AssetKindCount] = {true,
+                                             true,
                                              true,
                                              true,
                                              true,

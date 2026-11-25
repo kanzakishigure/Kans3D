@@ -187,6 +187,7 @@ namespace Kans
                     return p.TypeShader;
                 case Browser::AssetKind::Scene:
                     return p.TypeScene;
+                case Browser::AssetKind::AudioAttenuation:
                 case Browser::AssetKind::AudioEvent:
                 case Browser::AssetKind::Audio:
                     return p.TypeAudio;

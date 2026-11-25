@@ -10,9 +10,13 @@
 #include <vector>
 #include <glm/vec3.hpp>
 #include "Kans3D/Audio/AudioBusLayout.h"
+#include "AudioAttenuation.h"
+#include "AudioEmitterShape.h"
 
 namespace Kans
 {
+    class AssetManager;
+    class Scene;
     class AudioClipRegistry;
     class AudioClipAsset;
     class AudioEventPlayer;
@@ -98,13 +102,14 @@ namespace Kans
         uint64_t                        StolenThisFrame = 0, TotalStolen = 0, RejectedStarts = 0;
         std::map<std::string, uint32_t> GroupActiveCounts;
     };
-    enum class AudioAttenuationModel { None, Inverse, Linear, Exponential };
     struct AudioSpatialParams
     {
         glm::vec3 Position{0}, Velocity{0}, Direction{0, 0, -1};
         AudioAttenuationModel Attenuation = AudioAttenuationModel::Inverse;
         float MinDistance = 1, MaxDistance = 100, Rolloff = 1, DopplerFactor = 1;
         float ConeInnerAngle = 360, ConeOuterAngle = 360, ConeOuterGain = 0;
+        AudioEmitterShape     Shape;
+        glm::mat4 ShapeTransform {1}; // Linear part maps the local shape to world space. Position supplies translation.
     };
     struct AudioListenerState
     {
@@ -260,9 +265,13 @@ namespace Kans
         void FadeTo(AudioVoiceHandle handle, float targetVolume, float seconds);
         void SetLoopRegion(AudioVoiceHandle handle, uint64_t beginFrame, uint64_t endFrame);
         void SetSpatialParams(AudioVoiceHandle handle, const AudioSpatialParams& params);
+        // An empty ID restores an event's authored asset, or the voice's built-in settings.
+        void SetVoiceAttenuationAsset(AudioVoiceHandle handle, AssetManager* assets, AssetID id);
         void SetListener(uint32_t index, const AudioListenerState& state);
 
     private:
+        friend class Scene;
+        void SetVoiceEmitter(AudioVoiceHandle handle, const AudioSpatialParams& emitter);
         friend class AudioMusicPlayer;
         friend class AudioEventPlayer;
         void             DefineEventGroup(AssetID id, const AudioConcurrencyGroup& group);
@@ -274,7 +283,10 @@ namespace Kans
                                                const AudioSpatialParams*                    spatial,
                                                double                                       startOffsetSeconds,
                                                bool*                                        rejectedByLimit,
-                                               AssetID                                      eventGroup = {});
+                                               AssetID                                      eventGroup       = {},
+                                               AssetManager*                                assets           = nullptr,
+                                               AssetID                                      eventAttenuation = {},
+                                               AssetID                                      attenuationOverride = {});
         AudioVoiceHandle
         CreateVoice(const AudioVoiceDesc& desc, uint64_t loopStart, uint64_t loopEnd, bool oneShot = false);
         uint64_t                   StartVoice(AudioVoiceHandle        handle,

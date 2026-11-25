@@ -352,6 +352,13 @@ namespace Kans
         AudioSpatialParams GetAudioSpatialParams(Entity entity) const;
         AudioEngine*      m_AudioEngine = nullptr;
         AudioClipRegistry m_AudioClips;
+        struct EntityAudioEvent
+        {
+            AudioVoiceHandle Voice;
+            entt::entity     Emitter;
+            glm::vec3        PreviousPosition;
+        };
+        std::vector<EntityAudioEvent> m_EntityAudioEvents;
         bool              m_AudioRunning = false, m_AudioPaused = false, m_WarnedMultipleListeners = false;
         UIContext         m_UI;
         UIViewport        m_UIViewport;

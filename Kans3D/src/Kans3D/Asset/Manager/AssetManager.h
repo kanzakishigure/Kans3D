@@ -108,6 +108,9 @@ namespace Kans
         size_t GetResidentCount() const;
 
     private:
+        friend class AudioEngine;
+        // Audio voices may outlive the manager that supplied their immutable asset.
+        const std::shared_ptr<const int>                m_Lifetime = std::make_shared<const int>(0);
         void                                            NotifyChange(AssetID id); // m_Mutex held
         std::vector<std::weak_ptr<AssetChangeObserver>> m_Observers;
         struct Entry
