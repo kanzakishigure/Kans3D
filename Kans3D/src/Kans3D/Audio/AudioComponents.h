@@ -7,6 +7,7 @@ namespace Kans
 {
     class Scene;
     class AudioClipRegistry;
+    class AudioEventAsset;
 
     struct AudioSourceComponent
     {
@@ -45,7 +46,10 @@ namespace Kans
             AudioVoiceHandle          Voice;
             glm::vec3                 PreviousPosition {0};
             bool                      Acquired = false, HasPosition = false, PendingStart = false;
-            bool                      ResumeOnUnpause = false, Spatial = false;
+            bool                       Spatial = false;
+            std::optional<double>      PendingSeek;
+            Ref<const AudioEventAsset> EventAsset;
+            float                      EventVolume = 1, EventPitch = 1;
             std::optional<AssetError> LastError;
         };
         std::unique_ptr<Runtime> m_Runtime;

@@ -202,6 +202,8 @@ namespace Kans
             return {};
 
         const auto& data = state.Event->GetData();
+        if (m_Engine.IsBusPaused(params.Bus ? *params.Bus : data.Bus))
+            return {{}, AudioEventTriggerStatus::Paused};
         const auto  now  = m_Engine.GetClockFrames();
         if (state.LastTrigger && double(now - *state.LastTrigger) < (data.CooldownSeconds * m_Engine.GetSampleRate()))
         {
@@ -273,6 +275,8 @@ namespace Kans
         state.LastTrigger = m_Engine.GetClockFrames();
         AudioEventTriggerResult result {voice, AudioEventTriggerStatus::Started};
         result.Entry              = index;
+        result.ClipVolume         = (*clip)->GetData().Volume;
+        result.Asset              = asset;
         result.VolumeDb           = float(volumeDb);
         result.PitchSemitones     = float(pitchSemitones);
         result.StartOffsetSeconds = offset;

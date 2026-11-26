@@ -285,6 +285,8 @@ namespace Kans
         void              OnRuntimePause();
         void              OnRuntimeResume();
         // The engine must outlive its attachment to this scene.
+        void  SetTimeScale(float scale);
+        float GetTimeScale() const { return m_TimeScale; }
         void SetAudioEngine(AudioEngine* engine);
         void PlayAudioSource(Entity entity);
         void StopAudioSource(Entity entity);
@@ -309,6 +311,14 @@ namespace Kans
         std::optional<double> GetVideoFrameTime(Entity) const;
         std::string           GetVideoPlayerError(Entity) const;
         void PauseAudioSource(Entity entity);
+        bool                    UnPauseAudioSource(Entity entity);
+        void                    SetAudioSourceTime(Entity entity, double seconds);
+        double                  GetAudioSourceTime(Entity entity) const;
+        void                    SyncAudioSource(Entity entity);
+        AssetType               GetAudioAssetType(AssetID asset) const;
+        void                    WarnAudioOnce(const std::string& message);
+        void                    WarnInvalidAudioAsset(const std::string& asset);
+        AudioEventTriggerResult PlayAudioAsset(AssetID asset, const AudioEventParams& params, Entity emitter);
         bool IsAudioSourcePlaying(Entity entity) const;
         AudioEngine* GetAudioEngine() const { return m_AudioEngine; }
         // Between OnRuntimeStart and OnRuntimeStop (also while paused): sources play only then.
@@ -356,6 +366,8 @@ namespace Kans
         void              UpdateAudio(double seconds);
         void               UpdateAudioListeners(double seconds);
         void               UpdateAudioZones(AudioListenerState* listeners, size_t listenerCount);
+        AudioEventTriggerResult
+                           PlayEventAtEntity(Entity emitter, AssetID event, AudioEventParams params, bool followPoint);
         void              PrepareAudioSource(Entity entity);
         void              PushAudioSource(Entity entity, double seconds);
         AudioSpatialParams GetAudioSpatialParams(Entity entity) const;
@@ -366,6 +378,7 @@ namespace Kans
             AudioVoiceHandle Voice;
             entt::entity     Emitter;
             glm::vec3        PreviousPosition;
+            bool             FollowPoint = false;
         };
         std::vector<EntityAudioEvent> m_EntityAudioEvents;
         struct AudioZoneScratch
@@ -378,6 +391,8 @@ namespace Kans
         };
         std::vector<AudioZoneScratch> m_AudioZones;
         bool                          m_AudioRunning = false, m_AudioPaused = false;
+        float                           m_TimeScale = 1;
+        std::unordered_set<std::string> m_WarnedAudioMessages;
         UIContext         m_UI;
         UIViewport        m_UIViewport;
         UUID                          m_AudioCamera = 0;

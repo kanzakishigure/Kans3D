@@ -507,6 +507,18 @@ namespace Kans
                 ResetSecondaryMotion(root);
             }
             ApplyAnimatorPose(root, a.Player->GetPose(), seconds);
+            if (m_AudioRunning && m_AudioEngine)
+                for (const auto& occurrence : a.Events)
+                    if (const auto* event = occurrence.Event; event && event->Name == "Audio")
+                    {
+                        const auto id = AssetID::FromString(event->Payload);
+                        if (id.IsValid())
+                            PlayAudioAsset(id, {}, root);
+                        else
+                            WarnInvalidAudioAsset(
+                                (occurrence.Action.IsValid() ? occurrence.Action : occurrence.Clip).ToString() +
+                                " (invalid animation Audio payload)");
+                    }
             updatedPose = true;
         }
         if (externalClock != true)

@@ -350,6 +350,9 @@ namespace Kans
 
     void Scene::OnUpdate(TimeStep ts)
     {
+        const double realSeconds = ts.GetSeconds();
+        if (m_PhysicsWorld && !m_PhysicsSingleStep)
+            ts = TimeStep(ts.GetSeconds() * m_TimeScale);
         m_FrameTimeDelta = ts;
 
         BeginTransformConstraintFrame();
@@ -395,7 +398,7 @@ namespace Kans
         UpdateTransformConstraints(animationDelta);
         auto vfxCamera = GetCameraEntity();
         m_VfxWorld->Tick(float(ts), false, vfxCamera ? glm::vec3(GetWorldTransform(vfxCamera)[3]) : glm::vec3(0));
-        UpdateAudio(double(ts));
+        UpdateAudio(realSeconds);
     }
 
     void Scene::OnViewportResize(uint32_t width, uint32_t height)

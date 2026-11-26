@@ -20,7 +20,13 @@ namespace Kans
             return field ? field.as<T>() : fallback;
         }
 
-        constexpr unsigned BusLayoutVersion = 2;
+        constexpr unsigned BusLayoutVersion = 3;
+
+        bool IsBoolean(const YAML::Node& node)
+        {
+            bool value = false;
+            return YAML::convert<bool>::decode(node, value);
+        }
 
         template<size_t... I>
         auto EffectDefaults(std::index_sequence<I...>)
@@ -145,7 +151,7 @@ namespace Kans
                 return Invalid("Expected one audio bus layout mapping");
             const auto& root = documents.front();
             const auto  version = root["Version"].as<unsigned>();
-            if (version != 1 && version != BusLayoutVersion)
+            if (version < 1 || version > BusLayoutVersion)
                 return AssetError {AssetErrorCode::UnsupportedVersion, "Unsupported audio bus layout version"};
             const auto buses = root["Buses"];
             if (!buses.IsSequence())
@@ -161,6 +167,14 @@ namespace Kans
                 bus.Mute     = ReadOr<bool>(entry, "Mute", false);
                 bus.Solo     = ReadOr<bool>(entry, "Solo", false);
                 bus.Bypass   = ReadOr<bool>(entry, "Bypass", false);
+                if (version >= 3)
+                {
+                    for (const char* field : {"FollowTimeScale", "PausesWithGame"})
+                        if (const auto node = entry[field]; node && !IsBoolean(node))
+                            return Invalid("Expected a boolean " + std::string(field) + " for audio bus " + bus.Name);
+                    bus.FollowTimeScale = ReadOr<bool>(entry, "FollowTimeScale", false);
+                    bus.PausesWithGame  = ReadOr<bool>(entry, "PausesWithGame", true);
+                }
                 if (const auto sends = entry["Sends"])
                 {
                     if (!sends.IsSequence())
@@ -228,6 +242,8 @@ namespace Kans
         {
             out << YAML::BeginMap << YAML::Key << "Name" << YAML::Value << bus.Name << YAML::Key << "Parent"
                 << YAML::Value << bus.Parent;
+            out << YAML::Key << "FollowTimeScale" << YAML::Value << bus.FollowTimeScale << YAML::Key << "PausesWithGame"
+                << YAML::Value << bus.PausesWithGame;
             if (bus.PinToCenter)
                 out << YAML::Key << "PinToCenter" << YAML::Value << true;
             out << YAML::Key << "VolumeDb" << YAML::Value << bus.VolumeDb << YAML::Key << "Mute" << YAML::Value

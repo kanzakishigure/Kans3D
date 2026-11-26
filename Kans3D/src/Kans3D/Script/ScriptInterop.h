@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 
 #if defined(_WIN32)
@@ -9,8 +10,8 @@
 
 namespace Kans::Scripting
 {
-    // ABI 12 appends MouseState and LoadScene; native and managed tables must change together.
-    constexpr uint32_t ApiVersion = 12;
+    // Native and managed tables must change together.
+    constexpr uint32_t ApiVersion = 13;
     enum class ComponentType : uint32_t
     {
 #define KANS_COMPONENT(id, name) name = id,
@@ -90,7 +91,18 @@ namespace Kans::Scripting
         const PhysicsContactData* Contacts = nullptr;
         int32_t                   Count = 0, Phase = 0, Trigger = 0, Removed = 0;
     };
-    // ABI v7: UTF-8, NUL terminated strings; Cdecl callbacks; int32 booleans/status;
+    struct AudioCommandData
+    {
+        uint64_t    Source = 0, Local = 0, Engine = 0;
+        uint32_t    VoiceIndex = 0, VoiceGeneration = 0;
+        Vector3     Position {};
+        float       Volume = 1, Pitch = 1, Value = 0;
+        int32_t     Priority = -1, Flags = 0;
+        const char* Bus       = nullptr;
+        int32_t     BusLength = 0;
+    };
+    static_assert(offsetof(AudioCommandData, Bus) == 64);
+    // Cdecl callbacks; int32 booleans/status; UTF-8 strings unless specified otherwise.
     // no engine pointers cross this boundary. Handles are opaque uint64 values.
     struct NativeApi
     {
@@ -134,6 +146,7 @@ namespace Kans::Scripting
         int32_t(KANS_SCRIPT_CALL* MouseState)(int32_t, int32_t, Value*) = nullptr;
         // Queues a scene switch at the end of the frame: 1 queued, 0 not playing, -1 invalid path.
         int32_t(KANS_SCRIPT_CALL* LoadScene)(const char*) = nullptr;
+        int32_t(KANS_SCRIPT_CALL* AudioCommand)(uint64_t, int32_t, AudioCommandData*) = nullptr;
     };
     struct ManagedApi
     {
@@ -160,6 +173,6 @@ namespace Kans::Scripting
     static_assert(sizeof(Vector3) == 12);
     static_assert(sizeof(Value) == 24);
     static_assert(sizeof(UIEventData) == 64);
-    static_assert(sizeof(NativeApi) == 8 + 25 * sizeof(void*));
+    static_assert(sizeof(NativeApi) == 8 + 26 * sizeof(void*));
     static_assert(sizeof(ManagedApi) == 8 + 17 * sizeof(void*));
 } // namespace Kans::Scripting

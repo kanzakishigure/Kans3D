@@ -1059,18 +1059,6 @@ namespace Kans
             m_Audio->Pause();
     }
 
-    void TimelinePlayer::SetAudioPaused(bool paused)
-    {
-        m_AudioPausedByScene = paused;
-        if (paused)
-        {
-            if (m_Audio)
-                m_Audio->Pause();
-        }
-        else if (m_Playing)
-            UpdateAudio(true);
-    }
-
     AudioVoiceHandle TimelinePlayer::GetAudioVoice(size_t track) const
     {
         return m_Audio ? m_Audio->GetTrackVoice(track) : AudioVoiceHandle {};
@@ -1085,7 +1073,7 @@ namespace Kans
     {
         auto* engine    = m_Scene.GetAudioEngine();
         auto* component = Component();
-        if (!engine || !component || m_Source->GetData().Audio.empty() || m_AudioPausedByScene || m_Scene.m_AudioPaused)
+        if (!engine || !component || m_Source->GetData().Audio.empty() || m_Scene.m_AudioPaused)
             return;
         if (!m_Playing)
         {
@@ -1136,7 +1124,6 @@ namespace Kans
     void TimelinePlayer::Stop()
     {
         m_Audio.reset();
-        m_AudioPausedByScene = false;
         m_Playing = false;
         auto c    = Component();
         if (c && c->WrapMode == TimelineWrapMode::Reset)
@@ -1268,7 +1255,7 @@ namespace Kans
             }
             return evaluated;
         };
-        if (m_Audio && !m_AudioPausedByScene && c->Speed > 0 && c->ClockSource == TimelineClockSource::Audio)
+        if (m_Audio && !m_Scene.m_AudioPaused && c->Speed > 0 && c->ClockSource == TimelineClockSource::Audio)
             if (auto clock = m_Audio->GetClockTime(c->AudioClockTrack))
             {
                 const auto target = std::clamp(*clock, 0.0, length);

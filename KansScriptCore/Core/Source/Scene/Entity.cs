@@ -20,6 +20,7 @@ namespace Kans
         private ClothComponent m_Cloth;
         private SpringBoneComponent m_SpringBone;
         private MotionColliderComponent m_MotionCollider;
+        private AudioSource m_AudioSource;
 
         public Entity() : this(0) { }
         public Entity(ulong id)
@@ -40,6 +41,7 @@ namespace Kans
             m_Cloth = new ClothComponent { Entity = this };
             m_SpringBone = new SpringBoneComponent { Entity = this };
             m_MotionCollider = new MotionColliderComponent { Entity = this };
+            m_AudioSource = new AudioSource { Entity = this };
         }
 
         protected virtual void OnCreate() { }
@@ -134,6 +136,7 @@ namespace Kans
             if (typeof(T) == typeof(Cloth) || typeof(T) == typeof(ClothComponent)) return (T)(Component)m_Cloth;
             if (typeof(T) == typeof(SpringBone) || typeof(T) == typeof(SpringBoneComponent)) return (T)(Component)m_SpringBone;
             if (typeof(T) == typeof(MotionCollider) || typeof(T) == typeof(MotionColliderComponent)) return (T)(Component)m_MotionCollider;
+            if (typeof(T) == typeof(AudioSource)) return (T)(Component)m_AudioSource;
             return new T { Entity = this };
         }
         public unsafe T AddComponent<T>() where T : Component, new()
@@ -168,6 +171,7 @@ namespace Kans
             (typeof(T) == typeof(Cloth) || typeof(T) == typeof(ClothComponent)) ? ComponentIds.ClothComponent :
             (typeof(T) == typeof(SpringBone) || typeof(T) == typeof(SpringBoneComponent)) ? ComponentIds.SpringBoneComponent :
             (typeof(T) == typeof(MotionCollider) || typeof(T) == typeof(MotionColliderComponent)) ? ComponentIds.MotionColliderComponent :
+            typeof(T) == typeof(AudioSource) ? ComponentIds.AudioSourceComponent :
             typeof(T) == typeof(TextComponent) ? ComponentIds.TextComponent :
             typeof(T) == typeof(SpriteRendererComponent) ? ComponentIds.SpriteRendererComponent :
             typeof(T) == typeof(UIScreenComponent) ? ComponentIds.UIScreenComponent :

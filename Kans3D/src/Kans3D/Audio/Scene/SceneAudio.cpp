@@ -35,6 +35,15 @@ namespace Kans
         return entity.m_Scene == this && m_Registry.valid(entity.m_EntityHandle) &&
                m_Registry.all_of<AudioSourceComponent>(entity.m_EntityHandle);
     }
+    void Scene::SetTimeScale(float scale)
+    {
+        if (std::isfinite(scale) && scale >= 0)
+        {
+            m_TimeScale = scale;
+            if (m_AudioEngine && m_AudioRunning)
+                m_AudioEngine->SetTimeScale(scale);
+        }
+    }
     void Scene::SetAudioEngine(AudioEngine* engine)
     {
         if (m_AudioEngine == engine)
@@ -53,6 +62,8 @@ namespace Kans
         m_AudioRunning = true;
         if (!m_AudioEngine)
             return;
+        m_AudioEngine->SetTimeScale(m_TimeScale);
+        m_AudioEngine->SetGamePaused(m_AudioPaused);
         m_AudioZones.reserve(m_Registry.view<AudioReverbZoneComponent>().size());
         UpdateAudioListeners(0);
         for (auto handle : m_Registry.view<AudioSourceComponent>())
@@ -71,6 +82,11 @@ namespace Kans
         m_EntityAudioEvents.clear();
         m_AudioClips.Clear();
         m_AudioZones.clear();
+        if (m_AudioEngine && m_AudioRunning)
+        {
+            m_AudioEngine->SetGamePaused(false);
+            m_AudioEngine->SetTimeScale(1);
+        }
         m_AudioRunning = m_AudioPaused                             = false;
         m_AudioCamera                                              = 0;
         m_HasCameraAudioPosition                                   = false;
@@ -92,8 +108,7 @@ namespace Kans
             r.Engine         = m_AudioEngine;
             r.PendingStart   = true;
             r.LastError.reset();
-            if (!m_AudioPaused)
-                PrepareAudioSource(entity);
+            PrepareAudioSource(entity);
             return;
         }
         if (c.m_Runtime && m_AudioEngine->IsVoiceValid(c.m_Runtime->Voice) &&
@@ -101,20 +116,18 @@ namespace Kans
         {
             c.m_Runtime->HasPosition = false;
             PushAudioSource(entity, 0);
-            if (m_AudioPaused)
-                c.m_Runtime->ResumeOnUnpause = true;
-            else
-                m_AudioEngine->Play(c.m_Runtime->Voice);
+            m_AudioEngine->Play(c.m_Runtime->Voice);
             return;
         }
+        const auto seek = c.m_Runtime ? c.m_Runtime->PendingSeek : std::nullopt;
         c.m_Runtime     = std::make_unique<AudioSourceComponent::Runtime>();
         auto& r         = *c.m_Runtime;
         r.RequestedClip = c.Clip;
         r.Engine        = m_AudioEngine;
         r.Registry      = &m_AudioClips;
         r.PendingStart  = true;
-        if (!m_AudioPaused)
-            PrepareAudioSource(entity);
+        r.PendingSeek   = seek;
+        PrepareAudioSource(entity);
     }
     void Scene::StopAudioSource(Entity entity)
     {
@@ -124,12 +137,18 @@ namespace Kans
 
     AudioEventTriggerResult Scene::PlayEvent(AssetID event, const AudioEventParams& params)
     {
-        if (!m_AudioEngine || !m_AudioRunning || m_AudioPaused || !m_PrefabAssets)
+        if (!m_AudioEngine || !m_AudioRunning || !m_PrefabAssets)
             return {};
         return m_AudioEngine->GetEventPlayer().Trigger(*m_PrefabAssets, m_AudioClips, event, params);
     }
 
     AudioEventTriggerResult Scene::PlayEvent(Entity emitter, AssetID event, AudioEventParams params)
+    {
+        return PlayEventAtEntity(emitter, event, std::move(params), false);
+    }
+
+    AudioEventTriggerResult
+    Scene::PlayEventAtEntity(Entity emitter, AssetID event, AudioEventParams params, bool followPoint)
     {
         if (emitter.m_Scene != this || !m_Registry.valid(emitter.m_EntityHandle))
             return {};
@@ -148,7 +167,7 @@ namespace Kans
         }
         const auto result = PlayEvent(event, params);
         if (result.Voice.IsValid())
-            m_EntityAudioEvents.push_back({result.Voice, emitter.m_EntityHandle, *params.Position});
+            m_EntityAudioEvents.push_back({result.Voice, emitter.m_EntityHandle, *params.Position, followPoint});
         return result;
     }
 
@@ -160,7 +179,7 @@ namespace Kans
 
     AudioVoiceHandle Scene::PlayOneShot(AssetID clip, const AudioOneShotParams& params)
     {
-        if (!m_AudioEngine || !m_AudioRunning || m_AudioPaused || !m_PrefabAssets || !clip.IsValid())
+        if (!m_AudioEngine || !m_AudioRunning || !m_PrefabAssets || !clip.IsValid())
             return {};
         auto loaded = m_PrefabAssets->Request<AudioClipAsset>(clip);
         return loaded.IsReady() ? m_AudioEngine->PlayOneShot(m_AudioClips, loaded.Asset, params) : AudioVoiceHandle {};
@@ -178,6 +197,78 @@ namespace Kans
         params.Position = position;
         return PlayOneShot(clip, params);
     }
+    AssetType Scene::GetAudioAssetType(AssetID id) const
+    {
+        if (m_PrefabAssets && id.IsValid())
+            if (const auto registry = m_PrefabAssets->GetRegistry())
+                if (const auto asset = registry->Find(id, m_PrefabAssets->GetTarget()))
+                    return asset->Metadata.Type;
+        return AssetType::None;
+    }
+
+    void Scene::WarnInvalidAudioAsset(const std::string& asset) { WarnAudioOnce("cannot play asset " + asset); }
+
+    void Scene::WarnAudioOnce(const std::string& message)
+    {
+        if (m_WarnedAudioMessages.insert(message).second)
+            Warn(message);
+    }
+
+    AudioEventTriggerResult Scene::PlayAudioAsset(AssetID asset, const AudioEventParams& params, Entity emitter)
+    {
+        if (!m_AudioEngine || !m_AudioRunning)
+            return {};
+        if (emitter && (emitter.m_Scene != this || !m_Registry.valid(emitter.m_EntityHandle)))
+            return {};
+        switch (GetAudioAssetType(asset))
+        {
+            case AssetType::AudioEvent: {
+                const auto result =
+                    emitter ? PlayEventAtEntity(emitter, asset, params, true) : PlayEvent(asset, params);
+                if (result.Status == AudioEventTriggerStatus::Invalid ||
+                    result.Status == AudioEventTriggerStatus::MissingClip)
+                    WarnInvalidAudioAsset(asset.ToString());
+                return result;
+            }
+            case AssetType::AudioClip: {
+                AudioOneShotParams clipParams;
+                clipParams.Position =
+                    emitter ? std::optional<glm::vec3>(glm::vec3(GetWorldTransform(emitter)[3])) : params.Position;
+                clipParams.Volume = params.Volume;
+                clipParams.Pitch  = params.Pitch;
+                if (emitter && OwnsAudioSource(emitter))
+                {
+                    const auto& source          = emitter.GetComponent<AudioSourceComponent>();
+                    clipParams.Bus              = source.Bus;
+                    clipParams.Spatial          = source.Spatial;
+                    clipParams.Priority         = source.Priority;
+                    clipParams.ConcurrencyGroup = source.ConcurrencyGroup;
+                }
+                if (params.Bus)
+                    clipParams.Bus = *params.Bus;
+                if (m_AudioEngine->IsBusPaused(clipParams.Bus))
+                    return {{}, AudioEventTriggerStatus::Paused};
+                auto loaded = m_PrefabAssets->Load<AudioClipAsset>(asset);
+                if (const auto* clip = std::get_if<Ref<const AudioClipAsset>>(&loaded))
+                {
+                    const auto voice = m_AudioEngine->PlayOneShot(m_AudioClips, *clip, clipParams);
+                    if (voice.IsValid())
+                    {
+                        if (emitter)
+                            m_EntityAudioEvents.push_back({voice, emitter.m_EntityHandle, *clipParams.Position, true});
+                        return {voice, AudioEventTriggerStatus::Started};
+                    }
+                    return {};
+                }
+                WarnInvalidAudioAsset(asset.ToString());
+                return {{}, AudioEventTriggerStatus::MissingClip};
+            }
+            default:
+                WarnInvalidAudioAsset(asset.ToString());
+                return {};
+        }
+    }
+
     void Scene::PauseAudioSource(Entity entity)
     {
         if (!m_AudioEngine || !m_AudioRunning || !OwnsAudioSource(entity))
@@ -186,10 +277,62 @@ namespace Kans
         if (c.m_Runtime)
         {
             m_AudioEngine->Pause(c.m_Runtime->Voice);
-            c.m_Runtime->PendingStart    = false;
-            c.m_Runtime->ResumeOnUnpause = false;
+            c.m_Runtime->PendingStart = false;
         }
     }
+    bool Scene::UnPauseAudioSource(Entity entity)
+    {
+        return m_AudioEngine && m_AudioRunning && OwnsAudioSource(entity) &&
+               m_AudioEngine->UnPause(entity.GetComponent<AudioSourceComponent>().GetVoiceHandle());
+    }
+
+    void Scene::SetAudioSourceTime(Entity entity, double seconds)
+    {
+        if (!OwnsAudioSource(entity) || !std::isfinite(seconds) || seconds < 0)
+            return;
+        auto& source = entity.GetComponent<AudioSourceComponent>();
+        if (m_AudioEngine && m_AudioEngine->IsVoiceValid(source.GetVoiceHandle()))
+            m_AudioEngine->SeekSeconds(source.GetVoiceHandle(), seconds);
+        else
+        {
+            if (!source.m_Runtime)
+                source.m_Runtime = std::make_unique<AudioSourceComponent::Runtime>();
+            source.m_Runtime->RequestedClip  = source.Clip;
+            source.m_Runtime->RequestedEvent = source.Event;
+            source.m_Runtime->PendingSeek    = seconds;
+        }
+    }
+
+    double Scene::GetAudioSourceTime(Entity entity) const
+    {
+        if (!OwnsAudioSource(entity))
+            return 0;
+        const auto& source = entity.GetComponent<AudioSourceComponent>();
+        if (source.m_Runtime && source.m_Runtime->PendingSeek)
+            return *source.m_Runtime->PendingSeek;
+        return m_AudioEngine ? m_AudioEngine->GetVoicePositionSeconds(source.GetVoiceHandle()) : 0;
+    }
+
+    void Scene::SyncAudioSource(Entity entity)
+    {
+        if (!m_AudioEngine || !OwnsAudioSource(entity))
+            return;
+        auto& source  = entity.GetComponent<AudioSourceComponent>();
+        auto* runtime = source.m_Runtime.get();
+        if (!runtime || !m_AudioEngine->IsVoiceValid(runtime->Voice))
+            return;
+        if (runtime->EventAsset)
+        {
+            const auto& event = runtime->EventAsset->GetData();
+            m_AudioEngine->SetVolume(runtime->Voice, source.Volume * runtime->EventVolume);
+            m_AudioEngine->SetPitch(runtime->Voice, source.Pitch * runtime->EventPitch);
+            m_AudioEngine->SetLooping(runtime->Voice, source.Loop || event.Loop);
+            m_AudioEngine->SetVoiceBus(runtime->Voice, source.Bus == MasterAudioBus ? event.Bus : source.Bus);
+        }
+        else
+            PushAudioSource(entity, 0);
+    }
+
     bool Scene::IsAudioSourcePlaying(Entity entity) const
     {
         if (!m_AudioEngine || !m_AudioRunning || !OwnsAudioSource(entity))
@@ -200,12 +343,12 @@ namespace Kans
     {
         auto& c = entity.GetComponent<AudioSourceComponent>();
         auto& r = *c.m_Runtime;
-        if (!r.PendingStart || r.LastError || m_AudioPaused)
+        if (!r.PendingStart || r.LastError || (!c.Event.IsValid() && m_AudioEngine->IsBusPaused(c.Bus)))
             return;
         auto fail = [&](AssetError error) {
             r.LastError    = std::move(error);
             r.PendingStart = false;
-            Warn("source " + std::to_string(uint64_t(entity.GetUUID())) + ": " + r.LastError->Message);
+            WarnInvalidAudioAsset((c.Event.IsValid() ? c.Event : c.Clip).ToString());
         };
         if (c.Event.IsValid())
         {
@@ -241,7 +384,15 @@ namespace Kans
                     if (!m_AudioEngine->IsVoiceReleasing(r.Voice))
                         m_AudioEngine->DestroyVoice(r.Voice);
                     r.Voice       = result.Voice;
-                    r.HasPosition = r.ResumeOnUnpause = false;
+                    r.HasPosition = false;
+                    r.EventAsset  = result.Asset;
+                    r.EventVolume = result.ClipVolume * std::pow(10.f, result.VolumeDb / 20);
+                    r.EventPitch  = std::exp2(result.PitchSemitones / 12);
+                    if (r.PendingSeek)
+                        m_AudioEngine->SeekSeconds(r.Voice, *std::exchange(r.PendingSeek, std::nullopt));
+                    return;
+                case AudioEventTriggerStatus::Paused:
+                    r.LastError = AssetError {AssetErrorCode::InvalidArgument, "Audio event bus is paused"};
                     return;
                 case AudioEventTriggerStatus::Cooldown:
                     r.LastError = AssetError {AssetErrorCode::InvalidArgument, "Audio event is on cooldown"};
@@ -301,6 +452,8 @@ namespace Kans
             return;
         }
         r.PendingStart = false;
+        if (r.PendingSeek)
+            m_AudioEngine->SeekSeconds(r.Voice, *std::exchange(r.PendingSeek, std::nullopt));
         PushAudioSource(entity, 0);
         if (!m_AudioEngine->Play(r.Voice))
         {
@@ -535,8 +688,6 @@ namespace Kans
                     PlayAudioSource({handle, this});
             }
         }
-        if (m_AudioPaused)
-            return;
         UpdateAudioListeners(seconds);
         const auto expired =
             std::remove_if(m_EntityAudioEvents.begin(), m_EntityAudioEvents.end(), [&](EntityAudioEvent& instance) {
@@ -547,7 +698,7 @@ namespace Kans
                 spatial.Velocity          = Velocity(spatial.Position, instance.PreviousPosition, true, seconds);
                 instance.PreviousPosition = spatial.Position;
                 m_AudioEngine->SetVoiceReverbPosition(instance.Voice, spatial.Position);
-                m_AudioEngine->SetVoiceEmitter(instance.Voice, spatial);
+                m_AudioEngine->SetVoiceEmitter(instance.Voice, spatial, instance.FollowPoint);
                 return false;
             });
         m_EntityAudioEvents.erase(expired, m_EntityAudioEvents.end());
@@ -564,8 +715,8 @@ namespace Kans
                 if (m_AudioEngine->HasEnded(c.m_Runtime->Voice))
                     c.m_Runtime.reset();
             }
-            else if (c.m_Runtime->Acquired ||
-                     (c.Event.IsValid() && !c.m_Runtime->LastError && !c.m_Runtime->PendingStart))
+            else if (c.m_Runtime->Acquired || (c.Event.IsValid() && c.m_Runtime->Voice.IsValid() &&
+                                               !c.m_Runtime->LastError && !c.m_Runtime->PendingStart))
                 c.m_Runtime.reset();
         }
     }
@@ -575,19 +726,13 @@ namespace Kans
         if (!m_AudioRunning || m_AudioPaused)
             return;
         m_AudioPaused = true;
-        for (auto handle : m_Registry.view<TimelinePlayerComponent>())
-            if (auto& player = m_Registry.get<TimelinePlayerComponent>(handle).Player)
-                player->SetAudioPaused(true);
-        if (!m_AudioEngine)
-            return;
-        for (auto handle : m_Registry.view<AudioSourceComponent>())
+        if (m_AudioEngine)
         {
-            auto& c = m_Registry.get<AudioSourceComponent>(handle);
-            if (c.m_Runtime)
-            {
-                c.m_Runtime->ResumeOnUnpause = m_AudioEngine->IsPlaying(c.m_Runtime->Voice);
-                m_AudioEngine->Pause(c.m_Runtime->Voice);
-            }
+            m_AudioEngine->SetGamePaused(true);
+            for (auto handle : m_Registry.view<TimelinePlayerComponent>())
+                if (const auto& player = m_Registry.get<TimelinePlayerComponent>(handle).Player;
+                    player && player->m_Audio)
+                    player->m_Audio->SetGamePaused(true);
         }
     }
     void Scene::OnRuntimeResume()
@@ -596,27 +741,13 @@ namespace Kans
         if (!m_AudioRunning || !m_AudioPaused)
             return;
         m_AudioPaused = false;
-        for (auto handle : m_Registry.view<TimelinePlayerComponent>())
-            if (auto& player = m_Registry.get<TimelinePlayerComponent>(handle).Player)
-                player->SetAudioPaused(false);
         if (!m_AudioEngine)
             return;
         m_AudioCamera = 0;
+        for (auto handle : m_Registry.view<TimelinePlayerComponent>())
+            if (const auto& player = m_Registry.get<TimelinePlayerComponent>(handle).Player; player && player->m_Audio)
+                player->m_Audio->SetGamePaused(false);
+        m_AudioEngine->SetGamePaused(false);
         UpdateAudio(0);
-        for (auto handle : m_Registry.view<AudioSourceComponent>())
-        {
-            auto& c = m_Registry.get<AudioSourceComponent>(handle);
-            if (c.m_Runtime)
-            {
-                c.m_Runtime->HasPosition = false;
-                if (m_AudioEngine->IsVoiceValid(c.m_Runtime->Voice))
-                {
-                    PushAudioSource({handle, this}, 0);
-                    if (c.m_Runtime->ResumeOnUnpause)
-                        m_AudioEngine->Play(c.m_Runtime->Voice);
-                }
-                c.m_Runtime->ResumeOnUnpause = false;
-            }
-        }
     }
 } // namespace Kans

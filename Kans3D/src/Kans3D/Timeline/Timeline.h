@@ -239,9 +239,7 @@ namespace Kans
         void                                      Finish();
         friend class Scene;
         void                                      UpdateAudio(bool seek = false);
-        void                                      SetAudioPaused(bool paused);
         std::unique_ptr<TimelineAudioPlayer>      m_Audio;
-        bool                                      m_AudioPausedByScene = false;
         Scene&                                    m_Scene;
         UUID                                      m_Owner;
         Ref<const TimelineAsset>                  m_Source;

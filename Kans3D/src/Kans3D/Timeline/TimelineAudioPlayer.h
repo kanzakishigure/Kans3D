@@ -20,6 +20,7 @@ namespace Kans
         void Play(double time, double speed = 1, double offset = 0, std::optional<size_t> masterTrack = {});
         void Update(double time, double speed = 1, double offset = 0, std::optional<size_t> masterTrack = {});
         void Pause();
+        void SetGamePaused(bool paused);
         // A playing seek rearms playback at the cursor. A paused seek is silent.
         void Seek(double time);
         // Silent editor scrubbing. Play(Time(), ...) resumes from the new cursor.
@@ -60,6 +61,7 @@ namespace Kans
         double                               m_Time = 0, m_Speed = 1, m_Offset = 0, m_AnchorTime = 0;
         uint64_t                             m_AnchorFrame = 0;
         std::optional<size_t>                m_MasterTrack;
+        std::optional<uint64_t>              m_GamePauseFrame;
         TimelineAudioStats                   m_Stats;
     };
 } // namespace Kans

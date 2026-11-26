@@ -102,6 +102,7 @@ namespace Kans
         std::string              Bus      = MasterAudioBus;
         uint8_t                  Priority = DefaultAudioVoicePriority;
         std::string              ConcurrencyGroup;
+        bool                     Spatial = true; // Applies when Position is supplied.
     };
 
     struct AudioVoiceStats
@@ -168,6 +169,7 @@ namespace Kans
         AudioOutputMode GetMode() const;
         uint32_t GetSampleRate() const;
         uint32_t GetChannels() const;
+        uint64_t                                 GetInstanceID() const;
         // Absolute engine output frames mixed since Init, including Offline renders.
         uint64_t GetClockFrames() const;
         // First output frame available to schedule on the main thread.
@@ -207,6 +209,10 @@ namespace Kans
         // Runtime settings are copies of the asset. Send indices follow the order in GetBuses().
         [[nodiscard]] std::optional<std::string> ApplyBusLayout(const AudioBusLayout& layout);
         const std::vector<AudioBusDefinition>&   GetBuses() const;
+        std::optional<float>                     GetBusVolumeDb(const std::string& bus) const;
+        bool                                     IsBusPaused(const std::string& bus) const;
+        void                                     SetGamePaused(bool paused);
+        void                                     SetTimeScale(float scale);
         bool                                     SetBusVolumeDb(const std::string& bus, float db);
         bool                                     SetBusMute(const std::string& bus, bool mute);
         bool                                     SetBusSolo(const std::string& bus, bool solo);
@@ -271,6 +277,8 @@ namespace Kans
                           AudioFadeCurve   curve      = AudioFadeCurve::Linear);
         void Stop(AudioVoiceHandle handle);
         void Pause(AudioVoiceHandle handle);
+        bool UnPause(AudioVoiceHandle handle);
+        void SeekSeconds(AudioVoiceHandle handle, double seconds);
         bool IsPlaying(AudioVoiceHandle handle) const;
         bool HasEnded(AudioVoiceHandle handle) const;
         void SetVolume(AudioVoiceHandle handle, float linear);
@@ -303,12 +311,15 @@ namespace Kans
 
     private:
         friend class Scene;
-        void SetVoiceEmitter(AudioVoiceHandle handle, const AudioSpatialParams& emitter);
+        void SetVoiceEmitter(AudioVoiceHandle handle, const AudioSpatialParams& emitter, bool followPoint);
         friend class AudioMusicPlayer;
         friend class AudioEventPlayer;
         void             DefineEventGroup(AssetID id, const AudioConcurrencyGroup& group);
         uint32_t         CountEventInstances(AssetID id) const;
         bool             PlayVoice(AudioVoiceHandle handle, bool* rejectedByLimit);
+        void             RefreshBusPolicy(AudioVoiceHandle handle);
+        void             RefreshBusPolicies();
+        void             ApplyVoicePitch(AudioVoiceHandle handle, bool ramp);
         AudioVoiceHandle PlayRegisteredOneShot(AudioClipRegistry&                           registry,
                                                const std::shared_ptr<const AudioClipAsset>& clip,
                                                AudioVoiceDesc&                              desc,

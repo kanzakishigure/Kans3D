@@ -5,6 +5,7 @@
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Scene/Scene.h"
 #include "ScriptAnimation.h"
+#include "ScriptAudio.h"
 #include "ScriptEngine.h"
 #include "ScriptInput.h"
 #include "ScriptPhysics.h"
@@ -82,6 +83,8 @@ namespace Kans
                         return entity.HasComponent<WindZoneComponent>();
                     case Scripting::ComponentType::TimelinePlayerComponent:
                         return entity.HasComponent<TimelinePlayerComponent>();
+                    case Scripting::ComponentType::AudioSourceComponent:
+                        return entity.HasComponent<AudioSourceComponent>();
                     case Scripting::ComponentType::AnimatorComponent:
                         return entity.HasComponent<AnimatorComponent>();
                     case Scripting::ComponentType::TransformComponent:
@@ -254,6 +257,7 @@ namespace Kans
         ScriptAnimation::Install(api);
         ScriptTimeline::Install(api);
         ScriptPhysics::Install(api);
+        ScriptAudio::Install(api);
         ScriptVfx::Install(api);
         ScriptInput::Install(api);
         return api;

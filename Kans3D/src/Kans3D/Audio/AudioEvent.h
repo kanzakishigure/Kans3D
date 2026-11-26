@@ -82,7 +82,8 @@ namespace Kans
         Cooldown,
         InstanceLimit,
         MissingClip,
-        Invalid
+        Invalid,
+        Paused
     };
 
     struct AudioEventTriggerResult
@@ -94,6 +95,8 @@ namespace Kans
         size_t Entry    = SIZE_MAX;
         float  VolumeDb = 0, PitchSemitones = 0;
         double StartOffsetSeconds = 0;
+        float                      ClipVolume         = 1;
+        Ref<const AudioEventAsset> Asset;
     };
 
     struct AudioEventStats

@@ -44,6 +44,7 @@ namespace Kans
         m_Sounds.clear();
         m_Playing = false;
         m_Time    = 0;
+        m_GamePauseFrame.reset();
     }
 
     void TimelineAudioPlayer::Pause()
@@ -55,6 +56,38 @@ namespace Kans
                 m_Engine.Pause(entry.second.Handle);
         m_Playing = false;
         m_Stats   = {};
+    }
+
+    void TimelineAudioPlayer::SetGamePaused(bool paused)
+    {
+        // The engine holds the voices. Move their timeline windows to the resumed mixer clock.
+        if (paused)
+        {
+            if (m_Playing)
+                m_GamePauseFrame = m_Engine.GetClockFrames();
+            return;
+        }
+
+        const auto start = std::exchange(m_GamePauseFrame, std::nullopt);
+        if (!start || !m_Playing)
+            return;
+        const auto now     = m_Engine.GetSchedulingClockFrames();
+        const auto elapsed = now - std::min(now, *start);
+        const auto shift   = [elapsed](uint64_t frame) { return frame + std::min(elapsed, UINT64_MAX - frame); };
+        m_AnchorFrame      = shift(m_AnchorFrame);
+        for (size_t i = 0; i < m_Voices.size(); ++i)
+        {
+            if (!m_Engine.IsBusPaused(m_Source->GetData().Audio[i].Bus))
+                continue;
+            for (auto& entry : m_Voices[i])
+            {
+                auto& voice = entry.second;
+                if (voice.Start > *start)
+                    voice.Start = shift(voice.Start);
+                if (voice.Stop > *start)
+                    voice.Stop = shift(voice.Stop);
+            }
+        }
     }
 
     void TimelineAudioPlayer::Scrub(double time)

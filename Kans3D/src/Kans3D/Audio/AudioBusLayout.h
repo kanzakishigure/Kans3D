@@ -36,6 +36,7 @@ namespace Kans
         std::vector<AudioBusSend> Sends;
         std::vector<AudioBusEffect> Effects {};
         bool                        PinToCenter = false;
+        bool                        FollowTimeScale = false, PausesWithGame = true;
     };
 
     struct AudioBusLayout
