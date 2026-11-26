@@ -2564,6 +2564,8 @@ namespace Kans
     std::vector<AudioOutputDevice> AudioEngine::EnumerateOutputDevices() const
     {
         auto& p = *m_Impl;
+        if (p.Simulated)
+            return p.SimulatedDevices; // The test seam's snapshot stands in for the backend's list.
         if (!p.ContextReady || p.Config.UseNullDevice)
             return {};
         const auto                     devices = p.ReadDevices();
@@ -3345,6 +3347,8 @@ namespace Kans
         return std::nullopt;
     }
 
+    const std::filesystem::path& AudioEngine::GetUserSettingsFile() const { return m_Impl->Config.UserSettingsFile; }
+
     std::optional<std::string> AudioEngine::SaveUserSettings() const
     {
         const auto& p = *m_Impl;
@@ -3421,6 +3425,8 @@ namespace Kans
             RefreshBusPolicies();
         }
     }
+
+    float AudioEngine::GetTimeScale() const { return m_Impl->TimeScale; }
 
     void AudioEngine::RefreshBusPolicies()
     {

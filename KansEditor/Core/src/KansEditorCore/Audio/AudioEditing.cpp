@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Scene.h"
 #include "KansEditorCore/Audio/AudioAttenuationEditing.h"
@@ -33,7 +34,8 @@ namespace Kans::AudioEditing
     EventHints EventHintsOf(const AudioSourceComponent& source)
     {
         EventHints hints;
-        if (!source.Event.IsValid())
+        // Only an Event source plays the event (a Clip or Generator source keeps its own rows).
+        if (!source.Event.IsValid() || source.GetSourceKind() != AudioSourceKind::Event)
             return hints;
         hints.Clip = "Overridden: the Event picks the clip";
         if (source.Bus.empty() || source.Bus == MasterAudioBus)
@@ -58,6 +60,26 @@ namespace Kans::AudioEditing
         c.ConeOuterGain  = std::clamp(Finite(c.ConeOuterGain, d.ConeOuterGain), 0.0f, 1.0f);
         if (int(c.Attenuation) < 0 || c.Attenuation > AudioAttenuationModel::Exponential)
             c.Attenuation = d.Attenuation;
+        if (c.Kind && (int(*c.Kind) < 0 || *c.Kind > AudioSourceKind::Generator))
+            c.Kind.reset();
+        c.Generator.Channels   = std::clamp<uint32_t>(c.Generator.Channels, 1, 8);
+        c.Generator.SampleRate = std::clamp<uint32_t>(c.Generator.SampleRate, 8000, 192000);
+    }
+
+    std::string GeneratorUnderrunText(uint64_t frames, uint32_t sampleRate)
+    {
+        char text[96];
+        if (frames == 0 || sampleRate == 0)
+            std::snprintf(text, sizeof(text), "%llu frames", static_cast<unsigned long long>(frames));
+        else
+            std::snprintf(text,
+                          sizeof(text),
+                          "%llu frame%s (%.2f ms at %u Hz)",
+                          static_cast<unsigned long long>(frames),
+                          frames == 1 ? "" : "s",
+                          double(frames) * 1000.0 / double(sampleRate),
+                          sampleRate);
+        return text;
     }
 
     bool IsAudioFile(const std::filesystem::path& file)

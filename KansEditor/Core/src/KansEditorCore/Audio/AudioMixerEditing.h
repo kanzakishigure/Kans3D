@@ -132,4 +132,9 @@ namespace Kans::AudioMixerEditing
 
     // The layout's .audiobus text, or empty when it cannot be serialized.
     std::string ToText(const AudioBusLayout& layout);
+
+    // The note a bus strip shows while the game runs: "Paused" while the game pause (or a time scale
+    // of 0 on a bus that follows it) holds its voices, "Time scale 0.50x" while the bus follows a
+    // time scale other than 1 (its pitch bends by it); empty otherwise or for an unknown bus.
+    std::string BusPlayStatus(const AudioEngine& engine, const std::string& bus);
 } // namespace Kans::AudioMixerEditing

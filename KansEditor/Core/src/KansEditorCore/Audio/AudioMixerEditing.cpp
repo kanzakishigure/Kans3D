@@ -1,6 +1,7 @@
 #include "KansEditorCore/Audio/AudioMixerEditing.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include "Kans3D/Audio/AudioBusEffectFields.h"
 #include "Kans3D/Audio/AudioEngine.h"
@@ -270,6 +271,21 @@ namespace Kans::AudioMixerEditing
     {
         auto text = SerializeAudioBusLayout(layout);
         return std::holds_alternative<std::string>(text) ? std::get<std::string>(std::move(text)) : std::string();
+    }
+
+    std::string BusPlayStatus(const AudioEngine& engine, const std::string& bus)
+    {
+        if (engine.IsBusPaused(bus))
+            return "Paused";
+        const float scale = engine.GetTimeScale();
+        for (const auto& definition : engine.GetBuses())
+            if (definition.Name == bus && definition.FollowTimeScale && scale != 1.0f)
+            {
+                char text[48];
+                std::snprintf(text, sizeof(text), "Time scale %.2fx", double(scale));
+                return text;
+            }
+        return {};
     }
 
     void MixerDocument::Reset(AudioBusLayout layout, bool saved)

@@ -32,7 +32,17 @@ namespace Kans::AudioEditing
     EventHints EventHintsOf(const AudioSourceComponent& source);
 
     // Keeps edited values inside the ranges the scene serializer accepts, so every edit saves.
+    // A generator's channel count stays within 1..8 and its sample rate within 8..192 kHz.
     void Validate(AudioSourceComponent& source);
+
+    // The Source kind selector's choices (AudioSourceKind order) and the sample rates its generator
+    // field offers, lowest first.
+    inline constexpr const char* SourceKindNames[] = {"Clip", "Event", "Generator"};
+    inline constexpr uint32_t    GeneratorSampleRates[] =
+        {8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000};
+    // "0 frames", "1 frame (0.02 ms at 48000 Hz)": the Play-mode underrun counter of a
+    // generator source (missing input frames filled with silence).
+    std::string GeneratorUnderrunText(uint64_t frames, uint32_t sampleRate);
 
     // Whether the file is an audio format the AudioClip importer reads (by extension, any case).
     bool IsAudioFile(const std::filesystem::path& file);

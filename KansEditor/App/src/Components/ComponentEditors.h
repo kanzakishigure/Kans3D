@@ -57,6 +57,9 @@ namespace Kans::ComponentEditors
         {
             ImRect AttenuationAsset, AttenuationPreview, Shape[4], Size[3], ReverbZoneSend, LfeSend, PinToCenter;
             bool   PinToCenterEnabled = false, ModelOverridden = false;
+            ImRect Kind[3], Channels, SampleRate; // Source kind buttons (Clip, Event, Generator) and the format.
+            std::vector<std::pair<uint32_t, ImRect>> SampleRates; // Items of the open sample rate list.
+            std::string                              Underruns;   // The Play-mode counter, as drawn.
         } Source;
         struct ZoneBoxes
         {

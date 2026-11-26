@@ -200,6 +200,8 @@ namespace Kans
         m_AudioMixerPanel.SetProjectLayoutCallback({});
         m_AudioEventPanel.Bind(nullptr, nullptr, nullptr);
         m_AudioAttenuationPanel.Bind(nullptr);
+        m_ActionMarkersPanel.Bind(nullptr);
+        m_ActionMarkersPanel.SetAssetChoices({});
         m_AudioEventPanel.SetAssetChoices({});
         m_AudioEventNames.clear();
         m_RenderTexturePanel.SetResources({});
@@ -338,6 +340,7 @@ namespace Kans
         // The AudioEvent editor's audition; it stops once its window is closed.
         m_AudioEventPanel.Bind(m_AssetImports.get(), AudioSystem::Get(), m_Assets.get());
         m_AudioAttenuationPanel.Bind(m_AssetImports.get());
+        m_ActionMarkersPanel.Bind(m_AssetImports.get());
         if (!m_Panels.IsOpen(PanelID::AudioEvent))
             m_AudioEventPanel.StopPreview();
         m_TimelinePanel.SetAudioEngine(AudioSystem::Get()); // Its preview's audio tracks.

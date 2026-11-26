@@ -167,6 +167,13 @@ namespace Kans
                 else
                     Record(AssetError {AssetErrorCode::InvalidData, m_AudioAttenuationPanel.GetStatus()});
             }
+            else if (path.extension() == ".action")
+            {
+                if (m_ActionMarkersPanel.Open(path))
+                    m_Panels.Open(PanelID::ActionMarkers);
+                else
+                    Record(AssetError {AssetErrorCode::InvalidData, m_ActionMarkersPanel.GetStatus()});
+            }
             else if (path.extension() == ".vfxmodule")
                 OpenVfxModule(path);
             else if (path.extension() == ".vfxsystem" || path.extension() == ".vfxemitter")
@@ -295,6 +302,7 @@ namespace Kans
         m_UIDesignerPanel.SetAssetChoices(choices);
         m_RagdollEditor.SetAssetChoices(choices);
         m_AudioEventPanel.SetAssetChoices(choices);
+        m_ActionMarkersPanel.SetAssetChoices(choices);
         m_AudioEventNames.clear();
         for (const auto& choice : choices)
             if (choice.Type == AssetType::AudioEvent)

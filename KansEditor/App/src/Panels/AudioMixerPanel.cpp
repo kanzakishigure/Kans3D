@@ -106,6 +106,7 @@ namespace Kans
         m_Service     = service;
         m_ProjectFile = std::move(projectFile);
         m_Document.Bind(engine);
+        m_Output.Bind(engine);
         m_Opened = false; // Opens the project's layout on the next draw.
         m_File.clear();
         m_PendingProjectLayout = false;
@@ -362,7 +363,12 @@ namespace Kans
             m_Meters.resize(layout.Buses.size());
             m_Boxes.resize(m_Order.size());
         }
-        ImGui::BeginChild("##strips", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+        // The Output pane takes the right side; the strips scroll in the rest.
+        const float outputWidth = m_ShowOutput ? Px(380.0f) : 0.0f;
+        ImGui::BeginChild("##strips",
+                          {m_ShowOutput ? -(outputWidth + ImGui::GetStyle().ItemSpacing.x) : 0.0f, 0},
+                          ImGuiChildFlags_None,
+                          ImGuiWindowFlags_HorizontalScrollbar);
         // Every strip reads the layout as it was at the start of the frame; edits commit after them.
         const size_t count = m_Order.size();
         for (size_t i = 0; i < count && i < m_Boxes.size(); ++i)
@@ -373,6 +379,13 @@ namespace Kans
                 DrawStrip(m_Order[i].Index, m_Order[i].Depth, m_Boxes[i]);
         }
         ImGui::EndChild();
+        if (m_ShowOutput)
+        {
+            ImGui::SameLine();
+            ImGui::BeginChild("##output", {outputWidth, 0}, ImGuiChildFlags_Borders);
+            m_Output.Draw();
+            ImGui::EndChild();
+        }
         CommitPending();
         if (!ImGui::IsAnyItemActive())
             m_Document.EndGesture();
@@ -452,6 +465,14 @@ namespace Kans
             });
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Adds a bus under Master");
+        ImGui::SameLine();
+        if (ToggleButton(ICON_FA_HEADPHONES " Output##output",
+                         "Output device, speakers and the player's volume (per-user settings, not the project)",
+                         m_ShowOutput,
+                         p.AccentHover,
+                         0.0f))
+            m_ShowOutput = !m_ShowOutput;
+        m_OutputToggle     = LastItem();
         const char* status = !m_Status.empty()      ? m_Status.c_str() :
                              m_PendingProjectLayout ? "Importing; it becomes the project's layout once imported." :
                              !m_Engine              ? "Audio is unavailable: edits are not heard." :
@@ -634,6 +655,44 @@ namespace Kans
                 ImGui::SetTooltip("Play this bus from the centre speaker (in stereo, half to each side), e.g. "
                                   "dialogue");
         }
+        // Game time: whether the bus bends with the time scale and holds while the game is paused.
+        {
+            bool follow = bus.FollowTimeScale;
+            if (ImGui::Checkbox("Follow time scale##timeScale", &follow))
+                Edit([&, follow](AudioBusLayout& next) {
+                    next.Buses[index].FollowTimeScale = follow;
+                    return std::optional<std::string>();
+                });
+            boxes.FollowTimeScale = LastItem();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Slow motion lowers this bus's pitch with the scene's time scale (0.05x to 4x); "
+                                  "a time scale of 0 holds it, e.g. gameplay effects");
+            bool pauses = bus.PausesWithGame;
+            if (ImGui::Checkbox("Pauses with game##pauses", &pauses))
+                Edit([&, pauses](AudioBusLayout& next) {
+                    next.Buses[index].PausesWithGame = pauses;
+                    return std::optional<std::string>();
+                });
+            boxes.PausesWithGame = LastItem();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Held while the game is paused and resumed where it stopped. Turn off for UI and "
+                                  "menu buses, which keep playing while the game is paused");
+        }
+        // In Play: the engine holding this bus's voices for the pause, or bending them with the time scale.
+        boxes.PlayStatus = m_Engine ? BusPlayStatus(*m_Engine, bus.Name) : std::string();
+        if (!boxes.PlayStatus.empty())
+        {
+            const bool paused = boxes.PlayStatus == "Paused";
+            ImGui::TextColored(paused ? p.Warning : p.AccentHover,
+                               "%s %s",
+                               paused ? ICON_FA_PAUSE : ICON_FA_FORWARD_FAST,
+                               boxes.PlayStatus.c_str());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(paused ? "The game is paused: this bus's voices are held" :
+                                           "This bus follows the scene's time scale: its pitch bends with it");
+        }
+        else
+            ImGui::Dummy({0, ImGui::GetTextLineHeight()}); // Keeps the fader in place when a note appears.
 
         DrawFader(index, boxes);
         // Sends and effects: groups in the strip's own grid (narrow label column).

@@ -24,6 +24,7 @@
 #include "KansEditorCore/UnsavedChanges.h"
 #include "KansEditorCore/ViewportClient.h"
 #include "Launcher/ProjectBrowser.h"
+#include "Panels/ActionMarkersPanel.h"
 #include "Panels/AnimatorGraphPanel.h"
 #include "Panels/AudioAttenuationEditorPanel.h"
 #include "Panels/AudioEventEditorPanel.h"
@@ -75,6 +76,7 @@ namespace Kans
         inline constexpr const char* AudioMixer                   = "AudioMixer";
         inline constexpr const char* AudioEvent                   = "AudioEvent";
         inline constexpr const char* AudioAttenuation             = "AudioAttenuation";
+        inline constexpr const char* ActionMarkers                = "ActionMarkers";
     } // namespace PanelID
 
     class EditorLayer : public Kans::Layer
@@ -407,6 +409,7 @@ namespace Kans
         AudioMixerPanel                  m_AudioMixerPanel;
         AudioEventEditorPanel                    m_AudioEventPanel;
         AudioAttenuationEditorPanel              m_AudioAttenuationPanel;
+        ActionMarkersPanel                       m_ActionMarkersPanel;
         std::unordered_map<AssetID, std::string> m_AudioEventNames; // Published AudioEvents by ID.
         RenderTexturePanel   m_RenderTexturePanel;
         MaterialParameterCollectionPanel m_MaterialParameterCollectionPanel;

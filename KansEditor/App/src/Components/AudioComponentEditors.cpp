@@ -328,31 +328,122 @@ namespace Kans::ComponentEditors
         return changed;
     }
 
+    namespace
+    {
+        // Clip and Event sources: the asset pickers and the preview, as before the Source selector.
+        void
+        DrawAssetSource(Entity entity, AudioSourceComponent& c, ComponentUI& ui, const AudioEditing::EventHints& hints)
+        {
+            // An Event picks the clip itself: the Clip row stays editable but dimmed.
+            if (hints.Clip)
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.45f);
+            ui.AssetPicker("Clip", AssetType::AudioClip, c.Clip);
+            if (hints.Clip)
+            {
+                ImGui::PopStyleVar();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", hints.Clip);
+            }
+            ui.AssetPicker("Event", AssetType::AudioEvent, c.Event);
+            if (hints.Clip && PropertyGrid::Row(""))
+            {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextDisabled("%s", hints.Clip);
+            }
+            DrawPlayback(entity, c, ui);
+        }
+
+        // A generator source: the PCM format pushed to it and, in Play, the frames it ran short.
+        void DrawGenerator(Entity entity, AudioSourceComponent& c, ComponentUI& ui, AudioCardBoxes::SourceBoxes& boxes)
+        {
+            static const AudioGeneratorFormat defaults;
+            const bool                        channelsModified = c.Generator.Channels != defaults.Channels;
+            if (PropertyGrid::Row("Channels", "Interleaved channels in the pushed PCM (1 to 8)", channelsModified))
+            {
+                ImGui::PushID("Channels");
+                int channels = int(c.Generator.Channels);
+                if (ImGui::SliderInt("##value", &channels, 1, 8, "%d", ImGuiSliderFlags_AlwaysClamp))
+                    c.Generator.Channels = uint32_t(channels);
+                boxes.Channels = LastItem();
+                if (PropertyGrid::RowReset(channelsModified))
+                    c.Generator.Channels = defaults.Channels;
+                ImGui::PopID();
+            }
+            const bool rateModified = c.Generator.SampleRate != defaults.SampleRate;
+            if (PropertyGrid::Row("Sample rate", "The pushed PCM's rate; the engine resamples it", rateModified))
+            {
+                ImGui::PushID("SampleRate");
+                char preview[32];
+                std::snprintf(preview, sizeof(preview), "%u Hz", c.Generator.SampleRate);
+                const bool open  = ImGui::BeginCombo("##value", preview);
+                boxes.SampleRate = LastItem();
+                boxes.SampleRates.clear();
+                if (open)
+                {
+                    for (const uint32_t rate : AudioEditing::GeneratorSampleRates)
+                    {
+                        char label[32];
+                        std::snprintf(label, sizeof(label), "%u Hz", rate);
+                        if (ImGui::Selectable(label, rate == c.Generator.SampleRate))
+                            c.Generator.SampleRate = rate;
+                        boxes.SampleRates.emplace_back(rate, LastItem());
+                    }
+                    ImGui::EndCombo();
+                }
+                if (PropertyGrid::RowReset(rateModified))
+                    c.Generator.SampleRate = defaults.SampleRate;
+                ImGui::PopID();
+            }
+            Scene* scene = ui.GetScene();
+            if (scene && scene->IsAudioRunning())
+            {
+                if (PropertyGrid::Row("Playback", "This source in the running scene."))
+                {
+                    const bool playing = scene->IsAudioSourcePlaying(entity);
+                    if (ImGui::Button(playing ? ICON_FA_STOP " Stop##source" : ICON_FA_PLAY " Play##source"))
+                    {
+                        if (playing)
+                            scene->StopAudioSource(entity);
+                        else
+                            scene->PlayAudioSource(entity);
+                    }
+                }
+                const auto* engine = scene->GetAudioEngine();
+                boxes.Underruns    = AudioEditing::GeneratorUnderrunText(
+                    engine ? engine->GetGeneratorUnderrunFrames(c.GetVoiceHandle()) : 0, c.Generator.SampleRate);
+                PropertyGrid::Text("Underruns", boxes.Underruns, true);
+            }
+            else if (PropertyGrid::Row(""))
+            {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextDisabled("Push PCM from a script or C++ while the game plays");
+            }
+        }
+    } // namespace
+
     void DrawAudioSource(Entity entity, ComponentUI& ui)
     {
         static const AudioSourceComponent defaults;
         entity.PatchComponent<AudioSourceComponent>([&](AudioSourceComponent& c) {
             // The groups keep this order: Source, Playback, Output, Spatial, Cone.
             const auto hints = AudioEditing::EventHintsOf(c);
+            auto&      boxes = LastAudioCardBoxes();
+            boxes.Source     = {};
             if (PropertyGrid::BeginGroup("Source"))
             {
-                // An Event picks the clip itself: the Clip row stays editable but dimmed.
-                if (hints.Clip)
-                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.45f);
-                ui.AssetPicker("Clip", AssetType::AudioClip, c.Clip);
-                if (hints.Clip)
-                {
-                    ImGui::PopStyleVar();
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s", hints.Clip);
-                }
-                ui.AssetPicker("Event", AssetType::AudioEvent, c.Event);
-                if (hints.Clip && PropertyGrid::Row(""))
-                {
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextDisabled("%s", hints.Clip);
-                }
-                DrawPlayback(entity, c, ui);
+                // Clip and Event play assets; a Generator plays PCM a script or C++ pushes at run time.
+                int kind = int(c.GetSourceKind());
+                if (ChoiceRow("Source",
+                              AudioEditing::SourceKindNames,
+                              3,
+                              kind,
+                              boxes.Source.Kind,
+                              int(AudioSourceKind::Clip)))
+                    c.Kind = AudioSourceKind(kind);
+                if (c.GetSourceKind() == AudioSourceKind::Generator)
+                    DrawGenerator(entity, c, ui, boxes.Source);
+                else
+                    DrawAssetSource(entity, c, ui, hints);
                 if (const auto& error = c.GetLastError(); error && PropertyGrid::Row("Error"))
                 {
                     ImGui::PushStyleColor(ImGuiCol_Text, ErrorColor);
@@ -401,8 +492,6 @@ namespace Kans::ComponentEditors
                     ImGui::SetTooltip("Sounds sharing a group are limited together (empty: none)");
                 PropertyGrid::EndGroup();
             }
-            auto& boxes  = LastAudioCardBoxes();
-            boxes.Source = {};
             if (PropertyGrid::BeginGroup("Output"))
             {
                 const AudioEngine* engine = ui.GetScene() ? ui.GetScene()->GetAudioEngine() : nullptr;

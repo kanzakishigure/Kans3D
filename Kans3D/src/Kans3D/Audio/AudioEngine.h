@@ -250,6 +250,8 @@ namespace Kans
         std::optional<std::string>          LoadUserSettings(const std::filesystem::path& file);
         std::optional<std::string>          LoadUserSettings();
         std::optional<std::string>          SaveUserSettings() const;
+        // Where Load/SaveUserSettings read and write; empty while storage is disabled.
+        const std::filesystem::path&        GetUserSettingsFile() const;
         std::optional<AudioUserBusSettings> GetUserBusSettings(const std::string& bus) const;
         bool                                SetUserBusVolumeDb(const std::string& bus, float db);
         bool                                SetUserBusMute(const std::string& bus, bool mute);
@@ -278,6 +280,7 @@ namespace Kans
         bool                                     IsBusPaused(const std::string& bus) const;
         void                                     SetGamePaused(bool paused);
         void                                     SetTimeScale(float scale);
+        float                                    GetTimeScale() const;
         bool                                     SetBusVolumeDb(const std::string& bus, float db);
         bool                                     SetBusMute(const std::string& bus, bool mute);
         bool                                     SetBusSolo(const std::string& bus, bool solo);

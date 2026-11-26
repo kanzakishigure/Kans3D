@@ -148,6 +148,10 @@ namespace Kans
                                PanelDock::Right,
                                false),
                           [this] { m_AudioAttenuationPanel.Draw(); });
+        m_Panels.Register(
+            spec(
+                PanelID::ActionMarkers, "Action Markers", ICON_FA_FLAG, PanelCategory::Assets, PanelDock::Right, false),
+            [this] { m_ActionMarkersPanel.Draw(); });
     }
 
     void EditorLayer::OpenImporter(const std::filesystem::path& file)
@@ -451,7 +455,7 @@ namespace Kans
             m_MaterialEditorPanel.HasFocus() || m_RenderTexturePanel.HasFocus() ||
             m_MaterialParameterCollectionPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() ||
             m_AudioMixerPanel.HasFocus() || m_AudioEventPanel.HasFocus() || m_AudioAttenuationPanel.HasFocus() ||
-            m_TimelinePanel.HasFocus() || m_RagdollEditor.HasFocus() ||
+            m_ActionMarkersPanel.HasFocus() || m_TimelinePanel.HasFocus() || m_RagdollEditor.HasFocus() ||
             std::any_of(
                 m_VfxModuleEditors.begin(), m_VfxModuleEditors.end(), [](const auto& e) { return e->HasFocus(); }) ||
             std::any_of(

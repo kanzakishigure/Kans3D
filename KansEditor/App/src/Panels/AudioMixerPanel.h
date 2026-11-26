@@ -9,6 +9,7 @@
 #include <vector>
 #include "Kans3D/Asset/Asset.h"
 #include "Kans3D/Audio/AudioEngine.h"
+#include "AudioOutputSettingsPanel.h"
 #include "KansEditorCore/Audio/AudioMixerEditing.h"
 
 namespace Kans
@@ -63,11 +64,19 @@ namespace Kans
         {
             std::string              Bus;
             ImRect                   Strip, Name, Parent, Fader, Volume, Solo, Mute, Bypass, Delete, PinToCenter;
+            ImRect                   FollowTimeScale, PausesWithGame;
+            std::string              PlayStatus; // "Paused", "Time scale 0.50x" or empty, as drawn.
             ImRect                   AddSend, AddEffect;
             size_t                   Meters = 0; // Meter bars drawn (the engine's output channels).
             std::vector<EffectBoxes> Effects;
         };
         const std::vector<StripBoxes>& GetStripBoxes() const { return m_Boxes; }
+        // The Output pane (device, speakers, player volume), shown beside the strips by the header's
+        // Output toggle.
+        AudioOutputSettingsPanel& GetOutputSettings() { return m_Output; }
+        bool                      IsOutputShown() const { return m_ShowOutput; }
+        void                      ShowOutput(bool show) { m_ShowOutput = show; }
+        const ImRect&             GetOutputToggleBox() const { return m_OutputToggle; }
         // Items of the open add-effect or add-send menu, by label.
         const std::vector<std::pair<std::string, ImRect>>& GetMenuBoxes() const { return m_MenuBoxes; }
 
@@ -118,5 +127,8 @@ namespace Kans
         std::vector<StripBoxes>                         m_Boxes;
         std::vector<std::pair<std::string, ImRect>>     m_MenuBoxes;
         std::vector<std::filesystem::path>              m_LayoutChoices;
+        AudioOutputSettingsPanel                        m_Output;
+        bool                                            m_ShowOutput = false;
+        ImRect                                          m_OutputToggle;
     };
 } // namespace Kans
