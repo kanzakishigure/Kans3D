@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
+#include <string_view>
 
 namespace
 {
@@ -150,16 +152,416 @@ namespace Kans
             return std::monostate {};
         }
 
-        std::variant<std::optional<TextureColorSpace>, AssetError>
+        struct TextureMetadata
+        {
+            std::optional<TextureColorSpace> Space;
+            std::string                      Warning;
+        };
+
+        TextureMetadata IgnoredIccProfile(const std::string& kind)
+        {
+            return {{}, "Embedded ICC profile (" + kind + ") was ignored. No color conversion was performed."};
+        }
+
+        uint16_t IccUInt16(const char* data) { return uint16_t((uint16_t(uint8_t(data[0])) << 8) | uint8_t(data[1])); }
+
+        uint32_t Big32(const char* data) { return Big32(reinterpret_cast<const unsigned char*>(data)); }
+
+        double IccFixed(const char* data)
+        {
+            const auto value = Big32(data);
+            // ICC s15Fixed16 is signed two's complement, including on big-endian hosts.
+            return value < 0x80000000u ? value / 65536.0 : (double(value) - 4294967296.0) / 65536.0;
+        }
+
+        enum class IccCurve
+        {
+            Invalid,
+            Other,
+            Linear,
+            SRGB
+        };
+
+        IccCurve ClassifyIccGamma(double gamma)
+        {
+            if (gamma <= 0.0)
+                return IccCurve::Invalid;
+            if (std::abs(gamma - 1.0) <= 0.01)
+                return IccCurve::Linear;
+            return std::abs(gamma - 2.2) <= 0.05 ? IccCurve::SRGB : IccCurve::Other;
+        }
+
+        template<typename Sample>
+        IccCurve ClassifyIccSamples(size_t count, const Sample& sample)
+        {
+            constexpr double tolerance = 0.006;
+            bool             linear = true, srgb = true, gamma22 = true;
+            for (size_t i = 0; i < count; ++i)
+            {
+                const double x = double(i) / double(count - 1);
+                const double y = sample(i, x);
+                if (!std::isfinite(y))
+                    return IccCurve::Invalid;
+                linear = linear && std::abs(y - x) <= tolerance;
+                srgb =
+                    srgb && std::abs(y - (x <= 0.04045 ? x / 12.92 : std::pow((x + 0.055) / 1.055, 2.4))) <= tolerance;
+                gamma22 = gamma22 && std::abs(y - std::pow(x, 2.2)) <= tolerance;
+                if (!linear && !srgb && !gamma22)
+                    return IccCurve::Other;
+            }
+            return linear ? IccCurve::Linear : IccCurve::SRGB;
+        }
+
+        IccCurve ReadIccCurve(std::string_view tag)
+        {
+            if (tag.size() < 12)
+                return IccCurve::Invalid;
+            if (tag.substr(0, 4) == "curv")
+            {
+                const auto count = Big32(tag.data() + 8);
+                if (count > (tag.size() - 12) / 2)
+                    return IccCurve::Invalid;
+                if (count == 0)
+                    return IccCurve::Linear;
+                if (count == 1)
+                    return ClassifyIccGamma(IccUInt16(tag.data() + 12) / 256.0);
+                // Check every stored knot. Also sample the segments of short tables,
+                // whose endpoints alone can fit both a linear and a nonlinear curve.
+                const size_t subdivisions = count < 257 ? 256 / (count - 1) + 1 : 1;
+                return ClassifyIccSamples((count - 1) * subdivisions + 1, [tag, count, subdivisions](size_t i, double) {
+                    const size_t index = i / subdivisions;
+                    const auto   first = IccUInt16(tag.data() + 12 + index * 2);
+                    if (i % subdivisions == 0 || index + 1 == count)
+                        return first / 65535.0;
+                    const auto next = IccUInt16(tag.data() + 14 + index * 2);
+                    return (first + (double(next) - first) * double(i % subdivisions) / double(subdivisions)) / 65535.0;
+                });
+            }
+            if (tag.substr(0, 4) != "para")
+                return IccCurve::Invalid;
+            constexpr std::array<size_t, 5> parameterCounts {1, 3, 4, 5, 7};
+            const auto                      type = IccUInt16(tag.data() + 8);
+            if (type >= parameterCounts.size() || parameterCounts[type] > (tag.size() - 12) / 4)
+                return IccCurve::Invalid;
+            std::array<double, 7> parameters {};
+            for (size_t i = 0; i < parameterCounts[type]; ++i)
+                parameters[i] = IccFixed(tag.data() + 12 + i * 4);
+            if (type == 0)
+                return ClassifyIccGamma(parameters[0]);
+            if (parameters[0] <= 0.0 || parameters[1] <= 0.0)
+                return IccCurve::Invalid;
+            return ClassifyIccSamples(257, [type, parameters](size_t, double x) {
+                const auto& [g, a, b, c, d, e, f] = parameters;
+                if (type <= 2)
+                {
+                    const double offset = type == 2 ? c : 0.0;
+                    return std::clamp((x >= -b / a ? std::pow((std::max)(0.0, a * x + b), g) : 0.0) + offset, 0.0, 1.0);
+                }
+                return std::clamp(x >= d ? std::pow(a * x + b, g) + e : c * x + f, 0.0, 1.0);
+            });
+        }
+
+        using IccXYZ = std::array<double, 3>;
+
+        std::optional<IccXYZ> ReadIccXYZ(std::string_view tag)
+        {
+            if (tag.size() < 20 || tag.substr(0, 4) != "XYZ ")
+                return std::nullopt;
+            return IccXYZ {IccFixed(tag.data() + 8), IccFixed(tag.data() + 12), IccFixed(tag.data() + 16)};
+        }
+
+        bool MatchesIccXYZ(const IccXYZ& value, const IccXYZ& reference)
+        {
+            // Allow for fixed-point rounding and small differences in chromatic adaptation.
+            constexpr double tolerance = 0.005;
+            for (size_t i = 0; i < value.size(); ++i)
+                if (std::abs(value[i] - reference[i]) > tolerance)
+                    return false;
+            return true;
+        }
+
+        void AppendIccCodePoint(std::string& text, uint32_t codePoint)
+        {
+            if (codePoint < 0x20 || codePoint == 0x7f)
+                return;
+            if (codePoint < 0x80)
+                text += char(codePoint);
+            else if (codePoint < 0x800)
+            {
+                text += char(0xc0 | (codePoint >> 6));
+                text += char(0x80 | (codePoint & 63));
+            }
+            else
+            {
+                if (codePoint >= 0x10000)
+                    text += char(0xf0 | (codePoint >> 18));
+                text += char((codePoint < 0x10000 ? 0xe0 : 0x80) | ((codePoint >> 12) & 63));
+                text += char(0x80 | ((codePoint >> 6) & 63));
+                text += char(0x80 | (codePoint & 63));
+            }
+        }
+
+        std::optional<std::string> IccDescription(std::string_view tag)
+        {
+            constexpr size_t descriptionLimit = 128;
+            std::string      name;
+            if (tag.empty())
+                return name;
+            if (tag.size() >= 12 && tag.substr(0, 4) == "desc")
+            {
+                const auto size = Big32(tag.data() + 8);
+                if (size == 0 || size > tag.size() - 12 || tag[12 + size - 1] != '\0')
+                    return std::nullopt;
+                for (const unsigned char c : tag.substr(12, (std::min)(descriptionLimit, size_t(size - 1))))
+                    AppendIccCodePoint(name, c);
+                return name;
+            }
+            if (tag.size() < 16 || tag.substr(0, 4) != "mluc" || Big32(tag.data() + 12) != 12)
+                return std::nullopt;
+            const auto count = Big32(tag.data() + 8);
+            if (count > (tag.size() - 16) / 12)
+                return std::nullopt;
+            const size_t     recordsEnd = 16 + size_t(count) * 12;
+            std::string_view label;
+            bool             english = false;
+            for (size_t at = 16; at < recordsEnd; at += 12)
+            {
+                const auto length = Big32(tag.data() + at + 4);
+                const auto offset = Big32(tag.data() + at + 8);
+                if (offset < recordsEnd || offset > tag.size() || length > tag.size() - offset || length % 2 != 0)
+                    return std::nullopt;
+                if (length && (label.empty() || (!english && tag.substr(at, 2) == "en")))
+                {
+                    label   = tag.substr(offset, length);
+                    english = tag.substr(at, 2) == "en";
+                }
+            }
+            for (size_t at = 0; at < label.size() && at < descriptionLimit * 2; at += 2)
+            {
+                uint32_t cp = IccUInt16(label.data() + at);
+                if (cp >= 0xd800 && cp <= 0xdbff && label.size() - at >= 4)
+                {
+                    const uint32_t trailing = IccUInt16(label.data() + at + 2);
+                    if (trailing >= 0xdc00 && trailing <= 0xdfff)
+                    {
+                        cp = 0x10000 + ((cp - 0xd800) << 10) + trailing - 0xdc00;
+                        at += 2;
+                    }
+                }
+                AppendIccCodePoint(name, cp >= 0xd800 && cp <= 0xdfff ? 0xfffd : cp);
+            }
+            return name;
+        }
+
+        TextureMetadata ReadIccProfile(std::string_view profile)
+        {
+            const auto       malformed      = [] { return IgnoredIccProfile("malformed or truncated"); };
+            constexpr size_t directoryStart = 132;
+            if (profile.size() < directoryStart || Big32(profile.data()) != profile.size() ||
+                profile.substr(36, 4) != "acsp")
+                return malformed();
+            const auto count = Big32(profile.data() + 128);
+            if (count > (profile.size() - directoryStart) / 12)
+                return malformed();
+            const size_t directoryEnd = directoryStart + size_t(count) * 12;
+            enum Tag
+            {
+                RedXYZ,
+                GreenXYZ,
+                BlueXYZ,
+                WhiteXYZ,
+                Adaptation,
+                RedTRC,
+                GreenTRC,
+                BlueTRC,
+                GrayTRC,
+                Desc
+            };
+            constexpr std::array<std::string_view, 10> signatures {
+                "rXYZ", "gXYZ", "bXYZ", "wtpt", "chad", "rTRC", "gTRC", "bTRC", "kTRC", "desc"};
+            std::array<std::string_view, signatures.size()> tags {};
+            for (size_t at = directoryStart; at < directoryEnd; at += 12)
+            {
+                const auto offset = Big32(profile.data() + at + 4);
+                const auto size   = Big32(profile.data() + at + 8);
+                if (offset < directoryEnd || offset > profile.size() || size < 8 || size > profile.size() - offset)
+                    return malformed();
+                const auto found = std::find(signatures.begin(), signatures.end(), profile.substr(at, 4));
+                if (found != signatures.end())
+                {
+                    auto& tag = tags[size_t(found - signatures.begin())];
+                    if (!tag.empty())
+                        return malformed();
+                    tag = profile.substr(offset, size);
+                }
+            }
+
+            const auto deviceSpace = profile.substr(16, 4);
+            const auto pcs         = profile.substr(20, 4);
+            const auto description = IccDescription(tags[Desc]);
+            if (!description)
+                return malformed();
+            const std::string kind        = !description->empty() ? *description :
+                                            deviceSpace == "RGB " ? "RGB" :
+                                            deviceSpace == "GRAY" ? "Gray" :
+                                            deviceSpace == "CMYK" ? "CMYK" :
+                                                                    "unsupported color space";
+            const auto        invalidTags = [&kind] { return IgnoredIccProfile("malformed or truncated " + kind); };
+            if (deviceSpace == "GRAY" && (pcs == "XYZ " || pcs == "Lab "))
+            {
+                if (tags[GrayTRC].empty())
+                    return IgnoredIccProfile(kind);
+                const auto curve = ReadIccCurve(tags[GrayTRC]);
+                if (curve == IccCurve::Invalid)
+                    return invalidTags();
+                if (curve == IccCurve::SRGB)
+                    return {TextureColorSpace::SRGB, {}};
+                return IgnoredIccProfile(kind);
+            }
+            if (deviceSpace != "RGB " || pcs != "XYZ ")
+                return IgnoredIccProfile(kind);
+
+            const auto              white = ReadIccXYZ(tags[WhiteXYZ]);
+            std::array<IccXYZ, 3>   colorants {};
+            std::array<IccCurve, 3> curves {};
+            for (size_t channel = 0; channel < colorants.size(); ++channel)
+            {
+                // Other ICC profile types can describe RGB with a LUT instead of matrix/TRC tags.
+                if (tags[RedXYZ + channel].empty() || tags[RedTRC + channel].empty())
+                    return IgnoredIccProfile(kind);
+                const auto xyz  = ReadIccXYZ(tags[RedXYZ + channel]);
+                curves[channel] = ReadIccCurve(tags[RedTRC + channel]);
+                if (!xyz || curves[channel] == IccCurve::Invalid)
+                    return invalidTags();
+                colorants[channel] = *xyz;
+            }
+            if (!white)
+                return invalidTags();
+
+            constexpr std::array<IccXYZ, 3> srgbD50 {
+                {{0.43607, 0.22249, 0.01392}, {0.38506, 0.71689, 0.09708}, {0.14308, 0.06062, 0.71410}}};
+            constexpr IccXYZ d50 {0.9642, 1.0, 0.8249};
+            constexpr IccXYZ d65 {0.95047, 1.0, 1.08883};
+            const auto       matchesSrgb = [&srgbD50](const auto& xyz) {
+                return std::equal(xyz.begin(), xyz.end(), srgbD50.begin(), MatchesIccXYZ);
+            };
+            bool matching = matchesSrgb(colorants) && (MatchesIccXYZ(*white, d50) || MatchesIccXYZ(*white, d65));
+            if (!tags[Adaptation].empty())
+            {
+                const auto chad = tags[Adaptation];
+                if (chad.size() < 44 || chad.substr(0, 4) != "sf32")
+                    return invalidTags();
+                if (!matching)
+                {
+                    // Some profiles store native XYZ values alongside their adaptation matrix.
+                    const auto adapt = [chad](const IccXYZ& xyz) {
+                        IccXYZ result {};
+                        for (size_t y = 0; y < 3; ++y)
+                            for (size_t x = 0; x < 3; ++x)
+                                result[y] += IccFixed(chad.data() + 8 + (y * 3 + x) * 4) * xyz[x];
+                        return result;
+                    };
+                    for (auto& xyz : colorants)
+                        xyz = adapt(xyz);
+                    matching =
+                        matchesSrgb(colorants) && (MatchesIccXYZ(*white, d50) || MatchesIccXYZ(adapt(*white), d50));
+                }
+            }
+            if (matching && curves[0] == curves[1] && curves[0] == curves[2])
+            {
+                if (curves[0] == IccCurve::Linear)
+                    return {TextureColorSpace::Linear, {}};
+                if (curves[0] == IccCurve::SRGB)
+                    return {TextureColorSpace::SRGB, {}};
+            }
+            return IgnoredIccProfile(kind);
+        }
+
+        TextureMetadata ReadPngIccProfile(std::string_view chunk)
+        {
+            const auto   malformed = [] { return IgnoredIccProfile("malformed or truncated"); };
+            const size_t separator = chunk.find('\0');
+            if (separator == std::string_view::npos || separator == 0 || separator > 79 ||
+                chunk.size() - separator < 8 || chunk[separator + 1] != 0)
+                return malformed();
+            const auto compressed = chunk.substr(separator + 2);
+            // Bound inflation independently of the raster. The limit also covers the
+            // largest profile that can fit in JPEG's 255 ICC APP2 segments.
+            constexpr int profileBudget = 16 * 1024 * 1024;
+            auto          profile       = std::unique_ptr<char[]>(new char[profileBudget]);
+            const int     length        = stbi_zlib_decode_buffer(
+                profile.get(), profileBudget, compressed.data(), static_cast<int>(compressed.size()));
+            if (length < 0)
+                return malformed();
+            // stb's inflate does not verify the zlib Adler-32 trailer.
+            uint32_t a = 1, b = 0;
+            for (int i = 0; i < length; ++i)
+            {
+                a = (a + uint8_t(profile[i])) % 65521u;
+                b = (b + a) % 65521u;
+            }
+            if ((b << 16 | a) != Big32(compressed.data() + compressed.size() - 4))
+                return malformed();
+            return ReadIccProfile({profile.get(), size_t(length)});
+        }
+
+        struct JpegIccProfile
+        {
+            std::array<std::string_view, 255> Parts {};
+            size_t                            Count     = 0;
+            size_t                            Received  = 0;
+            size_t                            Size      = 0;
+            bool                              Malformed = false;
+
+            void Add(std::string_view segment)
+            {
+                if (segment.size() <= 14)
+                {
+                    Malformed = true;
+                    return;
+                }
+                const size_t sequence = uint8_t(segment[12]);
+                const size_t count    = uint8_t(segment[13]);
+                if (sequence == 0 || sequence > count || (Count != 0 && Count != count) || !Parts[sequence - 1].empty())
+                {
+                    Malformed = true;
+                    return;
+                }
+                Count = count;
+                ++Received;
+                Parts[sequence - 1] = segment.substr(14);
+                Size += segment.size() - 14;
+            }
+
+            TextureMetadata Read() const
+            {
+                if (Malformed || Received != Count)
+                    return IgnoredIccProfile("malformed or truncated JPEG segments");
+                if (Count == 0)
+                    return {};
+                if (Count == 1)
+                    return ReadIccProfile(Parts[0]);
+                std::string joined;
+                joined.reserve(Size);
+                for (size_t i = 0; i < Count; ++i)
+                    joined += Parts[i];
+                return ReadIccProfile(joined);
+            }
+        };
+
+        std::variant<TextureMetadata, AssetError>
         CheckMetadata(const unsigned char* bytes, size_t size, const TextureImportSettings& settings)
         {
-            std::optional<TextureColorSpace> space;
+            TextureMetadata                  metadata;
+            const bool                       color = settings.Usage == TextureUsage::Color;
             const unsigned char              signature[8] {137, 80, 78, 71, 13, 10, 26, 10};
             if (size >= 8 && std::memcmp(bytes, signature, 8) == 0)
             {
                 size_t                  offset = 8;
                 bool                    first = true, ended = false, srgb = false;
                 std::optional<uint32_t> gamma;
+                std::optional<std::string_view> icc;
+                bool                            duplicateIcc = false;
                 while (offset < size)
                 {
                     if (size - offset < 12)
@@ -176,9 +578,11 @@ namespace Kans
                     first = false;
                     if (std::memcmp(type, "CgBI", 4) == 0 || std::memcmp(type, "acTL", 4) == 0)
                         return AssetError {AssetErrorCode::NotImplemented, "CgBI/animated PNG import is not supported"};
-                    if (std::memcmp(type, "iCCP", 4) == 0 && settings.Usage == TextureUsage::Color)
-                        return AssetError {AssetErrorCode::NotImplemented,
-                                           "ICC color profile conversion is not supported"};
+                    if (color && std::memcmp(type, "iCCP", 4) == 0)
+                    {
+                        duplicateIcc = icc.has_value();
+                        icc          = std::string_view {reinterpret_cast<const char*>(data), length};
+                    }
                     if (std::memcmp(type, "cICP", 4) == 0 && settings.Usage == TextureUsage::Color)
                         return AssetError {AssetErrorCode::NotImplemented, "PNG cICP conversion is not supported"};
                     if (std::memcmp(type, "cHRM", 4) == 0)
@@ -229,12 +633,15 @@ namespace Kans
                 }
                 if (!ended)
                     return AssetError {AssetErrorCode::InvalidData, "Missing PNG end chunk"};
+                if (icc)
+                    return duplicateIcc ? IgnoredIccProfile("malformed (multiple PNG profiles)") :
+                                          ReadPngIccProfile(*icc);
                 if (srgb)
-                    space = TextureColorSpace::SRGB;
+                    metadata.Space = TextureColorSpace::SRGB;
                 else if (gamma == 100000)
-                    space = TextureColorSpace::Linear;
+                    metadata.Space = TextureColorSpace::Linear;
                 else if (gamma == 45455)
-                    space = TextureColorSpace::SRGB;
+                    metadata.Space = TextureColorSpace::SRGB;
                 else if (gamma && settings.Usage == TextureUsage::Color && !settings.ColorSpace)
                     return AssetError {AssetErrorCode::NotImplemented,
                                        "PNG gamma requires an explicit supported color_space"};
@@ -243,6 +650,7 @@ namespace Kans
             {
                 size_t at    = 2;
                 bool   ended = false;
+                JpegIccProfile icc;
                 while (at < size)
                 {
                     if (bytes[at++] != 255)
@@ -268,10 +676,8 @@ namespace Kans
                         return AssetError {AssetErrorCode::InvalidData, "Invalid JPEG segment size"};
                     const auto*  data    = bytes + at + 2;
                     const size_t payload = length - 2;
-                    if (marker == 226 && payload >= 12 && std::memcmp(data, "ICC_PROFILE\0", 12) == 0 &&
-                        settings.Usage == TextureUsage::Color)
-                        return AssetError {AssetErrorCode::NotImplemented,
-                                           "ICC color profile conversion is not supported"};
+                    if (color && marker == 226 && payload >= 12 && std::memcmp(data, "ICC_PROFILE\0", 12) == 0)
+                        icc.Add({reinterpret_cast<const char*>(data), payload});
                     if (marker == 225 && payload >= 6 && std::memcmp(data, "Exif\0\0", 6) == 0)
                     {
                         auto checked = CheckExif(data + 6, payload - 6);
@@ -307,8 +713,9 @@ namespace Kans
                 }
                 if (!ended)
                     return AssetError {AssetErrorCode::InvalidData, "Missing JPEG end marker"};
+                return icc.Read();
             }
-            return space;
+            return metadata;
         }
 
         std::variant<std::monostate, AssetError>
@@ -538,7 +945,8 @@ namespace Kans
     }
 
     std::variant<TextureData, AssetError> ParseTextureSource(const std::filesystem::path& file,
-                                                             const TextureImportSettings& settings)
+                                                             const TextureImportSettings& settings,
+                                                             std::vector<std::string>*    warnings)
     {
         if (const auto checked = ValidateTextureImportSettings(settings); std::holds_alternative<AssetError>(checked))
             return std::get<AssetError>(checked);
@@ -625,7 +1033,7 @@ namespace Kans
         const auto sourceSpace = settings.ColorSpace.value_or(
             hdr || settings.Usage != TextureUsage::Color ?
                 TextureColorSpace::Linear :
-                std::get<std::optional<TextureColorSpace>>(metadata).value_or(TextureColorSpace::SRGB));
+                std::get<TextureMetadata>(metadata).Space.value_or(TextureColorSpace::SRGB));
         TextureData result;
         result.Width      = static_cast<uint32_t>(width);
         result.Height     = static_cast<uint32_t>(height);
@@ -712,8 +1120,11 @@ namespace Kans
                 return *failure;
             result = std::get<TextureData>(std::move(resized));
         }
-        if (settings.GenerateMips)
-            return GenerateTextureMips(result);
-        return result;
+        std::variant<TextureData, AssetError> output =
+            settings.GenerateMips ? GenerateTextureMips(result) : std::move(result);
+        auto& warning = std::get<TextureMetadata>(metadata).Warning;
+        if (warnings && !warning.empty() && std::holds_alternative<TextureData>(output))
+            warnings->push_back(std::move(warning));
+        return output;
     }
 } // namespace Kans

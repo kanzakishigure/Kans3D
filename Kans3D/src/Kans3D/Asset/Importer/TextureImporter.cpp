@@ -31,7 +31,8 @@ namespace Kans
         if (error || !std::filesystem::is_directory(status) || std::filesystem::is_symlink(status) ||
             !std::filesystem::is_empty(context.StagingDirectory, error) || error)
             return AssetError {AssetErrorCode::InvalidArgument, "Texture staging must be an empty exclusive directory"};
-        auto parsed = ParseTextureSource(context.SourceFile, std::get<TextureImportSettings>(settings));
+        auto parsed =
+            ParseTextureSource(context.SourceFile, std::get<TextureImportSettings>(settings), &result.Warnings);
         if (const auto* failure = std::get_if<AssetError>(&parsed))
             return *failure;
         auto encoded = EncodeTextureProduct(std::get<TextureData>(parsed));
