@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 using Kans.Interop;
@@ -61,8 +62,58 @@ namespace Kans
 
     public readonly record struct AudioEventTriggerResult(AudioEventTriggerStatus Status, AudioVoiceHandle Voice);
 
+    public enum SpeakerMode { Auto, Mono, Stereo, Surround51, Surround71 }
+    public enum AudioDeviceChangeReason { Selected, Rerouted, FellBackToDefault, SpeakerModeChanged }
+    public readonly record struct AudioOutputFormat(int Channels, ulong PackedChannelMap)
+    {
+        /// <summary>Returns the miniaudio channel position at an output index, or zero if unknown.</summary>
+        public byte GetChannelPosition(int index) =>
+            index >= 0 && index < Channels && index < 8 ? (byte)(PackedChannelMap >> (index * 8)) : (byte)0;
+    }
+    public readonly record struct AudioOutputDevice(string Id, string Name, bool IsDefault, AudioOutputFormat NativeFormat);
+    public readonly record struct AudioDeviceChange(string DeviceId, AudioDeviceChangeReason Reason, AudioOutputFormat Format);
+
     public static class Audio
     {
+        public static event Action<AudioDeviceChange>? DeviceChanged;
+
+        public static SpeakerMode SpeakerMode
+        {
+            get => (SpeakerMode)AudioCalls.Read(0, AudioOperation.SpeakerMode).Priority;
+            set => SetSpeakerMode(value);
+        }
+
+        public static bool SetSpeakerMode(SpeakerMode mode) => AudioCalls.Send(0, AudioOperation.SpeakerMode,
+            new AudioCommandData { Priority = (int)mode, Flags = AudioCalls.Write }) != 0;
+
+        public static string OutputDeviceId => AudioCalls.ReadText(AudioCalls.Read(0, AudioOperation.SelectDevice));
+        public static bool SetOutputDevice(string? id = null) => AudioCalls.Send(0, AudioOperation.SelectDevice,
+            new AudioCommandData { Flags = AudioCalls.Write }, id ?? "default") != 0;
+
+        public static IReadOnlyList<AudioOutputDevice> EnumerateOutputDevices() => AudioCalls.EnumerateDevices();
+        public static bool SaveUserSettings() => AudioCalls.Send(0, AudioOperation.SaveUserSettings) != 0;
+        public static bool LoadUserSettings() => AudioCalls.Send(0, AudioOperation.LoadUserSettings) != 0;
+
+        private static ulong s_DeviceRevision, s_OutputEngine;
+
+        internal static void DispatchDeviceChange()
+        {
+            var callback = DeviceChanged;
+            if (callback == null || !AudioCalls.ReadDeviceChange(ref s_OutputEngine, ref s_DeviceRevision, out var change))
+                return;
+            foreach (Action<AudioDeviceChange> subscriber in callback.GetInvocationList())
+            {
+                try { subscriber(change); }
+                catch (Exception error) { Log.Error(error.ToString()); }
+            }
+        }
+
+        internal static void ResetDeviceEvents()
+        {
+            DeviceChanged = null;
+            s_DeviceRevision = s_OutputEngine = 0;
+        }
+
         public static AudioEventTriggerResult PlayOneShot(AssetHandle clipOrEvent, Vector3 position, float volume = 1) =>
             AudioCalls.Trigger(0, false, AudioOperation.PlayOneShot, clipOrEvent, position, new AudioEventParameters(volume));
 
@@ -78,6 +129,17 @@ namespace Kans
 
     public sealed class AudioSource : Component
     {
+        public unsafe int PushGeneratorFrames(ReadOnlySpan<float> interleaved)
+        {
+            fixed (float* pcm = interleaved)
+                return AudioCalls.Send(Entity.ID, AudioOperation.PushGenerator,
+                    new AudioCommandData { Samples = pcm, SampleCount = interleaved.Length });
+        }
+
+        public int GetFramesAvailableToPush() => AudioCalls.Send(Entity.ID, AudioOperation.GeneratorRoom);
+        /// <summary>Number of missing input frames replaced by silence by this generator voice.</summary>
+        public ulong GeneratorUnderrunFrames => AudioCalls.Read(Entity.ID, AudioOperation.GeneratorUnderruns).Local;
+
         public bool Play() => AudioCalls.Send(Entity.ID, AudioOperation.Play) != 0;
         public bool Stop() => AudioCalls.Send(Entity.ID, AudioOperation.Stop) != 0;
         public bool Pause() => AudioCalls.Send(Entity.ID, AudioOperation.Pause) != 0;
@@ -115,10 +177,18 @@ namespace Kans
 
     public static class AudioBus
     {
+        public static float? GetUserVolumeDb(string bus) => AudioCalls.ReadBusSetting(AudioOperation.UserBusVolume, bus ?? "");
+        public static bool? GetUserMuted(string bus) => AudioCalls.ReadBusSetting(AudioOperation.UserBusMute, bus ?? "") is float value
+            ? value != 0 : null;
+        public static bool SetUserVolumeDb(string bus, float db) => AudioCalls.Send(0, AudioOperation.UserBusVolume,
+            new AudioCommandData { Value = db, Flags = AudioCalls.Write }, bus ?? "") != 0;
+        public static bool SetUserMuted(string bus, bool muted) => AudioCalls.Send(0, AudioOperation.UserBusMute,
+            new AudioCommandData { Value = muted ? 1 : 0, Flags = AudioCalls.Write }, bus ?? "") != 0;
+
         public static bool SetVolumeDb(string bus, float db) => AudioCalls.Send(0, AudioOperation.BusVolume,
             new AudioCommandData { Value = db, Flags = AudioCalls.Write }, bus ?? "") != 0;
 
-        public static float? GetVolumeDb(string bus) => AudioCalls.ReadBusVolume(bus ?? "");
+        public static float? GetVolumeDb(string bus) => AudioCalls.ReadBusSetting(AudioOperation.BusVolume, bus ?? "");
 
         public static bool SetMuted(string bus, bool muted) => AudioCalls.Send(0, AudioOperation.BusMute,
             new AudioCommandData { Value = muted ? 1 : 0 }, bus ?? "") != 0;
@@ -128,7 +198,9 @@ namespace Kans
     {
         Play, Stop, Pause, UnPause, IsPlaying,
         Volume, Pitch, Loop, Clip, Event, Bus, Time,
-        PlayOneShot, TriggerEvent, StopVoice, BusVolume, BusMute
+        PlayOneShot, TriggerEvent, StopVoice, BusVolume, BusMute,
+        UserBusVolume, UserBusMute, SaveUserSettings, LoadUserSettings, SpeakerMode, SelectDevice,
+        EnumerateDevices, ReadDevice, LastDeviceChange, PushGenerator, GeneratorRoom, GeneratorUnderruns
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -141,6 +213,10 @@ namespace Kans
         internal int Priority, Flags;
         internal byte* Bus;
         internal int BusLength;
+        internal byte* DeviceName;
+        internal int DeviceNameLength;
+        internal float* Samples;
+        internal int SampleCount;
     }
 
     internal static unsafe class AudioCalls
@@ -180,10 +256,42 @@ namespace Kans
             return data.Bus != null ? Encoding.UTF8.GetString(data.Bus, data.BusLength) : "";
         }
 
-        internal static float? ReadBusVolume(string bus)
+        internal static string ReadText(AudioCommandData data) =>
+            data.Bus != null ? Encoding.UTF8.GetString(data.Bus, data.BusLength) : "";
+
+        internal static IReadOnlyList<AudioOutputDevice> EnumerateDevices()
+        {
+            int count = Send(0, AudioOperation.EnumerateDevices);
+            if (count <= 0) return Array.Empty<AudioOutputDevice>();
+            var devices = new AudioOutputDevice[count];
+            for (int index = 0; index < count; ++index)
+            {
+                AudioCommandData data = new() { Priority = index };
+                if (Call(0, AudioOperation.ReadDevice, &data) != 0)
+                    devices[index] = new AudioOutputDevice(ReadText(data),
+                        Encoding.UTF8.GetString(data.DeviceName, data.DeviceNameLength), data.Flags != 0,
+                        new AudioOutputFormat((int)data.Source, data.Local));
+            }
+            return devices;
+        }
+
+        internal static bool ReadDeviceChange(ref ulong engine, ref ulong revision, out AudioDeviceChange change)
+        {
+            AudioCommandData data = new() { Engine = engine, VoiceIndex = (uint)revision, VoiceGeneration = (uint)(revision >> 32) };
+            change = default;
+            if (Call(0, AudioOperation.LastDeviceChange, &data) == 0)
+                return false;
+            revision = ((ulong)data.VoiceGeneration << 32) | data.VoiceIndex;
+            engine = data.Engine;
+            change = new AudioDeviceChange(ReadText(data), (AudioDeviceChangeReason)data.Priority,
+                new AudioOutputFormat((int)data.Source, data.Local));
+            return true;
+        }
+
+        internal static float? ReadBusSetting(AudioOperation operation, string bus)
         {
             AudioCommandData data = default;
-            return Call(0, AudioOperation.BusVolume, &data, bus) != 0 ? data.Value : null;
+            return Call(0, operation, &data, bus) != 0 ? data.Value : null;
         }
 
         internal static AudioEventTriggerResult Trigger(ulong entity, bool entityTarget, AudioOperation operation,

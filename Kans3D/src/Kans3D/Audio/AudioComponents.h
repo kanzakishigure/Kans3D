@@ -9,9 +9,23 @@ namespace Kans
     class AudioClipRegistry;
     class AudioEventAsset;
 
+    enum class AudioSourceKind
+    {
+        Clip,
+        Event,
+        Generator
+    };
+
     struct AudioSourceComponent
     {
         AssetID               Clip, Event, AttenuationAsset;
+        // Legacy scenes and callers infer the asset kind from Event when Kind is unset.
+        std::optional<AudioSourceKind> Kind;
+        AudioGeneratorFormat           Generator;
+        AudioSourceKind                GetSourceKind() const
+        {
+            return Kind.value_or(Event.IsValid() ? AudioSourceKind::Event : AudioSourceKind::Clip);
+        }
         AudioEmitterShape     Shape;
         std::string           Bus    = MasterAudioBus;
         uint8_t               Priority = DefaultAudioVoicePriority;
@@ -41,6 +55,10 @@ namespace Kans
             ~Runtime();
             Ref<const AudioClipAsset> Source;
             AssetID                   RequestedClip, RequestedEvent;
+            AudioSourceKind                     RequestedKind = AudioSourceKind::Clip;
+            std::optional<AudioGeneratorFormat> RequestedGenerator;
+            void                                SetSource(const AudioSourceComponent& source);
+            bool                                MatchesSource(const AudioSourceComponent& source) const;
             AudioEngine*              Engine   = nullptr;
             AudioClipRegistry*        Registry = nullptr;
             AudioVoiceHandle          Voice;

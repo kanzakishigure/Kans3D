@@ -26,7 +26,19 @@ namespace Kans::ScriptAudio
             TriggerEvent,
             StopVoice,
             BusVolume,
-            BusMute
+            BusMute,
+            UserBusVolume,
+            UserBusMute,
+            SaveUserSettings,
+            LoadUserSettings,
+            SpeakerMode,
+            SelectDevice,
+            EnumerateDevices,
+            ReadDevice,
+            LastDeviceChange,
+            PushGenerator,
+            GeneratorRoom,
+            GeneratorUnderruns
         };
         constexpr int32_t Write = 1, EntityTarget = 2;
         using Data   = Scripting::AudioCommandData;
@@ -53,6 +65,15 @@ namespace Kans::ScriptAudio
             const bool write  = (data.Flags & Write) != 0;
             switch (operation)
             {
+                case Operation::PushGenerator:
+                    return data.SampleCount <= 0 ? 0 :
+                                                   static_cast<int32_t>(engine.PushGeneratorFrames(
+                                                       source.GetVoiceHandle(), data.Samples, data.SampleCount));
+                case Operation::GeneratorRoom:
+                    return static_cast<int32_t>(engine.GetFramesAvailableToPush(source.GetVoiceHandle()));
+                case Operation::GeneratorUnderruns:
+                    data.Local = engine.GetGeneratorUnderrunFrames(source.GetVoiceHandle());
+                    return 1;
                 case Operation::Play:
                     scene.PlayAudioSource(entity);
                     return !source.GetLastError();
@@ -190,6 +211,81 @@ namespace Kans::ScriptAudio
             return result.Status;
         }
 
+        void WriteOutputFormat(const AudioOutputFormat& format, Data& data)
+        {
+            data.Source = format.Channels;
+            data.Local  = 0;
+            for (size_t i = 0; i < format.ChannelMap.size(); ++i)
+                data.Local |= uint64_t(format.ChannelMap[i]) << (i * 8);
+        }
+
+        int32_t OutputSettings(AudioEngine& engine, Operation operation, Data& data)
+        {
+            static thread_local std::vector<AudioOutputDevice> devices;
+            switch (operation)
+            {
+                case Operation::UserBusVolume:
+                case Operation::UserBusMute: {
+                    const std::string bus(data.Bus ? data.Bus : "", data.BusLength);
+                    if (data.Flags & Write)
+                        return operation == Operation::UserBusVolume ? engine.SetUserBusVolumeDb(bus, data.Value) :
+                                                                       engine.SetUserBusMute(bus, data.Value != 0);
+                    const auto settings = engine.GetUserBusSettings(bus);
+                    if (!settings)
+                        return 0;
+                    data.Value = operation == Operation::UserBusVolume ? settings->VolumeDb : float(settings->Mute);
+                    return 1;
+                }
+                case Operation::SaveUserSettings:
+                    return !engine.SaveUserSettings();
+                case Operation::LoadUserSettings:
+                    return !engine.LoadUserSettings();
+                case Operation::SpeakerMode:
+                    if (data.Flags & Write)
+                        return engine.SetSpeakerMode(static_cast<SpeakerMode>(data.Priority));
+                    data.Priority = static_cast<int32_t>(engine.GetSpeakerMode());
+                    return 1;
+                case Operation::SelectDevice:
+                    if (data.Flags & Write)
+                        return engine.SetOutputDevice(std::string_view(data.Bus ? data.Bus : "", data.BusLength));
+                    data.Bus       = engine.GetUserSettings().OutputDevice.data();
+                    data.BusLength = static_cast<int32_t>(engine.GetUserSettings().OutputDevice.size());
+                    return 1;
+                case Operation::EnumerateDevices:
+                    devices = engine.EnumerateOutputDevices();
+                    return static_cast<int32_t>(devices.size());
+                case Operation::ReadDevice: {
+                    if (data.Priority < 0 || static_cast<size_t>(data.Priority) >= devices.size())
+                        return 0;
+                    const auto& device    = devices[data.Priority];
+                    data.Bus              = device.Id.data();
+                    data.BusLength        = static_cast<int32_t>(device.Id.size());
+                    data.DeviceName       = device.Name.data();
+                    data.DeviceNameLength = static_cast<int32_t>(device.Name.size());
+                    data.Flags            = device.IsDefault;
+                    WriteOutputFormat(device.NativeFormat, data);
+                    return 1;
+                }
+                case Operation::LastDeviceChange: {
+                    const auto& change   = engine.GetLastDeviceChange();
+                    const auto  instance = engine.GetInstanceID();
+                    if (!change.Revision || (data.Engine == instance && data.VoiceIndex == uint32_t(change.Revision) &&
+                                             data.VoiceGeneration == uint32_t(change.Revision >> 32)))
+                        return 0;
+                    data.Engine          = instance;
+                    data.VoiceIndex      = uint32_t(change.Revision);
+                    data.VoiceGeneration = uint32_t(change.Revision >> 32);
+                    data.Priority        = int32_t(change.Reason);
+                    data.Bus             = change.DeviceId.data();
+                    data.BusLength       = static_cast<int32_t>(change.DeviceId.size());
+                    WriteOutputFormat(change.Format, data);
+                    return 1;
+                }
+                default:
+                    return 0;
+            }
+        }
+
         int32_t KANS_SCRIPT_CALL Command(uint64_t entityID, int32_t command, Data* data) noexcept
         {
             const auto operation = Operation(command);
@@ -215,6 +311,8 @@ namespace Kans::ScriptAudio
                     data->Value = *engine->GetBusVolumeDb(bus);
                     return 1;
                 }
+                if (operation >= Operation::UserBusVolume && operation <= Operation::LastDeviceChange)
+                    return OutputSettings(*engine, operation, *data);
                 if (operation == Operation::StopVoice)
                 {
                     const AudioVoiceHandle voice {data->VoiceIndex, data->VoiceGeneration};

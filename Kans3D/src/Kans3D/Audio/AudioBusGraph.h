@@ -15,10 +15,11 @@ namespace Kans
         AudioBusGraph();
         ~AudioBusGraph();
 
-        ma_result            Init(ma_engine&              engine,
-                                  const AudioBusLayout&   layout,
-                                  const AudioBusGraph*    previous,
-                                  const AudioDSPRegistry& registry);
+        ma_result                              Init(ma_engine&               engine,
+                                                    const AudioBusLayout&    layout,
+                                                    const AudioBusGraph*     previous,
+                                                    const AudioDSPRegistry&  registry,
+                                                    const AudioUserSettings& settings);
         bool                 TryUpdate(const AudioBusLayout& layout, const AudioDSPRegistry& registry);
         bool                 SetEffectParameters(const std::string&              bus,
                                                  size_t                          index,
@@ -44,6 +45,7 @@ namespace Kans
         const AudioSidechainPeak* Detector(const AudioBusEffectParameters& params) const;
         ma_result InitChain(ma_node_graph* graph, uint32_t rate, size_t index, const AudioDSPRegistry& registry);
         float     ResolveAudibilityGain(size_t index);
+        const AudioUserSettings* m_UserSettings = nullptr;
         AudioBusLayout                          m_Layout;
         std::vector<std::unique_ptr<Bus>>       m_Buses;
         std::unordered_map<std::string, size_t> m_Names;

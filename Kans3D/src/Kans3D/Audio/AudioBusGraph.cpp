@@ -229,11 +229,13 @@ namespace Kans
             ma_node_detach_output_bus(static_cast<ma_node_base*>(&m_Buses[m_Names.at(MasterAudioBus)]->Fader), 0);
     }
 
-    ma_result AudioBusGraph::Init(ma_engine&              engine,
-                                  const AudioBusLayout&   layout,
-                                  const AudioBusGraph*    previous,
-                                  const AudioDSPRegistry& registry)
+    ma_result AudioBusGraph::Init(ma_engine&               engine,
+                                  const AudioBusLayout&    layout,
+                                  const AudioBusGraph*     previous,
+                                  const AudioDSPRegistry&  registry,
+                                  const AudioUserSettings& settings)
     {
+        m_UserSettings        = &settings;
         auto* graph           = ma_engine_get_node_graph(&engine);
         m_Endpoint            = ma_node_graph_get_endpoint(graph);
         m_Channels            = ma_engine_get_channels(&engine);
@@ -557,7 +559,12 @@ namespace Kans
             auto& fader = m_Buses[i]->Fader;
             fader.PinToCenter.store(definitions[i].PinToCenter, std::memory_order_relaxed);
             fader.PreFader.Target.store(audible ? 1.f : 0.f, std::memory_order_relaxed);
-            fader.Fader.Target.store(audible && !definitions[i].Mute ? Gain(definitions[i].VolumeDb) : 0.f,
+            const auto& definition = definitions[i];
+            const auto  found      = m_UserSettings->Buses.find(definition.Name);
+            const auto  player     = found == m_UserSettings->Buses.end() ? AudioUserBusSettings {} : found->second;
+            const auto  effective  = std::min(double(std::numeric_limits<float>::max()),
+                                              double(Gain(definition.VolumeDb)) * Gain(player.VolumeDb));
+            fader.Fader.Target.store(audible && !definition.Mute && !player.Mute ? float(effective) : 0.f,
                                      std::memory_order_relaxed);
         }
     }

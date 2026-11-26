@@ -96,15 +96,14 @@ namespace Kans
         if (!m_AudioEngine || !m_AudioRunning || !OwnsAudioSource(entity))
             return;
         auto& c = entity.GetComponent<AudioSourceComponent>();
-        if (c.m_Runtime &&
-            (c.m_Runtime->RequestedEvent != c.Event || (!c.Event.IsValid() && c.m_Runtime->RequestedClip != c.Clip)))
+        if (c.m_Runtime && !c.m_Runtime->MatchesSource(c))
             c.m_Runtime.reset();
-        if (c.Event.IsValid())
+        if (c.GetSourceKind() == AudioSourceKind::Event)
         {
             if (!c.m_Runtime)
                 c.m_Runtime = std::make_unique<AudioSourceComponent::Runtime>();
             auto& r          = *c.m_Runtime;
-            r.RequestedEvent = c.Event;
+            r.SetSource(c);
             r.Engine         = m_AudioEngine;
             r.PendingStart   = true;
             r.LastError.reset();
@@ -122,7 +121,7 @@ namespace Kans
         const auto seek = c.m_Runtime ? c.m_Runtime->PendingSeek : std::nullopt;
         c.m_Runtime     = std::make_unique<AudioSourceComponent::Runtime>();
         auto& r         = *c.m_Runtime;
-        r.RequestedClip = c.Clip;
+        r.SetSource(c);
         r.Engine        = m_AudioEngine;
         r.Registry      = &m_AudioClips;
         r.PendingStart  = true;
@@ -291,14 +290,15 @@ namespace Kans
         if (!OwnsAudioSource(entity) || !std::isfinite(seconds) || seconds < 0)
             return;
         auto& source = entity.GetComponent<AudioSourceComponent>();
+        if (source.GetSourceKind() == AudioSourceKind::Generator)
+            return;
         if (m_AudioEngine && m_AudioEngine->IsVoiceValid(source.GetVoiceHandle()))
             m_AudioEngine->SeekSeconds(source.GetVoiceHandle(), seconds);
         else
         {
             if (!source.m_Runtime)
                 source.m_Runtime = std::make_unique<AudioSourceComponent::Runtime>();
-            source.m_Runtime->RequestedClip  = source.Clip;
-            source.m_Runtime->RequestedEvent = source.Event;
+            source.m_Runtime->SetSource(source);
             source.m_Runtime->PendingSeek    = seconds;
         }
     }
@@ -343,14 +343,16 @@ namespace Kans
     {
         auto& c = entity.GetComponent<AudioSourceComponent>();
         auto& r = *c.m_Runtime;
-        if (!r.PendingStart || r.LastError || (!c.Event.IsValid() && m_AudioEngine->IsBusPaused(c.Bus)))
+        const auto kind = c.GetSourceKind();
+        if (!r.PendingStart || r.LastError || (kind == AudioSourceKind::Clip && m_AudioEngine->IsBusPaused(c.Bus)))
             return;
         auto fail = [&](AssetError error) {
             r.LastError    = std::move(error);
             r.PendingStart = false;
-            WarnInvalidAudioAsset((c.Event.IsValid() ? c.Event : c.Clip).ToString());
+            if (kind != AudioSourceKind::Generator)
+                WarnInvalidAudioAsset((kind == AudioSourceKind::Event ? c.Event : c.Clip).ToString());
         };
-        if (c.Event.IsValid())
+        if (kind == AudioSourceKind::Event)
         {
             // Event playback snapshots gain, pitch, routing and loop settings at Play.
             // Component volume and pitch multiply. Master and default priority inherit.
@@ -408,27 +410,30 @@ namespace Kans
                     return;
             }
         }
-        if (!c.Clip.IsValid() || !m_PrefabAssets)
+        if (kind == AudioSourceKind::Clip)
         {
-            fail({AssetErrorCode::InvalidData, "Audio clip or scene AssetManager is missing"});
-            return;
+            if (!c.Clip.IsValid() || !m_PrefabAssets)
+            {
+                fail({AssetErrorCode::InvalidData, "Audio clip or scene AssetManager is missing"});
+                return;
+            }
+            auto loaded = m_PrefabAssets->Request<AudioClipAsset>(c.Clip);
+            if (loaded.State == AssetLoadState::Failed)
+            {
+                fail(loaded.Error.value_or(AssetError {AssetErrorCode::InvalidData, "Audio clip load failed"}));
+                return;
+            }
+            if (!loaded.IsReady())
+                return;
+            r.Source = loaded.Asset;
+            if (!m_AudioClips.Acquire(*m_AudioEngine, r.Source))
+            {
+                fail({AssetErrorCode::InvalidData, "Audio clip registration failed"});
+                r.Source.reset();
+                return;
+            }
+            r.Acquired = true;
         }
-        auto loaded = m_PrefabAssets->Request<AudioClipAsset>(c.Clip);
-        if (loaded.State == AssetLoadState::Failed)
-        {
-            fail(loaded.Error.value_or(AssetError {AssetErrorCode::InvalidData, "Audio clip load failed"}));
-            return;
-        }
-        if (!loaded.IsReady())
-            return;
-        r.Source = loaded.Asset;
-        if (!m_AudioClips.Acquire(*m_AudioEngine, r.Source))
-        {
-            fail({AssetErrorCode::InvalidData, "Audio clip registration failed"});
-            r.Source.reset();
-            return;
-        }
-        r.Acquired = true;
         AudioVoiceDesc desc;
         desc.Bus     = c.Bus;
         desc.Priority         = c.Priority;
@@ -442,10 +447,17 @@ namespace Kans
         desc.LfeSendDb        = c.LfeSendDb;
         desc.PinToCenter      = c.PinToCenter;
         r.Spatial    = c.Spatial;
-        r.Voice      = m_AudioClips.CreateVoice(*m_AudioEngine, r.Source, desc);
+        if (kind == AudioSourceKind::Generator)
+        {
+            desc.Generator = c.Generator;
+            r.Voice        = m_AudioEngine->CreateVoice(desc);
+        }
+        else
+            r.Voice = m_AudioClips.CreateVoice(*m_AudioEngine, r.Source, desc);
         if (!m_AudioEngine->IsVoiceValid(r.Voice))
         {
-            m_AudioClips.Release(r.Source->assetID);
+            if (r.Acquired)
+                m_AudioClips.Release(r.Source->assetID);
             r.Acquired = false;
             r.Source.reset();
             fail({AssetErrorCode::InvalidData, "Audio voice creation failed"});
@@ -459,7 +471,8 @@ namespace Kans
         {
             m_AudioEngine->DestroyVoice(r.Voice);
             r.Voice = {};
-            m_AudioClips.Release(r.Source->assetID);
+            if (r.Acquired)
+                m_AudioClips.Release(r.Source->assetID);
             r.Acquired = false;
             r.Source.reset();
         }
@@ -468,11 +481,11 @@ namespace Kans
     {
         auto& c = entity.GetComponent<AudioSourceComponent>();
         auto& r = *c.m_Runtime;
-        if (!r.RequestedEvent.IsValid())
+        if (!r.EventAsset)
         {
             m_AudioEngine->SetVoiceBus(r.Voice, c.Bus);
             m_AudioEngine->SetVoicePriority(r.Voice, c.Priority);
-            m_AudioEngine->SetVolume(r.Voice, c.Volume * r.Source->GetData().Volume);
+            m_AudioEngine->SetVolume(r.Voice, c.Volume * (r.Source ? r.Source->GetData().Volume : 1.f));
             m_AudioEngine->SetPitch(r.Voice, c.Pitch);
             m_AudioEngine->SetPan(r.Voice, r.Spatial ? 0 : c.Pan);
             m_AudioEngine->SetLooping(r.Voice, c.Loop);
@@ -679,8 +692,7 @@ namespace Kans
         for (auto handle : m_Registry.view<AudioSourceComponent>())
         {
             auto& c = m_Registry.get<AudioSourceComponent>(handle);
-            if (c.m_Runtime && (c.m_Runtime->RequestedEvent != c.Event ||
-                                (!c.Event.IsValid() && c.m_Runtime->RequestedClip != c.Clip)))
+            if (c.m_Runtime && !c.m_Runtime->MatchesSource(c))
             {
                 const bool pending = c.m_Runtime->PendingStart;
                 c.m_Runtime.reset();
@@ -715,8 +727,9 @@ namespace Kans
                 if (m_AudioEngine->HasEnded(c.m_Runtime->Voice))
                     c.m_Runtime.reset();
             }
-            else if (c.m_Runtime->Acquired || (c.Event.IsValid() && c.m_Runtime->Voice.IsValid() &&
-                                               !c.m_Runtime->LastError && !c.m_Runtime->PendingStart))
+            else if (c.m_Runtime->Acquired ||
+                     (c.GetSourceKind() != AudioSourceKind::Clip && c.m_Runtime->Voice.IsValid() &&
+                      !c.m_Runtime->LastError && !c.m_Runtime->PendingStart))
                 c.m_Runtime.reset();
         }
     }

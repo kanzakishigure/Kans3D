@@ -74,6 +74,132 @@ namespace Kans
             }
         }
 
+        AudioOutputFormat StandardOutputFormat(uint32_t channels)
+        {
+            AudioOutputFormat format {channels};
+            ma_channel_map_init_standard(
+                ma_standard_channel_map_default, format.ChannelMap.data(), format.ChannelMap.size(), channels);
+            return format;
+        }
+
+        AudioOutputFormat NormalizeOutputFormat(AudioOutputFormat format, uint32_t fallback)
+        {
+            if (format.Channels == 0 || format.Channels > MaxOutputChannels)
+                return StandardOutputFormat(fallback);
+            std::fill(format.ChannelMap.begin() + format.Channels, format.ChannelMap.end(), MA_CHANNEL_NONE);
+            if (std::find(format.ChannelMap.begin(), format.ChannelMap.begin() + format.Channels, MA_CHANNEL_NONE) !=
+                    format.ChannelMap.begin() + format.Channels ||
+                !ma_channel_map_is_valid(format.ChannelMap.data(), format.Channels))
+                return StandardOutputFormat(format.Channels);
+            return format;
+        }
+
+        AudioOutputFormat MixFormatFor(SpeakerMode mode, const AudioOutputFormat& native)
+        {
+            switch (mode)
+            {
+                case SpeakerMode::Mono:
+                    return StandardOutputFormat(1);
+                case SpeakerMode::Stereo:
+                    return StandardOutputFormat(2);
+                case SpeakerMode::Surround51:
+                    return StandardOutputFormat(6);
+                case SpeakerMode::Surround71:
+                    return StandardOutputFormat(8);
+                default:
+                    return native;
+            }
+        }
+
+        std::string DeviceId(ma_backend backend, const ma_device_id& id)
+        {
+            std::string_view bytes;
+            switch (backend)
+            {
+                case ma_backend_wasapi: {
+                    size_t length = 0;
+                    while (length < std::size(id.wasapi) && id.wasapi[length])
+                        ++length;
+                    bytes = {reinterpret_cast<const char*>(id.wasapi), length * sizeof(id.wasapi[0])};
+                    break;
+                }
+                case ma_backend_dsound:
+                    bytes = {reinterpret_cast<const char*>(id.dsound), sizeof(id.dsound)};
+                    break;
+                case ma_backend_winmm:
+                    bytes = {reinterpret_cast<const char*>(&id.winmm), sizeof(id.winmm)};
+                    break;
+                case ma_backend_pulseaudio:
+                    bytes = id.pulse;
+                    break;
+                case ma_backend_alsa:
+                    bytes = id.alsa;
+                    break;
+                case ma_backend_jack:
+                    bytes = {reinterpret_cast<const char*>(&id.jack), sizeof(id.jack)};
+                    break;
+                default:
+                    return {};
+            }
+            constexpr char digits[] = "0123456789abcdef";
+            std::string    key      = ma_get_backend_name(backend);
+            key += ':';
+            for (const auto byte : bytes)
+            {
+                const auto value = static_cast<unsigned char>(byte);
+                key += digits[value >> 4];
+                key += digits[value & 15];
+            }
+            return key;
+        }
+
+        struct OutputConverter
+        {
+            ma_channel_converter Converter {};
+            bool                 Ready = false;
+            ~OutputConverter()
+            {
+                if (Ready)
+                    ma_channel_converter_uninit(&Converter, nullptr);
+            }
+
+            ma_result Init(const AudioOutputFormat& mix, AudioOutputFormat output)
+            {
+                auto                                                mode = ma_channel_mix_mode_rectangular;
+                std::array<std::array<float, 2>, MaxOutputChannels> weights {};
+                std::array<float*, MaxOutputChannels>               rows {};
+                if (mix.Channels > 2 && output.Channels <= 2)
+                {
+                    mode = ma_channel_mix_mode_custom_weights;
+                    for (uint32_t ch = 0; ch < mix.Channels; ++ch)
+                    {
+                        const auto stereo = StereoDownmix(mix.ChannelMap[ch]);
+                        if (output.Channels == 1)
+                            weights[ch][0] = AudioMinus3Db * (stereo[0] + stereo[1]);
+                        else
+                            for (uint32_t speaker = 0; speaker < 2; ++speaker)
+                                weights[ch][speaker] = stereo[output.ChannelMap[speaker] == MA_CHANNEL_FRONT_RIGHT];
+                        rows[ch] = weights[ch].data();
+                    }
+                    // The mono shortcut averages every input, including LFE. Use the explicit matrix.
+                    if (output.Channels == 1)
+                        output.ChannelMap[0] = MA_CHANNEL_FRONT_CENTER;
+                }
+                else if (mix.Channels <= output.Channels && mix.Channels > 1)
+                    mode = ma_channel_mix_mode_simple;
+                auto config       = ma_channel_converter_config_init(ma_format_f32,
+                                                                     mix.Channels,
+                                                                     mix.ChannelMap.data(),
+                                                                     output.Channels,
+                                                                     output.ChannelMap.data(),
+                                                                     mode);
+                config.ppWeights  = rows.data();
+                const auto result = ma_channel_converter_init(&config, nullptr, &Converter);
+                Ready             = result == MA_SUCCESS;
+                return result;
+            }
+        };
+
         struct SpatialMix
         {
             std::array<float, MaxOutputChannels> Gains {1, 1, 1, 1, 1, 1, 1, 1};
@@ -324,6 +450,51 @@ namespace Kans
             ma_decoder                      Decoder {};
             bool                            Offline = false, Initialized = false, Stream = false, DecoderReady = false;
             AudioSoundInfo                  Info {};
+            bool                            Generator = false;
+            std::atomic<uint64_t>           UnderrunFrames {0};
+
+            uint32_t PushRoom() const
+            {
+                return static_cast<uint32_t>(Capacity - (WriteFrame.load(std::memory_order_relaxed) -
+                                                         ReadFrame.load(std::memory_order_acquire)));
+            }
+
+            uint32_t Push(const float* samples, size_t sampleCount)
+            {
+                if (!samples || sampleCount % Info.Channels != 0)
+                    return 0;
+                const auto count = std::min<size_t>(sampleCount / Info.Channels, PushRoom());
+                if (!count)
+                    return 0;
+                const auto write  = WriteFrame.load(std::memory_order_relaxed);
+                const auto offset = write % Capacity;
+                const auto first  = std::min<uint64_t>(count, Capacity - offset);
+                std::copy_n(samples, first * Info.Channels, PCM.data() + offset * Info.Channels);
+                std::copy_n(samples + first * Info.Channels, (count - first) * Info.Channels, PCM.data());
+                WriteFrame.store(write + count, std::memory_order_release);
+                return static_cast<uint32_t>(count);
+            }
+
+            ma_result ReadGenerator(void* output, ma_uint64 count, ma_uint64& read)
+            {
+                const auto start = ReadFrame.load(std::memory_order_relaxed);
+                const auto ready = std::min<uint64_t>(count, WriteFrame.load(std::memory_order_acquire) - start);
+                if (output)
+                {
+                    const auto offset  = start % Capacity;
+                    const auto first   = std::min(ready, Capacity - offset);
+                    auto*      samples = static_cast<float*>(output);
+                    std::copy_n(PCM.data() + offset * Info.Channels, first * Info.Channels, samples);
+                    std::copy_n(PCM.data(), (ready - first) * Info.Channels, samples + first * Info.Channels);
+                    std::fill_n(samples + ready * Info.Channels, (count - ready) * Info.Channels, 0.f);
+                }
+                ReadFrame.store(start + ready, std::memory_order_release);
+                Cursor.fetch_add(count, std::memory_order_relaxed);
+                if (ready < count)
+                    UnderrunFrames.fetch_add(count - ready, std::memory_order_relaxed);
+                read = count;
+                return MA_SUCCESS;
+            }
             uint64_t                        LoopStart = 0, LoopEnd = 0;
             uint64_t                        DecoderFrame = 0;
             uint64_t                        Capacity     = 0;
@@ -342,6 +513,12 @@ namespace Kans
             ma_result
             ConfigureRouting(const ma_channel* input, const ma_channel* output, uint32_t channels, bool spatial)
             {
+                if (ConverterReady)
+                {
+                    ma_channel_converter_uninit(&Converter, nullptr);
+                    ConverterReady = false;
+                }
+                RoutingScratch.clear();
                 Spatial = spatial;
                 std::copy_n(input, Info.Channels, InputMap.begin());
                 OutputChannels = Info.Channels;
@@ -379,6 +556,8 @@ namespace Kans
 
             ma_result ReadRaw(void* out, ma_uint64 count, ma_uint64& read)
             {
+                if (Generator)
+                    return ReadGenerator(out, count, read);
                 return Stream ? Read(out, count, read) : ma_data_source_read_pcm_frames(&Data, out, count, &read);
             }
 
@@ -459,15 +638,22 @@ namespace Kans
                            const ma_channel*    inputMap,
                            const ma_channel*    outputMap,
                            uint32_t             outputChannels,
-                           bool                 spatial)
+                           bool                 spatial,
+                           bool                 generator)
             {
+                Generator = generator;
                 Offline = offline;
                 Stream    = stream;
                 Info      = info;
                 LoopStart = loopStart;
                 LoopEnd   = loopEnd;
                 ma_result result;
-                if (Stream)
+                if (Generator)
+                {
+                    Capacity = std::max(2048u, Info.SampleRate / 4);
+                    PCM.resize(Capacity * Info.Channels);
+                }
+                else if (Stream)
                 {
                     const auto config = ma_decoder_config_init(ma_format_f32, 0, 0);
                     result            = ma_decoder_init_vfs(&vfs, path, &config, &Decoder);
@@ -488,7 +674,7 @@ namespace Kans
                 result = ConfigureRouting(inputMap, outputMap, outputChannels, spatial);
                 if (result != MA_SUCCESS)
                 {
-                    if (!Stream)
+                    if (!Stream && !Generator)
                         ma_resource_manager_data_source_uninit(&Data);
                     return result;
                 }
@@ -499,6 +685,8 @@ namespace Kans
                     },
                     [](ma_data_source* source, ma_uint64 frame) -> ma_result {
                         auto& self = *static_cast<VoiceSource*>(source);
+                        if (self.Generator)
+                            return MA_SUCCESS;
                         if (!self.Stream)
                             return ma_data_source_seek_to_pcm_frame(&self.Data, frame);
                         if (frame != self.Cursor.load(std::memory_order_relaxed))
@@ -533,7 +721,7 @@ namespace Kans
 
                     [](ma_data_source* source, ma_uint64* cursor) -> ma_result {
                         auto& self = *static_cast<VoiceSource*>(source);
-                        if (!self.Stream)
+                        if (!self.Stream && !self.Generator)
                             return ma_data_source_get_cursor_in_pcm_frames(&self.Data, cursor);
                         *cursor = self.Cursor.load(std::memory_order_relaxed);
                         return MA_SUCCESS;
@@ -547,7 +735,7 @@ namespace Kans
                 auto config = ma_data_source_config_init();
                 config.vtable = &callbacks;
                 result = ma_data_source_init(&config, &Base);
-                if (result != MA_SUCCESS && !Stream)
+                if (result != MA_SUCCESS && !Stream && !Generator)
                     ma_resource_manager_data_source_uninit(&Data);
                 Initialized = result == MA_SUCCESS;
                 return result;
@@ -637,7 +825,7 @@ namespace Kans
                 if (Initialized)
                 {
                     ma_data_source_uninit(&Base);
-                    if (!Stream)
+                    if (!Stream && !Generator)
                         ma_resource_manager_data_source_uninit(&Data);
                 }
                 if (ConverterReady)
@@ -849,6 +1037,71 @@ namespace Kans
                     engineNode.spatializer.minSpatializationChannelGain = NativePanFloor;
                 }
 
+                void
+                ProcessNative(ma_node* node, const float** in, ma_uint32* inCount, float** out, ma_uint32* outCount)
+                {
+                    if (!Owner->Source->Generator)
+                    {
+                        Original->onProcess(node, in, inCount, out, outCount);
+                        return;
+                    }
+
+                    // ma_sound normally requests its full cache from an asset. A live producer
+                    // supplies just enough input to render the requested block, so a short pull
+                    // cannot consume samples or report silence for future output.
+                    const auto pitch      = ma_sound_get_pitch(this);
+                    const auto doppler    = engineNode.spatializer.dopplerPitch;
+                    const auto engineRate = ma_engine_get_sample_rate(engineNode.pEngine);
+                    const bool bypass     = pitch == 1 && doppler == 1 && engineNode.sampleRate == engineRate;
+                    if (engineNode.isPitchDisabled != bypass)
+                    {
+                        engineNode.isPitchDisabled = bypass;
+                        if (!bypass)
+                            ResetResampler();
+                    }
+                    if (!bypass && (pitch != engineNode.oldPitch || doppler != engineNode.oldDopplerPitch))
+                    {
+                        engineNode.oldPitch        = pitch;
+                        engineNode.oldDopplerPitch = doppler;
+                        ma_resampler_set_rate_ratio(&engineNode.resampler,
+                                                    float(engineNode.sampleRate) / engineRate * pitch * doppler);
+                    }
+                    const auto capacity  = processingCacheCap;
+                    const auto requested = *outCount;
+                    const auto channels  = ma_node_get_output_channels(node, 0);
+                    *outCount            = 0;
+                    while (*outCount < requested)
+                    {
+                        ma_uint64 count    = requested - *outCount;
+                        ma_uint64 required = count;
+                        if (!bypass)
+                        {
+                            if (ma_resampler_get_required_input_frame_count(&engineNode.resampler, count, &required) !=
+                                MA_SUCCESS)
+                                break;
+                            if (required > capacity)
+                            {
+                                ma_uint64 fit = 0;
+                                ma_resampler_get_expected_output_frame_count(&engineNode.resampler, capacity, &fit);
+                                count = std::max<ma_uint64>(1, std::min(fit, count));
+                                ma_resampler_get_required_input_frame_count(&engineNode.resampler, count, &required);
+                            }
+                        }
+                        else
+                            required = count = std::min<ma_uint64>(capacity, count);
+                        const auto cached  = processingCacheFramesRemaining;
+                        processingCacheCap = static_cast<ma_uint32>(
+                            std::clamp<ma_uint64>(required - std::min<ma_uint64>(required, cached), 1, capacity));
+                        float* output = out[0] + size_t(*outCount) * channels;
+                        auto   mixed  = static_cast<ma_uint32>(count);
+                        Original->onProcess(node, in, inCount, &output, &mixed);
+                        *outCount += mixed;
+                        if (mixed < count)
+                            break;
+                    }
+                    processingCacheCap = capacity;
+                }
+
                 void ProcessPitch(ma_node* node, const float** in, ma_uint32* inCount, float** out, ma_uint32* outCount)
                 {
                     const uint64_t endRamp   = AddFrames(Pitch.Start, Pitch.Frames);
@@ -868,7 +1121,7 @@ namespace Kans
                         ma_sound_set_pitch(this, Pitch.At(double(frame) + count * 0.5));
                         float* output = out[0] + size_t(*outCount) * channels;
                         auto   mixed  = count;
-                        Original->onProcess(node, in, inCount, &output, &mixed);
+                        ProcessNative(node, in, inCount, &output, &mixed);
                         *outCount += mixed;
                         if (mixed < count)
                             break;
@@ -887,7 +1140,7 @@ namespace Kans
                         self.Next  = std::max<uint64_t>(block, ma_node_get_state_time(node, ma_node_state_started));
                     }
                     self.PitchMailbox.Consume(self.Pitch);
-                    if (self.Pitch.Driven)
+                    if (self.Pitch.Driven && !voice.Source->Generator)
                         self.engineNode.isPitchDisabled = false;
                     if (voice.Timed.load(std::memory_order_relaxed))
                     {
@@ -902,7 +1155,7 @@ namespace Kans
                             !self.Pitch.Driven && !voice.Desc.Spatial &&
                             self.engineNode.sampleRate == ma_engine_get_sample_rate(ma_sound_get_engine(&self)) &&
                             ma_sound_get_pitch(&self) == 1 && !self.FractionalSeek;
-                        if (self.engineNode.isPitchDisabled != bypass)
+                        if (!voice.Source->Generator && self.engineNode.isPitchDisabled != bypass)
                         {
                             self.engineNode.isPitchDisabled = bypass;
                             self.ResetResampler();
@@ -932,7 +1185,7 @@ namespace Kans
                     if (self.Pitch.Driven)
                         self.ProcessPitch(node, in, inCount, out, outCount);
                     else
-                        self.Original->onProcess(node, in, inCount, out, outCount);
+                        self.ProcessNative(node, in, inCount, out, outCount);
                     if (*outCount < requested && voice.Source->Stream && !voice.Source->Offline &&
                         !ma_sound_at_end(&self))
                         voice.StreamDelay.fetch_add(requested - *outCount, std::memory_order_relaxed);
@@ -1056,11 +1309,17 @@ namespace Kans
                     return result;
                 }
 
-                ~SendNode()
+                void Uninit()
                 {
                     if (Ready)
+                    {
+                        Disconnect();
                         ma_node_uninit(this, nullptr);
+                        Ready = false;
+                    }
                 }
+
+                ~SendNode() { Uninit(); }
 
                 static void Process(ma_node*      node,
                                     const float** inputs,
@@ -1323,6 +1582,40 @@ namespace Kans
                 std::this_thread::yield();
         }
 
+        struct OutputDevice
+        {
+            Impl*                       Mixer = nullptr;
+            ma_device                   Device {};
+            std::atomic<bool>           Changed {false};
+            std::optional<ma_device_id> Endpoint;
+            bool                        Open = false;
+            ~OutputDevice()
+            {
+                if (Open)
+                    ma_device_uninit(&Device);
+            }
+        };
+
+        struct DeviceList
+        {
+            std::vector<ma_device_info> Entries;
+            ma_result                   Result = MA_SUCCESS;
+        };
+
+        DeviceList ReadDevices()
+        {
+            DeviceList list;
+            list.Result = ma_context_enumerate_devices(
+                &Context,
+                [](ma_context*, ma_device_type type, const ma_device_info* info, void* user) -> ma_bool32 {
+                    if (type == ma_device_type_playback)
+                        static_cast<DeviceList*>(user)->Entries.push_back(*info);
+                    return MA_TRUE;
+                },
+                &list);
+            return list;
+        }
+
         MemoryVFS VFS;
         ma_context Context{};
         ma_resource_manager Resources{};
@@ -1361,6 +1654,20 @@ namespace Kans
             return Buses->Find(MasterAudioBus);
         }
         AudioEngineConfig Config;
+        AudioUserSettings                UserSettings;
+        AudioOutputFormat                MixFormat, NativeFormat;
+        uint32_t                         MixPeriod = 0;
+        std::unique_ptr<OutputDevice>    Output;
+        std::unique_ptr<OutputConverter> OutputConversion;
+        AudioDeviceChange                LastDeviceChange;
+        std::vector<AudioOutputDevice>   SimulatedDevices;
+        bool                             Simulated = false, SimulatedChanged = false, RetryOutput = false;
+        std::string                      SimulatedEndpoint;
+        MixClock::time_point             NextOutputCheck {};
+        ma_result                        InitMixer(const AudioOutputFormat& format);
+        ma_result                        InitVoiceNodes(Voice& voice, uint64_t loopStart, uint64_t loopEnd);
+        ma_result                        OpenOutput(const ma_device_id* selection, OutputDevice& output);
+        ma_uint64                        MixPCM(float* output, ma_uint64 count);
         ma_spatializer                  PanProbe {};
         bool                            PanProbeReady = false;
         std::unique_ptr<AudioBusGraph>  Buses;
@@ -1892,8 +2199,16 @@ namespace Kans
         Shutdown();
         auto& p = *m_Impl;
         p.Config = config;
+        if (!config.UserSettingsFile.empty())
+        {
+            std::vector<std::string> reasons;
+            p.UserSettings = AudioUserSettings::Load(config.UserSettingsFile, reasons);
+            for (const auto& reason : reasons)
+                Warn(reason);
+        }
         if (config.MaxListeners < 1 || config.MaxListeners > MaxAudioListeners || config.Channels == 0 ||
-            config.Channels > MA_MAX_CHANNELS || (config.Mode == AudioOutputMode::Offline && config.SampleRate == 0) ||
+            config.Channels > MaxOutputChannels ||
+            (config.Mode == AudioOutputMode::Offline && config.SampleRate == 0) ||
             !std::isfinite(config.VirtualizationThreshold) || config.VirtualizationThreshold < 0)
             return "Invalid audio engine configuration";
 
@@ -1961,86 +2276,52 @@ namespace Kans
                 return error.what();
             }
         }
-        auto engineConfig = ma_engine_config_init();
-        engineConfig.pResourceManager = &p.Resources;
-        engineConfig.pContext = p.ContextReady ? &p.Context : nullptr;
-        engineConfig.noDevice = config.Mode == AudioOutputMode::Offline;
-        engineConfig.channels = config.Channels;
-        engineConfig.sampleRate = config.SampleRate;
-        engineConfig.listenerCount = config.MaxListeners;
-        engineConfig.noAutoStart      = MA_TRUE;
         if (config.Mode == AudioOutputMode::Device)
         {
-            engineConfig.dataCallback = [](ma_device* device, void* output, const void*, ma_uint32 frames) {
-                auto*          engine  = static_cast<ma_engine*>(device->pUserData);
-                auto&          impl    = *static_cast<Impl*>(engine->pProcessUserData);
-                const auto*    graph   = ma_engine_get_node_graph(engine);
-                const uint64_t quantum = std::max(1u, graph->processingSizeInFrames);
-                const uint64_t needed  = frames - std::min(frames, graph->processingCacheFramesRemaining);
-                const auto     first   = ma_engine_get_time_in_pcm_frames(engine);
-                impl.MixEnd.store(AddFrames(first, (needed + quantum - 1) / quantum * quantum));
-                impl.ApplyMixerListeners();
-                impl.ApplySchedules();
-                ma_engine_read_pcm_frames(engine, output, frames, nullptr);
-                impl.MixEnd.store(ma_engine_get_time_in_pcm_frames(engine));
-            };
-            engineConfig.pProcessUserData = &p;
-            engineConfig.onProcess        = [](void* user, float*, ma_uint64 count) {
-                auto& impl = *static_cast<Impl*>(user);
-                ++impl.ClockSequence;
-                impl.LastMixedFrame.store(ma_engine_get_time_in_pcm_frames(&impl.Engine));
-                impl.LastMixedCount.store(count);
-                impl.LastMixTicks.store(MixClock::now().time_since_epoch().count());
-                ++impl.ClockSequence;
-            };
+            if (auto error = RebuildOutput(
+                    p.UserSettings.OutputDevice, p.UserSettings.Speakers, AudioDeviceChangeReason::Selected))
+            {
+                if (p.UserSettings.OutputDevice == DefaultAudioOutputDevice)
+                {
+                    Shutdown();
+                    return error;
+                }
+                if (auto fallback = RebuildOutput(
+                        DefaultAudioOutputDevice, p.UserSettings.Speakers, AudioDeviceChangeReason::FellBackToDefault))
+                {
+                    Shutdown();
+                    return fallback;
+                }
+            }
         }
-        result = ma_engine_init(&engineConfig, &p.Engine);
-        if (result != MA_SUCCESS)
+        else
         {
-            Shutdown();
-            return Error("Audio engine init", result);
+            if (auto error = RebuildOutput(
+                    p.UserSettings.OutputDevice, p.UserSettings.Speakers, AudioDeviceChangeReason::Selected))
+            {
+                Shutdown();
+                return error;
+            }
         }
         static std::atomic<uint64_t> nextInstance {0};
         p.InstanceID = ++nextInstance;
-        p.Ready = true;
+        p.Listeners[0].Active = true;
         for (uint32_t i = 1; i < config.MaxListeners; ++i)
         {
             p.Listeners[i].Active = false;
             ma_engine_listener_set_enabled(&p.Engine, i, false);
         }
-        const auto* channelMap    = p.Engine.listeners[0].config.pChannelMapOut;
-        p.LfeChannel              = AudioChannelIndex(channelMap, config.Channels, MA_CHANNEL_LFE);
-        p.ProbeListener           = {};
-        p.ProbeListener.config    = p.Engine.listeners[0].config;
-        p.ProbeListener.isEnabled = true;
-        auto probeConfig          = ma_spatializer_config_init(config.Channels, config.Channels);
-        probeConfig.positioning   = ma_positioning_relative;
-        probeConfig.rolloff       = 0;
-        probeConfig.dopplerFactor = 0;
-        probeConfig.pChannelMapIn = p.Engine.listeners[0].config.pChannelMapOut;
-        result                    = ma_spatializer_init(&probeConfig, nullptr, &p.PanProbe);
-        if (result != MA_SUCCESS)
-        {
-            Shutdown();
-            return Error("Audio spatial probe init", result);
-        }
-        p.PanProbeReady = true;
         if (auto error = ApplyBusLayout(AudioBusLayout::Default()))
         {
             Shutdown();
             return error;
         }
-        if (config.Mode == AudioOutputMode::Device)
+        if (p.Output)
         {
-            const auto&    playback     = ma_engine_get_device(&p.Engine)->playback;
-            const uint64_t deviceFrames = uint64_t {playback.internalPeriodSizeInFrames} * playback.internalPeriods;
-            if (playback.internalSampleRate != 0)
-                p.LatencyFrames = static_cast<uint64_t>(
-                    std::ceil(static_cast<double>(deviceFrames) * GetSampleRate() / playback.internalSampleRate));
-            if (const auto start = ma_engine_start(&p.Engine); start != MA_SUCCESS)
+            if (const auto start = ma_device_start(&p.Output->Device); start != MA_SUCCESS)
             {
                 Shutdown();
-                return Error("Audio engine start", start);
+                return Error("Audio device start", start);
             }
         }
         return std::nullopt;
@@ -2049,8 +2330,8 @@ namespace Kans
     void AudioEngine::Shutdown()
     {
         auto& p = *m_Impl;
-        if (p.Ready && p.Config.Mode == AudioOutputMode::Device)
-            ma_engine_stop(&p.Engine);
+        p.Output.reset();
+        p.OutputConversion.reset();
         while (!p.ClipRegistries.empty())
             p.ClipRegistries.back()->Clear();
         for (uint32_t i = 0; i < p.Slots.size(); ++i)
@@ -2059,6 +2340,14 @@ namespace Kans
         while (!p.Sounds.empty())
             UnregisterSound(p.Sounds.begin()->first);
         p.Buses.reset();
+        p.UserSettings = {};
+        p.MixFormat = p.NativeFormat = {};
+        p.MixPeriod                  = 0;
+        p.LastDeviceChange           = {};
+        p.NextOutputCheck            = {};
+        p.SimulatedDevices.clear();
+        p.SimulatedEndpoint.clear();
+        p.Simulated = p.SimulatedChanged = p.RetryOutput = false;
         p.GamePaused = false;
         p.TimeScale = p.PitchTimeScale = 1;
         p.WarnedBusNames.clear();
@@ -2106,6 +2395,596 @@ namespace Kans
         p.Stats        = {};
         p.PlaySequence = p.PendingSteals = 0;
         p.Candidates.clear();
+    }
+
+    ma_result AudioEngine::Impl::InitVoiceNodes(Voice& voice, uint64_t loopStart, uint64_t loopEnd)
+    {
+        auto config        = ma_sound_config_init_2(&Engine);
+        config.pDataSource = voice.Source.get();
+        config.flags |= MA_SOUND_FLAG_NO_DEFAULT_ATTACHMENT;
+        if (!voice.Desc.Spatial)
+            config.flags |= MA_SOUND_FLAG_NO_SPATIALIZATION;
+        if (voice.Desc.Loop && !(voice.Source->Stream && loopEnd != 0))
+            config.flags |= MA_SOUND_FLAG_LOOPING;
+        if (loopEnd != 0 && !voice.Source->Stream && !voice.Source->Generator)
+        {
+            config.loopPointBegInPCMFrames = loopStart;
+            config.loopPointEndInPCMFrames = loopEnd;
+        }
+        auto& node   = voice.Sound;
+        auto  result = ma_sound_init_ex(&Engine, &config, &node);
+        if (result != MA_SUCCESS)
+            return result;
+        voice.Initialized                  = true;
+        node.Owner                         = &voice;
+        node.ListenerIdentities            = &MixerListenerIdentities;
+        node.NativePanFloor                = node.engineNode.spatializer.minSpatializationChannelGain;
+        node.Original                      = node.engineNode.baseNode.vtable;
+        static const ma_node_vtable vtable = {Voice::Node::Process, nullptr, 0, 1, 0};
+        node.engineNode.baseNode.vtable    = &vtable;
+        ma_sound_set_pan_mode(&node, ma_pan_mode_balance);
+        if (voice.Source->Generator && voice.Info.SampleRate != ma_engine_get_sample_rate(&Engine))
+            node.ResetResampler();
+        result = voice.Route.Init(Engine, LfeChannel);
+        if (result == MA_SUCCESS)
+            result = ma_node_attach_output_bus(&node, 0, &voice.Route, 0);
+        return result;
+    }
+
+    ma_result AudioEngine::Impl::InitMixer(const AudioOutputFormat& format)
+    {
+        auto config               = ma_engine_config_init();
+        config.pResourceManager   = &Resources;
+        config.noDevice           = MA_TRUE;
+        config.channels           = format.Channels;
+        config.sampleRate         = Config.SampleRate;
+        config.periodSizeInFrames = MixPeriod;
+        config.listenerCount      = Config.MaxListeners;
+        if (Config.Mode == AudioOutputMode::Device)
+        {
+            config.pProcessUserData = this;
+            config.onProcess        = [](void* user, float*, ma_uint64 frames) {
+                auto& impl = *static_cast<Impl*>(user);
+                ++impl.ClockSequence;
+                impl.LastMixedFrame.store(ma_engine_get_time_in_pcm_frames(&impl.Engine));
+                impl.LastMixedCount.store(frames);
+                impl.LastMixTicks.store(MixClock::now().time_since_epoch().count());
+                ++impl.ClockSequence;
+            };
+        }
+        auto result = ma_engine_init(&config, &Engine);
+        if (result != MA_SUCCESS)
+            return result;
+        // Keep miniaudio's side-facing stereo spatial anchors for conventional left/right
+        // playback. They preserve symmetric panning around the listener; the output map
+        // still identifies the physical left and right speakers.
+        if (format != StandardOutputFormat(2))
+            for (uint32_t i = 0; i < Config.MaxListeners; ++i)
+                std::copy_n(format.ChannelMap.data(),
+                            format.Channels,
+                            ma_spatializer_listener_get_channel_map(&Engine.listeners[i]));
+        LfeChannel                = AudioChannelIndex(format.ChannelMap.data(), format.Channels, MA_CHANNEL_LFE);
+        ProbeListener             = {};
+        ProbeListener.config      = Engine.listeners[0].config;
+        ProbeListener.isEnabled   = true;
+        auto probeConfig          = ma_spatializer_config_init(format.Channels, format.Channels);
+        probeConfig.positioning   = ma_positioning_relative;
+        probeConfig.rolloff       = 0;
+        probeConfig.dopplerFactor = 0;
+        probeConfig.pChannelMapIn = Engine.listeners[0].config.pChannelMapOut;
+        result                    = ma_spatializer_init(&probeConfig, nullptr, &PanProbe);
+        if (result != MA_SUCCESS)
+        {
+            ma_engine_uninit(&Engine);
+            return result;
+        }
+        PanProbeReady = Ready = true;
+        MixFormat             = format;
+        return MA_SUCCESS;
+    }
+
+    ma_result AudioEngine::Impl::OpenOutput(const ma_device_id* selection, OutputDevice& output)
+    {
+        auto config                      = ma_device_config_init(ma_device_type_playback);
+        config.playback.pDeviceID        = selection;
+        config.playback.format           = ma_format_f32;
+        config.playback.channels         = Config.UseNullDevice ? Config.Channels : 0;
+        config.sampleRate                = Config.SampleRate;
+        config.wasapi.noAutoConvertSRC   = MA_TRUE;
+        config.noPreSilencedOutputBuffer = MA_TRUE;
+        config.noClip                    = MA_TRUE;
+        output.Mixer                     = this;
+        config.pUserData                 = &output;
+        config.notificationCallback      = [](const ma_device_notification* notice) {
+            auto& device = *static_cast<OutputDevice*>(notice->pDevice->pUserData);
+            switch (notice->type)
+            {
+                case ma_device_notification_type_stopped:
+                case ma_device_notification_type_rerouted:
+                case ma_device_notification_type_unlocked:
+                case ma_device_notification_type_interruption_ended:
+                    device.Changed.store(true, std::memory_order_release);
+                    break;
+                default:
+                    break;
+            }
+        };
+        config.dataCallback = [](ma_device* device, void* outputFrames, const void*, ma_uint32 frames) {
+            auto&          impl    = *static_cast<OutputDevice*>(device->pUserData)->Mixer;
+            auto*          graph   = ma_engine_get_node_graph(&impl.Engine);
+            const uint64_t quantum = std::max(1u, graph->processingSizeInFrames);
+            const uint64_t needed  = frames - std::min(frames, graph->processingCacheFramesRemaining);
+            const auto     first   = ma_engine_get_time_in_pcm_frames(&impl.Engine);
+            impl.MixEnd.store(AddFrames(first, (needed + quantum - 1) / quantum * quantum));
+            impl.ApplyMixerListeners();
+            impl.ApplySchedules();
+            auto*      samples = static_cast<float*>(outputFrames);
+            const auto read    = impl.MixPCM(samples, frames);
+            if (read < frames)
+                std::fill_n(
+                    samples + read * device->playback.channels, (frames - read) * device->playback.channels, 0.f);
+            impl.MixEnd.store(ma_engine_get_time_in_pcm_frames(&impl.Engine));
+        };
+        auto result = ma_device_init(&Context, &config, &output.Device);
+        if (result == MA_SUCCESS && output.Device.playback.channels > MaxOutputChannels)
+        {
+            ma_device_uninit(&output.Device);
+            config.playback.channels = MaxOutputChannels;
+            result                   = ma_device_init(&Context, &config, &output.Device);
+        }
+        output.Open = result == MA_SUCCESS;
+        return result;
+    }
+
+    ma_uint64 AudioEngine::Impl::MixPCM(float* output, ma_uint64 count)
+    {
+        if (!OutputConversion)
+        {
+            ma_uint64 read = 0;
+            ma_engine_read_pcm_frames(&Engine, output, count, &read);
+            return read;
+        }
+        constexpr uint32_t                                   scratchFrames = 256;
+        std::array<float, scratchFrames * MaxOutputChannels> scratch;
+        ma_uint64                                            total = 0;
+        while (total < count)
+        {
+            ma_uint64  read   = 0;
+            const auto result = ma_engine_read_pcm_frames(
+                &Engine, scratch.data(), std::min<ma_uint64>(scratchFrames, count - total), &read);
+            ma_channel_converter_process_pcm_frames(
+                &OutputConversion->Converter, output + total * NativeFormat.Channels, scratch.data(), read);
+            total += read;
+            if (result != MA_SUCCESS || read == 0)
+                break;
+        }
+        return total;
+    }
+
+    std::vector<AudioOutputDevice> AudioEngine::EnumerateOutputDevices() const
+    {
+        auto& p = *m_Impl;
+        if (!p.ContextReady || p.Config.UseNullDevice)
+            return {};
+        const auto                     devices = p.ReadDevices();
+        std::vector<AudioOutputDevice> result;
+        for (const auto& entry : devices.Entries)
+        {
+            auto& device     = result.emplace_back();
+            device.Id        = DeviceId(p.Context.backend, entry.id);
+            device.Name      = entry.name;
+            device.IsDefault = entry.isDefault != 0;
+            if (p.Output && p.Output->Endpoint && ma_device_id_equal(&entry.id, &*p.Output->Endpoint))
+                device.NativeFormat = p.NativeFormat;
+            else
+            {
+                ma_device_info detail {};
+                if (ma_context_get_device_info(&p.Context, ma_device_type_playback, &entry.id, &detail) == MA_SUCCESS)
+                {
+                    // A backend can report multiple supported formats with no preferred channel count.
+                    // Prefer the non-exclusive count only when the list agrees.
+                    uint32_t channels = 0;
+                    for (uint32_t i = 0; i < detail.nativeDataFormatCount; ++i)
+                    {
+                        const auto& format = detail.nativeDataFormats[i];
+                        if (!format.channels || (format.flags & MA_DATA_FORMAT_FLAG_EXCLUSIVE_MODE))
+                            continue;
+                        if (channels != 0 && channels != format.channels)
+                        {
+                            channels = 0;
+                            break;
+                        }
+                        channels = format.channels;
+                    }
+                    device.NativeFormat.Channels = channels;
+                }
+            }
+        }
+        return result;
+    }
+
+    const AudioDeviceChange& AudioEngine::GetLastDeviceChange() const { return m_Impl->LastDeviceChange; }
+    SpeakerMode              AudioEngine::GetSpeakerMode() const { return m_Impl->UserSettings.Speakers; }
+    AudioOutputFormat        AudioEngine::GetOutputFormat() const { return m_Impl->NativeFormat; }
+
+    bool AudioEngine::SetOutputDevice(std::string_view id)
+    {
+        auto& p = *m_Impl;
+        if (!p.Ready || (!p.Simulated && (!p.ContextReady || p.Config.UseNullDevice)))
+            return false;
+        if (id.empty())
+            id = DefaultAudioOutputDevice;
+        return (id == p.UserSettings.OutputDevice && !p.RetryOutput) ||
+               !RebuildOutput(id, GetSpeakerMode(), AudioDeviceChangeReason::Selected);
+    }
+
+    bool AudioEngine::SetSpeakerMode(SpeakerMode mode)
+    {
+        auto& p = *m_Impl;
+        if (!p.Ready || static_cast<unsigned>(mode) > static_cast<unsigned>(SpeakerMode::Surround71))
+            return false;
+        return mode == GetSpeakerMode() ||
+               !RebuildOutput(p.UserSettings.OutputDevice, mode, AudioDeviceChangeReason::SpeakerModeChanged);
+    }
+
+    void AudioEngine::SimulateOutputDevices(std::vector<AudioOutputDevice> devices)
+    {
+        auto& p = *m_Impl;
+        if (p.Ready && p.Config.Mode == AudioOutputMode::Offline)
+        {
+            p.Simulated = p.SimulatedChanged = true;
+            p.SimulatedDevices               = std::move(devices);
+        }
+    }
+
+    std::optional<std::string>
+    AudioEngine::RebuildOutput(std::string_view id, SpeakerMode mode, AudioDeviceChangeReason reason)
+    {
+        auto&                               p          = *m_Impl;
+        const bool                          useDefault = id == DefaultAudioOutputDevice;
+        const bool                          startup    = !p.Ready;
+        auto                                native     = StandardOutputFormat(p.Config.Channels);
+        std::string                         simulatedEndpoint;
+        std::unique_ptr<Impl::OutputDevice> next;
+        const bool keepDevice = p.Output && !p.RetryOutput && reason == AudioDeviceChangeReason::SpeakerModeChanged;
+        if (keepDevice)
+            native = p.NativeFormat;
+        else if (p.ContextReady)
+        {
+            std::optional<ma_device_id> endpoint;
+            if (!p.Config.UseNullDevice)
+            {
+                for (const auto& device : p.ReadDevices().Entries)
+                    if (useDefault ? device.isDefault != 0 : DeviceId(p.Context.backend, device.id) == id)
+                    {
+                        endpoint = device.id;
+                        break;
+                    }
+                if (!useDefault && !endpoint)
+                    return "Selected audio output device is unavailable";
+            }
+            next           = std::make_unique<Impl::OutputDevice>();
+            next->Endpoint = endpoint;
+            // Leave the backend's default routing enabled. If the backend reroutes, the
+            // notification causes us to reopen and re-read the format.
+            const auto result = p.OpenOutput(useDefault || !endpoint ? nullptr : &*endpoint, *next);
+            if (result != MA_SUCCESS)
+                return Error("Open audio output device", result);
+            const auto& playback = next->Device.playback;
+            native.Channels      = playback.channels;
+            std::copy_n(playback.channelMap, native.Channels, native.ChannelMap.begin());
+            native = NormalizeOutputFormat(native, p.Config.Channels);
+            if (startup)
+            {
+                p.MixPeriod = playback.internalPeriodSizeInFrames;
+                if (p.Config.SampleRate == 0)
+                    p.Config.SampleRate = next->Device.sampleRate;
+            }
+        }
+        else if (p.Simulated)
+        {
+            const auto found =
+                std::find_if(p.SimulatedDevices.begin(), p.SimulatedDevices.end(), [&](const auto& device) {
+                    return useDefault ? device.IsDefault : device.Id == id;
+                });
+            if (found != p.SimulatedDevices.end())
+            {
+                native            = NormalizeOutputFormat(found->NativeFormat, p.Config.Channels);
+                simulatedEndpoint = found->Id;
+            }
+            else if (!useDefault)
+                return "Selected audio output device is unavailable";
+        }
+
+        const auto                       mix = MixFormatFor(mode, native);
+        std::unique_ptr<OutputConverter> conversion;
+        if (mix != native)
+        {
+            conversion = std::make_unique<OutputConverter>();
+            if (const auto result = conversion->Init(mix, native); result != MA_SUCCESS)
+                return Error("Initialize audio output converter", result);
+        }
+        if (p.Output)
+        {
+            const auto result = ma_device_stop(&p.Output->Device);
+            if (result != MA_SUCCESS)
+                return Error("Stop audio output device", result);
+        }
+        auto restartOld = [&] {
+            if (p.Output)
+            {
+                p.Output->Changed.store(false, std::memory_order_release);
+                p.RetryOutput = ma_device_start(&p.Output->Device) != MA_SUCCESS;
+            }
+        };
+        const auto lastMix = p.MixFormat;
+        if (startup)
+        {
+            if (const auto result = p.InitMixer(mix); result != MA_SUCCESS)
+                return Error("Initialize audio mixer", result);
+        }
+        else if (mix != lastMix)
+        {
+            if (auto error = ReformatMix(mix))
+            {
+                restartOld();
+                return error;
+            }
+        }
+        const auto lastNative = p.NativeFormat;
+        p.NativeFormat        = native;
+        std::swap(p.OutputConversion, conversion);
+        auto*    output  = keepDevice ? p.Output.get() : next.get();
+        uint64_t latency = 0;
+        if (output)
+        {
+            const auto& playback = output->Device.playback;
+            const auto  rate     = playback.internalSampleRate;
+            latency = rate ? static_cast<uint64_t>(std::ceil(double(playback.internalPeriodSizeInFrames) *
+                                                             playback.internalPeriods * GetSampleRate() / rate)) :
+                             0;
+        }
+        if (output && !startup)
+        {
+            if (keepDevice)
+                output->Changed.store(false, std::memory_order_release);
+            if (const auto result = ma_device_start(&output->Device); result != MA_SUCCESS)
+            {
+                p.NativeFormat = lastNative;
+                std::swap(p.OutputConversion, conversion);
+                if (mix != lastMix)
+                    if (auto error = ReformatMix(lastMix))
+                        return error;
+                restartOld();
+                return Error("Start audio output device", result);
+            }
+        }
+        if (!keepDevice)
+            p.Output = std::move(next);
+        p.LatencyFrames             = latency;
+        p.SimulatedEndpoint         = std::move(simulatedEndpoint);
+        p.UserSettings.OutputDevice = id;
+        p.UserSettings.Speakers     = mode;
+        // Keep the ID of the resolved endpoint for consumers following the default.
+        std::string active = p.UserSettings.OutputDevice;
+        if (p.Output && p.Output->Endpoint)
+            active = DeviceId(p.Context.backend, *p.Output->Endpoint);
+        else if (!p.SimulatedEndpoint.empty())
+            active = p.SimulatedEndpoint;
+        if (!startup || reason == AudioDeviceChangeReason::FellBackToDefault)
+            p.LastDeviceChange = {p.LastDeviceChange.Revision + 1, std::move(active), reason, native};
+        p.RetryOutput     = false;
+        p.NextOutputCheck = MixClock::now() + std::chrono::seconds(1);
+        return std::nullopt;
+    }
+
+    void AudioEngine::UpdateOutput()
+    {
+        auto&      p              = *m_Impl;
+        const bool followsDefault = p.UserSettings.OutputDevice == DefaultAudioOutputDevice;
+        bool       disappeared    = false;
+        bool       changed        = false;
+        if (p.Simulated)
+        {
+            if (!std::exchange(p.SimulatedChanged, false))
+                return;
+            const auto found = std::find_if(p.SimulatedDevices.begin(), p.SimulatedDevices.end(), [&](const auto& d) {
+                return followsDefault ? d.IsDefault : d.Id == p.UserSettings.OutputDevice;
+            });
+            disappeared      = !followsDefault && found == p.SimulatedDevices.end();
+            changed          = found != p.SimulatedDevices.end() &&
+                               (found->Id != p.SimulatedEndpoint ||
+                                NormalizeOutputFormat(found->NativeFormat, p.Config.Channels) != p.NativeFormat);
+        }
+        else if (p.Output && !p.Config.UseNullDevice)
+        {
+            changed        = p.Output->Changed.exchange(false, std::memory_order_acq_rel);
+            const auto now = MixClock::now();
+            if (changed || now >= p.NextOutputCheck)
+            {
+                p.NextOutputCheck = now + std::chrono::seconds(1);
+                struct Scan
+                {
+                    std::optional<ma_device_id> Active, Default;
+                    bool                        Present = false;
+                } scan {p.Output->Endpoint};
+                const auto result = ma_context_enumerate_devices(
+                    &p.Context,
+                    [](ma_context*, ma_device_type type, const ma_device_info* info, void* user) -> ma_bool32 {
+                        auto& state = *static_cast<Scan*>(user);
+                        if (type == ma_device_type_playback)
+                        {
+                            if (info->isDefault)
+                                state.Default = info->id;
+                            if (state.Active && ma_device_id_equal(&*state.Active, &info->id))
+                                state.Present = true;
+                        }
+                        return MA_TRUE;
+                    },
+                    &scan);
+                if (result == MA_SUCCESS)
+                {
+                    disappeared = !followsDefault && !scan.Present;
+                    changed |= followsDefault && scan.Default &&
+                               (!scan.Active || !ma_device_id_equal(&*scan.Active, &*scan.Default));
+                }
+                changed |= p.RetryOutput;
+            }
+        }
+        if (!disappeared && !changed)
+            return;
+        if (!disappeared)
+            if (!RebuildOutput(p.UserSettings.OutputDevice, GetSpeakerMode(), AudioDeviceChangeReason::Rerouted))
+                return;
+        if (!followsDefault &&
+            !RebuildOutput(DefaultAudioOutputDevice, GetSpeakerMode(), AudioDeviceChangeReason::FellBackToDefault))
+            return;
+        // Keep the current graph alive while there is no usable device. Retry at the next scan.
+        p.RetryOutput = true;
+    }
+
+    std::optional<std::string> AudioEngine::ReformatMix(const AudioOutputFormat& format)
+    {
+        auto& p = *m_Impl;
+        p.ApplySchedules();
+        const auto           previous = p.MixFormat;
+        const auto           clock    = GetClockFrames();
+        const auto           master   = GetMasterVolume();
+        const AudioBusLayout layout {p.Buses->GetBuses()};
+        struct VoiceState
+        {
+            Impl::Voice*  Voice;
+            double        Position;
+            float         Pitch;
+            uint64_t      Start, Stop, LocalTime;
+            ma_node_state State;
+            bool          Attached, Ended, PitchDisabled;
+        };
+        std::vector<VoiceState> states;
+        states.reserve(p.Slots.size());
+        for (const auto& slot : p.Slots)
+            if (slot.Value)
+            {
+                auto&     v      = *slot.Value;
+                auto&     node   = v.Sound;
+                ma_uint64 cursor = 0;
+                ma_sound_get_cursor_in_pcm_frames(&node, &cursor);
+                double position = double(cursor) - node.processingCacheFramesRemaining;
+                if (!node.engineNode.isPitchDisabled && ma_node_get_time(&node) != 0)
+                {
+                    const auto& phase = *static_cast<const ma_linear_resampler*>(node.engineNode.resampler.pBackend);
+                    position += double(phase.inTimeInt) - 2 + double(phase.inTimeFrac) / phase.config.sampleRateOut;
+                }
+                if (node.seekTarget != NoFrame)
+                    position = double(node.seekTarget);
+                if (position < 0 && v.Desc.Loop && cursor >= v.Current().LoopBegin)
+                    position += double(v.Current().LoopEnd - v.Current().LoopBegin);
+                states.push_back({&v,
+                                  std::max(0.0, position),
+                                  ma_sound_get_pitch(&node),
+                                  ma_node_get_state_time(&node, ma_node_state_started),
+                                  ma_node_get_state_time(&node, ma_node_state_stopped),
+                                  ma_node_get_time(&node),
+                                  ma_node_get_state(&node),
+                                  v.Attached,
+                                  ma_sound_at_end(&node) != MA_FALSE,
+                                  node.engineNode.isPitchDisabled != MA_FALSE});
+            }
+        for (auto& [id, sound] : p.Sounds)
+            for (auto& pool : sound.OneShots)
+                pool.clear();
+        p.PooledOneShots = 0;
+
+        auto release = [&] {
+            for (const auto& state : states)
+            {
+                auto& voice = *state.Voice;
+                voice.Route.Uninit();
+                voice.Attached = false;
+                if (voice.Initialized)
+                    ma_sound_uninit(&voice.Sound);
+                voice.Initialized = false;
+            }
+            p.Buses.reset();
+            if (p.PanProbeReady)
+                ma_spatializer_uninit(&p.PanProbe, nullptr);
+            if (p.Ready)
+                ma_engine_uninit(&p.Engine);
+            p.PanProbeReady = p.Ready = false;
+        };
+        auto build = [&](const AudioOutputFormat& replacement) -> std::optional<std::string> {
+            if (const auto result = p.InitMixer(replacement); result != MA_SUCCESS)
+                return Error("Reinitialize audio mixer", result);
+            ma_engine_set_time_in_pcm_frames(&p.Engine, clock);
+            ma_engine_set_volume(&p.Engine, master);
+            p.ListenerMailbox.Reset();
+            p.ListenerMailbox.Publish(p.Listeners);
+            p.ApplyMixerListeners();
+            p.Buses        = std::make_unique<AudioBusGraph>();
+            auto busResult = p.Buses->Init(p.Engine, layout, nullptr, p.DSPRegistry, p.UserSettings);
+            if (busResult == MA_SUCCESS)
+                busResult = p.Buses->ConnectEndpoint();
+            if (busResult != MA_SUCCESS)
+                return Error("Rebuild audio bus graph", busResult);
+            for (const auto& state : states)
+            {
+                auto&      v      = *state.Voice;
+                auto&      source = *v.Source;
+                const auto input  = source.InputMap;
+                auto       result = source.ConfigureRouting(
+                    input.data(), replacement.ChannelMap.data(), replacement.Channels, v.Desc.Spatial);
+                if (result == MA_SUCCESS)
+                    result = p.InitVoiceNodes(
+                        v, v.Current().LoopBegin, v.Current().LoopEnd == v.Info.LengthFrames ? 0 : v.Current().LoopEnd);
+                if (result != MA_SUCCESS)
+                    return Error("Rebuild audio voice", result);
+                auto& node = v.Sound;
+                node.ResetSpatialMix();
+                node.Block                      = NoFrame;
+                node.engineNode.isPitchDisabled = state.PitchDisabled;
+                if (!source.Generator)
+                    node.Seek(state.Position);
+                else
+                    node.ResetResampler();
+                node.atEnd = state.Ended;
+                ma_sound_set_volume(&node, v.Desc.Volume);
+                ma_sound_set_pan(&node, v.Desc.Pan);
+                ma_sound_set_pitch(&node, state.Pitch);
+                ma_node_set_time(&node, state.LocalTime);
+                ma_sound_set_start_time_in_pcm_frames(&node, state.Start);
+                ma_sound_set_stop_time_in_pcm_frames(&node, state.Stop);
+                ma_node_set_state(&node, state.State);
+                if (v.Desc.Spatial)
+                    p.ApplySpatial(v);
+                if (source.Stream && v.Attached && p.Config.Mode == AudioOutputMode::Device)
+                    p.WakeStreams();
+                if (state.Attached && !p.Attach(v))
+                    return "Restore audio voice routing";
+            }
+            return std::nullopt;
+        };
+        release();
+        if (auto error = build(format))
+        {
+            release();
+            if (auto rollback = build(previous))
+            {
+                release();
+                for (auto& slot : p.Slots)
+                    if (slot.Value)
+                    {
+                        slot.Value->Commands->Owner.store(nullptr);
+                        slot.Value.reset();
+                        if (++slot.Generation == 0)
+                            ++slot.Generation;
+                    }
+                p.FreeSlot = UINT32_MAX;
+                Shutdown();
+                return *error + "; " + *rollback;
+            }
+            return error;
+        }
+        return std::nullopt;
     }
 
     bool AudioEngine::IsInitialized() const { return m_Impl->Ready; }
@@ -2177,12 +3056,11 @@ namespace Kans
         while (written < frameCount)
         {
             m_Impl->DrainJobs();
-            ma_uint64 read = 0;
             m_Impl->ApplyMixerListeners();
-            const auto result = ma_engine_read_pcm_frames(&m_Impl->Engine, out + written * GetChannels(),
-                std::min<uint64_t>(256, frameCount - written), &read);
+            const auto read = m_Impl->MixPCM(out + written * GetOutputFormat().Channels,
+                                             std::min<uint64_t>(256, frameCount - written));
             written += read;
-            if (result != MA_SUCCESS || read == 0)
+            if (read == 0)
                 break;
         }
         m_Impl->DrainJobs();
@@ -2194,6 +3072,9 @@ namespace Kans
         if (!IsInitialized())
             return;
         auto& p = *m_Impl;
+        UpdateOutput();
+        if (!p.Ready)
+            return;
         p.DrainJobs();
         p.CollectSchedules();
         const auto now          = GetClockFrames();
@@ -2355,7 +3236,7 @@ namespace Kans
         auto& p = *m_Impl;
         // Build off the endpoint, then move existing sound nodes without touching their playback state.
         auto next   = std::make_unique<AudioBusGraph>();
-        auto result = next->Init(p.Engine, layout, p.Buses.get(), p.DSPRegistry);
+        auto result = next->Init(p.Engine, layout, p.Buses.get(), p.DSPRegistry, p.UserSettings);
         if (result == MA_SUCCESS)
             result = next->ConnectEndpoint();
         if (result != MA_SUCCESS)
@@ -2425,6 +3306,87 @@ namespace Kans
     {
         static const std::vector<AudioBusDefinition> empty;
         return m_Impl->Buses ? m_Impl->Buses->GetBuses() : empty;
+    }
+
+    const AudioUserSettings& AudioEngine::GetUserSettings() const { return m_Impl->UserSettings; }
+
+    std::optional<std::string> AudioEngine::LoadUserSettings()
+    {
+        const auto file = m_Impl->Config.UserSettingsFile;
+        return file.empty() ? std::optional<std::string>("Audio settings storage is disabled") : LoadUserSettings(file);
+    }
+
+    std::optional<std::string> AudioEngine::LoadUserSettings(const std::filesystem::path& file)
+    {
+        auto& p = *m_Impl;
+        if (!p.Ready)
+            return "Audio engine is unavailable";
+        std::vector<std::string> reasons;
+        auto                     settings = AudioUserSettings::Load(file, reasons);
+        for (const auto& reason : reasons)
+            Warn(reason);
+        const auto reason = settings.OutputDevice == p.UserSettings.OutputDevice ?
+                                AudioDeviceChangeReason::SpeakerModeChanged :
+                                AudioDeviceChangeReason::Selected;
+        if (settings.OutputDevice != p.UserSettings.OutputDevice || settings.Speakers != GetSpeakerMode())
+        {
+            if (auto error = RebuildOutput(settings.OutputDevice, settings.Speakers, reason))
+            {
+                if (settings.OutputDevice == DefaultAudioOutputDevice)
+                    return error;
+                if (auto fallback = RebuildOutput(
+                        DefaultAudioOutputDevice, settings.Speakers, AudioDeviceChangeReason::FellBackToDefault))
+                    return fallback;
+            }
+        }
+        p.Config.UserSettingsFile = file;
+        p.UserSettings.Buses      = std::move(settings.Buses);
+        p.Buses->UpdateFaders();
+        return std::nullopt;
+    }
+
+    std::optional<std::string> AudioEngine::SaveUserSettings() const
+    {
+        const auto& p = *m_Impl;
+        if (p.Config.UserSettingsFile.empty())
+            return "Audio settings storage is disabled";
+        auto settings = p.UserSettings;
+        if (p.Buses)
+            for (auto it = settings.Buses.begin(); it != settings.Buses.end();)
+                it = p.Buses->Find(it->first) ? std::next(it) : settings.Buses.erase(it);
+        return settings.Save(p.Config.UserSettingsFile);
+    }
+
+    std::optional<AudioUserBusSettings> AudioEngine::GetUserBusSettings(const std::string& bus) const
+    {
+        const auto& p = *m_Impl;
+        if (!p.Buses || !p.Buses->Find(bus))
+            return std::nullopt;
+        const auto found = p.UserSettings.Buses.find(bus);
+        return found == p.UserSettings.Buses.end() ? AudioUserBusSettings {} : found->second;
+    }
+
+    bool AudioEngine::SetUserBusVolumeDb(const std::string& bus, float db)
+    {
+        auto& p = *m_Impl;
+        if (!p.Buses || !p.Buses->Find(bus))
+            return false;
+        auto& level = p.UserSettings.Buses[bus].VolumeDb;
+        level       = std::isnan(db) ? 0.f : std::clamp(db, -80.f, 12.f);
+        if (level != db)
+            Warn(bus + ".VolumeDb " + (std::isnan(db) ? "is NaN; using 0 dB" : "clamped to [-80, 12] dB"));
+        p.Buses->UpdateFaders();
+        return true;
+    }
+
+    bool AudioEngine::SetUserBusMute(const std::string& bus, bool mute)
+    {
+        auto& p = *m_Impl;
+        if (!p.Buses || !p.Buses->Find(bus))
+            return false;
+        p.UserSettings.Buses[bus].Mute = mute;
+        p.Buses->UpdateFaders();
+        return true;
     }
 
     std::optional<float> AudioEngine::GetBusVolumeDb(const std::string& bus) const
@@ -2757,7 +3719,7 @@ namespace Kans
         for (uint32_t i = 0; i < m_Impl->Slots.size(); ++i)
         {
             auto& slot = m_Impl->Slots[i];
-            if (slot.Value && slot.Value->Desc.Sound == id)
+            if (slot.Value && !slot.Value->Source->Generator && slot.Value->Desc.Sound == id)
                 DestroyVoice({i, slot.Generation});
         }
         auto& sound = entry.mapped();
@@ -2794,27 +3756,30 @@ namespace Kans
     AudioVoiceHandle
     AudioEngine::CreateVoice(const AudioVoiceDesc& desc, uint64_t loopStart, uint64_t loopEnd, bool oneShot)
     {
+        const bool generator = desc.Generator.has_value();
         auto it = m_Impl->Sounds.find(desc.Sound);
-        if (!IsInitialized() || it == m_Impl->Sounds.end())
+        if (!IsInitialized() || (generator ? !desc.Generator->IsValid() : it == m_Impl->Sounds.end()))
         {
             Warn("Cannot create voice: sound is not registered or engine is not initialized");
             return {};
         }
-        auto& sound = it->second;
-        const bool stream = desc.LoadMode == AudioLoadMode::Stream && sound.Encoded;
-        if (!stream)
+        auto*                sound = generator ? nullptr : &it->second;
+        const AudioSoundInfo info =
+            generator ? AudioSoundInfo {desc.Generator->Channels, desc.Generator->SampleRate, NoFrame} : sound->Info;
+        const bool stream = sound && desc.LoadMode == AudioLoadMode::Stream && sound->Encoded;
+        if (sound && !stream)
         {
-            if (auto error = m_Impl->EnsureDecoded(sound))
+            if (auto error = m_Impl->EnsureDecoded(*sound))
             {
                 Warn(*error);
                 return {};
             }
         }
-        const bool                   poolable = oneShot && !stream;
-        auto&                        pool     = sound.OneShots[desc.Spatial];
+        const bool                   poolable = sound && oneShot && !stream;
         std::unique_ptr<Impl::Voice> voice;
-        if (poolable && !pool.empty())
+        if (poolable && !sound->OneShots[desc.Spatial].empty())
         {
+            auto& pool = sound->OneShots[desc.Spatial];
             voice = std::move(pool.back());
             pool.pop_back();
             --m_Impl->PooledOneShots;
@@ -2824,14 +3789,16 @@ namespace Kans
         voice->Desc = desc;
         voice->Desc.Volume = voice->Desc.Pitch = 1;
         voice->Desc.Pan                        = 0;
-        voice->Info = sound.Info;
+        voice->Info                            = info;
+        voice->Desc.Loop                       = desc.Loop && !generator;
+        voice->Desc.NeverVirtualize |= generator;
         voice->Poolable                        = poolable;
         Impl::Voice::Transport transport;
         transport.Frame     = GetClockFrames();
-        transport.Loop      = desc.Loop;
+        transport.Loop      = voice->Desc.Loop;
         transport.LoopBegin = loopStart;
-        transport.LoopEnd   = loopEnd != 0 ? loopEnd : sound.Info.LengthFrames;
-        transport.Length    = sound.Info.LengthFrames;
+        transport.LoopEnd   = loopEnd != 0 ? loopEnd : info.LengthFrames;
+        transport.Length    = info.LengthFrames;
         if (voice->Initialized)
         {
             voice->History.resize(1);
@@ -2858,7 +3825,7 @@ namespace Kans
             node.Block                               = NoFrame;
             node.engineNode.isPitchDisabled          = false;
             ma_sound_set_looping(&node, desc.Loop);
-            ma_data_source_set_loop_point_in_pcm_frames(voice->Source.get(), 0, sound.Info.LengthFrames);
+            ma_data_source_set_loop_point_in_pcm_frames(voice->Source.get(), 0, info.LengthFrames);
             node.Seek(0);
             ma_resampler_reset(&node.engineNode.resampler);
             auto& spatialGain = node.engineNode.spatializer.gainer;
@@ -2870,56 +3837,33 @@ namespace Kans
         else
         {
             voice->History.push_back(transport);
-            auto result = voice->Source->Init(&m_Impl->Resources,
-                                              m_Impl->VFS,
-                                              (stream ? sound.EncodedName : sound.DecodedName).c_str(),
-                                              stream,
-                                              GetMode() == AudioOutputMode::Offline,
-                                              sound.Info,
-                                              loopStart,
-                                              loopEnd,
-                                              sound.ChannelMap.data(),
-                                              m_Impl->Engine.listeners[0].config.pChannelMapOut,
-                                              GetChannels(),
-                                              desc.Spatial);
+            std::array<ma_channel, MaxOutputChannels> generatorMap {};
+            if (generator)
+                ma_channel_map_init_standard(
+                    ma_standard_channel_map_default, generatorMap.data(), generatorMap.size(), info.Channels);
+            auto result =
+                voice->Source->Init(&m_Impl->Resources,
+                                    m_Impl->VFS,
+                                    sound ? (stream ? sound->EncodedName : sound->DecodedName).c_str() : nullptr,
+                                    stream,
+                                    GetMode() == AudioOutputMode::Offline,
+                                    info,
+                                    loopStart,
+                                    loopEnd,
+                                    sound ? sound->ChannelMap.data() : generatorMap.data(),
+                                    m_Impl->Engine.listeners[0].config.pChannelMapOut,
+                                    GetChannels(),
+                                    desc.Spatial,
+                                    generator);
             if (result != MA_SUCCESS)
             {
                 Warn(Error("Voice source init", result));
                 return {};
             }
-            auto config        = ma_sound_config_init_2(&m_Impl->Engine);
-            config.pDataSource = voice->Source.get();
-            config.flags |= MA_SOUND_FLAG_NO_DEFAULT_ATTACHMENT;
-            if (!desc.Spatial)
-                config.flags |= MA_SOUND_FLAG_NO_SPATIALIZATION;
-            if (desc.Loop && !(stream && loopEnd != 0))
-                config.flags |= MA_SOUND_FLAG_LOOPING;
-            if (loopEnd != 0 && !stream)
-            {
-                config.loopPointBegInPCMFrames = loopStart;
-                config.loopPointEndInPCMFrames = loopEnd;
-            }
-            result = ma_sound_init_ex(&m_Impl->Engine, &config, &voice->Sound);
+            result = m_Impl->InitVoiceNodes(*voice, loopStart, loopEnd);
             if (result != MA_SUCCESS)
             {
-                Warn(Error("Voice init", result));
-                return {};
-            }
-            voice->Initialized                 = true;
-            auto& node                         = voice->Sound;
-            node.Owner                         = voice.get();
-            node.ListenerIdentities            = &m_Impl->MixerListenerIdentities;
-            node.NativePanFloor                = node.engineNode.spatializer.minSpatializationChannelGain;
-            node.Original                      = node.engineNode.baseNode.vtable;
-            static const ma_node_vtable vtable = {Impl::Voice::Node::Process, nullptr, 0, 1, 0};
-            node.engineNode.baseNode.vtable    = &vtable;
-            ma_sound_set_pan_mode(&node, ma_pan_mode_balance);
-            result = voice->Route.Init(m_Impl->Engine, m_Impl->LfeChannel);
-            if (result == MA_SUCCESS)
-                result = ma_node_attach_output_bus(&node, 0, &voice->Route, 0);
-            if (result != MA_SUCCESS)
-            {
-                Warn(Error("Initialize voice routing", result));
+                Warn(Error("Initialize audio voice nodes", result));
                 return {};
             }
         }
@@ -3017,6 +3961,24 @@ namespace Kans
             return handle;
         DestroyVoice(handle);
         return {};
+    }
+
+    uint32_t AudioEngine::PushGeneratorFrames(AudioVoiceHandle handle, const float* pcm, size_t sampleCount)
+    {
+        auto* voice = m_Impl->Find(handle);
+        return voice && voice->Source->Generator ? voice->Source->Push(pcm, sampleCount) : 0;
+    }
+
+    uint32_t AudioEngine::GetFramesAvailableToPush(AudioVoiceHandle handle) const
+    {
+        auto* voice = m_Impl->Find(handle);
+        return voice && voice->Source->Generator ? voice->Source->PushRoom() : 0;
+    }
+
+    uint64_t AudioEngine::GetGeneratorUnderrunFrames(AudioVoiceHandle handle) const
+    {
+        auto* voice = m_Impl->Find(handle);
+        return voice && voice->Source->Generator ? voice->Source->UnderrunFrames.load(std::memory_order_relaxed) : 0;
     }
 
     bool AudioEngine::SetVoiceBus(AudioVoiceHandle handle, const std::string& bus)
@@ -3524,7 +4486,7 @@ namespace Kans
     }
     void AudioEngine::SetLooping(AudioVoiceHandle handle, bool looping)
     {
-        if (auto* voice = m_Impl->Find(handle); voice && voice->Desc.Loop != looping)
+        if (auto* voice = m_Impl->Find(handle); voice && !voice->Source->Generator && voice->Desc.Loop != looping)
         {
             voice->Desc.Loop = looping;
             ma_sound_set_looping(&voice->Sound, looping);
@@ -3539,7 +4501,7 @@ namespace Kans
     }
     void AudioEngine::SeekFrames(AudioVoiceHandle handle, uint64_t frame)
     {
-        if (auto* voice = m_Impl->Find(handle))
+        if (auto* voice = m_Impl->Find(handle); voice && !voice->Source->Generator)
         {
             auto state = voice->Current();
             frame      = std::min(frame, voice->Info.LengthFrames);

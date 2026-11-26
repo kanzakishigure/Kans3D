@@ -100,6 +100,10 @@ namespace Kans::Scripting
         int32_t     Priority = -1, Flags = 0;
         const char* Bus       = nullptr;
         int32_t     BusLength = 0;
+        const char*  DeviceName       = nullptr;
+        int32_t      DeviceNameLength = 0;
+        const float* Samples          = nullptr;
+        int32_t      SampleCount      = 0;
     };
     static_assert(offsetof(AudioCommandData, Bus) == 64);
     // Cdecl callbacks; int32 booleans/status; UTF-8 strings unless specified otherwise.

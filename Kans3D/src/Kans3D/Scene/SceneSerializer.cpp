@@ -93,6 +93,13 @@ namespace Kans
         {
             YAML::Node v;
             v["Clip"] = c.Clip.ToString();
+            if (c.Kind)
+                v["Kind"] = int(*c.Kind);
+            if (c.GetSourceKind() == AudioSourceKind::Generator || c.Generator != AudioGeneratorFormat {})
+            {
+                v["GeneratorChannels"]   = c.Generator.Channels;
+                v["GeneratorSampleRate"] = c.Generator.SampleRate;
+            }
             if (c.Event.IsValid())
                 v["Event"] = c.Event.ToString();
             if (c.AttenuationAsset.IsValid())
@@ -187,32 +194,49 @@ namespace Kans
 
         AudioSourceComponent DecodeAudioSource(const YAML::Node& node)
         {
-            Keys(node, {"Clip",
-                        "Event",
-                        "AttenuationAsset",
-                        "Shape",
-                        "Bus",
-                        "Priority",
-                        "ConcurrencyGroup",
-                        "Volume",
-                        "Pitch",
-                        "PlayOnStart",
-                        "Loop",
-                        "Spatial",
-                        "Pan",
-                        "ReverbZoneSend",
-                        "LfeSendDb",
-                        "PinToCenter",
-                        "Attenuation",
-                        "MinDistance",
-                        "MaxDistance",
-                        "Rolloff",
-                        "DopplerFactor",
-                        "ConeInnerAngle",
-                        "ConeOuterAngle",
-                        "ConeOuterGain"});
-            Require(node["Clip"] || node["Event"], "AudioSourceComponent requires Clip or Event");
+            Keys(node,
+                 {"Clip",
+                  "Event",
+                  "Kind",
+                  "GeneratorChannels",
+                  "GeneratorSampleRate",
+                  "AttenuationAsset",
+                  "Shape",
+                  "Bus",
+                  "Priority",
+                  "ConcurrencyGroup",
+                  "Volume",
+                  "Pitch",
+                  "PlayOnStart",
+                  "Loop",
+                  "Spatial",
+                  "Pan",
+                  "ReverbZoneSend",
+                  "LfeSendDb",
+                  "PinToCenter",
+                  "Attenuation",
+                  "MinDistance",
+                  "MaxDistance",
+                  "Rolloff",
+                  "DopplerFactor",
+                  "ConeInnerAngle",
+                  "ConeOuterAngle",
+                  "ConeOuterGain"});
             AudioSourceComponent c;
+            if (node["Kind"])
+            {
+                const int kind = node["Kind"].as<int>();
+                Require(kind >= int(AudioSourceKind::Clip) && kind <= int(AudioSourceKind::Generator),
+                        "Invalid audio source kind");
+                c.Kind = static_cast<AudioSourceKind>(kind);
+            }
+            Require(c.Kind == AudioSourceKind::Generator || node["Clip"] || node["Event"],
+                    "AudioSourceComponent requires Clip or Event");
+            if (node["GeneratorChannels"])
+                c.Generator.Channels = node["GeneratorChannels"].as<uint32_t>();
+            if (node["GeneratorSampleRate"])
+                c.Generator.SampleRate = node["GeneratorSampleRate"].as<uint32_t>();
+            Require(c.Generator.IsValid(), "Invalid audio generator format");
             if (node["Clip"])
                 c.Clip = AssetID::FromString(Text(node["Clip"]));
             if (node["Event"])

@@ -8,11 +8,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <glm/vec3.hpp>
 #include "Kans3D/Audio/AudioBusLayout.h"
 #include "AudioAttenuation.h"
 #include "AudioEmitterShape.h"
+#include "AudioUserSettings.h"
 
 namespace Kans
 {
@@ -23,6 +25,40 @@ namespace Kans
     class AudioEventPlayer;
     inline constexpr uint8_t DefaultAudioVoicePriority = 128;
     enum class AudioOutputMode { Device, Offline };
+    struct AudioOutputFormat
+    {
+        uint32_t Channels = 0;
+        // Channel positions use miniaudio's MA_CHANNEL values. Zero entries mean unknown.
+        std::array<uint8_t, 8> ChannelMap {};
+        bool                   operator==(const AudioOutputFormat& other) const
+        {
+            return Channels == other.Channels && ChannelMap == other.ChannelMap;
+        }
+        bool operator!=(const AudioOutputFormat& other) const { return !(*this == other); }
+    };
+
+    struct AudioOutputDevice
+    {
+        std::string       Id, Name;
+        bool              IsDefault = false;
+        AudioOutputFormat NativeFormat;
+    };
+
+    enum class AudioDeviceChangeReason
+    {
+        Selected,
+        Rerouted,
+        FellBackToDefault,
+        SpeakerModeChanged
+    };
+    struct AudioDeviceChange
+    {
+        uint64_t                Revision = 0;
+        std::string             DeviceId;
+        AudioDeviceChangeReason Reason = AudioDeviceChangeReason::Selected;
+        AudioOutputFormat       Format;
+    };
+
     struct AudioEngineConfig
     {
         AudioOutputMode Mode = AudioOutputMode::Device;
@@ -32,6 +68,7 @@ namespace Kans
         bool UseNullDevice = false; // Device mode: real-time silent playback without opening hardware.
         uint32_t        MaxRealVoices = 64;
         float           VirtualizationThreshold = 0.001f; // Linear amplitude (-60 dB). Zero disables the threshold.
+        std::filesystem::path UserSettingsFile;                 // Empty leaves persistence disabled.
     };
 
     using AudioSoundID = uint64_t;
@@ -64,6 +101,17 @@ namespace Kans
     inline constexpr size_t   MaxAudioVoiceSends = 2;
     inline constexpr uint32_t MaxAudioListeners  = 4;
 
+    struct AudioGeneratorFormat
+    {
+        uint32_t Channels = 1, SampleRate = 48000;
+        bool     operator==(const AudioGeneratorFormat& other) const
+        {
+            return Channels == other.Channels && SampleRate == other.SampleRate;
+        }
+        bool operator!=(const AudioGeneratorFormat& other) const { return !(*this == other); }
+        bool IsValid() const { return Channels >= 1 && Channels <= 8 && SampleRate >= 8000 && SampleRate <= 192000; }
+    };
+
     struct AudioVoiceDesc
     {
         AudioSoundID Sound = 0;
@@ -79,6 +127,7 @@ namespace Kans
         bool                     ReverbZoneSend = true, PinToCenter = false;
         float                    LfeSendDb = AudioSendOffDb;
         std::optional<glm::vec3> ReverbPosition; // Listener selection for a world-positioned 2D voice.
+        std::optional<AudioGeneratorFormat> Generator;
     };
 
     enum class AudioConcurrencyRule
@@ -188,6 +237,22 @@ namespace Kans
         float GetMasterVolume() const;
         uint64_t Render(float* out, uint64_t frameCount);
         void Update();
+        std::vector<AudioOutputDevice> EnumerateOutputDevices() const;
+        bool                           SetOutputDevice(std::string_view id = DefaultAudioOutputDevice);
+        bool                           SetSpeakerMode(SpeakerMode mode);
+        SpeakerMode                    GetSpeakerMode() const;
+        // GetChannels() reports the bus mix. Offline Render writes the output format.
+        AudioOutputFormat        GetOutputFormat() const;
+        const AudioDeviceChange& GetLastDeviceChange() const;
+        // Test seam. Offline only. The next Update handles this snapshot like a backend notification.
+        void                                SimulateOutputDevices(std::vector<AudioOutputDevice> devices);
+        const AudioUserSettings&            GetUserSettings() const;
+        std::optional<std::string>          LoadUserSettings(const std::filesystem::path& file);
+        std::optional<std::string>          LoadUserSettings();
+        std::optional<std::string>          SaveUserSettings() const;
+        std::optional<AudioUserBusSettings> GetUserBusSettings(const std::string& bus) const;
+        bool                                SetUserBusVolumeDb(const std::string& bus, float db);
+        bool                                SetUserBusMute(const std::string& bus, bool mute);
         void     SetMaxRealVoices(uint32_t count);
         void     SetVirtualizationThreshold(float linear);
         // Counts are published by Update. Groups count admitted starts, including virtual and scheduled voices.
@@ -257,6 +322,11 @@ namespace Kans
         uint64_t GetDecodedBytes(AudioSoundID id) const;
 
         AudioVoiceHandle CreateVoice(const AudioVoiceDesc& desc);
+        // One producer per voice. Keep the voice and slot table stable during a background producer's calls.
+        // PCM is interleaved. Push returns accepted input frames, and underruns count missing input frames.
+        uint32_t PushGeneratorFrames(AudioVoiceHandle handle, const float* pcm, size_t sampleCount);
+        uint32_t GetFramesAvailableToPush(AudioVoiceHandle handle) const;
+        uint64_t GetGeneratorUnderrunFrames(AudioVoiceHandle handle) const;
         // Empty or unknown names route to Master. Returns false for an invalid handle or failed attachment.
         bool                       SetVoiceBus(AudioVoiceHandle handle, const std::string& bus);
         std::optional<std::string> GetVoiceBus(AudioVoiceHandle handle) const;
@@ -337,6 +407,9 @@ namespace Kans
                                               uint64_t                fadeFrames,
                                               AudioFadeCurve          curve,
                                               const AudioVoiceWindow* window = nullptr);
+        std::optional<std::string> RebuildOutput(std::string_view id, SpeakerMode mode, AudioDeviceChangeReason reason);
+        std::optional<std::string> ReformatMix(const AudioOutputFormat& format);
+        void                       UpdateOutput();
         std::optional<std::string> ReplaceBusGraph(const AudioBusLayout& layout);
         bool                       AdmitVoice(AudioVoiceHandle handle, uint64_t now);
         friend class AudioClipRegistry;

@@ -13,6 +13,8 @@ namespace Kans
         {
             return std::tie(c.Clip,
                             c.Event,
+                            c.Kind,
+                            c.Generator,
                             c.AttenuationAsset,
                             c.Shape,
                             c.Bus,
@@ -50,6 +52,32 @@ namespace Kans
             return 0;
         const float t = 1 - distance / zone.FadeDistance;
         return t * t * (3 - 2 * t);
+    }
+
+    void AudioSourceComponent::Runtime::SetSource(const AudioSourceComponent& source)
+    {
+        RequestedKind      = source.GetSourceKind();
+        RequestedClip      = source.Clip;
+        RequestedEvent     = source.Event;
+        RequestedGenerator = RequestedKind == AudioSourceKind::Generator ?
+                                 std::optional<AudioGeneratorFormat>(source.Generator) :
+                                 std::nullopt;
+    }
+
+    bool AudioSourceComponent::Runtime::MatchesSource(const AudioSourceComponent& source) const
+    {
+        if (RequestedKind != source.GetSourceKind())
+            return false;
+        switch (RequestedKind)
+        {
+            case AudioSourceKind::Generator:
+                return RequestedGenerator == source.Generator;
+            case AudioSourceKind::Event:
+                return RequestedEvent == source.Event;
+            case AudioSourceKind::Clip:
+                return RequestedClip == source.Clip;
+        }
+        return false;
     }
 
     AudioSourceComponent::Runtime::~Runtime()

@@ -98,6 +98,7 @@ namespace Kans.Interop
             AnimationEvents.Reset();
             TimelineEvents.Reset();
             foreach (var instance in s_Instances.ToArray()) Release(instance);
+            Audio.ResetDeviceEvents();
             s_Instances.Clear();
             s_Handles.Clear();
         }
@@ -285,6 +286,7 @@ namespace Kans.Interop
                 UI.Drain();
                 AnimationEvents.Drain();
                 TimelineEvents.Drain();
+                Audio.DispatchDeviceChange();
                 if (!s_Playing) return;
                 // Native supplies handles in current scene order; dictionary lookups allocate nothing.
                 for (int i = 0; i < count; ++i)
