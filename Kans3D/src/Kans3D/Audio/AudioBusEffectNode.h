@@ -47,6 +47,7 @@ namespace Kans
         ~AudioBusEffectNode();
 
         ma_result Init(ma_node_graph*                        graph,
+                       const ma_channel*                     channelMap,
                        uint32_t                              channels,
                        uint32_t                              rate,
                        const AudioBusEffect&                 effect,

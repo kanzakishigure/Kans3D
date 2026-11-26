@@ -226,6 +226,9 @@ namespace Kans
         desc.Priority         = params.Priority.value_or(data.Priority);
         desc.Bus              = params.Bus ? *params.Bus : data.Bus;
         desc.Loop             = params.Loop.value_or(data.Loop);
+        desc.ReverbZoneSend   = params.ReverbZoneSend && data.ReverbZoneSend;
+        desc.LfeSendDb        = params.LfeSendDb.value_or(data.LfeSendDb);
+        desc.PinToCenter      = params.PinToCenter;
         desc.ConcurrencyGroup = data.ConcurrencyGroup.empty() ? params.FallbackConcurrencyGroup : data.ConcurrencyGroup;
         const bool spatial    = params.Spatial.value_or(data.Spatial);
         desc.Pan              = spatial ? 0 : params.Pan;
@@ -242,6 +245,10 @@ namespace Kans
                 data.AttenuationAsset.IsValid())
                 emitter.Direction = -glm::vec3((*params.EntityTransform)[2]);
         }
+
+        desc.ReverbPosition = params.Position;
+        if (!desc.ReverbPosition && (params.Emitter || params.EntityTransform))
+            desc.ReverbPosition = emitter.Position;
 
         bool         rejected = false;
         const double offset   = Sample(state.Rng, data.StartOffsetSeconds);

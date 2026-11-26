@@ -214,6 +214,7 @@ namespace Kans
         std::optional<VehicleComponent>             Vehicle;
         std::optional<WindZoneComponent>            GlobalWind;
         std::optional<AudioSourceComponent>         AudioSource;
+        std::optional<AudioReverbZoneComponent>     AudioReverbZone;
         std::optional<CharacterControllerComponent> CharacterController;
         std::optional<ClothComponent>               Cloth;
         std::optional<SpringBoneComponent>          SpringBone;
@@ -232,7 +233,8 @@ namespace Kans
             return !LocalTransform && Materials.empty() && !Removed && !RenderCustomDepth && !CustomStencil &&
                    !UIScreen && !UIWorld && !RigidBody && !BoxCollider && !SphereCollider && !CapsuleCollider &&
                    !MeshCollider && !ForceField && !Ragdoll && !Particles && !Vehicle && !GlobalWind && !AudioSource &&
-                   !CharacterController && !AimConstraint && !Joint && !Cloth && !SpringBone && !MotionCollider;
+                   !AudioReverbZone && !CharacterController && !AimConstraint && !Joint && !Cloth && !SpringBone &&
+                   !MotionCollider;
         }
     };
     struct PrefabNodeState
@@ -427,6 +429,7 @@ namespace Kans
                                          MaterialParameterDriversComponent,
                                          AudioSourceComponent,
                                          AudioListenerComponent,
+                                         AudioReverbZoneComponent,
                                          PrefabOwnedComponent,
                                          PrefabAttachmentComponent,
                                          BoundsComponent,

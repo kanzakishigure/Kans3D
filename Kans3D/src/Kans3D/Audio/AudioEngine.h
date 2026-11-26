@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -59,6 +60,10 @@ namespace Kans
         uint32_t Index = 0, Generation = 0;
         bool IsValid() const { return Generation != 0; }
     };
+    inline constexpr float    AudioSendOffDb     = -std::numeric_limits<float>::infinity();
+    inline constexpr size_t   MaxAudioVoiceSends = 2;
+    inline constexpr uint32_t MaxAudioListeners  = 4;
+
     struct AudioVoiceDesc
     {
         AudioSoundID Sound = 0;
@@ -71,6 +76,9 @@ namespace Kans
         uint8_t       Priority    = DefaultAudioVoicePriority; // 255 is highest.
         std::string   ConcurrencyGroup;
         bool          NeverVirtualize = false;
+        bool                     ReverbZoneSend = true, PinToCenter = false;
+        float                    LfeSendDb = AudioSendOffDb;
+        std::optional<glm::vec3> ReverbPosition; // Listener selection for a world-positioned 2D voice.
     };
 
     enum class AudioConcurrencyRule
@@ -111,9 +119,26 @@ namespace Kans
         AudioEmitterShape     Shape;
         glm::mat4 ShapeTransform {1}; // Linear part maps the local shape to world space. Position supplies translation.
     };
+    struct AudioZoneSend
+    {
+        // Index in GetBuses(), valid until the next layout change.
+        size_t BusIndex = 0;
+        float  Gain     = 0;
+        bool   operator==(const AudioZoneSend& other) const { return BusIndex == other.BusIndex && Gain == other.Gain; }
+    };
+
     struct AudioListenerState
     {
         glm::vec3 Position{0}, Velocity{0}, Forward{0, 0, -1}, Up{0, 1, 0};
+        bool      Active   = true;
+        uint64_t  Identity = 0; // Optional stable ID when active listeners are reassigned to different slots.
+        std::array<AudioZoneSend, MaxAudioVoiceSends> ReverbSends {};
+        bool                                          operator==(const AudioListenerState& other) const
+        {
+            return Position == other.Position && Velocity == other.Velocity && Forward == other.Forward &&
+                   Up == other.Up && Active == other.Active && Identity == other.Identity &&
+                   ReverbSends == other.ReverbSends;
+        }
     };
 
     struct AudioBusChannelMeter
@@ -268,6 +293,13 @@ namespace Kans
         // An empty ID restores an event's authored asset, or the voice's built-in settings.
         void SetVoiceAttenuationAsset(AudioVoiceHandle handle, AssetManager* assets, AssetID id);
         void SetListener(uint32_t index, const AudioListenerState& state);
+        // Replaces the active listener set. Slots beyond the span are disabled.
+        void     SetListeners(const AudioListenerState* states, size_t count);
+        uint32_t GetMaxListeners() const;
+        // Reports missing targets once per engine and never falls back to Master.
+        std::optional<size_t> ResolveReverbBus(const std::string& name);
+        void SetVoiceRouting(AudioVoiceHandle handle, bool reverbZoneSend, float lfeSendDb, bool pinToCenter);
+        void SetVoiceReverbPosition(AudioVoiceHandle handle, glm::vec3 position);
 
     private:
         friend class Scene;

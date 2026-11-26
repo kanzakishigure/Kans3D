@@ -1,5 +1,7 @@
 #include "kspch.h"
 #include "AudioBusGraph.h"
+#include "AudioChannelRouting.h"
+#include "AudioGainRamp.h"
 
 #include <algorithm>
 #include <array>
@@ -15,43 +17,6 @@ namespace Kans
         static_assert(std::atomic<uint64_t>::is_always_lock_free);
 
         float Gain(float db) { return std::pow(10.f, db / 20.f); }
-
-        struct GainRamp
-        {
-            std::atomic<float> Target {1};
-            std::atomic<float> Published {1};
-            double             Current = 1, Step = 0;
-            float              Destination = 1;
-            uint32_t           Remaining   = 0;
-
-            void Initialize(float gain)
-            {
-                Destination = gain;
-                Current     = gain;
-                Published.store(gain, std::memory_order_relaxed);
-            }
-            void Prepare(uint32_t frames)
-            {
-                const float target = Target.load(std::memory_order_relaxed);
-                if (target != Destination)
-                {
-                    Destination = target;
-                    Remaining   = frames;
-                    Step        = (target - Current) / frames;
-                }
-            }
-            float Next()
-            {
-                if (Remaining > 0)
-                {
-                    Current += Step;
-                    if (--Remaining == 0)
-                        Current = Destination;
-                }
-                return static_cast<float>(Current);
-            }
-            void Publish() { Published.store(static_cast<float>(Current), std::memory_order_relaxed); }
-        };
 
         uint64_t PackMeter(float peak, float rms)
         {
@@ -139,13 +104,15 @@ namespace Kans
 
         struct SendOutput
         {
-            GainRamp     Level;
+            AudioGainRamp Level;
             AudioSendTap Tap = AudioSendTap::PostFader;
         };
 
         struct FaderNode : ma_node_base
         {
-            GainRamp                                           Fader, PreFader;
+            AudioGainRamp                                      Fader, PreFader;
+            std::atomic<bool>                                  PinToCenter {false};
+            int                                                Center = -1, Lfe = -1;
             ma_node_graph*                                     Graph = nullptr;
             AudioSidechainPeak                                 Sidechain;
             std::unique_ptr<SendOutput[]>                      Sends;
@@ -171,15 +138,27 @@ namespace Kans
                     fader.Sends[i].Level.Prepare(fader.RampFrames);
 
                 const float* source = inputs[0];
+                const bool   pin    = channels > 1 && fader.PinToCenter.load(std::memory_order_relaxed);
+                std::array<float, MA_MAX_CHANNELS> pinned {};
                 float*       dry    = outputs[0];
                 for (ma_uint32 frame = 0; frame < frames; ++frame)
                 {
                     const auto  offset = frame * channels;
                     const float post   = fader.Fader.Next();
                     const float pre    = fader.PreFader.Next();
+                    const float* frameSource = source + offset;
+                    if (pin)
+                    {
+                        float mono = 0;
+                        for (uint32_t channel = 0; channel < channels; ++channel)
+                            if (int(channel) != fader.Lfe)
+                                mono += frameSource[channel];
+                        RouteAudioCenter(pinned.data(), channels, fader.Center, mono / (channels - (fader.Lfe >= 0)));
+                        frameSource = pinned.data();
+                    }
                     for (uint32_t channel = 0; channel < channels; ++channel)
                     {
-                        const float sample    = source[offset + channel] * post;
+                        const float sample    = frameSource[channel] * post;
                         dry[offset + channel] = sample;
                         peak[channel]         = std::max(peak[channel], std::abs(sample));
                         sumSquares[channel] += double(sample) * sample;
@@ -190,7 +169,7 @@ namespace Kans
                         const float tap   = send.Tap == AudioSendTap::PreFader ? pre : post;
                         const float level = send.Level.Next();
                         for (uint32_t channel = 0; channel < channels; ++channel)
-                            outputs[i + 1][offset + channel] = source[offset + channel] * tap * level;
+                            outputs[i + 1][offset + channel] = frameSource[channel] * tap * level;
                     }
                 }
                 fader.Sidechain.Publish(ma_node_graph_get_time(fader.Graph),
@@ -258,6 +237,7 @@ namespace Kans
         auto* graph           = ma_engine_get_node_graph(&engine);
         m_Endpoint            = ma_node_graph_get_endpoint(graph);
         m_Channels            = ma_engine_get_channels(&engine);
+        std::copy_n(engine.listeners[0].config.pChannelMapOut, m_Channels, m_ChannelMap.begin());
         const auto rampFrames = std::max(1u, ma_engine_get_sample_rate(&engine) / 200); // 5 ms
         m_Layout              = layout;
 
@@ -276,6 +256,8 @@ namespace Kans
             auto& fader    = bus.Fader;
             fader.Channels = m_Channels;
             fader.Graph    = graph;
+            fader.Center   = AudioChannelIndex(m_ChannelMap.data(), m_Channels, MA_CHANNEL_FRONT_CENTER);
+            fader.Lfe      = AudioChannelIndex(m_ChannelMap.data(), m_Channels, MA_CHANNEL_LFE);
             for (uint32_t channel = 0; channel < m_Channels; ++channel)
                 fader.Meters[channel].store(0, std::memory_order_relaxed);
             fader.RampFrames = rampFrames;
@@ -406,6 +388,7 @@ namespace Kans
         {
             auto node = std::make_unique<AudioBusEffectNode>();
             result    = node->Init(graph,
+                                   m_ChannelMap.data(),
                                    m_Channels,
                                    rate,
                                    effect,
@@ -513,6 +496,17 @@ namespace Kans
         return it == m_Names.end() ? nullptr : &m_Buses[it->second]->Input;
     }
 
+    ma_node* AudioBusGraph::Input(size_t index) const
+    {
+        return index < m_Buses.size() ? &m_Buses[index]->Input : nullptr;
+    }
+
+    std::optional<size_t> AudioBusGraph::FindIndex(const std::string& bus) const
+    {
+        const auto it = m_Names.find(bus);
+        return it == m_Names.end() ? std::nullopt : std::optional<size_t>(it->second);
+    }
+
     AudioBusDefinition* AudioBusGraph::Find(const std::string& bus)
     {
         const auto it = m_Names.find(bus);
@@ -561,6 +555,7 @@ namespace Kans
             for (std::optional<size_t> bus = i; bus && !audible; bus = m_Buses[*bus]->Parent)
                 audible = definitions[*bus].Solo;
             auto& fader = m_Buses[i]->Fader;
+            fader.PinToCenter.store(definitions[i].PinToCenter, std::memory_order_relaxed);
             fader.PreFader.Target.store(audible ? 1.f : 0.f, std::memory_order_relaxed);
             fader.Fader.Target.store(audible && !definitions[i].Mute ? Gain(definitions[i].VolumeDb) : 0.f,
                                      std::memory_order_relaxed);

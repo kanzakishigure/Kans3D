@@ -157,6 +157,7 @@ namespace Kans
                 bus.Name     = entry["Name"].as<std::string>();
                 bus.Parent   = ReadOr<std::string>(entry, "Parent", "");
                 bus.VolumeDb = ReadOr<float>(entry, "VolumeDb", 0);
+                bus.PinToCenter = ReadOr<bool>(entry, "PinToCenter", false);
                 bus.Mute     = ReadOr<bool>(entry, "Mute", false);
                 bus.Solo     = ReadOr<bool>(entry, "Solo", false);
                 bus.Bypass   = ReadOr<bool>(entry, "Bypass", false);
@@ -226,9 +227,12 @@ namespace Kans
         for (const auto& bus : layout.Buses)
         {
             out << YAML::BeginMap << YAML::Key << "Name" << YAML::Value << bus.Name << YAML::Key << "Parent"
-                << YAML::Value << bus.Parent << YAML::Key << "VolumeDb" << YAML::Value << bus.VolumeDb << YAML::Key
-                << "Mute" << YAML::Value << bus.Mute << YAML::Key << "Solo" << YAML::Value << bus.Solo << YAML::Key
-                << "Bypass" << YAML::Value << bus.Bypass << YAML::Key << "Sends" << YAML::Value << YAML::BeginSeq;
+                << YAML::Value << bus.Parent;
+            if (bus.PinToCenter)
+                out << YAML::Key << "PinToCenter" << YAML::Value << true;
+            out << YAML::Key << "VolumeDb" << YAML::Value << bus.VolumeDb << YAML::Key << "Mute" << YAML::Value
+                << bus.Mute << YAML::Key << "Solo" << YAML::Value << bus.Solo << YAML::Key << "Bypass" << YAML::Value
+                << bus.Bypass << YAML::Key << "Sends" << YAML::Value << YAML::BeginSeq;
             for (const auto& send : bus.Sends)
                 out << YAML::BeginMap << YAML::Key << "Target" << YAML::Value << send.Target << YAML::Key << "LevelDb"
                     << YAML::Value << send.LevelDb << YAML::Key << "Tap" << YAML::Value

@@ -18,6 +18,8 @@ namespace Kans
         float                 Volume = 1, Pitch = 1;
         bool                  PlayOnStart = true, Loop = false, Spatial = true;
         float                 Pan         = 0;
+        bool                  ReverbZoneSend = true, PinToCenter = false;
+        float                 LfeSendDb   = AudioSendOffDb;
         AudioAttenuationModel Attenuation = AudioAttenuationModel::Inverse;
         float                 MinDistance = 1, MaxDistance = 100, Rolloff = 1, DopplerFactor = 1;
         float                 ConeInnerAngle = 360, ConeOuterAngle = 360, ConeOuterGain = 0;
@@ -49,6 +51,32 @@ namespace Kans
         std::unique_ptr<Runtime> m_Runtime;
     };
     bool operator==(const AudioSourceComponent&, const AudioSourceComponent&);
+
+    enum class AudioReverbZoneShape
+    {
+        Sphere,
+        Box
+    };
+
+    struct AudioReverbZoneComponent
+    {
+        AudioReverbZoneShape Shape  = AudioReverbZoneShape::Sphere;
+        float                Radius = 1, FadeDistance = 1;
+        glm::vec3            HalfExtents {1};
+        std::string          Bus      = "Reverb";
+        float                SendDb   = 0;
+        int                  Priority = 0;
+
+        bool operator==(const AudioReverbZoneComponent& other) const
+        {
+            return Shape == other.Shape && Radius == other.Radius && HalfExtents == other.HalfExtents &&
+                   FadeDistance == other.FadeDistance && Bus == other.Bus && SendDb == other.SendDb &&
+                   Priority == other.Priority;
+        }
+        bool operator!=(const AudioReverbZoneComponent& other) const { return !(*this == other); }
+    };
+
+    float AudioReverbZoneWeight(const AudioReverbZoneComponent& zone, const glm::mat4& world, glm::vec3 listener);
 
     struct AudioListenerComponent
     {

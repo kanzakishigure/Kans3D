@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "AudioComponents.h"
 #include <tuple>
+#include <glm/geometric.hpp>
 #include "AudioClipRegistry.h"
 
 namespace Kans
@@ -23,6 +24,9 @@ namespace Kans
                             c.Loop,
                             c.Spatial,
                             c.Pan,
+                            c.ReverbZoneSend,
+                            c.PinToCenter,
+                            c.LfeSendDb,
                             c.Attenuation,
                             c.MinDistance,
                             c.MaxDistance,
@@ -33,6 +37,21 @@ namespace Kans
                             c.ConeOuterGain);
         }
     } // namespace
+    float AudioReverbZoneWeight(const AudioReverbZoneComponent& zone, const glm::mat4& world, glm::vec3 listener)
+    {
+        AudioEmitterShape shape;
+        shape.Type        = zone.Shape == AudioReverbZoneShape::Box ? AudioSourceShape::Box : AudioSourceShape::Sphere;
+        shape.Radius      = zone.Radius;
+        shape.HalfExtents = zone.HalfExtents;
+        const float distance = glm::length(ClosestAudioEmitterPoint(shape, world, listener) - listener);
+        if (distance == 0)
+            return 1;
+        if (!(distance < zone.FadeDistance))
+            return 0;
+        const float t = 1 - distance / zone.FadeDistance;
+        return t * t * (3 - 2 * t);
+    }
+
     AudioSourceComponent::Runtime::~Runtime()
     {
         if (Engine)

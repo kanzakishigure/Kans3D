@@ -57,9 +57,10 @@ namespace Kans
                     x->second.SphereCollider != y->second.SphereCollider ||
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
-                    !(x->second.AudioSource == y->second.AudioSource) || x->second.ForceField != y->second.ForceField ||
-                    x->second.Ragdoll != y->second.Ragdoll || x->second.Particles != y->second.Particles ||
-                    x->second.Vehicle != y->second.Vehicle ||
+                    !(x->second.AudioSource == y->second.AudioSource) ||
+                    x->second.AudioReverbZone != y->second.AudioReverbZone ||
+                    x->second.ForceField != y->second.ForceField || x->second.Ragdoll != y->second.Ragdoll ||
+                    x->second.Particles != y->second.Particles || x->second.Vehicle != y->second.Vehicle ||
                     x->second.CharacterController != y->second.CharacterController ||
                     x->second.AimConstraint != y->second.AimConstraint || x->second.Joint != y->second.Joint ||
                     x->second.SpringBone != y->second.SpringBone || x->second.Cloth != y->second.Cloth ||
@@ -207,6 +208,9 @@ namespace Kans
             change.AudioSource = part.HasComponent<AudioSourceComponent>() ?
                                      std::optional<AudioSourceComponent>(part.GetComponent<AudioSourceComponent>()) :
                                      std::nullopt;
+            change.AudioReverbZone = part.HasComponent<AudioReverbZoneComponent>() ?
+                                         std::optional(part.GetComponent<AudioReverbZoneComponent>()) :
+                                         std::nullopt;
             change.ForceField = part.HasComponent<ForceFieldComponent>() ?
                                     std::optional<ForceFieldComponent>(part.GetComponent<ForceFieldComponent>()) :
                                     std::nullopt;
@@ -488,6 +492,15 @@ namespace Kans
             }
             else if (entity.HasComponent<AudioSourceComponent>())
                 entity.RemoveComponent<AudioSourceComponent>();
+            if (change != instance.Overrides.end() && change->second.AudioReverbZone)
+            {
+                if (!entity.HasComponent<AudioReverbZoneComponent>())
+                    entity.AddComponent<AudioReverbZoneComponent>(*change->second.AudioReverbZone);
+                else if (entity.GetComponent<AudioReverbZoneComponent>() != *change->second.AudioReverbZone)
+                    entity.SetComponent<AudioReverbZoneComponent>(*change->second.AudioReverbZone);
+            }
+            else if (entity.HasComponent<AudioReverbZoneComponent>())
+                entity.RemoveComponent<AudioReverbZoneComponent>();
             if (change != instance.Overrides.end() && change->second.ForceField)
             {
                 if (!entity.HasComponent<ForceFieldComponent>())

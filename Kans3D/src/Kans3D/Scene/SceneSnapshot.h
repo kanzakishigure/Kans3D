@@ -36,6 +36,7 @@ namespace Kans
         std::optional<MaterialParameterDriversComponent> MaterialDrivers;
         std::optional<AudioSourceComponent>              AudioSource;
         std::optional<AudioListenerComponent>            AudioListener;
+        std::optional<AudioReverbZoneComponent>          AudioReverbZone;
         std::optional<PrefabAttachmentComponent>         PrefabParent;
         std::optional<DirLightComponent>                 DirLight;
         std::optional<PointLightComponent>               PointLight;

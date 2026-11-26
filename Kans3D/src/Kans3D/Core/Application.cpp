@@ -57,6 +57,7 @@ namespace Kans
         //-------------Init the Renderer----------------------------//
         Renderer::Init(m_Window);
         AudioEngineConfig audioConfig;
+        audioConfig.MaxListeners  = MaxAudioListeners;
         const char* nullAudio = std::getenv("KANS_AUDIO_NULL");
         const bool forceSilent = nullAudio && std::string_view(nullAudio) == "1";
         audioConfig.UseNullDevice = forceSilent;

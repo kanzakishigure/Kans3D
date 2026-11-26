@@ -115,6 +115,12 @@ namespace Kans
             v["Loop"]           = c.Loop;
             v["Spatial"]        = c.Spatial;
             v["Pan"]            = c.Pan;
+            if (!c.ReverbZoneSend)
+                v["ReverbZoneSend"] = false;
+            if (c.PinToCenter)
+                v["PinToCenter"] = true;
+            if (c.LfeSendDb != AudioSendOffDb)
+                v["LfeSendDb"] = c.LfeSendDb;
             v["MinDistance"]    = c.MinDistance;
             v["MaxDistance"]    = c.MaxDistance;
             v["Rolloff"]        = c.Rolloff;
@@ -131,30 +137,80 @@ namespace Kans
             return v;
         }
 
+        YAML::Node EncodeAudioReverbZone(const AudioReverbZoneComponent& zone)
+        {
+            YAML::Node node;
+            node["Shape"]  = zone.Shape == AudioReverbZoneShape::Sphere ? "Sphere" : "Box";
+            node["Radius"] = zone.Radius;
+            auto extents   = node["HalfExtents"];
+            extents.SetStyle(YAML::EmitterStyle::Flow);
+            for (int axis = 0; axis < 3; ++axis)
+                extents.push_back(zone.HalfExtents[axis]);
+            node["FadeDistance"] = zone.FadeDistance;
+            node["Bus"]          = zone.Bus;
+            node["SendDb"]       = zone.SendDb;
+            node["Priority"]     = zone.Priority;
+            return node;
+        }
+
+        AudioReverbZoneComponent DecodeAudioReverbZone(const YAML::Node& node)
+        {
+            Keys(node, {"Shape", "Radius", "HalfExtents", "FadeDistance", "Bus", "SendDb", "Priority"});
+            AudioReverbZoneComponent zone;
+            if (node["Shape"])
+            {
+                const auto shape = Text(node["Shape"]);
+                Require(shape == "Sphere" || shape == "Box", "Invalid audio reverb zone shape");
+                zone.Shape = shape == "Box" ? AudioReverbZoneShape::Box : AudioReverbZoneShape::Sphere;
+            }
+            if (node["Radius"])
+                zone.Radius = Number(node["Radius"]);
+            if (const auto extents = node["HalfExtents"])
+            {
+                Require(extents.IsSequence() && extents.size() == 3, "Expected three reverb zone half extents");
+                for (int axis = 0; axis < 3; ++axis)
+                    zone.HalfExtents[axis] = Number(extents[axis]);
+            }
+            if (node["FadeDistance"])
+                zone.FadeDistance = Number(node["FadeDistance"]);
+            if (node["Bus"])
+                zone.Bus = Text(node["Bus"]);
+            if (node["SendDb"])
+                zone.SendDb = node["SendDb"].as<float>();
+            if (node["Priority"])
+                zone.Priority = node["Priority"].as<int>();
+            Require(zone.Radius >= 0 && glm::all(glm::greaterThanEqual(zone.HalfExtents, glm::vec3(0))) &&
+                        zone.FadeDistance >= 0 && IsValidAudioBusLevel(zone.SendDb),
+                    "Invalid audio reverb zone range");
+            return zone;
+        }
+
         AudioSourceComponent DecodeAudioSource(const YAML::Node& node)
         {
-            Keys(node,
-                 {"Clip",
-                  "Event",
-                  "AttenuationAsset",
-                  "Shape",
-                  "Bus",
-                  "Priority",
-                  "ConcurrencyGroup",
-                  "Volume",
-                  "Pitch",
-                  "PlayOnStart",
-                  "Loop",
-                  "Spatial",
-                  "Pan",
-                  "Attenuation",
-                  "MinDistance",
-                  "MaxDistance",
-                  "Rolloff",
-                  "DopplerFactor",
-                  "ConeInnerAngle",
-                  "ConeOuterAngle",
-                  "ConeOuterGain"});
+            Keys(node, {"Clip",
+                        "Event",
+                        "AttenuationAsset",
+                        "Shape",
+                        "Bus",
+                        "Priority",
+                        "ConcurrencyGroup",
+                        "Volume",
+                        "Pitch",
+                        "PlayOnStart",
+                        "Loop",
+                        "Spatial",
+                        "Pan",
+                        "ReverbZoneSend",
+                        "LfeSendDb",
+                        "PinToCenter",
+                        "Attenuation",
+                        "MinDistance",
+                        "MaxDistance",
+                        "Rolloff",
+                        "DopplerFactor",
+                        "ConeInnerAngle",
+                        "ConeOuterAngle",
+                        "ConeOuterGain"});
             Require(node["Clip"] || node["Event"], "AudioSourceComponent requires Clip or Event");
             AudioSourceComponent c;
             if (node["Clip"])
@@ -199,6 +255,13 @@ namespace Kans
             c.Loop                 = node["Loop"].as<bool>();
             c.Spatial              = node["Spatial"].as<bool>();
             c.Pan                  = Number(node["Pan"]);
+            if (node["ReverbZoneSend"])
+                c.ReverbZoneSend = node["ReverbZoneSend"].as<bool>();
+            if (node["PinToCenter"])
+                c.PinToCenter = node["PinToCenter"].as<bool>();
+            if (node["LfeSendDb"])
+                c.LfeSendDb = node["LfeSendDb"].as<float>();
+            Require(IsValidAudioBusLevel(c.LfeSendDb), "Invalid audio source LfeSendDb");
             const auto attenuation = node["Attenuation"].as<int>();
             Require(attenuation >= 0 && attenuation <= int(AudioAttenuationModel::Exponential),
                     "Invalid audio attenuation model");
@@ -1078,6 +1141,8 @@ namespace Kans
                     item["WindZoneComponent"] = PhysicsYaml::Encode(*change.GlobalWind);
                 if (change.AudioSource)
                     item["AudioSourceComponent"] = EncodeAudioSource(*change.AudioSource);
+                if (change.AudioReverbZone)
+                    item["AudioReverbZoneComponent"] = EncodeAudioReverbZone(*change.AudioReverbZone);
                 if (change.ForceField)
                     item["ForceFieldComponent"] = PhysicsYaml::Encode(*change.ForceField);
                 if (change.Ragdoll)
@@ -1141,6 +1206,7 @@ namespace Kans
                       "MeshColliderComponent",
                       "WindZoneComponent",
                       "AudioSourceComponent",
+                      "AudioReverbZoneComponent",
                       "ForceFieldComponent",
                       "RagdollComponent",
                       "ParticleSystemComponent",
@@ -1207,6 +1273,8 @@ namespace Kans
                 }
                 if (item["AudioSourceComponent"])
                     change.AudioSource = DecodeAudioSource(item["AudioSourceComponent"]);
+                if (item["AudioReverbZoneComponent"])
+                    change.AudioReverbZone = DecodeAudioReverbZone(item["AudioReverbZoneComponent"]);
                 if (item["ForceFieldComponent"])
                 {
                     ForceFieldComponent c;
@@ -1708,6 +1776,9 @@ namespace Kans
                 node["AudioSourceComponent"] = EncodeAudioSource(entity.GetComponent<AudioSourceComponent>());
             if (entity.HasComponent<AudioListenerComponent>())
                 node["AudioListenerComponent"]["Active"] = entity.GetComponent<AudioListenerComponent>().Active;
+            if (entity.HasComponent<AudioReverbZoneComponent>())
+                node["AudioReverbZoneComponent"] =
+                    EncodeAudioReverbZone(entity.GetComponent<AudioReverbZoneComponent>());
             if (entity.HasComponent<MaterialParameterDriversComponent>())
             {
                 auto list = node["MaterialParameterDriversComponent"]["Bindings"];
@@ -2271,6 +2342,7 @@ namespace Kans
                       "JointComponent",
                       "AudioSourceComponent",
                       "AudioListenerComponent",
+                      "AudioReverbZoneComponent",
                       "TextComponent",
                       "UIScreenComponent",
                       "UIWorldComponent",
@@ -2415,6 +2487,9 @@ namespace Kans
                 }
                 if (node["AudioSourceComponent"])
                     entity.AddComponent<AudioSourceComponent>(DecodeAudioSource(node["AudioSourceComponent"]));
+                if (node["AudioReverbZoneComponent"])
+                    entity.AddComponent<AudioReverbZoneComponent>(
+                        DecodeAudioReverbZone(node["AudioReverbZoneComponent"]));
                 if (node["AudioListenerComponent"])
                 {
                     Keys(node["AudioListenerComponent"], {"Active"});

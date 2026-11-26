@@ -40,6 +40,8 @@ namespace Kans
         std::string                  Bus      = MasterAudioBus;
         uint8_t                      Priority = DefaultAudioVoicePriority;
         bool                         Loop = false, Spatial = false;
+        bool                         ReverbZoneSend = true;
+        float                        LfeSendDb      = AudioSendOffDb;
         AssetID                      AttenuationAsset;
         AudioSpatialParams           Attenuation; // Only attenuation, cone and Doppler settings are authored.
     };
@@ -68,6 +70,8 @@ namespace Kans
         std::optional<glm::mat4>          EntityTransform;
         AudioEmitterShape                 EntityShape;
         std::optional<bool>               Spatial, Loop;
+        bool                              ReverbZoneSend = true, PinToCenter = false;
+        std::optional<float>              LfeSendDb;
         float                             Pan = 0;
         std::string                       FallbackConcurrencyGroup;
     };

@@ -35,6 +35,7 @@ namespace Kans
         bool                        Bypass   = false;
         std::vector<AudioBusSend> Sends;
         std::vector<AudioBusEffect> Effects {};
+        bool                        PinToCenter = false;
     };
 
     struct AudioBusLayout

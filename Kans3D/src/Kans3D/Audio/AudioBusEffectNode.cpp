@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "AudioBusEffectNode.h"
 #include "AudioBusEffectFields.h"
+#include "AudioChannelRouting.h"
 
 #include <algorithm>
 #include <array>
@@ -367,6 +368,8 @@ namespace Kans
         std::variant<std::monostate, LowPass, HighPass, PeakingEQ> FilterNode;
         DelayLine                                                  Delay;
         std::vector<ReverbTank>                                    Tanks;
+        std::vector<std::pair<int, int>>                           ReverbPairs;
+        int                                                        Lfe = -1;
         std::vector<float>                                         WetFrame;
         LookAheadLimiter                                           Limiter;
         float                                                      Reduction = 0;
@@ -475,24 +478,23 @@ namespace Kans
             {
                 const auto& p        = Params.Current;
                 const float feedback = .7f + .28f * p[0];
-                // Each channel, including surround channels, has its own decorrelated tank.
-                // Width blends the wet channels in adjacent pairs (0/1, 2/3, ...). Mono and
-                // any unpaired final channel keep their own wet signal.
                 for (uint32_t c = 0; c < Channels; ++c)
                 {
+                    if (int(c) == Lfe)
+                        continue;
                     const float excitation = Delay.Read(c, input[c]);
                     Delay.Write(c, input[c]);
                     WetFrame[c] = Tanks[c].Process(excitation, feedback, p[1] * .9f);
                 }
-                for (uint32_t c = 0; c + 1 < Channels; c += 2)
+                const float cross = (1.f - p[2]) * .5f;
+                for (const auto& [leftIndex, rightIndex] : ReverbPairs)
                 {
-                    const float cross = (1.f - p[2]) * .5f;
-                    const float left = WetFrame[c], right = WetFrame[c + 1];
-                    WetFrame[c]     = Mix(left, right, cross);
-                    WetFrame[c + 1] = Mix(right, left, cross);
+                    const float left = WetFrame[leftIndex], right = WetFrame[rightIndex];
+                    WetFrame[leftIndex]  = Mix(left, right, cross);
+                    WetFrame[rightIndex] = Mix(right, left, cross);
                 }
                 for (uint32_t c = 0; c < Channels; ++c)
-                    output[c] = Mix(input[c], WetFrame[c], p[3]);
+                    output[c] = int(c) == Lfe ? input[c] : Mix(input[c], WetFrame[c], p[3]);
                 Delay.Advance();
                 Params.Advance();
                 input += Channels;
@@ -575,6 +577,7 @@ namespace Kans
     }
 
     ma_result AudioBusEffectNode::Init(ma_node_graph*                        graph,
+                                       const ma_channel*                     channelMap,
                                        uint32_t                              channels,
                                        uint32_t                              rate,
                                        const AudioBusEffect&                 effect,
@@ -611,8 +614,24 @@ namespace Kans
             s.Delay.Init(rate / 4, channels, rate, reverb->PreDelayMs);
             s.Tanks.resize(channels);
             s.WetFrame.resize(channels);
+            s.Lfe = AudioChannelIndex(channelMap, channels, MA_CHANNEL_LFE);
+            constexpr std::pair<ma_channel, ma_channel> pairs[] = {
+                {MA_CHANNEL_FRONT_LEFT, MA_CHANNEL_FRONT_RIGHT},
+                {MA_CHANNEL_BACK_LEFT, MA_CHANNEL_BACK_RIGHT},
+                {MA_CHANNEL_SIDE_LEFT, MA_CHANNEL_SIDE_RIGHT},
+                {MA_CHANNEL_FRONT_LEFT_CENTER, MA_CHANNEL_FRONT_RIGHT_CENTER},
+                {MA_CHANNEL_TOP_FRONT_LEFT, MA_CHANNEL_TOP_FRONT_RIGHT},
+                {MA_CHANNEL_TOP_BACK_LEFT, MA_CHANNEL_TOP_BACK_RIGHT}};
+            for (const auto& [left, right] : pairs)
+            {
+                const auto leftIndex  = AudioChannelIndex(channelMap, channels, left);
+                const auto rightIndex = AudioChannelIndex(channelMap, channels, right);
+                if (leftIndex >= 0 && rightIndex >= 0)
+                    s.ReverbPairs.emplace_back(leftIndex, rightIndex);
+            }
             for (uint32_t c = 0; c < channels; ++c)
-                s.Tanks[c].Init(c, rate);
+                if (int(c) != s.Lfe)
+                    s.Tanks[c].Init(c, rate);
         }
         if (std::holds_alternative<AudioLimiter>(effect.Parameters))
             s.Limiter.Init(rate, channels);

@@ -40,6 +40,7 @@ namespace Kans
     struct RuntimeMesh;
     struct EditableMesh;
     struct TransformComponent;
+    struct AudioReverbZoneComponent;
     struct PrefabNodeOverride;
     struct Bounds;
     struct MeshMaterialSlot;
@@ -346,7 +347,8 @@ namespace Kans
         void              StartAudio();
         void              StopAudio();
         void              UpdateAudio(double seconds);
-        void              UpdateAudioListener(double seconds);
+        void               UpdateAudioListeners(double seconds);
+        void               UpdateAudioZones(AudioListenerState* listeners, size_t listenerCount);
         void              PrepareAudioSource(Entity entity);
         void              PushAudioSource(Entity entity, double seconds);
         AudioSpatialParams GetAudioSpatialParams(Entity entity) const;
@@ -359,10 +361,19 @@ namespace Kans
             glm::vec3        PreviousPosition;
         };
         std::vector<EntityAudioEvent> m_EntityAudioEvents;
-        bool              m_AudioRunning = false, m_AudioPaused = false, m_WarnedMultipleListeners = false;
+        struct AudioZoneScratch
+        {
+            const AudioReverbZoneComponent*      Zone;
+            glm::mat4                            World;
+            UUID                                 ID;
+            size_t                               Bus;
+            std::array<float, MaxAudioListeners> Gains {};
+        };
+        std::vector<AudioZoneScratch> m_AudioZones;
+        bool                          m_AudioRunning = false, m_AudioPaused = false;
         UIContext         m_UI;
         UIViewport        m_UIViewport;
-        UUID              m_AudioListener = 0;
+        UUID                          m_AudioCamera = 0;
         glm::vec3         m_CameraAudioPosition {0};
         bool              m_HasCameraAudioPosition = false;
 

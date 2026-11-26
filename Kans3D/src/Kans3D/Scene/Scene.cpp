@@ -96,6 +96,9 @@ namespace Kans
         m_Registry.on_construct<AudioSourceComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_update<AudioSourceComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_destroy<AudioSourceComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_construct<AudioReverbZoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_update<AudioReverbZoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_destroy<AudioReverbZoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_update<TransformComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
         m_Registry.on_update<RelationshipComponent>().connect<&Scene::OnPhysicsTransformChanged>(this);
 
@@ -759,6 +762,7 @@ namespace Kans
 
         CopyComponent<AudioSourceComponent>(source, copy);
         CopyComponent<AudioListenerComponent>(source, copy);
+        CopyComponent<AudioReverbZoneComponent>(source, copy);
         if (source.HasComponent<PrefabInstanceComponent>())
         {
             auto instance     = source.GetComponent<PrefabInstanceComponent>();
@@ -1090,6 +1094,13 @@ namespace Kans
     template<>
     void Scene::OnComponentAdd<AudioListenerComponent>(Entity, AudioListenerComponent&)
     {}
+    template<>
+    void Scene::OnComponentAdd<AudioReverbZoneComponent>(Entity, AudioReverbZoneComponent&)
+    {
+        const auto count = m_Registry.view<AudioReverbZoneComponent>().size();
+        if (count > m_AudioZones.capacity())
+            m_AudioZones.reserve(std::max(count, 2 * m_AudioZones.capacity()));
+    }
 
     template<>
     void Scene::OnComponentAdd<MaterialParameterDriversComponent>(Entity, MaterialParameterDriversComponent&)

@@ -6,6 +6,8 @@
 #include "Kans3D/Audio/AudioMusicPlayer.h"
 #include "Kans3D/Core/Log/Log.h"
 #include "AudioBusGraph.h"
+#include "AudioChannelRouting.h"
+#include "AudioGainRamp.h"
 
 #include <miniaudio.h>
 #include <array>
@@ -35,30 +37,78 @@ namespace Kans
         static_assert(std::atomic<uint64_t>::is_always_lock_free);
         static_assert(std::atomic<uint32_t>::is_always_lock_free);
         constexpr size_t MaxOutputChannels = 8;
+        // Two destination sends plus two lanes available for previous sends to fade out.
+        constexpr size_t VoiceSendLanes = 2 * MaxAudioVoiceSends;
+
+        float RoutingGain(float db) { return IsValidAudioBusLevel(db) ? std::pow(10.f, db / 20.f) : 0.f; }
+
+        std::array<float, 2> StereoDownmix(ma_channel channel)
+        {
+            switch (channel)
+            {
+                case MA_CHANNEL_FRONT_LEFT:
+                    return {1, 0};
+                case MA_CHANNEL_FRONT_RIGHT:
+                    return {0, 1};
+                case MA_CHANNEL_FRONT_CENTER:
+                    return {AudioMinus3Db, AudioMinus3Db};
+                case MA_CHANNEL_BACK_LEFT:
+                case MA_CHANNEL_SIDE_LEFT:
+                case MA_CHANNEL_FRONT_LEFT_CENTER:
+                case MA_CHANNEL_TOP_FRONT_LEFT:
+                case MA_CHANNEL_TOP_BACK_LEFT:
+                    return {AudioMinus3Db, 0};
+                case MA_CHANNEL_BACK_RIGHT:
+                case MA_CHANNEL_SIDE_RIGHT:
+                case MA_CHANNEL_FRONT_RIGHT_CENTER:
+                case MA_CHANNEL_TOP_FRONT_RIGHT:
+                case MA_CHANNEL_TOP_BACK_RIGHT:
+                    return {0, AudioMinus3Db};
+                case MA_CHANNEL_BACK_CENTER:
+                case MA_CHANNEL_TOP_CENTER:
+                case MA_CHANNEL_TOP_FRONT_CENTER:
+                case MA_CHANNEL_TOP_BACK_CENTER:
+                    return {.5f, .5f};
+                default:
+                    return {};
+            }
+        }
 
         struct SpatialMix
         {
             std::array<float, MaxOutputChannels> Gains {1, 1, 1, 1, 1, 1, 1, 1};
             float                                FilterCoefficient = 1;
             bool                                 CustomPan         = false;
+            uint32_t                             Listener          = 0;
+            bool                                 HasNative         = false;
+            AudioSpatialParams                   Native;
             bool                                 operator==(const SpatialMix& other) const
             {
                 return Gains == other.Gains && FilterCoefficient == other.FilterCoefficient &&
-                       CustomPan == other.CustomPan;
+                       CustomPan == other.CustomPan && Listener == other.Listener && HasNative == other.HasNative &&
+                       Native.Position == other.Native.Position && Native.Velocity == other.Native.Velocity &&
+                       Native.Direction == other.Native.Direction && Native.Attenuation == other.Native.Attenuation &&
+                       Native.MinDistance == other.Native.MinDistance &&
+                       Native.MaxDistance == other.Native.MaxDistance && Native.Rolloff == other.Native.Rolloff &&
+                       Native.DopplerFactor == other.Native.DopplerFactor &&
+                       Native.ConeInnerAngle == other.Native.ConeInnerAngle &&
+                       Native.ConeOuterAngle == other.Native.ConeOuterAngle &&
+                       Native.ConeOuterGain == other.Native.ConeOuterGain;
             }
         };
 
         // One writer and one reader. Each owns a slot, and only the exchange slot
         // changes hands. The mixer reads a complete set of targets once per block.
-        struct SpatialMixMailbox
+        template<class T>
+        struct MixMailbox
         {
             static constexpr uint32_t Pending = 4;
-            std::array<SpatialMix, 3> Slots;
+            std::array<T, 3>          Slots;
             std::atomic<uint32_t>     Exchanged {2};
             uint32_t                  WriteSlot = 0, ReadSlot = 1;
-            SpatialMix                Published;
+            T                         Published {};
 
-            void Publish(const SpatialMix& mix)
+            void Publish(const T& mix)
             {
                 if (Published == mix)
                     return;
@@ -67,7 +117,7 @@ namespace Kans
                 WriteSlot        = Exchanged.exchange(WriteSlot | Pending, std::memory_order_acq_rel) & ~Pending;
             }
 
-            bool Consume(SpatialMix& mix)
+            bool Consume(T& mix)
             {
                 if (!(Exchanged.load(std::memory_order_acquire) & Pending))
                     return false;
@@ -246,6 +296,121 @@ namespace Kans
             uint64_t                        DecoderFrame = 0;
             uint64_t                        Capacity     = 0;
             std::vector<float>              PCM;
+            std::array<ma_channel, MA_MAX_CHANNELS>   InputMap {};
+            std::array<ma_channel, MaxOutputChannels> OutputMap {};
+            std::array<std::array<float, 2>, MA_MAX_CHANNELS> DownmixWeights {};
+            ma_channel_converter                              Converter {};
+            bool                                              ConverterReady = false, Downmix = false, Spatial = false;
+            uint32_t                                          OutputChannels = 0;
+            int                                               InputLfe = -1, OutputLfe = -1, Center = -1;
+            std::atomic<bool>                                 PinToCenter {false};
+            std::atomic<float>                                LfeGain {0};
+            std::vector<float>                                RoutingScratch;
+
+            ma_result
+            ConfigureRouting(const ma_channel* input, const ma_channel* output, uint32_t channels, bool spatial)
+            {
+                Spatial = spatial;
+                std::copy_n(input, Info.Channels, InputMap.begin());
+                OutputChannels = Info.Channels;
+                OutputLfe      = AudioChannelIndex(output, channels, MA_CHANNEL_LFE);
+                Center         = AudioChannelIndex(output, channels, MA_CHANNEL_FRONT_CENTER);
+                Downmix        = channels <= 2 && Info.Channels > 2;
+                if (!Downmix && OutputLfe < 0 && (Spatial || channels <= 2))
+                    return MA_SUCCESS;
+
+                OutputChannels = channels;
+                std::copy_n(output, channels, OutputMap.begin());
+                InputLfe = AudioChannelIndex(input, Info.Channels, MA_CHANNEL_LFE);
+                RoutingScratch.resize(32 * Info.Channels);
+                if (Downmix)
+                {
+                    for (size_t ch = 0; ch < Info.Channels; ++ch)
+                        DownmixWeights[ch] = StereoDownmix(input[ch]);
+                }
+                else
+                {
+                    auto       config = ma_channel_converter_config_init(ma_format_f32,
+                                                                         Info.Channels,
+                                                                         InputMap.data(),
+                                                                         OutputChannels,
+                                                                         OutputMap.data(),
+                                                                         Spatial ? ma_channel_mix_mode_rectangular :
+                                                                                   ma_channel_mix_mode_simple);
+                    const auto result = ma_channel_converter_init(&config, nullptr, &Converter);
+                    if (result != MA_SUCCESS)
+                        return result;
+                    ConverterReady = true;
+                }
+                return MA_SUCCESS;
+            }
+
+            ma_result ReadRaw(void* out, ma_uint64 count, ma_uint64& read)
+            {
+                return Stream ? Read(out, count, read) : ma_data_source_read_pcm_frames(&Data, out, count, &read);
+            }
+
+            ma_result ReadRouted(void* out, ma_uint64 count, ma_uint64& read)
+            {
+                if (RoutingScratch.empty() || !out)
+                    return ReadRaw(out, count, read);
+                const bool  pin         = OutputChannels > 2 && !Spatial && PinToCenter.load(std::memory_order_relaxed);
+                const float lfeGain     = LfeGain.load(std::memory_order_relaxed);
+                const auto  capacity    = RoutingScratch.size() / Info.Channels;
+                auto*       destination = static_cast<float*>(out);
+                read                    = 0;
+                ma_result result        = MA_SUCCESS;
+                while (read < count)
+                {
+                    ma_uint64  frames    = 0;
+                    const auto requested = std::min<ma_uint64>(count - read, capacity);
+                    result               = ReadRaw(RoutingScratch.data(), requested, frames);
+                    if (ConverterReady && !pin)
+                        ma_channel_converter_process_pcm_frames(&Converter, destination, RoutingScratch.data(), frames);
+                    for (ma_uint64 i = 0; i < frames; ++i)
+                    {
+                        const auto* source = RoutingScratch.data() + i * Info.Channels;
+                        auto*       frame  = destination + i * OutputChannels;
+                        if (Downmix)
+                        {
+                            float left = 0, right = 0;
+                            for (uint32_t ch = 0; ch < Info.Channels; ++ch)
+                            {
+                                const auto weights = DownmixWeights[ch];
+                                left += source[ch] * weights[0];
+                                right += source[ch] * weights[1];
+                            }
+                            // BS.775 Annex 4 folds Lo/Ro to mono at -3 dB per side.
+                            frame[0] = OutputChannels == 1 ? AudioMinus3Db * (left + right) : left;
+                            if (OutputChannels == 2)
+                                frame[1] = right;
+                            continue;
+                        }
+
+                        float mono = 0;
+                        if (pin || (OutputLfe >= 0 && lfeGain != 0))
+                        {
+                            for (uint32_t ch = 0; ch < Info.Channels; ++ch)
+                                if (int(ch) != InputLfe)
+                                    mono += source[ch];
+                            mono /= Info.Channels - (InputLfe >= 0);
+                        }
+                        if (pin)
+                            RouteAudioCenter(frame, OutputChannels, Center, mono);
+                        if (OutputLfe >= 0)
+                        {
+                            // Spatial voices have only the explicit LFE send. 2D beds can retain authored LFE.
+                            const float bed  = !Spatial && !pin && InputLfe >= 0 ? source[InputLfe] : 0;
+                            frame[OutputLfe] = bed + mono * lfeGain;
+                        }
+                    }
+                    destination += frames * OutputChannels;
+                    read += frames;
+                    if (result != MA_SUCCESS || frames < requested)
+                        break;
+                }
+                return result;
+            }
             std::atomic<uint64_t>           ReadFrame {0}, WriteFrame {0}, Cursor {0};
             std::atomic<uint64_t>           RequestedSeek {0}, SeekRevision {0}, ReadyRevision {0};
             std::atomic<bool>               Eof {false};
@@ -258,7 +423,11 @@ namespace Kans
                            bool                 offline,
                            AudioSoundInfo       info,
                            uint64_t             loopStart,
-                           uint64_t             loopEnd)
+                           uint64_t             loopEnd,
+                           const ma_channel*    inputMap,
+                           const ma_channel*    outputMap,
+                           uint32_t             outputChannels,
+                           bool                 spatial)
             {
                 Offline = offline;
                 Stream    = stream;
@@ -284,11 +453,17 @@ namespace Kans
                     if (result != MA_SUCCESS)
                         return result;
                 }
+                result = ConfigureRouting(inputMap, outputMap, outputChannels, spatial);
+                if (result != MA_SUCCESS)
+                {
+                    if (!Stream)
+                        ma_resource_manager_data_source_uninit(&Data);
+                    return result;
+                }
                 static const ma_data_source_vtable callbacks = {
                     [](ma_data_source* source, void* out, ma_uint64 count, ma_uint64* read) -> ma_result {
                         auto& self = *static_cast<VoiceSource*>(source);
-                        return self.Stream ? self.Read(out, count, *read) :
-                                             ma_data_source_read_pcm_frames(&self.Data, out, count, read);
+                        return self.ReadRouted(out, count, *read);
                     },
                     [](ma_data_source* source, ma_uint64 frame) -> ma_result {
                         auto& self = *static_cast<VoiceSource*>(source);
@@ -309,18 +484,21 @@ namespace Kans
                        ma_channel*     map,
                        size_t          capacity) -> ma_result {
                         auto& self = *static_cast<VoiceSource*>(source);
-                        if (!self.Stream)
-                            return ma_data_source_get_data_format(&self.Data, format, channels, rate, map, capacity);
                         if (format)
                             *format = ma_format_f32;
                         if (channels)
-                            *channels = self.Info.Channels;
+                            *channels = self.OutputChannels;
                         if (rate)
                             *rate = self.Info.SampleRate;
-                        ma_channel_map_init_standard(
-                            ma_standard_channel_map_default, map, capacity, self.Info.Channels);
+                        if (map)
+                        {
+                            const auto* from =
+                                self.RoutingScratch.empty() ? self.InputMap.data() : self.OutputMap.data();
+                            std::copy_n(from, std::min<size_t>(capacity, self.OutputChannels), map);
+                        }
                         return MA_SUCCESS;
                     },
+
                     [](ma_data_source* source, ma_uint64* cursor) -> ma_result {
                         auto& self = *static_cast<VoiceSource*>(source);
                         if (!self.Stream)
@@ -430,6 +608,8 @@ namespace Kans
                     if (!Stream)
                         ma_resource_manager_data_source_uninit(&Data);
                 }
+                if (ConverterReady)
+                    ma_channel_converter_uninit(&Converter, nullptr);
                 if (DecoderReady)
                     ma_decoder_uninit(&Decoder);
             }
@@ -489,28 +669,108 @@ namespace Kans
                 bool                  FractionalSeek = false;
                 uint64_t              ResumeAt       = NoFrame;
                 Transport             ResumeTransport;
-                SpatialMixMailbox                    SpatialMailbox;
+                MixMailbox<SpatialMix>                         SpatialMailbox;
                 SpatialMix                           SpatialCurrent, SpatialTarget;
                 std::array<float, MaxOutputChannels> AirHistory {};
                 uint32_t                             SpatialRamp    = 0;
                 float                                NativePanFloor = 0;
                 bool                                 HasMixed       = false;
+                const std::array<uint64_t, MaxAudioListeners>* ListenerIdentities = nullptr;
+                uint64_t                                       ListenerIdentity   = 0;
+                uint32_t                                       HandoffRemaining   = 0;
+                std::array<float, MaxOutputChannels>           HandoffGains {};
 
                 void SetSpatialTarget()
                 {
-                    if (!SpatialMailbox.Consume(SpatialTarget))
-                        return;
-                    engineNode.spatializer.minSpatializationChannelGain = SpatialTarget.CustomPan ? 1 : NativePanFloor;
-                    if (HasMixed)
-                        SpatialRamp = std::max(1u, ma_engine_get_sample_rate(ma_sound_get_engine(this)) / 100);
-                    else
-                        SpatialCurrent = SpatialTarget;
+                    SpatialMix next;
+                    if (SpatialMailbox.Consume(next))
+                    {
+                        const auto& params = next.Native;
+                        // The native pose is mixer-owned. Publishing it here avoids contending for
+                        // miniaudio's vector spinlocks with the control thread.
+                        auto& spatializer          = engineNode.spatializer;
+                        spatializer.position.v     = {params.Position.x, params.Position.y, params.Position.z};
+                        spatializer.velocity.v     = {params.Velocity.x, params.Velocity.y, params.Velocity.z};
+                        spatializer.direction.v    = {params.Direction.x, params.Direction.y, params.Direction.z};
+                        ma_attenuation_model model = ma_attenuation_model_inverse;
+                        if (params.Attenuation == AudioAttenuationModel::Linear)
+                            model = ma_attenuation_model_linear;
+                        else if (params.Attenuation == AudioAttenuationModel::Exponential)
+                            model = ma_attenuation_model_exponential;
+                        ma_sound_set_attenuation_model(this, model);
+                        ma_sound_set_min_distance(this, params.MinDistance);
+                        ma_sound_set_max_distance(this, params.MaxDistance);
+                        ma_sound_set_rolloff(this,
+                                             params.Attenuation == AudioAttenuationModel::None ? 0.f : params.Rolloff);
+                        ma_sound_set_doppler_factor(this, params.DopplerFactor);
+                        ma_sound_set_cone(this,
+                                          params.ConeInnerAngle * RadiansPerDegree,
+                                          params.ConeOuterAngle * RadiansPerDegree,
+                                          params.ConeOuterGain);
+                        engineNode.spatializer.minSpatializationChannelGain = next.CustomPan ? 1 : NativePanFloor;
+                        if (!HasMixed)
+                            SpatialCurrent = next;
+                        else if (SpatialTarget.Gains != next.Gains ||
+                                 SpatialTarget.FilterCoefficient != next.FilterCoefficient ||
+                                 SpatialTarget.CustomPan != next.CustomPan)
+                            SpatialRamp = std::max(1u, ma_engine_get_sample_rate(ma_sound_get_engine(this)) / 100);
+                        SpatialTarget = next;
+                    }
+                    // A frame can publish new poses while a voice is being retargeted. In this
+                    // case a removed slot falls back to the mixer's closest enabled listener.
+                    const auto* engine   = ma_sound_get_engine(this);
+                    const auto& p        = SpatialTarget.Native.Position;
+                    const auto  listener = ma_engine_listener_is_enabled(engine, SpatialTarget.Listener) ?
+                                               SpatialTarget.Listener :
+                                               ma_engine_find_closest_listener(engine, p.x, p.y, p.z);
+                    const auto  identity = (*ListenerIdentities)[listener];
+                    const auto  previous = ma_sound_get_pinned_listener_index(this);
+                    if (HasMixed && (previous != listener || ListenerIdentity != identity))
+                    {
+                        auto& gainer = engineNode.spatializer.gainer;
+                        if (!HandoffRemaining)
+                        {
+                            const auto  smooth   = gainer.config.smoothTimeInFrames;
+                            const float position = gainer.t < smooth ? float(gainer.t) / smooth : 1.f;
+                            for (uint32_t ch = 0; ch < gainer.config.channels; ++ch)
+                                HandoffGains[ch] = glm::mix(gainer.pOldGains[ch], gainer.pNewGains[ch], position);
+                        }
+                        HandoffRemaining = std::max(1u, ma_engine_get_sample_rate(engine) / 100);
+                    }
+                    ListenerIdentity = identity;
+                    if (previous != listener)
+                        ma_sound_set_pinned_listener_index(this, listener);
+                }
+
+                static constexpr float HandoffGainFloor = 1e-7f;
+
+                void ApplyListenerHandoff(float* output, uint32_t frames, uint32_t channels)
+                {
+                    // Miniaudio provides the destination gains. During the handoff use a
+                    // sample-counted ramp so its SIMD gainer cannot step at block boundaries.
+                    const auto*                          targets = engineNode.spatializer.gainer.pNewGains;
+                    std::array<float, MaxOutputChannels> destination {};
+                    for (uint32_t ch = 0; ch < channels; ++ch)
+                        destination[ch] = targets[ch] <= HandoffGainFloor ? 0.f : targets[ch];
+                    for (uint32_t frame = 0; frame < frames; ++frame)
+                    {
+                        if (HandoffRemaining)
+                        {
+                            const float step = 1.f / HandoffRemaining;
+                            for (uint32_t ch = 0; ch < channels; ++ch)
+                                HandoffGains[ch] = glm::mix(HandoffGains[ch], destination[ch], step);
+                            --HandoffRemaining;
+                        }
+                        for (uint32_t ch = 0; ch < channels; ++ch)
+                            output[frame * channels + ch] *= targets[ch] > 0 ? HandoffGains[ch] / targets[ch] : 0.f;
+                    }
                 }
 
                 void ApplySpatialMix(float* output, uint32_t frames, uint32_t channels)
                 {
                     // The mixer leaves legacy PCM untouched, including the original miniaudio gainer.
-                    if (!SpatialRamp && SpatialCurrent == SpatialMix {})
+                    if (!SpatialRamp && SpatialCurrent.Gains == SpatialMix {}.Gains &&
+                        SpatialCurrent.FilterCoefficient == 1)
                         return;
                     for (uint32_t frame = 0; frame < frames; ++frame)
                     {
@@ -547,6 +807,8 @@ namespace Kans
                     AirHistory                                          = {};
                     SpatialRamp                                         = 0;
                     HasMixed                                            = false;
+                    HandoffRemaining                                    = 0;
+                    ListenerIdentity                                    = 0;
                     engineNode.spatializer.minSpatializationChannelGain = NativePanFloor;
                 }
 
@@ -583,11 +845,46 @@ namespace Kans
                     if (voice.Desc.Spatial)
                         self.SetSpatialTarget();
                     const auto requested = *outCount;
+                    const bool handoff            = voice.Desc.Spatial && self.HandoffRemaining != 0;
+                    float      minGain            = 0;
+                    uint32_t   nativeSmoothFrames = 0;
+                    if (handoff)
+                    {
+                        auto& spatializer = self.engineNode.spatializer;
+                        minGain           = ma_spatializer_get_min_gain(&spatializer);
+                        // A strictly positive native gain keeps the source recoverable during the ramp,
+                        // even when the destination is fully attenuated.
+                        ma_spatializer_set_min_gain(&spatializer, HandoffGainFloor);
+                        auto& gainer       = spatializer.gainer;
+                        nativeSmoothFrames = gainer.config.smoothTimeInFrames;
+                        // The voice owns smoothing for the entire handoff. One native frame
+                        // avoids dividing by zero when miniaudio reads its interpolation state.
+                        gainer.config.smoothTimeInFrames = 1;
+                        std::copy_n(gainer.pNewGains, gainer.config.channels, gainer.pOldGains);
+                        gainer.t = UINT32_MAX;
+                    }
                     self.Original->onProcess(node, in, inCount, out, outCount);
                     if (*outCount < requested && voice.Source->Stream && !voice.Source->Offline &&
                         !ma_sound_at_end(&self))
                         voice.StreamDelay.fetch_add(requested - *outCount, std::memory_order_relaxed);
                     const auto channels = ma_node_get_output_channels(node, 0);
+                    if (handoff)
+                    {
+                        auto& spatializer = self.engineNode.spatializer;
+                        ma_spatializer_set_min_gain(&spatializer, minGain);
+                        self.ApplyListenerHandoff(out[0], *outCount, channels);
+                        auto& gainer = spatializer.gainer;
+                        // Subsequent native pulls must start at the gain the ramp ended on.
+                        for (uint32_t ch = 0; ch < channels; ++ch)
+                        {
+                            auto& gain = gainer.pNewGains[ch];
+                            if (gain <= HandoffGainFloor)
+                                gain = 0;
+                            gainer.pOldGains[ch] = gain;
+                        }
+                        gainer.config.smoothTimeInFrames = nativeSmoothFrames;
+                        gainer.t                         = nativeSmoothFrames;
+                    }
                     if (voice.Desc.Spatial)
                     {
                         self.ApplySpatialMix(out[0], *outCount, channels);
@@ -606,6 +903,13 @@ namespace Kans
                             }
                             for (uint32_t ch = 0; ch < channels; ++ch)
                                 out[0][i * channels + ch] *= gain;
+                        }
+                    if (channels == 2 && !voice.Desc.Spatial &&
+                        voice.Source->PinToCenter.load(std::memory_order_relaxed))
+                        for (uint32_t i = 0; i < *outCount; ++i)
+                        {
+                            auto* frame = out[0] + i * channels;
+                            RouteAudioCenter(frame, channels, -1, .5f * (frame[0] + frame[1]));
                         }
                     self.Next += requested;
                 }
@@ -630,9 +934,121 @@ namespace Kans
                 }
             };
 
+            struct SendNode : ma_node_base
+            {
+                struct Lane
+                {
+                    AudioGainRamp         Level;
+                    std::atomic<uint64_t> Command {0};
+                    std::atomic<uint32_t> SilentRevision {0};
+                    ma_node*              Target        = nullptr; // Control thread only.
+                    size_t                BusIndex      = 0;
+                    uint32_t              Revision      = 0;
+                    float                 RequestedGain = 0;
+
+                    void Set(float gain)
+                    {
+                        if (RequestedGain == gain)
+                            return;
+                        RequestedGain = gain;
+                        uint32_t bits;
+                        std::memcpy(&bits, &gain, sizeof(bits));
+                        Command.store((uint64_t(++Revision) << 32) | bits, std::memory_order_relaxed);
+                    }
+
+                    bool IsSilent() const
+                    {
+                        return RequestedGain == 0 && SilentRevision.load(std::memory_order_relaxed) == Revision;
+                    }
+                };
+
+                std::array<Lane, VoiceSendLanes> Sends;
+                uint32_t                         Channels = 0, RampFrames = 0;
+                int                              Lfe   = -1;
+                bool                             Ready = false;
+
+                ma_result Init(ma_engine& engine, int lfe)
+                {
+                    Channels   = ma_engine_get_channels(&engine);
+                    RampFrames = std::max(1u, ma_engine_get_sample_rate(&engine) / 100);
+                    Lfe        = lfe;
+                    for (auto& lane : Sends)
+                        lane.Level.Initialize(0);
+                    static const ma_node_vtable vtable = {
+                        Process, nullptr, 1, VoiceSendLanes + 1, MA_NODE_FLAG_CONTINUOUS_PROCESSING};
+                    std::array<ma_uint32, VoiceSendLanes + 1> outputs;
+                    outputs.fill(Channels);
+                    auto config            = ma_node_config_init();
+                    config.vtable          = &vtable;
+                    config.pInputChannels  = &Channels;
+                    config.pOutputChannels = outputs.data();
+                    const auto result      = ma_node_init(ma_engine_get_node_graph(&engine), &config, nullptr, this);
+                    Ready                  = result == MA_SUCCESS;
+                    return result;
+                }
+
+                ~SendNode()
+                {
+                    if (Ready)
+                        ma_node_uninit(this, nullptr);
+                }
+
+                static void Process(ma_node*      node,
+                                    const float** inputs,
+                                    ma_uint32*    inputFrames,
+                                    float**       outputs,
+                                    ma_uint32*    outputFrames)
+                {
+                    auto&        self     = *static_cast<SendNode*>(static_cast<ma_node_base*>(node));
+                    const auto   frames   = std::min(*inputFrames, *outputFrames);
+                    const auto   channels = self.Channels;
+                    const size_t samples  = size_t(frames) * channels;
+                    if (samples)
+                        std::copy_n(inputs[0], samples, outputs[0]);
+                    for (size_t i = 0; i < self.Sends.size(); ++i)
+                    {
+                        auto&      lane    = self.Sends[i];
+                        const auto command = lane.Command.load(std::memory_order_relaxed);
+                        const auto bits    = static_cast<uint32_t>(command);
+                        float      target;
+                        std::memcpy(&target, &bits, sizeof(target));
+                        lane.Level.Prepare(self.RampFrames, target);
+                        auto* wet = outputs[i + 1];
+                        if (lane.Level.Current == 0 && lane.Level.Destination == 0)
+                            std::fill_n(wet, samples, 0.f);
+                        else
+                            for (uint32_t frame = 0; frame < frames; ++frame)
+                            {
+                                const auto  offset = size_t(frame) * channels;
+                                const float gain   = lane.Level.Next();
+                                for (uint32_t ch = 0; ch < channels; ++ch)
+                                    wet[offset + ch] = int(ch) == self.Lfe ? 0.f : inputs[0][offset + ch] * gain;
+                            }
+                        if (lane.Level.Current == 0 && lane.Level.Destination == 0)
+                            lane.SilentRevision.store(uint32_t(command >> 32), std::memory_order_relaxed);
+                        lane.Level.Publish();
+                    }
+                    *inputFrames = *outputFrames = frames;
+                }
+
+                void Disconnect()
+                {
+                    ma_node_detach_all_output_buses(this);
+                    for (auto& lane : Sends)
+                    {
+                        lane.Target = nullptr;
+                        lane.Set(0);
+                        lane.Level.Remaining = 0;
+                        lane.Level.Initialize(0);
+                        lane.SilentRevision.store(lane.Revision, std::memory_order_relaxed);
+                    }
+                }
+            };
+
             std::shared_ptr<VoiceSource> Source = std::make_shared<VoiceSource>();
             std::atomic<uint64_t>        StreamDelay {0};
             Node                     Sound {};
+            SendNode                           Route {};
             AudioVoiceDesc Desc;
             AudioSoundInfo           Info {};
             std::deque<Transport>    History;
@@ -649,6 +1065,7 @@ namespace Kans
             Ref<const AudioAttenuationAsset>   Attenuation;
             bool                               AttenuationHasSpread = false;
             std::optional<float>               SpatialAudibility;
+            uint32_t                           Listener        = MaxAudioListeners;
             AudioClipRegistry*           OneShotRegistry = nullptr;
             AssetID                      OneShotClip, EventGroup;
             uint64_t                     PlayOrder = 0, PinnedStart = NoFrame;
@@ -704,6 +1121,7 @@ namespace Kans
         struct Sound
         {
             AudioSoundInfo                                     Info {};
+            std::array<ma_channel, MA_MAX_CHANNELS>            ChannelMap {};
             std::shared_ptr<const std::vector<std::byte>>      Encoded;
             std::vector<float>                                 PCM;
             std::string                                        EncodedName, DecodedName;
@@ -898,7 +1316,13 @@ namespace Kans
         uint32_t                                     FreeSlot = UINT32_MAX, RealCount = 0;
         size_t                                       PooledOneShots = 0;
         std::vector<AudioClipRegistry*> ClipRegistries;
-        std::array<AudioListenerState, 4>            Listeners;
+        using ListenerSet = std::array<AudioListenerState, MaxAudioListeners>;
+        ListenerSet                                  Listeners;
+        MixMailbox<ListenerSet>                      ListenerMailbox;
+        std::array<uint64_t, MaxAudioListeners>      MixerListenerIdentities {};
+        ma_spatializer_listener                      ProbeListener {};
+        int                                          LfeChannel = -1;
+        std::unordered_set<std::string>              MissingReverbBuses;
         std::map<std::string, AudioConcurrencyGroup> Groups;
         std::map<AssetID, AudioConcurrencyGroup>     EventGroups;
         struct ConcurrencyVictim
@@ -947,13 +1371,14 @@ namespace Kans
         {
             if (voice.Attached)
                 return true;
-            const auto result = ma_node_attach_output_bus(&voice.Sound, 0, VoiceBusInput(*Buses, voice.Desc.Bus), 0);
+            const auto result = ma_node_attach_output_bus(&voice.Route, 0, VoiceBusInput(*Buses, voice.Desc.Bus), 0);
             if (result != MA_SUCCESS)
             {
                 Warn(Error("Attach voice", result));
                 return false;
             }
             voice.Attached = true;
+            UpdateVoiceSends(voice);
             return true;
         }
 
@@ -961,22 +1386,131 @@ namespace Kans
         {
             if (voice.Attached)
             {
-                ma_node_detach_output_bus(&voice.Sound, 0);
+                voice.Route.Disconnect();
                 voice.Attached = false;
+            }
+        }
+
+        void UpdateVoiceSends(Voice& voice)
+        {
+            if (!voice.Attached)
+                return;
+            const auto listener = voice.Listener;
+            const bool send     = voice.Desc.ReverbZoneSend && listener < Config.MaxListeners;
+            const std::array<AudioZoneSend, MaxAudioVoiceSends> empty {};
+            const auto&                                         sends = send ? Listeners[listener].ReverbSends : empty;
+            std::array<ma_node*, MaxAudioVoiceSends>            targets {};
+            for (size_t i = 0; i < sends.size(); ++i)
+                if (sends[i].Gain > 0 && std::isfinite(sends[i].Gain))
+                    targets[i] = Buses->Input(sends[i].BusIndex);
+
+            auto& lanes = voice.Route.Sends;
+            for (size_t i = 0; i < lanes.size(); ++i)
+            {
+                auto& lane = lanes[i];
+                if (!lane.Target)
+                    continue;
+                float targetGain = 0;
+                for (size_t j = 0; j < targets.size(); ++j)
+                    if (targets[j] == lane.Target && targets[j])
+                    {
+                        targetGain += sends[j].Gain;
+                        targets[j] = nullptr;
+                    }
+                lane.Set(targetGain);
+                if (lane.IsSilent())
+                {
+                    ma_node_detach_output_bus(&voice.Route, static_cast<ma_uint32>(i + 1));
+                    lane.Target = nullptr;
+                }
+            }
+            for (size_t i = 0; i < targets.size(); ++i)
+            {
+                if (!targets[i])
+                    continue;
+                float gain = sends[i].Gain;
+                for (size_t j = i + 1; j < targets.size(); ++j)
+                    if (targets[j] == targets[i])
+                    {
+                        gain += sends[j].Gain;
+                        targets[j] = nullptr;
+                    }
+                const auto lane = std::find_if(lanes.begin(), lanes.end(), [](const auto& item) {
+                    return item.Target == nullptr && item.IsSilent();
+                });
+                if (lane == lanes.end())
+                    break; // Both spare lanes are still fading. The next update retries.
+                const auto output = static_cast<ma_uint32>(lane - lanes.begin() + 1);
+                if (ma_node_attach_output_bus(&voice.Route, output, targets[i], 0) == MA_SUCCESS)
+                {
+                    lane->Target   = targets[i];
+                    lane->BusIndex = sends[i].BusIndex;
+                    lane->Set(gain);
+                }
+            }
+        }
+
+        uint32_t ClosestListener(glm::vec3 position) const
+        {
+            float    closest  = std::numeric_limits<float>::infinity();
+            uint32_t selected = MaxAudioListeners;
+            for (uint32_t i = 0; i < Config.MaxListeners; ++i)
+            {
+                if (!Listeners[i].Active)
+                    continue;
+                const auto delta    = Listeners[i].Position - position;
+                const auto distance = glm::dot(delta, delta);
+                if (distance < closest)
+                {
+                    closest  = distance;
+                    selected = i;
+                }
+            }
+            return selected;
+        }
+
+        uint32_t ReverbListener(const Voice& voice) const
+        {
+            if (voice.Desc.ReverbPosition)
+                return ClosestListener(*voice.Desc.ReverbPosition);
+            for (uint32_t i = 0; i < Config.MaxListeners; ++i)
+                if (Listeners[i].Active)
+                    return i;
+            return MaxAudioListeners;
+        }
+
+        void ApplyMixerListeners()
+        {
+            ListenerSet states;
+            if (!ListenerMailbox.Consume(states))
+                return;
+            for (uint32_t i = 0; i < Config.MaxListeners; ++i)
+            {
+                const auto& state          = states[i];
+                auto&       listener       = Engine.listeners[i];
+                MixerListenerIdentities[i] = state.Identity;
+                listener.position.v        = {state.Position.x, state.Position.y, state.Position.z};
+                listener.velocity.v        = {state.Velocity.x, state.Velocity.y, state.Velocity.z};
+                listener.direction.v       = {state.Forward.x, state.Forward.y, state.Forward.z};
+                listener.config.worldUp    = {state.Up.x, state.Up.y, state.Up.z};
+                ma_engine_listener_set_enabled(&Engine, i, state.Active);
             }
         }
 
         // Use the same channel map and directional gains as miniaudio. The probe is
         // initialized once and only used on the main thread.
-        void SetCustomPan(SpatialMix&              mix,
-                          const ma_sound&          sound,
-                          ma_spatializer_listener& listener,
-                          float                    boundary,
-                          float                    spread)
+        void SetCustomPan(SpatialMix& mix, glm::vec3 position, uint32_t listenerIndex, float boundary, float spread)
         {
+            const auto& state    = Listeners[listenerIndex];
+            auto&       listener = ProbeListener;
+            ma_spatializer_listener_set_position(&listener, state.Position.x, state.Position.y, state.Position.z);
+            ma_spatializer_listener_set_direction(&listener, state.Forward.x, state.Forward.y, state.Forward.z);
+            ma_spatializer_listener_set_world_up(&listener, state.Up.x, state.Up.y, state.Up.z);
+            ma_spatializer_set_positioning(&PanProbe, ma_positioning_absolute);
+            ma_spatializer_set_position(&PanProbe, position.x, position.y, position.z);
             ma_vec3f relative {};
-            ma_spatializer_get_relative_position_and_direction(
-                &sound.engineNode.spatializer, &listener, &relative, nullptr);
+            ma_spatializer_get_relative_position_and_direction(&PanProbe, &listener, &relative, nullptr);
+            ma_spatializer_set_positioning(&PanProbe, ma_positioning_relative);
             ma_spatializer_set_position(&PanProbe, relative.x, relative.y, relative.z);
             std::array<float, MaxOutputChannels> input {}, output {};
             ma_spatializer_process_pcm_frames(&PanProbe, &listener, output.data(), input.data(), 1);
@@ -984,6 +1518,8 @@ namespace Kans
             float      power    = 0;
             for (uint32_t ch = 0; ch < channels; ++ch)
             {
+                if (int(ch) == LfeChannel)
+                    continue; // The explicit LFE send bypasses the directional and spread gains.
                 const float directional = glm::mix(1.f, PanProbe.pNewChannelGainsOut[ch], boundary);
                 mix.Gains[ch]           = directional;
                 power += directional * directional;
@@ -992,7 +1528,9 @@ namespace Kans
             // total power, and each channel retains its original source signal.
             if (spread > 0)
                 for (uint32_t ch = 0; ch < channels; ++ch)
-                    mix.Gains[ch] = std::sqrt(glm::mix(mix.Gains[ch] * mix.Gains[ch], power / channels, spread));
+                    if (int(ch) != LfeChannel)
+                        mix.Gains[ch] = std::sqrt(
+                            glm::mix(mix.Gains[ch] * mix.Gains[ch], power / (channels - (LfeChannel >= 0)), spread));
             mix.CustomPan = true;
         }
 
@@ -1003,14 +1541,15 @@ namespace Kans
             const auto* attenuation = voice.Attenuation ? &voice.Attenuation->GetData() : nullptr;
             const bool  shaped      = params.Shape.Type != AudioSourceShape::Point;
             const bool  enhanced    = shaped || attenuation;
-            auto        listenerIndex =
-                ma_engine_find_closest_listener(&Engine, params.Position.x, params.Position.y, params.Position.z);
+            auto        listenerIndex = ClosestListener(params.Position);
             if (shaped)
             {
                 params.ShapeTransform[3] = glm::vec4(params.Position, 1);
                 float closest            = std::numeric_limits<float>::infinity();
                 for (uint32_t index = 0; index < Config.MaxListeners; ++index)
                 {
+                    if (!Listeners[index].Active)
+                        continue;
                     const auto& listener = Listeners[index].Position;
                     const auto  point    = ClosestAudioEmitterPoint(params.Shape, params.ShapeTransform, listener);
                     const auto  delta    = listener - point;
@@ -1023,18 +1562,17 @@ namespace Kans
                     }
                 }
             }
-            ma_sound_set_positioning(sound, ma_positioning_absolute);
-            ma_sound_set_position(sound, params.Position.x, params.Position.y, params.Position.z);
-            ma_sound_set_pinned_listener_index(sound, listenerIndex);
-            ma_sound_set_velocity(sound, params.Velocity.x, params.Velocity.y, params.Velocity.z);
+            voice.Listener = listenerIndex;
+            UpdateVoiceSends(voice);
             const auto direction = glm::dot(params.Direction, params.Direction) > 0 ? glm::normalize(params.Direction) :
                                                                                       glm::vec3(0, 0, -1);
             voice.ConeInnerCos   = std::cos(params.ConeInnerAngle * RadiansPerDegree * 0.5f);
             voice.ConeOuterCos   = std::cos(params.ConeOuterAngle * RadiansPerDegree * 0.5f);
-            ma_sound_set_direction(sound, direction.x, direction.y, direction.z);
+            params.Direction     = direction;
 
             SpatialMix mix;
-            if (enhanced)
+            mix.Listener = listenerIndex;
+            if (enhanced && listenerIndex < MaxAudioListeners)
             {
                 const auto relative = Listeners[listenerIndex].Position - params.Position;
                 const auto distance = glm::length(relative);
@@ -1076,7 +1614,7 @@ namespace Kans
                     params.DopplerFactor = attenuation->DopplerFactor;
 
                 if (shaped || (attenuation && voice.AttenuationHasSpread))
-                    SetCustomPan(mix, *sound, Engine.listeners[listenerIndex], boundary, sample.Spread);
+                    SetCustomPan(mix, params.Position, listenerIndex, boundary, sample.Spread);
                 const float postGain = (nativePreset ? 1.f : sample.Gain) * (shaped ? angularGain : 1.f);
                 for (auto& gain : mix.Gains)
                     gain *= postGain;
@@ -1085,20 +1623,8 @@ namespace Kans
             else
                 voice.SpatialAudibility.reset();
 
-            ma_attenuation_model model = ma_attenuation_model_inverse;
-            if (params.Attenuation == AudioAttenuationModel::Linear)
-                model = ma_attenuation_model_linear;
-            else if (params.Attenuation == AudioAttenuationModel::Exponential)
-                model = ma_attenuation_model_exponential;
-            ma_sound_set_attenuation_model(sound, model);
-            ma_sound_set_min_distance(sound, params.MinDistance);
-            ma_sound_set_max_distance(sound, params.MaxDistance);
-            ma_sound_set_rolloff(sound, params.Attenuation == AudioAttenuationModel::None ? 0.f : params.Rolloff);
-            ma_sound_set_doppler_factor(sound, params.DopplerFactor);
-            ma_sound_set_cone(sound,
-                              params.ConeInnerAngle * RadiansPerDegree,
-                              params.ConeOuterAngle * RadiansPerDegree,
-                              params.ConeOuterGain);
+            mix.HasNative = true;
+            mix.Native    = params;
             sound->SpatialMailbox.Publish(mix);
         }
 
@@ -1128,28 +1654,29 @@ namespace Kans
 
         float Audibility(const Voice& voice, uint64_t clock)
         {
-            const float gain = voice.Desc.Volume * voice.Envelope.Gain(clock) * Buses->AudibilityGain(voice.Desc.Bus) *
-                               ma_engine_get_volume(&Engine);
+            float       busGain     = Buses->AudibilityGain(voice.Desc.Bus);
+            const auto& definitions = Buses->GetBuses();
+            if (voice.Desc.ReverbZoneSend && voice.Listener < Config.MaxListeners)
+                for (const auto& send : Listeners[voice.Listener].ReverbSends)
+                    if (send.Gain > 0 && send.BusIndex < definitions.size())
+                        busGain = std::max(busGain, send.Gain * Buses->AudibilityGain(definitions[send.BusIndex].Name));
+            for (const auto& lane : voice.Route.Sends)
+                if (lane.Target)
+                    busGain = std::max(busGain,
+                                       lane.Level.Published.load(std::memory_order_relaxed) *
+                                           Buses->AudibilityGain(definitions[lane.BusIndex].Name));
+            const float gain = voice.Desc.Volume * voice.Envelope.Gain(clock) * busGain * ma_engine_get_volume(&Engine);
             if (std::isnan(gain))
                 return 0;
             if (!voice.Desc.Spatial || gain == 0)
                 return gain;
+            if (voice.Listener == MaxAudioListeners)
+                return 0;
             if (voice.SpatialAudibility)
                 return gain * *voice.SpatialAudibility;
-            const auto& spatial  = voice.Spatial;
-            auto        relative = Listeners[0].Position - spatial.Position;
-            auto        squared  = glm::dot(relative, relative);
-            for (uint32_t i = 1; i < Config.MaxListeners; ++i)
-            {
-                const auto delta           = Listeners[i].Position - spatial.Position;
-                const auto distanceSquared = glm::dot(delta, delta);
-                if (distanceSquared < squared)
-                {
-                    squared  = distanceSquared;
-                    relative = delta;
-                }
-            }
-            const float distance    = std::sqrt(squared);
+            const auto& spatial     = voice.Spatial;
+            const auto  relative    = Listeners[voice.Listener].Position - spatial.Position;
+            const float distance    = glm::length(relative);
             float       attenuation = 1;
             const auto  minDistance = spatial.MinDistance, maxDistance = spatial.MaxDistance;
             if (minDistance < maxDistance)
@@ -1284,7 +1811,7 @@ namespace Kans
         Shutdown();
         auto& p = *m_Impl;
         p.Config = config;
-        if (config.MaxListeners < 1 || config.MaxListeners > 4 || config.Channels == 0 ||
+        if (config.MaxListeners < 1 || config.MaxListeners > MaxAudioListeners || config.Channels == 0 ||
             config.Channels > MA_MAX_CHANNELS || (config.Mode == AudioOutputMode::Offline && config.SampleRate == 0) ||
             !std::isfinite(config.VirtualizationThreshold) || config.VirtualizationThreshold < 0)
             return "Invalid audio engine configuration";
@@ -1371,6 +1898,7 @@ namespace Kans
                 const uint64_t needed  = frames - std::min(frames, graph->processingCacheFramesRemaining);
                 const auto     first   = ma_engine_get_time_in_pcm_frames(engine);
                 impl.MixEnd.store(AddFrames(first, (needed + quantum - 1) / quantum * quantum));
+                impl.ApplyMixerListeners();
                 impl.ApplySchedules();
                 ma_engine_read_pcm_frames(engine, output, frames, nullptr);
                 impl.MixEnd.store(ma_engine_get_time_in_pcm_frames(engine));
@@ -1392,6 +1920,16 @@ namespace Kans
             return Error("Audio engine init", result);
         }
         p.Ready = true;
+        for (uint32_t i = 1; i < config.MaxListeners; ++i)
+        {
+            p.Listeners[i].Active = false;
+            ma_engine_listener_set_enabled(&p.Engine, i, false);
+        }
+        const auto* channelMap    = p.Engine.listeners[0].config.pChannelMapOut;
+        p.LfeChannel              = AudioChannelIndex(channelMap, config.Channels, MA_CHANNEL_LFE);
+        p.ProbeListener           = {};
+        p.ProbeListener.config    = p.Engine.listeners[0].config;
+        p.ProbeListener.isEnabled = true;
         auto probeConfig          = ma_spatializer_config_init(config.Channels, config.Channels);
         probeConfig.positioning   = ma_positioning_relative;
         probeConfig.rolloff       = 0;
@@ -1473,6 +2011,9 @@ namespace Kans
         p.PlaybackFrames = 0;
         p.LatencyFrames  = 0;
         p.Listeners      = {};
+        p.ListenerMailbox.Reset();
+        p.MixerListenerIdentities.fill(0);
+        p.MissingReverbBuses.clear();
         p.Groups.clear();
         p.EventGroups.clear();
         p.ConcurrencyVictims.clear();
@@ -1551,6 +2092,7 @@ namespace Kans
         {
             m_Impl->DrainJobs();
             ma_uint64 read = 0;
+            m_Impl->ApplyMixerListeners();
             const auto result = ma_engine_read_pcm_frames(&m_Impl->Engine, out + written * GetChannels(),
                 std::min<uint64_t>(256, frameCount - written), &read);
             written += read;
@@ -1592,6 +2134,8 @@ namespace Kans
             }
             if (p.RefreshAttenuation(voice))
                 p.ApplySpatial(voice);
+            else
+                p.UpdateVoiceSends(voice);
             ++p.Stats.AllocatedVoices;
             if (!voice.Active(now))
             {
@@ -1730,7 +2274,7 @@ namespace Kans
             if (!slot.Value || !slot.Value->Attached)
                 continue;
             auto& voice = *slot.Value;
-            result      = ma_node_attach_output_bus(&voice.Sound, 0, p.VoiceBusInput(*next, voice.Desc.Bus), 0);
+            result      = ma_node_attach_output_bus(&voice.Route, 0, p.VoiceBusInput(*next, voice.Desc.Bus), 0);
             if (result != MA_SUCCESS)
             {
                 for (const auto& moved : p.Slots)
@@ -1739,10 +2283,47 @@ namespace Kans
                         break;
                     if (moved.Value && moved.Value->Attached)
                         ma_node_attach_output_bus(
-                            &moved.Value->Sound, 0, p.VoiceBusInput(*p.Buses, moved.Value->Desc.Bus), 0);
+                            &moved.Value->Route, 0, p.VoiceBusInput(*p.Buses, moved.Value->Desc.Bus), 0);
                 }
                 return Error("Reattach audio voice", result);
             }
+        }
+        if (p.Buses)
+        {
+            for (auto& listener : p.Listeners)
+                for (auto& send : listener.ReverbSends)
+                    if (send.Gain > 0 && send.BusIndex < p.Buses->GetBuses().size())
+                    {
+                        const auto replacement = next->FindIndex(p.Buses->GetBuses()[send.BusIndex].Name);
+                        if (replacement)
+                            send.BusIndex = *replacement;
+                        else
+                            send = {};
+                    }
+            for (const auto& slot : p.Slots)
+                if (slot.Value && slot.Value->Attached)
+                    for (size_t i = 0; i < VoiceSendLanes; ++i)
+                    {
+                        auto& lane = slot.Value->Route.Sends[i];
+                        if (!lane.Target)
+                            continue;
+                        // A retiring lane is still attached. Rebind both live and retiring lanes by name.
+                        const auto replacement = next->FindIndex(p.Buses->GetBuses()[lane.BusIndex].Name);
+                        const auto output      = static_cast<ma_uint32>(i + 1);
+                        auto*      target      = replacement ? next->Input(*replacement) : nullptr;
+                        if (target && ma_node_attach_output_bus(&slot.Value->Route, output, target, 0) == MA_SUCCESS)
+                        {
+                            lane.Target   = target;
+                            lane.BusIndex = *replacement;
+                        }
+                        else
+                        {
+                            // Keep the detached lane reserved until the mixer acknowledges zero.
+                            ma_node_detach_output_bus(&slot.Value->Route, output);
+                            lane.Set(0);
+                            lane.Target = nullptr;
+                        }
+                    }
         }
         p.Buses = std::move(next);
         return std::nullopt;
@@ -1974,12 +2555,17 @@ namespace Kans
             return Error("Decoder init", result);
         Impl::Sound sound;
         ma_uint64 length = 0;
-        result = ma_decoder_get_data_format(&decoder, nullptr, &sound.Info.Channels, &sound.Info.SampleRate, nullptr, 0);
+        result             = ma_decoder_get_data_format(&decoder,
+                                                        nullptr,
+                                                        &sound.Info.Channels,
+                                                        &sound.Info.SampleRate,
+                                                        sound.ChannelMap.data(),
+                                                        sound.ChannelMap.size());
         if (result == MA_SUCCESS)
             result = ma_decoder_get_length_in_pcm_frames(&decoder, &length);
         ma_decoder_uninit(&decoder);
-        if (result != MA_SUCCESS || sound.Info.Channels == 0 || sound.Info.SampleRate == 0 || length == 0 ||
-            length > std::vector<float>().max_size() / sound.Info.Channels)
+        if (result != MA_SUCCESS || sound.Info.Channels == 0 || sound.Info.Channels > MA_MAX_CHANNELS ||
+            sound.Info.SampleRate == 0 || length == 0 || length > std::vector<float>().max_size() / sound.Info.Channels)
             return "Invalid or unknown audio sound length";
         sound.Info.LengthFrames = length;
         sound.Encoded = std::move(encodedBytes);
@@ -2004,6 +2590,8 @@ namespace Kans
             return "Invalid audio PCM data";
         Impl::Sound sound;
         sound.Info = {channels, sampleRate, interleaved.size() / channels};
+        ma_channel_map_init_standard(
+            ma_standard_channel_map_default, sound.ChannelMap.data(), sound.ChannelMap.size(), channels);
         sound.PCM = std::move(interleaved);
         sound.DecodedName = "decoded/" + std::to_string(id);
         auto result = ma_resource_manager_register_decoded_data(&m_Impl->Resources, sound.DecodedName.c_str(),
@@ -2140,7 +2728,11 @@ namespace Kans
                                               GetMode() == AudioOutputMode::Offline,
                                               sound.Info,
                                               loopStart,
-                                              loopEnd);
+                                              loopEnd,
+                                              sound.ChannelMap.data(),
+                                              m_Impl->Engine.listeners[0].config.pChannelMapOut,
+                                              GetChannels(),
+                                              desc.Spatial);
             if (result != MA_SUCCESS)
             {
                 Warn(Error("Voice source init", result));
@@ -2167,11 +2759,20 @@ namespace Kans
             voice->Initialized                 = true;
             auto& node                         = voice->Sound;
             node.Owner                         = voice.get();
+            node.ListenerIdentities            = &m_Impl->MixerListenerIdentities;
             node.NativePanFloor                = node.engineNode.spatializer.minSpatializationChannelGain;
             node.Original                      = node.engineNode.baseNode.vtable;
             static const ma_node_vtable vtable = {Impl::Voice::Node::Process, nullptr, 0, 1, 0};
             node.engineNode.baseNode.vtable    = &vtable;
             ma_sound_set_pan_mode(&node, ma_pan_mode_balance);
+            result = voice->Route.Init(m_Impl->Engine, m_Impl->LfeChannel);
+            if (result == MA_SUCCESS)
+                result = ma_node_attach_output_bus(&node, 0, &voice->Route, 0);
+            if (result != MA_SUCCESS)
+            {
+                Warn(Error("Initialize voice routing", result));
+                return {};
+            }
         }
         voice->Commands->Owner.store(voice.get());
         uint32_t index = m_Impl->FreeSlot;
@@ -2188,11 +2789,14 @@ namespace Kans
         AudioVoiceHandle handle{index, slot.Generation};
         SetVolume(handle, desc.Volume);
         SetPitch(handle, desc.Pitch);
+        SetVoiceRouting(handle, desc.ReverbZoneSend, desc.LfeSendDb, desc.PinToCenter);
         SetPan(handle, desc.Pan);
         if (desc.Spatial)
         {
             SetSpatialParams(handle, {});
         }
+        else
+            slot.Value->Listener = m_Impl->ReverbListener(*slot.Value);
         return handle;
     }
 
@@ -2273,7 +2877,7 @@ namespace Kans
         auto* input = m_Impl->VoiceBusInput(graph, bus);
         if (voice->Attached && input != m_Impl->VoiceBusInput(graph, voice->Desc.Bus))
         {
-            if (const auto result = ma_node_attach_output_bus(&voice->Sound, 0, input, 0); result != MA_SUCCESS)
+            if (const auto result = ma_node_attach_output_bus(&voice->Route, 0, input, 0); result != MA_SUCCESS)
             {
                 Warn(Error("Move audio voice", result));
                 return false;
@@ -2716,7 +3320,7 @@ namespace Kans
         if (auto* voice = m_Impl->Find(handle); voice && std::isfinite(pan))
         {
             voice->Desc.Pan = std::clamp(pan, -1.f, 1.f);
-            ma_sound_set_pan(&voice->Sound, voice->Desc.Pan);
+            ma_sound_set_pan(&voice->Sound, !voice->Desc.Spatial && voice->Desc.PinToCenter ? 0 : voice->Desc.Pan);
         }
     }
     void AudioEngine::SetLooping(AudioVoiceHandle handle, bool looping)
@@ -2893,30 +3497,83 @@ namespace Kans
         SetSpatialParams(handle, params);
     }
 
+    uint32_t AudioEngine::GetMaxListeners() const { return m_Impl->Config.MaxListeners; }
+
+    std::optional<size_t> AudioEngine::ResolveReverbBus(const std::string& name)
+    {
+        auto& impl = *m_Impl;
+        if (!impl.Buses)
+            return std::nullopt;
+        if (auto index = impl.Buses->FindIndex(name))
+            return index;
+        if (impl.MissingReverbBuses.find(name) == impl.MissingReverbBuses.end())
+        {
+            impl.MissingReverbBuses.emplace(name);
+            Warn("Unknown reverb zone audio bus: " + name);
+        }
+        return std::nullopt;
+    }
+
+    void AudioEngine::SetVoiceRouting(AudioVoiceHandle handle, bool reverbZoneSend, float lfeSendDb, bool pinToCenter)
+    {
+        auto* voice = m_Impl->Find(handle);
+        if (!voice)
+            return;
+        voice->Desc.ReverbZoneSend = reverbZoneSend;
+        voice->Desc.LfeSendDb      = lfeSendDb;
+        voice->Desc.PinToCenter    = pinToCenter;
+        voice->Source->LfeGain.store(m_Impl->LfeChannel < 0 ? 0.f : RoutingGain(lfeSendDb), std::memory_order_relaxed);
+        voice->Source->PinToCenter.store(pinToCenter, std::memory_order_relaxed);
+        SetPan(handle, voice->Desc.Pan);
+        m_Impl->UpdateVoiceSends(*voice);
+    }
+
+    void AudioEngine::SetVoiceReverbPosition(AudioVoiceHandle handle, glm::vec3 position)
+    {
+        auto* voice = m_Impl->Find(handle);
+        if (!voice || voice->Desc.Spatial)
+            return;
+        voice->Desc.ReverbPosition = position;
+        voice->Listener            = m_Impl->ReverbListener(*voice);
+        m_Impl->UpdateVoiceSends(*voice);
+    }
+
+    void AudioEngine::SetListeners(const AudioListenerState* states, size_t count)
+    {
+        auto& impl = *m_Impl;
+        if (!IsInitialized())
+            return;
+        for (uint32_t i = 0; i < impl.Config.MaxListeners; ++i)
+        {
+            if (i < count)
+                impl.Listeners[i] = states[i];
+            else
+            {
+                impl.Listeners[i]        = {};
+                impl.Listeners[i].Active = false;
+            }
+        }
+        impl.ListenerMailbox.Publish(impl.Listeners);
+        for (auto& slot : impl.Slots)
+        {
+            if (!slot.Value)
+                continue;
+            if (slot.Value->Desc.Spatial)
+                impl.ApplySpatial(*slot.Value);
+            else
+            {
+                slot.Value->Listener = impl.ReverbListener(*slot.Value);
+                impl.UpdateVoiceSends(*slot.Value);
+            }
+        }
+    }
+
     void AudioEngine::SetListener(uint32_t index, const AudioListenerState& state)
     {
         if (!IsInitialized() || index >= m_Impl->Config.MaxListeners)
             return;
-        m_Impl->Listeners[index] = state;
-        auto* engine = &m_Impl->Engine;
-        ma_engine_listener_set_position(engine, index, state.Position.x, state.Position.y, state.Position.z);
-        ma_engine_listener_set_velocity(engine, index, state.Velocity.x, state.Velocity.y, state.Velocity.z);
-        ma_engine_listener_set_direction(engine, index, state.Forward.x, state.Forward.y, state.Forward.z);
-        ma_engine_listener_set_world_up(engine, index, state.Up.x, state.Up.y, state.Up.z);
-        for (auto& slot : m_Impl->Slots)
-        {
-            if (slot.Value && slot.Value->Desc.Spatial)
-            {
-                if (slot.Value->SpatialAudibility)
-                {
-                    m_Impl->ApplySpatial(*slot.Value);
-                    continue;
-                }
-                auto* sound = &slot.Value->Sound;
-                const auto& position = slot.Value->Spatial.Position;
-                ma_sound_set_pinned_listener_index(sound,
-                    ma_engine_find_closest_listener(engine, position.x, position.y, position.z));
-            }
-        }
+        auto states   = m_Impl->Listeners;
+        states[index] = state;
+        SetListeners(states.data(), m_Impl->Config.MaxListeners);
     }
 }

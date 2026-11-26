@@ -115,6 +115,8 @@ namespace Kans
             !Nonnegative(a.ConeInnerAngle) || !Nonnegative(a.ConeOuterAngle) || a.ConeInnerAngle > a.ConeOuterAngle ||
             a.ConeOuterAngle > 360 || !Nonnegative(a.ConeOuterGain) || a.ConeOuterGain > 1)
             return Invalid("Invalid audio event Attenuation parameters");
+        if (!IsValidAudioBusLevel(data.LfeSendDb))
+            return Invalid("Audio event LfeSendDb must convert to a finite gain");
         if (!std::isfinite(data.VolumeDb) || !std::isfinite(data.PitchSemitones))
             return Invalid("Audio event base volume and pitch must be finite");
         for (size_t i = 0; i < data.Entries.size(); ++i)
@@ -166,6 +168,8 @@ namespace Kans
             }
             data.Selection = ReadEnum(root, "Selection", data.Selection, Selections);
             Fields(data, [&](const char* key, auto& value) { Read(root, key, value); });
+            Read(root, "ReverbZoneSend", data.ReverbZoneSend);
+            Read(root, "LfeSendDb", data.LfeSendDb);
             ReadRange(root, "VolumeRangeDb", data.VolumeRangeDb);
             ReadRange(root, "PitchRangeSemitones", data.PitchRangeSemitones);
             ReadRange(root, "StartOffsetSeconds", data.StartOffsetSeconds);
@@ -214,6 +218,10 @@ namespace Kans
         root["Version"]   = 1;
         root["Selection"] = Selections[int(data.Selection)];
         Fields(data, [&](const char* key, const auto& value) { root[key] = value; });
+        if (!data.ReverbZoneSend)
+            root["ReverbZoneSend"] = false;
+        if (data.LfeSendDb != AudioSendOffDb)
+            root["LfeSendDb"] = data.LfeSendDb;
         root["Priority"]            = unsigned(data.Priority);
         root["VolumeRangeDb"]       = EncodeRange(data.VolumeRangeDb);
         root["PitchRangeSemitones"] = EncodeRange(data.PitchRangeSemitones);

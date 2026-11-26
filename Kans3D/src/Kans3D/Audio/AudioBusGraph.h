@@ -29,6 +29,8 @@ namespace Kans
         std::optional<float> GetEffectReductionDb(const std::string& bus, size_t index) const;
         ma_result           ConnectEndpoint();
         ma_node*            Input(const std::string& bus) const;
+        ma_node*                               Input(size_t index) const;
+        std::optional<size_t>                  FindIndex(const std::string& bus) const;
         float                                  AudibilityGain(const std::string& bus);
         AudioBusDefinition* Find(const std::string& bus);
         const std::vector<AudioBusDefinition>& GetBuses() const { return m_Layout.Buses; }
@@ -49,5 +51,6 @@ namespace Kans
         bool                                    m_Connected = false;
         bool                                    m_AudibilityDirty = true;
         uint32_t                                m_Channels = 0;
+        std::array<ma_channel, MA_MAX_CHANNELS> m_ChannelMap {};
     };
 } // namespace Kans
