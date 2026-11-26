@@ -44,7 +44,10 @@ namespace Kans
                  {"SFX", MasterAudioBus, 0, false, false, false, {}},
                  {"Voice", MasterAudioBus, 0, false, false, false, {}},
                  {"UI", MasterAudioBus, 0, false, false, false, {}},
-                 {"Ambience", MasterAudioBus, 0, false, false, false, {}}}};
+                 {"Ambience", MasterAudioBus, 0, false, false, false, {}},
+                 // Return bus for reverb zones (AudioReverbZoneComponent targets "Reverb" by default):
+                 // fully wet, so only the zone sends reach it and the dry paths stay untouched.
+                 {"Reverb", MasterAudioBus, 0, false, false, false, {}, {{AudioReverb {.6f, .5f, 1, 1, 12}}}}}};
     }
 
     bool IsValidAudioBusLevel(float db)
