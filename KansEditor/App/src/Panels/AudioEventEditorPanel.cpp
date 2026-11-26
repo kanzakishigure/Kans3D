@@ -66,9 +66,12 @@ namespace Kans
     void AudioEventEditorPanel::SetAssetChoices(const std::vector<EditorAssetChoice>& choices)
     {
         m_Clips.clear();
+        m_Attenuations.clear();
         for (const auto& choice : choices)
             if (choice.Type == AssetType::AudioClip)
                 m_Clips.push_back(choice);
+            else if (choice.Type == AssetType::AudioAttenuation)
+                m_Attenuations.push_back(choice);
     }
 
     bool AudioEventEditorPanel::Open(const std::filesystem::path& file)
@@ -198,6 +201,50 @@ namespace Kans
                     changed = dropped != clip;
                     clip    = dropped;
                 }
+            ImGui::EndDragDropTarget();
+        }
+        return changed;
+    }
+
+    bool AudioEventEditorPanel::AttenuationCombo(const char* id, AssetID& asset)
+    {
+        const EditorAssetChoice* current = nullptr;
+        for (const auto& choice : m_Attenuations)
+            if (choice.ID == asset)
+                current = &choice;
+        const std::string preview = current         ? std::filesystem::u8path(current->Name).stem().u8string() :
+                                    asset.IsValid() ? std::string(ICON_FA_TRIANGLE_EXCLAMATION " (missing)") :
+                                                      std::string("Built-in model");
+        bool              changed = false;
+        if (ImGui::BeginCombo(id, preview.c_str()))
+        {
+            if (ImGui::Selectable("Built-in model", !asset.IsValid()) && asset.IsValid())
+                asset = {}, changed = true;
+            for (const auto& choice : m_Attenuations)
+            {
+                ImGui::PushID(choice.ID.ToString().c_str());
+                if (ImGui::Selectable(std::filesystem::u8path(choice.Name).stem().u8string().c_str(),
+                                      choice.ID == asset) &&
+                    choice.ID != asset)
+                    asset = choice.ID, changed = true;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", choice.Name.c_str());
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("A shared distance curve; replaces the built-in model below.\nDrop a "
+                              ".audioattenuation file here.");
+        if (ImGui::BeginDragDropTarget())
+        {
+            if (const auto* payload = ImGui::AcceptDragDropPayload(AssetPayload))
+            {
+                const auto file = Canonical(PayloadPath(*payload));
+                for (const auto& choice : m_Attenuations)
+                    if (Canonical(choice.SourcePath) == file && choice.ID != asset)
+                        asset = choice.ID, changed = true;
+            }
             ImGui::EndDragDropTarget();
         }
         return changed;
@@ -735,8 +782,42 @@ namespace Kans
             Edit([loop](AudioEventData& next) { next.Loop = loop; });
         if (PropertyGrid::Checkbox("Spatial", spatial, &defaults.Spatial))
             Edit([spatial](AudioEventData& next) { next.Spatial = spatial; });
+        bool send = data.ReverbZoneSend;
+        if (PropertyGrid::Row("Reverb zone send",
+                              "Reverb zones around the listener send this event to their buses",
+                              send != defaults.ReverbZoneSend))
+        {
+            ImGui::PushID("ReverbZoneSend");
+            if (ImGui::Checkbox("##value", &send))
+                Edit([send](AudioEventData& next) { next.ReverbZoneSend = send; });
+            m_Boxes.ReverbZoneSend = LastItem();
+            if (PropertyGrid::RowReset(send != defaults.ReverbZoneSend))
+                Edit([](AudioEventData& next) { next.ReverbZoneSend = true; });
+            ImGui::PopID();
+        }
+        float lfe = data.LfeSendDb;
+        if (ComponentEditors::AudioSendRow(
+                "LFE send", lfe, "Also feed the subwoofer channel (surround outputs) at this level", &m_Boxes.LfeSend))
+            Edit([lfe](AudioEventData& next) { next.LfeSendDb = lfe; });
         if (data.Spatial)
         {
+            const bool modified = data.AttenuationAsset.IsValid();
+            if (PropertyGrid::Row("Attenuation asset",
+                                  "A shared .audioattenuation; it replaces the built-in model and, with a cone, the "
+                                  "cone below (a source's own asset replaces this one)",
+                                  modified))
+            {
+                ImGui::PushID("AttenuationAsset");
+                AssetID asset = data.AttenuationAsset;
+                if (AttenuationCombo("##value", asset))
+                    Edit([asset](AudioEventData& next) { next.AttenuationAsset = asset; });
+                m_Boxes.AttenuationAsset = LastItem();
+                if (PropertyGrid::RowReset(modified))
+                    Edit([](AudioEventData& next) { next.AttenuationAsset = {}; });
+                ImGui::PopID();
+            }
+            if (modified)
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.45f);
             const auto& d = defaults.Attenuation;
             auto        a = data.Attenuation;
             const char* models[] {"None", "Inverse", "Linear", "Exponential"};
@@ -759,6 +840,8 @@ namespace Kans
                 PropertyGrid::Float("Cone outer gain", a.ConeOuterGain, 0.01f, 0.0f, 1.0f, "%.2f", &d.ConeOuterGain);
             if (changed)
                 Edit([a](AudioEventData& next) { next.Attenuation = a; });
+            if (modified)
+                ImGui::PopStyleVar();
         }
         PropertyGrid::EndGroup();
     }

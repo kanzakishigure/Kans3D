@@ -1,10 +1,11 @@
 #pragma once
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <filesystem>
 #include <functional>
-#include "ComponentRegistry.h"
 #include "Kans3D/Geometry/Shapes.h"
 #include "Kans3D/Scene/Components.h"
+#include "ComponentRegistry.h"
 
 namespace Kans
 {
@@ -47,10 +48,39 @@ namespace Kans::ComponentEditors
     // Audio (AudioComponentEditors.cpp).
     void DrawAudioSource(Entity entity, ComponentUI& ui);
     void DrawAudioListener(Entity entity, ComponentUI& ui);
+    void DrawAudioReverbZone(Entity entity, ComponentUI& ui);
+    // Where the audio cards drew their controls in the last frame (screen space), and what they
+    // showed, for tooltips and UI tests.
+    struct AudioCardBoxes
+    {
+        struct SourceBoxes
+        {
+            ImRect AttenuationAsset, AttenuationPreview, Shape[4], Size[3], ReverbZoneSend, LfeSend, PinToCenter;
+            bool   PinToCenterEnabled = false, ModelOverridden = false;
+        } Source;
+        struct ZoneBoxes
+        {
+            ImRect Shape[2], Size[3], FadeDistance, Bus, SendLevel, Priority;
+            bool   MissingBus = false;
+        } Zone;
+        std::string ListenerSlot; // "Listener 1", "Inactive — over the limit of 4"...
+    };
+    AudioCardBoxes& LastAudioCardBoxes();
+    // Whether `bus` is a bus of `engine`'s layout (the default layout without one).
+    bool HasAudioBus(const AudioEngine* engine, const std::string& bus);
     // The mixer bus a sound plays through as a grid row: a dropdown of `engine`'s buses (the default
-    // layout without one). A name the layout lacks is kept and shown as missing; `inherited` (when not
-    // null) is the hint of a value another asset provides. True when changed.
-    bool AudioBusRow(const char* label, std::string& bus, const AudioEngine* engine, const char* inherited);
+    // layout without one). A name the layout lacks is kept and shown as missing (`missing` says what
+    // that means); `inherited` (when not null) is the hint of a value another asset provides; reset
+    // goes to `fallback`. True when changed.
+    bool AudioBusRow(const char*        label,
+                     std::string&       bus,
+                     const AudioEngine* engine,
+                     const char*        inherited,
+                     const char*        fallback = MasterAudioBus,
+                     const char*        missing  = nullptr,
+                     ImRect*            box      = nullptr);
+    // A send level in dB with Off (-inf) at the field's left end; reset turns it off. True when changed.
+    bool AudioSendRow(const char* label, float& db, const char* tooltip = nullptr, ImRect* box = nullptr);
     // The Stats panel's Audio card: the engine, its voices and concurrency groups, timeline audio and,
     // in Play, the events triggered so far (by the name `eventName` gives; an empty name hides one).
     struct AudioStatsInput

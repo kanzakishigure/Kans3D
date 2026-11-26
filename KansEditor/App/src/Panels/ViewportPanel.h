@@ -80,6 +80,11 @@ namespace Kans
         // The handles of a selected particle entity's system (shown read-only unless the card's
         // "Edit asset in viewport" is on); null: none.
         void SetVfxHandles(VfxGizmos::SceneHandles* handles) { m_VfxHandles = handles; }
+        // The assets audio gizmos read (attenuation assets for a source's ranges); may be null.
+        void SetAssetManager(AssetManager* assets) { m_Assets = assets; }
+        // The View menu's "Audio" toggle: every source's and reverb zone's gizmo, not only the selection's.
+        void SetShowAllAudio(bool show) { m_ShowAllAudio = show; }
+        bool ShowsAllAudio() const { return m_ShowAllAudio; }
         // The toolbar's gizmo size, pick radius and snapping (other viewports' handles use them).
         Gizmo::Settings ToolbarSettings() const { return GizmoSettings(); }
 
@@ -177,6 +182,11 @@ namespace Kans
         void DrawPhysicsOverlay();
         void DrawPhysicsMenu();
         void PhysicsHandles(Entity selected);
+        // Audio (ViewportAudio.cpp): source shapes, attenuation ranges and cones, reverb zones with
+        // their fade bands, and the handles resizing shapes and fade distances.
+        void DrawAudioOverlay();
+        void DrawAudioMenu();
+        void AudioHandles(Entity selected);
         // The selected particle entity's VFX handles (declared with the others), and their update
         // and draws once the hover is resolved.
         void VfxHandles(Entity selected);
@@ -252,6 +262,8 @@ namespace Kans
         Gizmo::HandleContext       m_Handles;
         Gizmo::Input               m_HandleInput;
         VfxGizmos::SceneHandles*   m_VfxHandles = nullptr;
+        AssetManager*              m_Assets       = nullptr;
+        bool                       m_ShowAllAudio = false;
         bool                       m_VfxDeclared = false;
         // Modal G/R/S and what it transforms; whether one ran this frame (its keys and clicks
         // then do nothing else).

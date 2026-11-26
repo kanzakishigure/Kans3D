@@ -621,6 +621,19 @@ namespace Kans
                 });
             boxes.Bypass = LastItem();
         }
+        // Centre pin: everything through this bus plays from the centre speaker (dialogue, UI voices).
+        {
+            bool pin = bus.PinToCenter;
+            if (ImGui::Checkbox("Pin to center##pin", &pin))
+                Edit([&, pin](AudioBusLayout& next) {
+                    next.Buses[index].PinToCenter = pin;
+                    return std::optional<std::string>();
+                });
+            boxes.PinToCenter = LastItem();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Play this bus from the centre speaker (in stereo, half to each side), e.g. "
+                                  "dialogue");
+        }
 
         DrawFader(index, boxes);
         // Sends and effects: groups in the strip's own grid (narrow label column).

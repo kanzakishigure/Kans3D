@@ -62,7 +62,7 @@ namespace Kans
         struct StripBoxes
         {
             std::string              Bus;
-            ImRect                   Strip, Name, Parent, Fader, Volume, Solo, Mute, Bypass, Delete;
+            ImRect                   Strip, Name, Parent, Fader, Volume, Solo, Mute, Bypass, Delete, PinToCenter;
             ImRect                   AddSend, AddEffect;
             size_t                   Meters = 0; // Meter bars drawn (the engine's output channels).
             std::vector<EffectBoxes> Effects;

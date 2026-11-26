@@ -255,7 +255,9 @@ namespace Kans
         audioSource.CreateOrder = 0;
         audioSource.Create      = audioSource.Add;
 
-        registry.Register<AudioReverbZoneComponent>("Audio Reverb Zone", ICON_FA_HEADPHONES, "Audio");
+        auto& reverbZone =
+            registry.Register<AudioReverbZoneComponent>("Audio Reverb Zone", ICON_FA_HEADPHONES, "Audio");
+        reverbZone.Draw      = DrawAudioReverbZone;
         auto& listener       = registry.Register<AudioListenerComponent>("Audio Listener", ICON_FA_HEADPHONES, "Audio");
         listener.IconRank    = 7;
         listener.Draw        = DrawAudioListener;

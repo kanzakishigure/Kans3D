@@ -16,6 +16,7 @@
 #include "Kans3D/Timeline/TimelineProduct.h"
 #include "Components/ComponentEditors.h"
 #include "EditorLayer.h"
+#include "KansEditorCore/Audio/AudioAttenuationEditing.h"
 #include "KansEditorCore/Audio/AudioEditing.h"
 #include "KansEditorCore/Audio/AudioEventEditing.h"
 #include "KansEditorCore/Components/MaterialAssignment.h"
@@ -159,6 +160,13 @@ namespace Kans
                 else
                     Record(AssetError {AssetErrorCode::InvalidData, m_AudioEventPanel.GetStatus()});
             }
+            else if (path.extension() == ".audioattenuation")
+            {
+                if (m_AudioAttenuationPanel.Open(path))
+                    m_Panels.Open(PanelID::AudioAttenuation);
+                else
+                    Record(AssetError {AssetErrorCode::InvalidData, m_AudioAttenuationPanel.GetStatus()});
+            }
             else if (path.extension() == ".vfxmodule")
                 OpenVfxModule(path);
             else if (path.extension() == ".vfxsystem" || path.extension() == ".vfxemitter")
@@ -200,6 +208,8 @@ namespace Kans
             m_AudioEventPanel.OpenNew(directory);
             m_Panels.Open(PanelID::AudioEvent);
         });
+        m_ContentBrowserPanel.SetCreateAudioAttenuationCallback(
+            [this](const std::filesystem::path& directory) { CreateAudioAttenuation(directory); });
         m_ContentBrowserPanel.SetCreateAudioEventFromClipsCallback(
             [this](const std::vector<std::filesystem::path>& files) { CreateAudioEventFromClips(files); });
         m_ContentBrowserPanel.SetCreateMaterialParameterCollectionCallback(
@@ -307,6 +317,7 @@ namespace Kans
             std::get<Ref<LooseFileAssetProvider>>(std::move(provider)), std::move(snapshot), std::move(spec));
         AudioSystem::LoadProjectBusLayout(m_ProjectConfig, *m_Assets);
         m_Viewport->SetAssetManager(m_Assets.get());
+        m_ViewportPanel.SetAssetManager(m_Assets.get());
         m_RenderTexturePanel.SetResources(m_Viewport->GetAssetCache());
         m_MaterialPreview->SetResources(m_Viewport->GetAssetCache(), m_Viewport->GetEnvironment());
         m_ThumbnailRenderer->SetResources(m_Viewport->GetAssetCache(), m_Viewport->GetEnvironment());
@@ -361,7 +372,7 @@ namespace Kans
                 choice.Name = id.GetSourceID().ToString();
             // Products other than a source's main Model are distinguished by LocalID; an audio file has one clip.
             if (choice.Type != AssetType::Model && choice.Type != AssetType::AudioClip &&
-                choice.Type != AssetType::AudioEvent)
+                choice.Type != AssetType::AudioEvent && choice.Type != AssetType::AudioAttenuation)
                 choice.Name += " #" + std::to_string(id.GetLocalID());
             choices.push_back(std::move(choice));
         }
@@ -407,6 +418,18 @@ namespace Kans
         BuildSavedSource(m_AssetImports.get(), file);
         if (m_AudioEventPanel.Open(file))
             m_Panels.Open(PanelID::AudioEvent);
+        m_ContentBrowserPanel.Reveal(file);
+    }
+
+    void EditorLayer::CreateAudioAttenuation(const std::filesystem::path& directory)
+    {
+        auto created = AudioAttenuationEditing::CreateAttenuationFile(directory, "NewAudioAttenuation");
+        if (const auto* error = std::get_if<AssetError>(&created))
+            return Record(*error);
+        const auto file = std::get<std::filesystem::path>(created);
+        BuildSavedSource(m_AssetImports.get(), file);
+        if (m_AudioAttenuationPanel.Open(file))
+            m_Panels.Open(PanelID::AudioAttenuation);
         m_ContentBrowserPanel.Reveal(file);
     }
 

@@ -25,6 +25,7 @@
 #include "KansEditorCore/ViewportClient.h"
 #include "Launcher/ProjectBrowser.h"
 #include "Panels/AnimatorGraphPanel.h"
+#include "Panels/AudioAttenuationEditorPanel.h"
 #include "Panels/AudioEventEditorPanel.h"
 #include "Panels/AudioMixerPanel.h"
 #include "Panels/ContentBrowserPanel.h"
@@ -73,6 +74,7 @@ namespace Kans
         inline constexpr const char* PhysicsMaterial = "PhysicsMaterial";
         inline constexpr const char* AudioMixer                   = "AudioMixer";
         inline constexpr const char* AudioEvent                   = "AudioEvent";
+        inline constexpr const char* AudioAttenuation             = "AudioAttenuation";
     } // namespace PanelID
 
     class EditorLayer : public Kans::Layer
@@ -139,6 +141,8 @@ namespace Kans
         std::string AudioEventName(AssetID event) const;
         // Content Browser: a new AudioEvent playing the selected audio files, opened in its editor.
         void CreateAudioEventFromClips(const std::vector<std::filesystem::path>& files);
+        // Content Browser: a new .audioattenuation (the built-in Inverse model) in `directory`, opened in its editor.
+        void CreateAudioAttenuation(const std::filesystem::path& directory);
         // Adds a dropped model to the scene, importing it first if needed.
         // `parent` (may be null) receives the placed model entity; `position`
         // (world space) is where it goes, the parent's origin otherwise.
@@ -402,6 +406,7 @@ namespace Kans
         PhysicsMaterialPanel m_PhysicsMaterialPanel;
         AudioMixerPanel                  m_AudioMixerPanel;
         AudioEventEditorPanel                    m_AudioEventPanel;
+        AudioAttenuationEditorPanel              m_AudioAttenuationPanel;
         std::unordered_map<AssetID, std::string> m_AudioEventNames; // Published AudioEvents by ID.
         RenderTexturePanel   m_RenderTexturePanel;
         MaterialParameterCollectionPanel m_MaterialParameterCollectionPanel;

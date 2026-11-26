@@ -435,6 +435,27 @@ namespace Kans
         m_AudioEngine->SetListeners(states.data(), count);
     }
 
+    uint32_t Scene::GetAudioListenerCapacity() const
+    {
+        return m_AudioEngine ? std::min(m_AudioEngine->GetMaxListeners(), MaxAudioListeners) : MaxAudioListeners;
+    }
+
+    std::optional<uint32_t> Scene::GetAudioListenerSlot(Entity entity) const
+    {
+        if (!m_Registry.valid(entity) || !m_Registry.all_of<AudioListenerComponent, IDComponent>(entity))
+            return std::nullopt;
+        if (!m_Registry.get<AudioListenerComponent>(entity).Active)
+            return std::nullopt;
+        // UpdateAudioListeners' order: the active listeners with a lower UUID come first.
+        const uint64_t id   = m_Registry.get<IDComponent>(entity).ID;
+        uint32_t       slot = 0;
+        for (auto handle : m_Registry.view<AudioListenerComponent, IDComponent>())
+            if (m_Registry.get<AudioListenerComponent>(handle).Active &&
+                uint64_t(m_Registry.get<IDComponent>(handle).ID) < id)
+                ++slot;
+        return slot < GetAudioListenerCapacity() ? std::optional<uint32_t>(slot) : std::nullopt;
+    }
+
     void Scene::UpdateAudioZones(AudioListenerState* listeners, size_t listenerCount)
     {
         m_AudioZones.clear();

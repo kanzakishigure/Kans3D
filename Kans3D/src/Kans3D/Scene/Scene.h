@@ -313,6 +313,13 @@ namespace Kans
         AudioEngine* GetAudioEngine() const { return m_AudioEngine; }
         // Between OnRuntimeStart and OnRuntimeStop (also while paused): sources play only then.
         bool IsAudioRunning() const { return m_AudioRunning; }
+        // How many listeners the scene hears at once: the engine's limit (at most MaxAudioListeners,
+        // which applies without an engine).
+        uint32_t GetAudioListenerCapacity() const;
+        // The engine listener slot an Audio Listener gets: active listeners in entity UUID order fill
+        // the slots up to the capacity. None for an inactive listener, one past the capacity or an
+        // entity without the component.
+        std::optional<uint32_t> GetAudioListenerSlot(Entity entity) const;
 
         Entity GetCameraEntity();
 

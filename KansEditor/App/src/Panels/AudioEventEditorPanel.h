@@ -27,7 +27,7 @@ namespace Kans
     public:
         // The project's import service (may be null), the editor's engine and asset manager (may be null).
         void Bind(EditorAssetImportService* service, AudioEngine* engine, AssetManager* assets);
-        // The published assets; the AudioClips are offered for entries.
+        // The published assets; the AudioClips are offered for entries, the Audio Attenuations for Output.
         void SetAssetChoices(const std::vector<EditorAssetChoice>& choices);
         // Peaks of a clip for its row's waveform; without one, the import service's clip previews.
         void SetWaveformSource(std::function<const std::vector<uint8_t>*(AssetID)> source)
@@ -69,6 +69,7 @@ namespace Kans
         struct Boxes
         {
             ImRect                  Validation, Save, Undo, Redo, Trigger, Auto, Interval, LastPick, Entries, Add;
+            ImRect                  AttenuationAsset, ReverbZoneSend, LfeSend;
             ImRect                  Ranges[3][2]; // Volume, pitch, start offset; min and max.
             std::vector<EntryBoxes> Rows;
         };
@@ -91,10 +92,12 @@ namespace Kans
         const EditorAssetChoice*    FindClip(AssetID clip) const;
         const std::vector<uint8_t>* PeaksOf(AssetID clip);
         bool                        ClipCombo(const char* id, AssetID& clip, const char* none);
+        // The Output group's attenuation asset: the published Audio Attenuations (also by drop).
+        bool AttenuationCombo(const char* id, AssetID& asset);
 
         EditorAssetImportService*                           m_Service = nullptr;
         AudioEngine*                                        m_Engine  = nullptr;
-        std::vector<EditorAssetChoice>                      m_Clips;
+        std::vector<EditorAssetChoice>                      m_Clips, m_Attenuations;
         std::function<const std::vector<uint8_t>*(AssetID)> m_Waveforms;
         std::function<bool()>                               m_PlayMode;
         AudioPreviewCache                                   m_PeakCache;

@@ -141,6 +141,13 @@ namespace Kans
                                PanelDock::Right,
                                false),
                           [this] { m_AudioEventPanel.Draw(); });
+        m_Panels.Register(spec(PanelID::AudioAttenuation,
+                               "Audio Attenuation",
+                               ICON_FA_CHART_LINE,
+                               PanelCategory::Assets,
+                               PanelDock::Right,
+                               false),
+                          [this] { m_AudioAttenuationPanel.Draw(); });
     }
 
     void EditorLayer::OpenImporter(const std::filesystem::path& file)
@@ -440,16 +447,15 @@ namespace Kans
         if (io.WantTextInput)
             return;
         // The material editor has its own undo, redo and save while it has focus.
-        const bool material = m_MaterialEditorPanel.HasFocus() || m_RenderTexturePanel.HasFocus() ||
-                              m_MaterialParameterCollectionPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() ||
-                              m_AudioMixerPanel.HasFocus() || m_AudioEventPanel.HasFocus() ||
-                              m_TimelinePanel.HasFocus() || m_RagdollEditor.HasFocus() ||
-                              std::any_of(m_VfxModuleEditors.begin(),
-                                          m_VfxModuleEditors.end(),
-                                          [](const auto& e) { return e->HasFocus(); }) ||
-                              std::any_of(m_VfxSystemEditors.begin(), m_VfxSystemEditors.end(), [](const auto& e) {
-                                  return e->HasFocus();
-                              });
+        const bool material =
+            m_MaterialEditorPanel.HasFocus() || m_RenderTexturePanel.HasFocus() ||
+            m_MaterialParameterCollectionPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() ||
+            m_AudioMixerPanel.HasFocus() || m_AudioEventPanel.HasFocus() || m_AudioAttenuationPanel.HasFocus() ||
+            m_TimelinePanel.HasFocus() || m_RagdollEditor.HasFocus() ||
+            std::any_of(
+                m_VfxModuleEditors.begin(), m_VfxModuleEditors.end(), [](const auto& e) { return e->HasFocus(); }) ||
+            std::any_of(
+                m_VfxSystemEditors.begin(), m_VfxSystemEditors.end(), [](const auto& e) { return e->HasFocus(); });
         // Cloth painting has its own stroke undo and saves the .cloth file.
         if (io.KeyCtrl && m_ViewportPanel.IsPaintingCloth() && !material && m_ActiveScene)
         {

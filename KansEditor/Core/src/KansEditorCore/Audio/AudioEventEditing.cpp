@@ -119,6 +119,7 @@ namespace Kans::AudioEventEditing
                a.InstanceLimit.ReleaseSeconds == b.InstanceLimit.ReleaseSeconds &&
                a.ConcurrencyGroup == b.ConcurrencyGroup && a.Bus == b.Bus && a.Priority == b.Priority &&
                a.Loop == b.Loop && a.Spatial == b.Spatial && a.AttenuationAsset == b.AttenuationAsset &&
+               a.ReverbZoneSend == b.ReverbZoneSend && a.LfeSendDb == b.LfeSendDb &&
                SameSpatial(a.Attenuation, b.Attenuation);
     }
 

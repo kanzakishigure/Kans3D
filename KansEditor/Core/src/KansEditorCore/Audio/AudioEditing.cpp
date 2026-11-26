@@ -4,6 +4,7 @@
 #include <cmath>
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Scene.h"
+#include "KansEditorCore/Audio/AudioAttenuationEditing.h"
 
 namespace Kans::AudioEditing
 {
@@ -87,32 +88,163 @@ namespace Kans::AudioEditing
         return entity;
     }
 
+    namespace
+    {
+        // An ellipse through centre + cos(a) x + sin(a) y.
+        void Ellipse(std::vector<GizmoSegment>& out,
+                     glm::vec3                  centre,
+                     glm::vec3                  x,
+                     glm::vec3                  y,
+                     GizmoPart                  part,
+                     int                        segments)
+        {
+            for (int i = 0; i < segments; ++i)
+            {
+                const float a = 2 * Pi * i / segments, b = 2 * Pi * (i + 1) / segments;
+                out.push_back(
+                    {centre + std::cos(a) * x + std::sin(a) * y, centre + std::cos(b) * x + std::sin(b) * y, part});
+            }
+        }
+
+        // A world axis of `world`: its unit direction (the world axis when collapsed) and length.
+        std::pair<glm::vec3, float> Axis(const glm::mat4& world, int index)
+        {
+            const glm::vec3 axis   = glm::vec3(world[index]);
+            const float     length = glm::length(axis);
+            if (!std::isfinite(length) || length <= 0.0f)
+            {
+                glm::vec3 fallback(0.0f);
+                fallback[index] = 1.0f;
+                return {fallback, 0.0f};
+            }
+            return {axis / length, length};
+        }
+    } // namespace
+
+    AudioEmitterShape ShapeOf(const AudioReverbZoneComponent& zone)
+    {
+        AudioEmitterShape shape;
+        shape.Type        = zone.Shape == AudioReverbZoneShape::Box ? AudioSourceShape::Box : AudioSourceShape::Sphere;
+        shape.Radius      = zone.Radius;
+        shape.HalfExtents = zone.HalfExtents;
+        return shape;
+    }
+
+    void AppendShapeOutline(std::vector<GizmoSegment>& out,
+                            const AudioEmitterShape&   shape,
+                            const glm::mat4&           world,
+                            float                      distance,
+                            GizmoPart                  part,
+                            int                        segments)
+    {
+        if (segments < 4)
+            return;
+        const glm::vec3 centre = glm::vec3(world[3]);
+        const float     grow   = std::max(0.0f, Finite(distance, 0.0f));
+        switch (shape.Type)
+        {
+            case AudioSourceShape::Point: {
+                // Three great circles in world axes: the distance is measured in world units.
+                if (grow <= 0.0f)
+                    return;
+                Ellipse(out, centre, {grow, 0, 0}, {0, grow, 0}, part, segments);
+                Ellipse(out, centre, {grow, 0, 0}, {0, 0, grow}, part, segments);
+                Ellipse(out, centre, {0, grow, 0}, {0, 0, grow}, part, segments);
+                return;
+            }
+            case AudioSourceShape::Sphere: {
+                // The (scaled) sphere's axes, each grown by the distance.
+                const float radius = std::max(0.0f, shape.Radius);
+                glm::vec3   axes[3];
+                for (int i = 0; i < 3; ++i)
+                {
+                    const auto [direction, length] = Axis(world, i);
+                    axes[i]                        = direction * (length * radius + grow);
+                }
+                Ellipse(out, centre, axes[0], axes[1], part, segments);
+                Ellipse(out, centre, axes[0], axes[2], part, segments);
+                Ellipse(out, centre, axes[1], axes[2], part, segments);
+                return;
+            }
+            case AudioSourceShape::Box: {
+                glm::vec3 axes[3];
+                for (int i = 0; i < 3; ++i)
+                {
+                    const auto [direction, length] = Axis(world, i);
+                    axes[i]                        = direction * (length * std::max(0.0f, shape.HalfExtents[i]) + grow);
+                }
+                const auto corner = [&](int bits) {
+                    return centre + (bits & 1 ? axes[0] : -axes[0]) + (bits & 2 ? axes[1] : -axes[1]) +
+                           (bits & 4 ? axes[2] : -axes[2]);
+                };
+                for (int bits = 0; bits < 8; ++bits)
+                    for (int axis = 0; axis < 3; ++axis)
+                        if (!(bits & (1 << axis)))
+                            out.push_back({corner(bits), corner(bits | (1 << axis)), part});
+                return;
+            }
+            case AudioSourceShape::Line: {
+                const auto [direction, length] = Axis(world, 0);
+                const glm::vec3 half           = direction * (length * 0.5f * std::max(0.0f, shape.Length));
+                if (grow <= 0.0f)
+                {
+                    out.push_back({centre - half, centre + half, part});
+                    return;
+                }
+                // A capsule: rings around both ends, four lines along the sides, and caps.
+                const glm::vec3 up   = std::abs(direction.y) > 0.99f ? glm::vec3(1, 0, 0) : glm::vec3(0, 1, 0);
+                const glm::vec3 side = glm::normalize(glm::cross(direction, up)) * grow;
+                const glm::vec3 lift = glm::normalize(glm::cross(side, direction)) * grow;
+                for (const float end : {-1.0f, 1.0f})
+                {
+                    const glm::vec3 at      = centre + half * end;
+                    const glm::vec3 outward = direction * (grow * end);
+                    Ellipse(out, at, side, lift, part, segments);
+                    // Half circles over the end, in two planes through the axis.
+                    for (const glm::vec3 across : {side, lift})
+                        for (int i = 0; i < segments / 2; ++i)
+                        {
+                            const float a = Pi * (float(i) / float(segments / 2) - 0.5f);
+                            const float b = Pi * (float(i + 1) / float(segments / 2) - 0.5f);
+                            out.push_back({at + std::sin(a) * across + std::cos(a) * outward,
+                                           at + std::sin(b) * across + std::cos(b) * outward,
+                                           part});
+                        }
+                }
+                for (const glm::vec3 offset : {side, -side, lift, -lift})
+                    out.push_back({centre - half + offset, centre + half + offset, part});
+                return;
+            }
+        }
+    }
+
     std::vector<GizmoSegment> SourceGizmo(const AudioSourceComponent& source, const glm::mat4& world, int segments)
+    {
+        return SourceGizmo(source, world, nullptr, segments);
+    }
+
+    std::vector<GizmoSegment> SourceGizmo(const AudioSourceComponent& source,
+                                          const glm::mat4&            world,
+                                          const AudioAttenuationData* asset,
+                                          int                         segments)
     {
         std::vector<GizmoSegment> out;
         if (!source.Spatial || segments < 4)
             return out;
         const glm::vec3 origin = glm::vec3(world[3]);
-        const auto      circle =
-            [&](const glm::vec3& centre, const glm::vec3& x, const glm::vec3& y, float radius, GizmoPart part) {
-                for (int i = 0; i < segments; ++i)
-                {
-                    const float a = 2 * Pi * i / segments, b = 2 * Pi * (i + 1) / segments;
-                    out.push_back({centre + radius * (std::cos(a) * x + std::sin(a) * y),
-                                   centre + radius * (std::cos(b) * x + std::sin(b) * y),
-                                   part});
-                }
-            };
-        // Three great circles in world axes: the distance is measured in world units.
-        const auto sphere = [&](float radius, GizmoPart part) {
-            circle(origin, {1, 0, 0}, {0, 1, 0}, radius, part);
-            circle(origin, {1, 0, 0}, {0, 0, 1}, radius, part);
-            circle(origin, {0, 1, 0}, {0, 0, 1}, radius, part);
-        };
-        sphere(source.MinDistance, GizmoPart::MinDistance);
-        if (source.Attenuation != AudioAttenuationModel::None && source.MaxDistance > source.MinDistance)
-            sphere(source.MaxDistance, GizmoPart::MaxDistance);
-        if (source.ConeOuterAngle >= 360.0f)
+        if (source.Shape.Type != AudioSourceShape::Point)
+            AppendShapeOutline(out, source.Shape, world, 0.0f, GizmoPart::Shape, segments);
+        const auto range =
+            asset ? AudioAttenuationEditing::RangeOf(*asset) :
+                    AudioAttenuationEditing::RangeOf(source.Attenuation, source.MinDistance, source.MaxDistance);
+        if (range.Inner > 0.0f)
+            AppendShapeOutline(out, source.Shape, world, range.Inner, GizmoPart::MinDistance, segments);
+        if (range.HasOuter)
+            AppendShapeOutline(out, source.Shape, world, range.Outer, GizmoPart::MaxDistance, segments);
+        float inner = source.ConeInnerAngle, outer = source.ConeOuterAngle;
+        if (asset && asset->Cone)
+            inner = asset->Cone->InnerAngle, outer = asset->Cone->OuterAngle;
+        if (outer >= 360.0f)
             return out;
         // The engine aims a source along its -Z; the cone's angles are full apex angles.
         glm::vec3   forward = glm::vec3(world * glm::vec4(0, 0, -1, 0));
@@ -121,20 +253,58 @@ namespace Kans::AudioEditing
         const glm::vec3 up = std::abs(forward.y) > 0.99f ? glm::vec3(1, 0, 0) : glm::vec3(0, 1, 0);
         const glm::vec3 side   = glm::normalize(glm::cross(forward, up));
         const glm::vec3 normal = glm::cross(side, forward);
-        const float     reach  = std::max(source.MinDistance, 0.5f);
+        const float     reach  = std::max(range.Inner, 0.5f);
         const auto      cone   = [&](float degrees, GizmoPart part) {
-            const float half = glm::radians(std::clamp(degrees, 0.0f, 359.0f)) * 0.5f;
-            const auto  end  = origin + forward * (reach * std::cos(half));
-            circle(end, side, normal, reach * std::sin(half), part);
+            const float half   = glm::radians(std::clamp(degrees, 0.0f, 359.0f)) * 0.5f;
+            const auto  end    = origin + forward * (reach * std::cos(half));
+            const float radius = reach * std::sin(half);
+            Ellipse(out, end, side * radius, normal * radius, part, segments);
             for (int i = 0; i < 4; ++i)
             {
                 const float a = Pi * 0.5f * i;
-                out.push_back(
-                    {origin, end + reach * std::sin(half) * (std::cos(a) * side + std::sin(a) * normal), part});
+                out.push_back({origin, end + radius * (std::cos(a) * side + std::sin(a) * normal), part});
             }
         };
-        cone(source.ConeInnerAngle, GizmoPart::InnerCone);
-        cone(source.ConeOuterAngle, GizmoPart::OuterCone);
+        cone(inner, GizmoPart::InnerCone);
+        cone(outer, GizmoPart::OuterCone);
         return out;
+    }
+
+    std::vector<GizmoSegment>
+    ReverbZoneGizmo(const AudioReverbZoneComponent& zone, const glm::mat4& world, int segments)
+    {
+        std::vector<GizmoSegment> out;
+        const auto                shape = ShapeOf(zone);
+        AppendShapeOutline(out, shape, world, 0.0f, GizmoPart::ZoneShape, segments);
+        if (zone.FadeDistance > 0.0f)
+            AppendShapeOutline(out, shape, world, zone.FadeDistance, GizmoPart::ZoneFade, segments);
+        return out;
+    }
+
+    HandleFrame ZoneFadeHandle(const AudioReverbZoneComponent& zone, const glm::mat4& world)
+    {
+        const auto [direction, length] = Axis(world, 0);
+        const float surface =
+            length * std::max(0.0f, zone.Shape == AudioReverbZoneShape::Box ? zone.HalfExtents.x : zone.Radius);
+        return {glm::vec3(world[3]) + direction * surface, direction};
+    }
+
+    HandleFrame LineLengthHandle(const glm::mat4& world, bool positive)
+    {
+        const glm::vec3 axis = glm::vec3(world[0]);
+        return {glm::vec3(world[3]), positive ? axis : -axis};
+    }
+
+    float SendToField(float db) { return std::isfinite(db) && db > SilenceDecibels ? db : SilenceDecibels; }
+
+    float FieldToSend(float field) { return std::isfinite(field) && field > SilenceDecibels ? field : AudioSendOffDb; }
+
+    std::string ListenerSlotText(bool active, std::optional<uint32_t> slot, uint32_t capacity)
+    {
+        if (slot)
+            return "Listener " + std::to_string(*slot + 1);
+        if (!active)
+            return "Inactive";
+        return "Inactive — over the limit of " + std::to_string(capacity);
     }
 } // namespace Kans::AudioEditing

@@ -597,6 +597,11 @@ namespace Kans
             if (ImGui::MenuItem(
                     Label(ICON_FA_LAYER_GROUP, "Audio Event").c_str(), nullptr, false, bool(m_CreateAudioEvent)))
                 m_CreateAudioEvent(m_Current);
+            if (ImGui::MenuItem(Label(ICON_FA_CHART_LINE, "Audio Attenuation").c_str(),
+                                nullptr,
+                                false,
+                                bool(m_CreateAudioAttenuation)))
+                m_CreateAudioAttenuation(m_Current), Refresh();
             if (ImGui::MenuItem(
                     Label(ICON_FA_ATOM, "Physics Material").c_str(), nullptr, false, bool(m_CreatePhysicsMaterial)))
                 m_CreatePhysicsMaterial(m_Current), Refresh();
@@ -1806,6 +1811,8 @@ namespace Kans
                     m_CreateTimeline(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_LAYER_GROUP, "Audio Event").c_str()) && m_CreateAudioEvent)
                     m_CreateAudioEvent(folder);
+                if (ImGui::MenuItem(Label(ICON_FA_CHART_LINE, "Audio Attenuation").c_str()) && m_CreateAudioAttenuation)
+                    m_CreateAudioAttenuation(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_ATOM, "Physics Material").c_str()) && m_CreatePhysicsMaterial)
                     m_CreatePhysicsMaterial(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_WAND_MAGIC_SPARKLES, "VFX System").c_str()) && m_CreateVfxSystem)

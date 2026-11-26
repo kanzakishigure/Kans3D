@@ -1,9 +1,11 @@
 #pragma once
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
+#include "Kans3D/Audio/AudioAttenuation.h"
 #include "Kans3D/Audio/AudioComponents.h"
 #include "Kans3D/Scene/Entity.h"
 
@@ -49,7 +51,10 @@ namespace Kans::AudioEditing
         MinDistance, // Full volume inside.
         MaxDistance, // Attenuation stops here.
         InnerCone,
-        OuterCone
+        OuterCone,
+        Shape,     // A sphere, box or line source's shape.
+        ZoneShape, // A reverb zone: full send inside.
+        ZoneFade   // The fade band's outer edge.
     };
     struct GizmoSegment
     {
@@ -61,4 +66,43 @@ namespace Kans::AudioEditing
     // maximum distance is drawn only with an attenuation model, the cone only below 360 degrees.
     std::vector<GizmoSegment>
     SourceGizmo(const AudioSourceComponent& source, const glm::mat4& world, int segments = 48);
+    // With the attenuation asset the source plays with (its own, else its event's; null for the
+    // built-in model): the ranges follow the asset (where its curve first reaches 0, or its model's
+    // max distance, and the end of its full-volume start), its cone replaces the source's when it
+    // has one, and a shaped source also draws its shape. Ranges grow from the shape's surface.
+    std::vector<GizmoSegment> SourceGizmo(const AudioSourceComponent& source,
+                                          const glm::mat4&            world,
+                                          const AudioAttenuationData* asset,
+                                          int                         segments = 48);
+    // A reverb zone: its shape (ZoneShape) and the fade band's outer edge (ZoneFade), FadeDistance
+    // world metres outside it.
+    std::vector<GizmoSegment>
+    ReverbZoneGizmo(const AudioReverbZoneComponent& zone, const glm::mat4& world, int segments = 48);
+    // The outline of `shape` placed by `world`, grown by `distance` world metres (a point: three
+    // great circles of that radius; a line: a capsule).
+    void              AppendShapeOutline(std::vector<GizmoSegment>& out,
+                                         const AudioEmitterShape&   shape,
+                                         const glm::mat4&           world,
+                                         float                      distance,
+                                         GizmoPart                  part,
+                                         int                        segments = 48);
+    AudioEmitterShape ShapeOf(const AudioReverbZoneComponent& zone);
+
+    // Where a viewport handle sits and the way it pulls (one unit of the handle's value per unit
+    // of Direction).
+    struct HandleFrame
+    {
+        glm::vec3 Origin {0}, Direction {1, 0, 0};
+    };
+    // The fade distance's handle: on the zone's surface along its +X axis, pulling outward in
+    // world metres.
+    HandleFrame ZoneFadeHandle(const AudioReverbZoneComponent& zone, const glm::mat4& world);
+    // A line source's end along +X (`positive`) or -X: the value is half the line's length.
+    HandleFrame LineLengthHandle(const glm::mat4& world, bool positive);
+
+    // A send level as its field shows it: dB, with Off (-inf) at SilenceDecibels and below.
+    float SendToField(float db);
+    float FieldToSend(float field);
+    // The listener slot readout: "Listener 2", "Inactive", or "Inactive — over the limit of 4".
+    std::string ListenerSlotText(bool active, std::optional<uint32_t> slot, uint32_t capacity);
 } // namespace Kans::AudioEditing

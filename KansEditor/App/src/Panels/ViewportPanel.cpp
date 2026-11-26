@@ -134,6 +134,7 @@ namespace Kans
         m_ModalThisFrame = m_Modal.IsActive();
         BeginHandles();
         DrawPhysicsOverlay();
+        DrawAudioOverlay();
         // A particle entity's VFX handles edit (or show) its system asset, outside play.
         if (!m_Playing && !editing)
             VfxHandles(selected);
@@ -726,20 +727,6 @@ namespace Kans
                     ring(right, aim, range);
                     ring(up, aim, range);
                 }
-            }
-            if (chosen && entity.HasComponent<AudioSourceComponent>())
-            {
-                // Full volume inside the bright sphere, silent (or the floor) past the dim one.
-                const ImU32 audio = ImGui::GetColorU32(EditorTheme::Colors().TypeAudio);
-                const ImU32 faint = (audio & ~IM_COL32_A_MASK) | IM_COL32(0, 0, 0, 110);
-                const ImU32 cone = accent, coneFaint = (accent & ~IM_COL32_A_MASK) | IM_COL32(0, 0, 0, 120);
-                for (const auto& s : AudioEditing::SourceGizmo(entity.GetComponent<AudioSourceComponent>(), world))
-                    segment(s.A,
-                            s.B,
-                            s.Part == AudioEditing::GizmoPart::MinDistance ? audio :
-                            s.Part == AudioEditing::GizmoPart::MaxDistance ? faint :
-                            s.Part == AudioEditing::GizmoPart::InnerCone   ? cone :
-                                                                             coneFaint);
             }
             ImVec2 center;
             if (!ToScreen(origin, center))
@@ -1465,6 +1452,8 @@ namespace Kans
                 m_Scene->GetRenderWorld().Settings = resource;
                 ImGui::Separator();
                 DrawPhysicsMenu();
+                ImGui::Separator();
+                DrawAudioMenu();
                 if (m_Playing)
                 {
                     ImGui::Separator();
