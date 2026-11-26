@@ -1110,7 +1110,8 @@ namespace Kans
                     auto spatial          = m_Scene.GetAudioSpatialParams(entity);
                     spatial.DopplerFactor = 0;
                     return spatial;
-                });
+                },
+                m_Owner);
             seek = true;
         }
         const auto master = component->ClockSource == TimelineClockSource::Audio ?

@@ -5,6 +5,7 @@
 #include <memory>
 #include <unordered_map>
 #include "AudioBusEffect.h"
+#include "AudioProfileCapture.h"
 
 namespace Kans
 {
@@ -43,6 +44,7 @@ namespace Kans
     class AudioBusEffectNode : public ma_node_base
     {
     public:
+        AudioProfileNodeKey ProfileKey;
         AudioBusEffectNode();
         ~AudioBusEffectNode();
 

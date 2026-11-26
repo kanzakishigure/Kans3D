@@ -166,7 +166,11 @@ namespace Kans
         auto  loadedEvent = assets.Load<AudioEventAsset>(event);
         auto* asset       = std::get_if<Ref<const AudioEventAsset>>(&loadedEvent);
         if (!asset)
+        {
+            m_Engine.ProfileRejection(AudioVoiceReason::InvalidSource,
+                                      {AudioVoiceOwnerKind::Event, params.OwnerEntity, event});
             return {};
+        }
         return Play(state, assets, clips, event, *asset, params);
     }
 
@@ -201,13 +205,18 @@ namespace Kans
         if (!state.Valid)
             return {};
 
+        const AudioVoiceOwner owner {AudioVoiceOwnerKind::Event, params.OwnerEntity, event};
         const auto& data = state.Event->GetData();
         if (m_Engine.IsBusPaused(params.Bus ? *params.Bus : data.Bus))
+        {
+            m_Engine.ProfileRejection(AudioVoiceReason::PausedBus, owner);
             return {{}, AudioEventTriggerStatus::Paused};
+        }
         const auto  now  = m_Engine.GetClockFrames();
         if (state.LastTrigger && double(now - *state.LastTrigger) < (data.CooldownSeconds * m_Engine.GetSampleRate()))
         {
             ++state.Stats.CooldownRejections;
+            m_Engine.ProfileRejection(AudioVoiceReason::Cooldown, owner);
             return {{}, AudioEventTriggerStatus::Cooldown};
         }
         const auto  index      = state.Pick();
@@ -215,12 +224,16 @@ namespace Kans
         auto        loadedClip = assets.Load<AudioClipAsset>(entry.Clip);
         auto*       clip       = std::get_if<Ref<const AudioClipAsset>>(&loadedClip);
         if (!clip || !(*clip)->IsValid())
+        {
+            m_Engine.ProfileRejection(AudioVoiceReason::MissingClip, owner, entry.Clip);
             return {{}, AudioEventTriggerStatus::MissingClip};
+        }
 
         const auto volumeDb = double(data.VolumeDb) + entry.VolumeDb + Sample(state.Rng, data.VolumeRangeDb);
         const auto pitchSemitones =
             double(data.PitchSemitones) + entry.PitchSemitones + Sample(state.Rng, data.PitchRangeSemitones);
         auto& desc  = state.VoiceDesc;
+        desc.Owner  = owner;
         desc.Volume = float(params.Volume * std::pow(10.0, volumeDb / 20));
         desc.Pitch  = float(params.Pitch * std::exp2(pitchSemitones / 12));
         if (!std::isfinite(desc.Volume * (*clip)->GetData().Volume) || !std::isfinite(desc.Pitch) || desc.Pitch <= 0)

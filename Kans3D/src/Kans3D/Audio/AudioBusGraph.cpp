@@ -110,6 +110,21 @@ namespace Kans
 
         struct FaderNode : ma_node_base
         {
+            AudioProfileNodeKey           ProfileKey;
+            AudioProfileClock::time_point ProfileStart;
+            uint64_t                      ProfileNested = 0;
+
+            static ma_result BeforeInput(ma_node* node, ma_uint32, ma_uint32*)
+            {
+                if (auto* profile = AudioProfileActiveMix; profile && profile->Frame)
+                {
+                    auto& fader         = *static_cast<FaderNode*>(static_cast<ma_node_base*>(node));
+                    fader.ProfileNested = profile->BusNanoseconds;
+                    fader.ProfileStart  = AudioProfileClock::now();
+                }
+                return MA_SUCCESS;
+            }
+
             AudioGainRamp                                      Fader, PreFader;
             std::atomic<bool>                                  PinToCenter {false};
             int                                                Center = -1, Lfe = -1;
@@ -184,11 +199,23 @@ namespace Kans
                 for (size_t i = 0; i < fader.SendCount; ++i)
                     fader.Sends[i].Level.Publish();
                 *inputFrames = *outputFrames = frames;
+                if (auto* profile = AudioProfileActiveMix; profile && profile->Frame)
+                {
+                    const auto end       = AudioProfileClock::now();
+                    const auto inclusive = ProfileNanoseconds(end - fader.ProfileStart);
+                    // Pulling inputs can process other buses. Charge their work to their own rows.
+                    const auto nested  = profile->BusNanoseconds - fader.ProfileNested;
+                    const auto elapsed = inclusive - std::min(inclusive, nested);
+                    profile->BusNanoseconds += elapsed;
+                    profile->Record(fader.ProfileKey, elapsed);
+                    fader.ProfileStart  = end;
+                    fader.ProfileNested = profile->BusNanoseconds;
+                }
             }
         };
 
         const ma_node_vtable FaderVtable = {FaderNode::Process,
-                                            nullptr,
+                                            FaderNode::BeforeInput,
                                             1,
                                             MA_NODE_BUS_COUNT_UNKNOWN,
                                             MA_NODE_FLAG_CONTINUOUS_PROCESSING};
@@ -233,7 +260,8 @@ namespace Kans
                                   const AudioBusLayout&    layout,
                                   const AudioBusGraph*     previous,
                                   const AudioDSPRegistry&  registry,
-                                  const AudioUserSettings& settings)
+                                  const AudioUserSettings& settings,
+                                  uint64_t                 profileRevision)
     {
         m_UserSettings        = &settings;
         auto* graph           = ma_engine_get_node_graph(&engine);
@@ -256,6 +284,7 @@ namespace Kans
             bus.InputReady = true;
 
             auto& fader    = bus.Fader;
+            fader.ProfileKey = {profileRevision, m_Buses.size()};
             fader.Channels = m_Channels;
             fader.Graph    = graph;
             fader.Center   = AudioChannelIndex(m_ChannelMap.data(), m_Channels, MA_CHANNEL_FRONT_CENTER);
@@ -289,12 +318,13 @@ namespace Kans
             m_Buses.push_back(std::move(storage));
         }
 
+        size_t profileEffect = m_Buses.size();
         for (size_t i = 0; i < m_Buses.size(); ++i)
         {
             auto&       bus        = *m_Buses[i];
             const auto& definition = m_Layout.Buses[i];
             auto*       fader      = static_cast<ma_node_base*>(&bus.Fader);
-            if (const auto result = InitChain(graph, ma_engine_get_sample_rate(&engine), i, registry);
+            if (const auto result = InitChain(graph, ma_engine_get_sample_rate(&engine), i, registry, profileEffect);
                 result != MA_SUCCESS)
                 return result;
             if (!definition.Parent.empty())
@@ -341,8 +371,11 @@ namespace Kans
         return nullptr;
     }
 
-    ma_result
-    AudioBusGraph::InitChain(ma_node_graph* graph, uint32_t rate, size_t index, const AudioDSPRegistry& registry)
+    ma_result AudioBusGraph::InitChain(ma_node_graph*          graph,
+                                       uint32_t                rate,
+                                       size_t                  index,
+                                       const AudioDSPRegistry& registry,
+                                       size_t&                 profileEffect)
     {
         auto&       bus        = *m_Buses[index];
         const auto& definition = m_Layout.Buses[index];
@@ -389,6 +422,7 @@ namespace Kans
         for (const auto& effect : definition.Effects)
         {
             auto node = std::make_unique<AudioBusEffectNode>();
+            node->ProfileKey = {bus.Fader.ProfileKey.Revision, profileEffect++};
             result    = node->Init(graph,
                                    m_ChannelMap.data(),
                                    m_Channels,
@@ -587,6 +621,16 @@ namespace Kans
         }
         const auto found = m_Names.find(bus);
         return ResolveAudibilityGain(found == m_Names.end() ? m_Names.at(MasterAudioBus) : found->second);
+    }
+
+    float AudioBusGraph::DryGain(const std::string& bus) const
+    {
+        const auto            found = m_Names.find(bus);
+        std::optional<size_t> index = found == m_Names.end() ? m_Names.at(MasterAudioBus) : found->second;
+        float                 gain  = 1;
+        for (; index; index = m_Buses[*index]->Parent)
+            gain *= m_Buses[*index]->Fader.Fader.Published.load(std::memory_order_relaxed);
+        return gain;
     }
 
     float AudioBusGraph::ResolveAudibilityGain(size_t index)

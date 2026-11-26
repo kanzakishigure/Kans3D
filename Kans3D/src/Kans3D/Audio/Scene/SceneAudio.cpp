@@ -151,6 +151,7 @@ namespace Kans
     {
         if (emitter.m_Scene != this || !m_Registry.valid(emitter.m_EntityHandle))
             return {};
+        params.OwnerEntity     = emitter.GetUUID();
         params.EntityTransform = GetWorldTransform(emitter);
         params.Position        = glm::vec3((*params.EntityTransform)[3]);
         if (emitter.HasComponent<AudioSourceComponent>())
@@ -181,13 +182,19 @@ namespace Kans
         if (!m_AudioEngine || !m_AudioRunning || !m_PrefabAssets || !clip.IsValid())
             return {};
         auto loaded = m_PrefabAssets->Request<AudioClipAsset>(clip);
-        return loaded.IsReady() ? m_AudioEngine->PlayOneShot(m_AudioClips, loaded.Asset, params) : AudioVoiceHandle {};
+        if (loaded.IsReady())
+            return m_AudioEngine->PlayOneShot(m_AudioClips, loaded.Asset, params);
+        if (loaded.State == AssetLoadState::Failed)
+            m_AudioEngine->ProfileRejection(
+                AudioVoiceReason::MissingClip, {AudioVoiceOwnerKind::OneShot, params.OwnerEntity, {}}, clip);
+        return {};
     }
 
     AudioVoiceHandle Scene::PlayOneShot(Entity entity, AssetID clip, AudioOneShotParams params)
     {
         if (entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle))
             return {};
+        params.OwnerEntity = entity.GetUUID();
         return PlayOneShot(glm::vec3(GetWorldTransform(entity)[3]), clip, std::move(params));
     }
 
@@ -231,6 +238,7 @@ namespace Kans
             }
             case AssetType::AudioClip: {
                 AudioOneShotParams clipParams;
+                clipParams.OwnerEntity = emitter ? uint64_t(emitter.GetUUID()) : 0;
                 clipParams.Position =
                     emitter ? std::optional<glm::vec3>(glm::vec3(GetWorldTransform(emitter)[3])) : params.Position;
                 clipParams.Volume = params.Volume;
@@ -246,7 +254,11 @@ namespace Kans
                 if (params.Bus)
                     clipParams.Bus = *params.Bus;
                 if (m_AudioEngine->IsBusPaused(clipParams.Bus))
+                {
+                    m_AudioEngine->ProfileRejection(
+                        AudioVoiceReason::PausedBus, {AudioVoiceOwnerKind::OneShot, clipParams.OwnerEntity, {}}, asset);
                     return {{}, AudioEventTriggerStatus::Paused};
+                }
                 auto loaded = m_PrefabAssets->Load<AudioClipAsset>(asset);
                 if (const auto* clip = std::get_if<Ref<const AudioClipAsset>>(&loaded))
                 {
@@ -259,6 +271,8 @@ namespace Kans
                     }
                     return {};
                 }
+                m_AudioEngine->ProfileRejection(
+                    AudioVoiceReason::MissingClip, {AudioVoiceOwnerKind::OneShot, clipParams.OwnerEntity, {}}, asset);
                 WarnInvalidAudioAsset(asset.ToString());
                 return {{}, AudioEventTriggerStatus::MissingClip};
             }
@@ -359,6 +373,7 @@ namespace Kans
             // The component can disable spatial playback or enable looping. When spatial,
             // the component supplies its A1 attenuation and follows the entity transform.
             AudioEventParams params;
+            params.OwnerEntity = entity.GetUUID();
             params.Volume = c.Volume;
             params.Pitch  = c.Pitch;
             if (!c.Bus.empty() && c.Bus != MasterAudioBus)
@@ -435,6 +450,7 @@ namespace Kans
             r.Acquired = true;
         }
         AudioVoiceDesc desc;
+        desc.Owner            = {AudioVoiceOwnerKind::Entity, entity.GetUUID(), {}};
         desc.Bus     = c.Bus;
         desc.Priority         = c.Priority;
         desc.ConcurrencyGroup = c.ConcurrencyGroup;

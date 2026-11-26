@@ -19,9 +19,11 @@ namespace Kans
     TimelineAudioPlayer::TimelineAudioPlayer(AudioEngine&             engine,
                                              Ref<const TimelineAsset> source,
                                              ClipResolver             clipResolver,
-                                             SpatialResolver          spatialResolver) :
+                                             SpatialResolver          spatialResolver,
+                                             uint64_t                 owner) :
         m_Engine(engine), m_Source(std::move(source)), m_ResolveClip(std::move(clipResolver)),
-        m_ResolveSpatial(std::move(spatialResolver)), m_Voices(m_Source ? m_Source->GetData().Audio.size() : 0)
+        m_ResolveSpatial(std::move(spatialResolver)), m_OwnerEntity(owner),
+        m_Voices(m_Source ? m_Source->GetData().Audio.size() : 0)
     {}
 
     TimelineAudioPlayer::~TimelineAudioPlayer() { Stop(); }
@@ -254,6 +256,8 @@ namespace Kans
             return;
 
         AudioVoiceDesc desc;
+        desc.Owner           = {AudioVoiceOwnerKind::Timeline, m_OwnerEntity, m_Source->assetID};
+        desc.Clip            = clip.Clip;
         desc.Sound        = sound->second;
         desc.Bus          = track.Bus;
         desc.LoadMode     = AudioLoadMode::Stream;

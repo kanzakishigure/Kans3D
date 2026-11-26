@@ -14,7 +14,11 @@ namespace Kans
         using SpatialResolver = std::function<std::optional<AudioSpatialParams>(const std::string& binding)>;
         static constexpr double SeekDriftSeconds = .050;
 
-        TimelineAudioPlayer(AudioEngine&, Ref<const TimelineAsset>, ClipResolver, SpatialResolver = {});
+        TimelineAudioPlayer(AudioEngine&,
+                            Ref<const TimelineAsset>,
+                            ClipResolver,
+                            SpatialResolver = {},
+                            uint64_t owner  = 0);
         ~TimelineAudioPlayer();
 
         void Play(double time, double speed = 1, double offset = 0, std::optional<size_t> masterTrack = {});
@@ -54,6 +58,7 @@ namespace Kans
         Ref<const TimelineAsset>             m_Source;
         ClipResolver                         m_ResolveClip;
         SpatialResolver                      m_ResolveSpatial;
+        uint64_t                             m_OwnerEntity;
         AudioClipRegistry                    m_Clips;
         std::map<AssetID, AudioSoundID>      m_Sounds;
         std::vector<std::map<size_t, Voice>> m_Voices;

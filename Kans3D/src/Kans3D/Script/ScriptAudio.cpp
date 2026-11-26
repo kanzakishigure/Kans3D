@@ -38,7 +38,8 @@ namespace Kans::ScriptAudio
             LastDeviceChange,
             PushGenerator,
             GeneratorRoom,
-            GeneratorUnderruns
+            GeneratorUnderruns,
+            ProfileStats
         };
         constexpr int32_t Write = 1, EntityTarget = 2;
         using Data   = Scripting::AudioCommandData;
@@ -299,6 +300,19 @@ namespace Kans::ScriptAudio
                     return failure;
                 if (trigger)
                     return int32_t(Trigger(*scene, *engine, entityID, operation, *data));
+                if (operation == Operation::ProfileStats)
+                {
+                    const auto stats      = engine->GetProfileStats();
+                    data->Flags           = engine->IsProfilingEnabled();
+                    data->Value           = static_cast<float>(stats.Current.LoadPercent());
+                    data->Volume          = static_cast<float>(stats.LastSecond.Average);
+                    data->Pitch           = static_cast<float>(stats.LastSecond.Peak);
+                    data->VoiceIndex      = stats.RealVoices;
+                    data->VoiceGeneration = stats.VirtualVoices;
+                    data->Source          = stats.Underruns;
+                    data->Local           = stats.UnderrunFrames;
+                    return 1;
+                }
                 if (operation == Operation::BusVolume || operation == Operation::BusMute)
                 {
                     const std::string bus(data->Bus ? data->Bus : "", data->BusLength);

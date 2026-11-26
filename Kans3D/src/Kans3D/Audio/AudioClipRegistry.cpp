@@ -80,6 +80,7 @@ namespace Kans
         if (found == m_Clips.end())
             return {};
         overrides.Sound    = found->second.Sound;
+        overrides.Clip     = clip->assetID;
         overrides.LoadMode = clip->GetData().LoadMode;
         overrides.Volume *= clip->GetData().Volume;
         auto voice = engine.CreateVoice(overrides);

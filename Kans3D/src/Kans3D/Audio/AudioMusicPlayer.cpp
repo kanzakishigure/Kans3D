@@ -73,7 +73,13 @@ namespace Kans
     bool AudioMusicPlayer::Play(const AudioMusicTrack& track, const AudioMusicTransition& transition)
     {
         const auto info = m_Engine.GetSoundInfo(track.Sound);
-        if (!info || (track.LoopEnd == 0 && track.LoopStart != 0) ||
+        if (!info)
+        {
+            m_Engine.ProfileRejection(
+                AudioVoiceReason::MissingClip, {AudioVoiceOwnerKind::Music, 0, {}}, track.Clip, track.Sound);
+            return false;
+        }
+        if ((track.LoopEnd == 0 && track.LoopStart != 0) ||
             (track.LoopEnd != 0 && (track.LoopStart >= track.LoopEnd || track.LoopEnd > info->LengthFrames)) ||
             !std::isfinite(track.BPM) || track.BPM < 0 || track.BeatsPerBar == 0)
             return false;
@@ -89,6 +95,8 @@ namespace Kans
             return false;
 
         AudioVoiceDesc desc;
+        desc.Clip            = track.Clip;
+        desc.Owner.Kind      = AudioVoiceOwnerKind::Music;
         desc.Sound       = track.Sound;
         desc.LoadMode    = AudioLoadMode::Stream;
         desc.Loop        = track.LoopEnd != 0;

@@ -73,8 +73,23 @@ namespace Kans
     public readonly record struct AudioOutputDevice(string Id, string Name, bool IsDefault, AudioOutputFormat NativeFormat);
     public readonly record struct AudioDeviceChange(string DeviceId, AudioDeviceChangeReason Reason, AudioOutputFormat Format);
 
+    public readonly record struct AudioProfilingStats(bool Enabled, float MixerLoadPercent, float AverageMixerLoadPercent,
+        float PeakMixerLoadPercent, uint RealVoices, uint VirtualVoices, ulong Underruns, ulong UnderrunFrames);
+
     public static class Audio
     {
+        public static class Profiling
+        {
+            public static bool Enabled => GetStats().Enabled;
+
+            public static AudioProfilingStats GetStats()
+            {
+                var data = AudioCalls.Read(0, AudioOperation.ProfileStats);
+                return new AudioProfilingStats(data.Flags != 0, data.Value, data.Volume, data.Pitch,
+                    data.VoiceIndex, data.VoiceGeneration, data.Source, data.Local);
+            }
+        }
+
         public static event Action<AudioDeviceChange>? DeviceChanged;
 
         public static SpeakerMode SpeakerMode
@@ -200,7 +215,7 @@ namespace Kans
         Volume, Pitch, Loop, Clip, Event, Bus, Time,
         PlayOneShot, TriggerEvent, StopVoice, BusVolume, BusMute,
         UserBusVolume, UserBusMute, SaveUserSettings, LoadUserSettings, SpeakerMode, SelectDevice,
-        EnumerateDevices, ReadDevice, LastDeviceChange, PushGenerator, GeneratorRoom, GeneratorUnderruns
+        EnumerateDevices, ReadDevice, LastDeviceChange, PushGenerator, GeneratorRoom, GeneratorUnderruns, ProfileStats
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -14,6 +14,7 @@
 #include "Kans3D/Audio/AudioBusLayout.h"
 #include "AudioAttenuation.h"
 #include "AudioEmitterShape.h"
+#include "AudioProfile.h"
 #include "AudioUserSettings.h"
 
 namespace Kans
@@ -69,9 +70,9 @@ namespace Kans
         uint32_t        MaxRealVoices = 64;
         float           VirtualizationThreshold = 0.001f; // Linear amplitude (-60 dB). Zero disables the threshold.
         std::filesystem::path UserSettingsFile;                 // Empty leaves persistence disabled.
+        uint32_t              StreamBufferFrames = 0;           // Source frames. Zero uses the default capacity.
     };
 
-    using AudioSoundID = uint64_t;
     enum class AudioLoadMode { Decompress, Stream };
     enum class AudioFadeCurve
     {
@@ -91,11 +92,6 @@ namespace Kans
     {
         uint32_t Channels, SampleRate;
         uint64_t LengthFrames;
-    };
-    struct AudioVoiceHandle
-    {
-        uint32_t Index = 0, Generation = 0;
-        bool IsValid() const { return Generation != 0; }
     };
     inline constexpr float    AudioSendOffDb     = -std::numeric_limits<float>::infinity();
     inline constexpr size_t   MaxAudioVoiceSends = 2;
@@ -128,6 +124,8 @@ namespace Kans
         float                    LfeSendDb = AudioSendOffDb;
         std::optional<glm::vec3> ReverbPosition; // Listener selection for a world-positioned 2D voice.
         std::optional<AudioGeneratorFormat> Generator;
+        AudioVoiceOwner                     Owner;
+        AssetID                             Clip;
     };
 
     enum class AudioConcurrencyRule
@@ -152,6 +150,7 @@ namespace Kans
         uint8_t                  Priority = DefaultAudioVoicePriority;
         std::string              ConcurrencyGroup;
         bool                     Spatial = true; // Applies when Position is supplied.
+        uint64_t                 OwnerEntity = 0;
     };
 
     struct AudioVoiceStats
@@ -257,8 +256,20 @@ namespace Kans
         bool                                SetUserBusMute(const std::string& bus, bool mute);
         void     SetMaxRealVoices(uint32_t count);
         void     SetVirtualizationThreshold(float linear);
+        // The timing switch is sampled once per device callback or offline mix block. Profile reads are main-thread
+        // only.
+        void              SetProfilingEnabled(bool enabled);
+        bool              IsProfilingEnabled() const;
+        AudioProfileStats GetProfileStats();
+        // Names are borrowed until the next audio update or control change.
+        void GetVoiceSnapshot(std::vector<AudioVoiceInfo>& out);
+        // Indices refer to GetBuses() and its effect slots. Refresh after a bus layout edit.
+        void GetProfileNodeSnapshot(std::vector<AudioProfileNode>& out);
+        // Start a fresh cursor after Init. Read retained entries in publication order and count missed entries.
+        size_t ReadProfileEvents(AudioProfileEventCursor& cursor, AudioProfileEvent* out, size_t capacity);
+
         // Counts are published by Update. Groups count admitted starts, including virtual and scheduled voices.
-        const AudioVoiceStats& GetVoiceStats() const;
+        const AudioVoiceStats&  GetVoiceStats() const;
         AudioEventPlayer&       GetEventPlayer();
         const AudioEventPlayer& GetEventPlayer() const;
         bool                    IsVoiceReleasing(AudioVoiceHandle handle) const;
@@ -387,6 +398,8 @@ namespace Kans
         void SetVoiceEmitter(AudioVoiceHandle handle, const AudioSpatialParams& emitter, bool followPoint);
         friend class AudioMusicPlayer;
         friend class AudioEventPlayer;
+        void
+        ProfileRejection(AudioVoiceReason reason, AudioVoiceOwner owner, AssetID clip = {}, AudioSoundID sound = 0);
         void             DefineEventGroup(AssetID id, const AudioConcurrencyGroup& group);
         uint32_t         CountEventInstances(AssetID id) const;
         bool             PlayVoice(AudioVoiceHandle handle, bool* rejectedByLimit);

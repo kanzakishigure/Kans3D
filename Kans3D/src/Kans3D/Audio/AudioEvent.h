@@ -74,6 +74,7 @@ namespace Kans
         std::optional<float>              LfeSendDb;
         float                             Pan = 0;
         std::string                       FallbackConcurrencyGroup;
+        uint64_t                          OwnerEntity = 0;
     };
 
     enum class AudioEventTriggerStatus

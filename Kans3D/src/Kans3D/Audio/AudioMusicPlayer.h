@@ -13,6 +13,7 @@ namespace Kans
         // Used for position queries and as the fallback tempo for quantised transitions.
         double   BPM         = 0;
         uint32_t BeatsPerBar = 4;
+        AssetID  Clip; // Optional asset identity when the track was registered from a clip.
     };
 
     enum class AudioMusicTransitionType

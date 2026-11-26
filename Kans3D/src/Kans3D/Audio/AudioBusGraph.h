@@ -19,7 +19,8 @@ namespace Kans
                                                     const AudioBusLayout&    layout,
                                                     const AudioBusGraph*     previous,
                                                     const AudioDSPRegistry&  registry,
-                                                    const AudioUserSettings& settings);
+                                                    const AudioUserSettings& settings,
+                                                    uint64_t                 profileRevision);
         bool                 TryUpdate(const AudioBusLayout& layout, const AudioDSPRegistry& registry);
         bool                 SetEffectParameters(const std::string&              bus,
                                                  size_t                          index,
@@ -33,6 +34,7 @@ namespace Kans
         ma_node*                               Input(size_t index) const;
         std::optional<size_t>                  FindIndex(const std::string& bus) const;
         float                                  AudibilityGain(const std::string& bus);
+        float                                  DryGain(const std::string& bus) const;
         AudioBusDefinition* Find(const std::string& bus);
         const std::vector<AudioBusDefinition>& GetBuses() const { return m_Layout.Buses; }
         std::optional<AudioBusMeter>           GetMeter(const std::string& bus) const;
@@ -43,7 +45,11 @@ namespace Kans
     private:
         struct Bus;
         const AudioSidechainPeak* Detector(const AudioBusEffectParameters& params) const;
-        ma_result InitChain(ma_node_graph* graph, uint32_t rate, size_t index, const AudioDSPRegistry& registry);
+        ma_result                               InitChain(ma_node_graph*          graph,
+                                                          uint32_t                rate,
+                                                          size_t                  index,
+                                                          const AudioDSPRegistry& registry,
+                                                          size_t&                 profileEffect);
         float     ResolveAudibilityGain(size_t index);
         const AudioUserSettings* m_UserSettings = nullptr;
         AudioBusLayout                          m_Layout;

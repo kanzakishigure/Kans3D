@@ -675,7 +675,9 @@ namespace Kans
                                      float**       outputs,
                                      ma_uint32*    outputFrames)
     {
-        auto&       s      = *static_cast<AudioBusEffectNode*>(static_cast<ma_node_base*>(node))->m_State;
+        auto&                         effect = *static_cast<AudioBusEffectNode*>(static_cast<ma_node_base*>(node));
+        const AudioProfileEffectScope profile(effect.ProfileKey);
+        auto&                         s      = *effect.m_State;
         const auto  frames = std::min(*inputFrames, *outputFrames);
         const auto* dry    = inputs[0];
         auto*       wet    = outputs[0];
