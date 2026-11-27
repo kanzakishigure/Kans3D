@@ -43,5 +43,6 @@ namespace Kans
         AudioEvent                  = 29,
         AudioAttenuation            = 30,
         AudioHRTF                   = 31,
+        MusicSet                    = 32,
     };
 } // namespace Kans

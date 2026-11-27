@@ -96,6 +96,9 @@ namespace Kans
         m_Registry.on_construct<AudioSourceComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_update<AudioSourceComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_destroy<AudioSourceComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_construct<MusicSetPlayerComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_update<MusicSetPlayerComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
+        m_Registry.on_destroy<MusicSetPlayerComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_construct<AudioReverbZoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_update<AudioReverbZoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
         m_Registry.on_destroy<AudioReverbZoneComponent>().connect<&Scene::OnPhysicsPrefabChanged>(this);
@@ -258,6 +261,7 @@ namespace Kans
         m_MaterialParameterSnapshot.reset();
         m_MaterialParametersNeedRefresh = !m_MaterialCollectionIDs.empty();
         m_AssetChanges = assets ? assets->ObserveChanges() : nullptr;
+        m_MusicSetChanges               = assets ? assets->ObserveChanges() : nullptr;
         if (m_PhysicsWorld)
             m_PhysicsWorld->NotifyAssetProviderChanged();
         if (m_IKPreviewPhysics)
@@ -362,6 +366,7 @@ namespace Kans
         m_DeferIK                   = true;
         m_IKHasSpringPose           = false;
         UpdateAnimations(animationDelta, false);
+        UpdateMusicSets();
         UpdateTimelines(animationDelta);
         UpdateAnimations(animationDelta, true);
         if (m_PhysicsWorld)
@@ -764,6 +769,7 @@ namespace Kans
         CopyComponent<VehicleComponent>(source, copy);
 
         CopyComponent<AudioSourceComponent>(source, copy);
+        CopyComponent<MusicSetPlayerComponent>(source, copy);
         CopyComponent<AudioListenerComponent>(source, copy);
         CopyComponent<AudioReverbZoneComponent>(source, copy);
         if (source.HasComponent<PrefabInstanceComponent>())
@@ -1093,6 +1099,9 @@ namespace Kans
 
     template<>
     void Scene::OnComponentAdd<AudioSourceComponent>(Entity, AudioSourceComponent&)
+    {}
+    template<>
+    void Scene::OnComponentAdd<MusicSetPlayerComponent>(Entity, MusicSetPlayerComponent&)
     {}
     template<>
     void Scene::OnComponentAdd<AudioListenerComponent>(Entity, AudioListenerComponent&)

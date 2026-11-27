@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <memory>
 #include <optional>
 #include "Kans3D/Asset/Runtime/AudioClipData.h"
@@ -76,6 +77,41 @@ namespace Kans
         std::unique_ptr<Runtime> m_Runtime;
     };
     bool operator==(const AudioSourceComponent&, const AudioSourceComponent&);
+
+    class MusicSetPlayer;
+    struct MusicSetEvent;
+
+    struct MusicSetPlayerSettings
+    {
+        AssetID                                   Asset;
+        std::string                               BusOverride, InitialState;
+        bool                                      PlayOnStart = true;
+        std::map<std::string, float, std::less<>> Parameters;
+        bool                                      operator==(const MusicSetPlayerSettings& other) const
+        {
+            return Asset == other.Asset && BusOverride == other.BusOverride && InitialState == other.InitialState &&
+                   PlayOnStart == other.PlayOnStart && Parameters == other.Parameters;
+        }
+        bool operator!=(const MusicSetPlayerSettings& other) const { return !(*this == other); }
+    };
+
+    struct MusicSetPlayerComponent : MusicSetPlayerSettings
+    {
+        MusicSetPlayerComponent();
+        ~MusicSetPlayerComponent();
+        MusicSetPlayerComponent(const MusicSetPlayerComponent& other);
+        MusicSetPlayerComponent& operator=(const MusicSetPlayerComponent& other);
+        MusicSetPlayerComponent(MusicSetPlayerComponent&&) noexcept;
+        MusicSetPlayerComponent& operator=(MusicSetPlayerComponent&&) noexcept;
+        bool                     operator==(const MusicSetPlayerComponent& other) const;
+        bool                     operator!=(const MusicSetPlayerComponent& other) const { return !(*this == other); }
+
+    private:
+        friend class Scene;
+        struct Runtime;
+        std::unique_ptr<Runtime> m_Runtime;
+        bool                     m_PlayRequested = false, m_Listen = false;
+    };
 
     enum class AudioReverbZoneShape
     {

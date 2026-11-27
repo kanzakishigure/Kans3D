@@ -1667,7 +1667,7 @@ namespace Kans
             SendNode                           Route {};
             AudioVoiceDesc Desc;
             AudioSoundInfo           Info {};
-            std::deque<Transport>    History;
+            std::vector<Transport>             History;
             std::atomic<bool>        Timed {false};
             std::atomic<uint64_t>    PendingSeek {NoFrame};
             std::shared_ptr<Control> Commands = std::make_shared<Control>();
@@ -1690,6 +1690,7 @@ namespace Kans
             AudioVoiceReason                   ProfileReason     = AudioVoiceReason::None;
             float                              ListenerDistance  = 0;
             uint64_t                           ReportedUnderruns = 0, ReportedUnderrunFrames = 0;
+            std::optional<uint64_t>            PendingMusicFrame;
             bool                               ProfileLive = false, ProfilePendingStart = false;
             uint64_t                     PlayOrder = 0, PinnedStart = NoFrame;
             bool                         Attached = false, Virtual = false, CountedReal = false, Stolen = false;
@@ -1749,7 +1750,7 @@ namespace Kans
             {
                 History.back().StreamDelayEnd = StreamDelay.load(std::memory_order_relaxed);
                 while (History.size() > 1 && History[1].Frame <= heardFrame)
-                    History.pop_front();
+                    History.erase(History.begin());
                 if (History.back().Frame >= state.Frame)
                 {
                     state.Frame    = History.back().Frame;
@@ -1796,6 +1797,9 @@ namespace Kans
         std::atomic<bool>                           ApplyingSchedule {false};
         std::vector<std::unique_ptr<ScheduleBatch>> ScheduleStorage;
         ScheduleBatch*                              BuildingSchedule = nullptr;
+        std::unique_ptr<ScheduleBatch>              MusicSchedule;
+        std::vector<std::unique_ptr<ScheduleBatch>> FreeSchedules;
+        size_t                                      MusicScheduleCapacity = 0;
 
         static void Apply(const Schedule& command)
         {
@@ -1824,11 +1828,30 @@ namespace Kans
 
         void CollectSchedules()
         {
-            ScheduleStorage.erase(
-                std::remove_if(ScheduleStorage.begin(),
-                               ScheduleStorage.end(),
-                               [](const auto& batch) { return batch->Applied.load(std::memory_order_acquire); }),
-                ScheduleStorage.end());
+            ScheduleStorage.erase(std::remove_if(ScheduleStorage.begin(),
+                                                 ScheduleStorage.end(),
+                                                 [&](auto& batch) {
+                                                     if (!batch->Applied.load(std::memory_order_acquire))
+                                                         return false;
+                                                     if (FreeSchedules.size() < FreeSchedules.capacity())
+                                                     {
+                                                         batch->Operations.clear();
+                                                         batch->Applied.store(false, std::memory_order_relaxed);
+                                                         FreeSchedules.push_back(std::move(batch));
+                                                     }
+                                                     return true;
+                                                 }),
+                                  ScheduleStorage.end());
+        }
+
+        std::unique_ptr<ScheduleBatch> GetScheduleBatch()
+        {
+            CollectSchedules();
+            if (FreeSchedules.empty())
+                return std::make_unique<ScheduleBatch>();
+            auto batch = std::move(FreeSchedules.back());
+            FreeSchedules.pop_back();
+            return batch;
         }
 
         void Submit(std::unique_ptr<ScheduleBatch> batch)
@@ -1876,13 +1899,15 @@ namespace Kans
             if (voice.Virtual)
                 return;
             Schedule command {voice.Commands, ++voice.Commands->Revision, voice.Current(), voice.Envelope, replay};
-            if (Config.Mode == AudioOutputMode::Offline)
+            if (MusicSchedule)
+                MusicSchedule->Operations.push_back(std::move(command));
+            else if (Config.Mode == AudioOutputMode::Offline)
                 Apply(command);
             else if (BuildingSchedule)
                 BuildingSchedule->Operations.push_back(std::move(command));
             else
             {
-                auto batch = std::make_unique<ScheduleBatch>();
+                auto batch = GetScheduleBatch();
                 batch->Operations.push_back(std::move(command));
                 Submit(std::move(batch));
             }
@@ -4006,6 +4031,7 @@ namespace Kans
             row.Bus              = bus ? std::string_view(bus->Name) : std::string_view {};
             row.ConcurrencyGroup = voice.Desc.ConcurrencyGroup;
             row.Reason           = voice.ProfileReason;
+            row.PendingMusicFrame = voice.PendingMusicFrame;
             row.Priority         = voice.Desc.Priority;
             row.Spatializer      = p.Spatializer(voice);
             row.SpatialBlend     = voice.Desc.SpatialBlend;
@@ -4782,6 +4808,7 @@ namespace Kans
         }
         else
         {
+            voice->History.reserve(8);
             voice->History.push_back(transport);
             std::array<ma_channel, MaxOutputChannels> generatorMap {};
             if (generator)
@@ -5229,7 +5256,9 @@ namespace Kans
                                      uint64_t                clockFrame,
                                      uint64_t                fadeFrames,
                                      AudioFadeCurve          curve,
-                                     const AudioVoiceWindow* window)
+                                     const AudioVoiceWindow* window,
+                                     std::optional<uint64_t> sourceFrame,
+                                     float                   initialGain)
     {
         auto* voice = m_Impl->Find(handle);
         if (!voice || !AdmitVoice(handle, GetClockFrames()))
@@ -5241,9 +5270,10 @@ namespace Kans
         ma_sound_stop(&sound);
         auto       state  = voice->Current();
         const auto now    = m_Impl->WritableClock();
-        const auto source = (voice->Ended(static_cast<double>(now)) || ma_sound_at_end(&sound)) ?
-                                0 :
-                                state.Position(static_cast<double>(now), voice->StreamDelay.load());
+        const auto source = sourceFrame ? static_cast<double>(*sourceFrame) :
+                            (voice->Ended(static_cast<double>(now)) || ma_sound_at_end(&sound)) ?
+                                          0 :
+                                          state.Position(static_cast<double>(now), voice->StreamDelay.load());
         const auto late   = !m_Impl->BuildingSchedule && now > clockFrame ? now - clockFrame : 0;
         const auto frame  = static_cast<uint64_t>(WrapPosition(
             source + late * state.Rate, state.LoopBegin, state.Loop ? state.LoopEnd : state.Length, state.Loop));
@@ -5283,6 +5313,7 @@ namespace Kans
                 voice->Envelope.Multiply = true;
             }
         }
+        voice->Envelope.User.From = voice->Envelope.User.To = initialGain;
         if (voice->Virtual && m_Impl->WantsOcclusion(*voice))
         {
             // An explicit scheduled start keeps its transport deadline, but its
@@ -5338,6 +5369,84 @@ namespace Kans
             m_Impl->Queue(*voice);
         }
     }
+    void AudioEngine::ReserveMusicScheduling(size_t voices)
+    {
+        auto&      p            = *m_Impl;
+        const auto batches      = std::max<size_t>(8, p.FreeSchedules.capacity());
+        p.MusicScheduleCapacity = std::max(p.MusicScheduleCapacity, voices);
+        p.FreeSchedules.reserve(batches);
+        p.ScheduleStorage.reserve(batches + p.ScheduleStorage.size());
+        while (p.FreeSchedules.size() < batches)
+            p.FreeSchedules.push_back(std::make_unique<Impl::ScheduleBatch>());
+        for (auto& batch : p.FreeSchedules)
+            batch->Operations.reserve(p.MusicScheduleCapacity);
+    }
+
+    void AudioEngine::BeginMusicSchedule()
+    {
+        auto& p         = *m_Impl;
+        p.MusicSchedule = p.GetScheduleBatch();
+        p.MusicSchedule->Operations.reserve(p.MusicScheduleCapacity);
+        p.BuildingSchedule = p.MusicSchedule.get();
+    }
+
+    void AudioEngine::EndMusicSchedule()
+    {
+        auto& p            = *m_Impl;
+        p.BuildingSchedule = nullptr;
+        auto batch         = std::move(p.MusicSchedule);
+        if (p.Config.Mode != AudioOutputMode::Offline && !batch->Operations.empty())
+            p.Submit(std::move(batch));
+        else
+        {
+            for (const auto& operation : batch->Operations)
+                Impl::Apply(operation);
+            batch->Operations.clear();
+            if (p.FreeSchedules.size() < p.FreeSchedules.capacity())
+                p.FreeSchedules.push_back(std::move(batch));
+        }
+    }
+
+    uint64_t AudioEngine::MusicSchedulingLead() const
+    {
+        return m_Impl->Config.Mode == AudioOutputMode::Offline ?
+                   0 :
+                   std::max<uint64_t>(m_Impl->MixPeriod * 2ull, GetSampleRate() / 50);
+    }
+
+    float AudioEngine::MusicBusRate(const std::string& bus) const
+    {
+        const auto* policy = m_Impl->BusPolicy(bus);
+        return policy && policy->FollowTimeScale ? m_Impl->PitchTimeScale : 1.f;
+    }
+
+    bool AudioEngine::MusicBusPoliciesMatch(const std::string& a, const std::string& b) const
+    {
+        const auto* first  = m_Impl->BusPolicy(a);
+        const auto* second = m_Impl->BusPolicy(b);
+        return first == second || ((first && first->FollowTimeScale) == (second && second->FollowTimeScale) &&
+                                   (first && first->PausesWithGame) == (second && second->PausesWithGame));
+    }
+
+    std::optional<uint64_t> AudioEngine::GetMusicVoiceStart(AudioVoiceHandle voice) const
+    {
+        if (const auto* found = m_Impl->Find(voice); found && found->Current().Start != NoFrame)
+            return found->Current().Start;
+        return std::nullopt;
+    }
+
+    void AudioEngine::RecordMusicEvent(AudioProfileEventType type, AudioVoiceHandle voice, uint64_t frame)
+    {
+        if (auto* found = m_Impl->Find(voice))
+        {
+            if (type == AudioProfileEventType::TransitionScheduled || type == AudioProfileEventType::StingerScheduled)
+                found->PendingMusicFrame = frame;
+            else
+                found->PendingMusicFrame.reset();
+            m_Impl->LogVoice(type, *found, frame);
+        }
+    }
+
     uint64_t AudioMusicPlayer::WritableClock() const
     {
         return m_Engine.IsInitialized() ? m_Engine.m_Impl->WritableClock() : 0;
@@ -5385,6 +5494,7 @@ namespace Kans
                 DestroyVoice(handle);
                 return;
             }
+            voice->PendingMusicFrame.reset();
             const auto now = GetClockFrames();
             m_Impl->ObserveVoice(*voice, now, GetPlaybackClockFrames());
             m_Impl->ProfileStop(*voice, now);

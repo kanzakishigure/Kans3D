@@ -73,7 +73,7 @@ namespace Kans
                     x->second.SphereCollider != y->second.SphereCollider ||
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
-                    !(x->second.AudioSource == y->second.AudioSource) ||
+                    !(x->second.AudioSource == y->second.AudioSource) || x->second.MusicSet != y->second.MusicSet ||
                     x->second.AudioReverbZone != y->second.AudioReverbZone ||
                     x->second.ForceField != y->second.ForceField || x->second.Ragdoll != y->second.Ragdoll ||
                     x->second.Particles != y->second.Particles || x->second.Vehicle != y->second.Vehicle ||
@@ -95,6 +95,7 @@ namespace Kans
         bool Same(const FogVolumeComponent& a, const FogVolumeComponent& b) { return a == b; }
         bool Same(const AreaLightComponent& a, const AreaLightComponent& b) { return a == b; }
         bool Same(const AudioSourceComponent& a, const AudioSourceComponent& b) { return a == b; }
+        bool Same(const MusicSetPlayerComponent& a, const MusicSetPlayerComponent& b) { return a == b; }
         bool Same(const AudioListenerComponent& a, const AudioListenerComponent& b) { return a == b; }
         bool Same(const AudioReverbZoneComponent& a, const AudioReverbZoneComponent& b) { return a == b; }
         bool Same(const MaterialParameterDriversComponent& a, const MaterialParameterDriversComponent& b)
@@ -170,11 +171,12 @@ namespace Kans
                Same(a.MaterialDrivers, b.MaterialDrivers) && Same(a.DirLight, b.DirLight) &&
                Same(a.AreaLight, b.AreaLight) && Same(a.FogVolume, b.FogVolume) && Same(a.SpotLight, b.SpotLight) &&
                Same(a.PointLight, b.PointLight) && Same(a.Script, b.Script) && Same(a.AudioSource, b.AudioSource) &&
-               Same(a.AudioListener, b.AudioListener) && Same(a.AudioReverbZone, b.AudioReverbZone) &&
-               Same(a.RigidBody, b.RigidBody) && Same(a.BoxCollider, b.BoxCollider) &&
-               Same(a.SphereCollider, b.SphereCollider) && Same(a.CapsuleCollider, b.CapsuleCollider) &&
-               Same(a.MeshCollider, b.MeshCollider) && Same(a.Vehicle, b.Vehicle) && Same(a.Ragdoll, b.Ragdoll) &&
-               Same(a.Particles, b.Particles) && Same(a.ForceField, b.ForceField) && Same(a.GlobalWind, b.GlobalWind) &&
+               Same(a.AudioListener, b.AudioListener) && Same(a.MusicSet, b.MusicSet) &&
+               Same(a.AudioReverbZone, b.AudioReverbZone) && Same(a.RigidBody, b.RigidBody) &&
+               Same(a.BoxCollider, b.BoxCollider) && Same(a.SphereCollider, b.SphereCollider) &&
+               Same(a.CapsuleCollider, b.CapsuleCollider) && Same(a.MeshCollider, b.MeshCollider) &&
+               Same(a.Vehicle, b.Vehicle) && Same(a.Ragdoll, b.Ragdoll) && Same(a.Particles, b.Particles) &&
+               Same(a.ForceField, b.ForceField) && Same(a.GlobalWind, b.GlobalWind) &&
                Same(a.CharacterController, b.CharacterController) && Same(a.Joint, b.Joint) &&
                Same(a.SpringBone, b.SpringBone) && Same(a.Cloth, b.Cloth) && Same(a.MotionCollider, b.MotionCollider);
     }
@@ -224,6 +226,7 @@ namespace Kans
             Kans::Capture(entity, item.MaterialDrivers);
             Kans::Capture(entity, item.AudioSource);
             Kans::Capture(entity, item.AudioListener);
+            Kans::Capture(entity, item.MusicSet);
             Kans::Capture(entity, item.AudioReverbZone);
             Kans::Capture(entity, item.PrefabParent);
             if (item.Prefab)
@@ -343,6 +346,7 @@ namespace Kans
             Kans::Restore(entity, item.MaterialDrivers);
             Kans::Restore(entity, item.AudioSource);
             Kans::Restore(entity, item.AudioListener);
+            Kans::Restore(entity, item.MusicSet);
             Kans::Restore(entity, item.AudioReverbZone);
             Kans::Restore(entity, item.PrefabParent);
             Kans::Restore(entity, item.DirLight);

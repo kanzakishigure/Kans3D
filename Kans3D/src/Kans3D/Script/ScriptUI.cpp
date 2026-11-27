@@ -132,6 +132,8 @@ namespace Kans::ScriptUI
                         return Add<SpringBoneComponent>(e);
                     case Scripting::ComponentType::AudioSourceComponent:
                         return Add<AudioSourceComponent>(e);
+                    case Scripting::ComponentType::MusicSetPlayerComponent:
+                        return Add<MusicSetPlayerComponent>(e);
                     case Scripting::ComponentType::ParticleSystemComponent:
                         return Add<ParticleSystemComponent>(e);
                     case Scripting::ComponentType::RagdollComponent:

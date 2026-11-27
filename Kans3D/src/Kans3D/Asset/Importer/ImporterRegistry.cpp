@@ -18,6 +18,7 @@
 #include "MaterialImporter.h"
 #include "MaterialParameterCollectionImporter.h"
 #include "ModelImporter.h"
+#include "MusicSetImporter.h"
 #include "RenderTextureImporter.h"
 #include "ShaderImporter.h"
 #include "TextureImporter.h"
@@ -122,6 +123,7 @@ namespace Kans
                 {"ShaderImporter", {{".vert", ".frag", ".comp", ".shaderprog"}, std::make_shared<ShaderImporter>()}},
                 {"AudioAttenuationImporter", {{".audioattenuation"}, std::make_shared<AudioAttenuationImporter>()}},
                 {"AudioEventImporter", {{".audioevent"}, std::make_shared<AudioEventImporter>()}},
+                {"MusicSetImporter", {{".musicset"}, std::make_shared<MusicSetImporter>()}},
                 {"AudioHRTFImporter", {{".sofa"}, std::make_shared<AudioHRTFImporter>()}},
                 {"AudioBusLayoutImporter", {{".audiobus"}, std::make_shared<AudioBusLayoutImporter>()}},
                 {"MaterialParameterCollectionImporter",

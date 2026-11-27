@@ -259,6 +259,109 @@ namespace Kans
                 new AudioCommandData { Source = value.Source, Local = value.Local, Flags = AudioCalls.Write });
     }
 
+    public readonly record struct MusicSetPosition(string State, string Segment, ulong Bar, float Beat, float Seconds);
+    public readonly record struct MusicSetBeat(ulong Sample, ulong Bar, uint Beat);
+    public readonly record struct MusicSetCue(ulong Sample, string Name);
+
+    public sealed class MusicSetPlayer : Component
+    {
+        private static MusicSetPlayer[] s_Listeners = Array.Empty<MusicSetPlayer>();
+        private Action<MusicSetBeat>? m_Beat, m_Bar;
+        private Action<MusicSetCue>? m_Cue, m_State;
+        private bool m_Listening;
+        private List<(byte[] Bytes, string Text)>? m_Names;
+        private List<(byte[] Bytes, string Text)> Names => m_Names ??= new();
+
+        public bool Play(float fadeSeconds = 0) => AudioCalls.Send(Entity.ID, AudioOperation.MusicPlay,
+            new AudioCommandData { Value = fadeSeconds }) != 0;
+        public bool Stop(float fadeSeconds = 0) => AudioCalls.Send(Entity.ID, AudioOperation.MusicStop,
+            new AudioCommandData { Value = fadeSeconds }) != 0;
+        public bool SetState(string name) => AudioCalls.Send(Entity.ID, AudioOperation.MusicSetState, bus: name ?? "") != 0;
+        public bool SetParameter(string name, float value) => AudioCalls.Send(Entity.ID, AudioOperation.MusicSetParameter,
+            new AudioCommandData { Value = value }, name ?? "") != 0;
+        public bool TriggerStinger(string name) => AudioCalls.Send(Entity.ID, AudioOperation.MusicStinger, bus: name ?? "") != 0;
+        public MusicSetPosition? Position => AudioCalls.ReadMusicPosition(Entity.ID, Names);
+        public string CurrentState => Position?.State ?? "";
+        public string CurrentSegment => Position?.Segment ?? "";
+        public ulong Bar => Position?.Bar ?? 0;
+        public float BeatInBar => Position?.Beat ?? 0;
+
+        public event Action<MusicSetBeat> Beat
+        {
+            add { m_Beat += value; SyncListener(); }
+            remove { m_Beat -= value; SyncListener(); }
+        }
+        public event Action<MusicSetBeat> BarStarted
+        {
+            add { m_Bar += value; SyncListener(); }
+            remove { m_Bar -= value; SyncListener(); }
+        }
+        public event Action<MusicSetCue> Cue
+        {
+            add { m_Cue += value; SyncListener(); }
+            remove { m_Cue -= value; SyncListener(); }
+        }
+        public event Action<MusicSetCue> StateChanged
+        {
+            add { m_State += value; SyncListener(); }
+            remove { m_State -= value; SyncListener(); }
+        }
+
+        private void SyncListener()
+        {
+            bool listen = m_Beat != null || m_Bar != null || m_Cue != null || m_State != null;
+            if (listen == m_Listening) return;
+            m_Listening = listen;
+            AudioCalls.Send(Entity.ID, AudioOperation.MusicListen, new AudioCommandData { Flags = listen ? 1 : 0 });
+            if (listen)
+            {
+                var listeners = s_Listeners;
+                s_Listeners = new MusicSetPlayer[listeners.Length + 1];
+                listeners.CopyTo(s_Listeners, 0);
+                s_Listeners[listeners.Length] = this;
+            }
+            else
+            {
+                var listeners = s_Listeners;
+                int index = Array.IndexOf(listeners, this);
+                if (index < 0) return;
+                s_Listeners = new MusicSetPlayer[listeners.Length - 1];
+                Array.Copy(listeners, 0, s_Listeners, 0, index);
+                Array.Copy(listeners, index + 1, s_Listeners, index, listeners.Length - index - 1);
+            }
+        }
+
+        internal static void DispatchEvents()
+        {
+            foreach (var listener in s_Listeners)
+                while (listener.m_Listening && AudioCalls.ReadMusicEvent(listener.Entity.ID, out var data))
+                {
+                    try
+                    {
+                        switch (data.Priority)
+                        {
+                            case 0: listener.m_Beat?.Invoke(new MusicSetBeat(data.Source, data.Local, data.VoiceIndex)); break;
+                            case 1: listener.m_Bar?.Invoke(new MusicSetBeat(data.Source, data.Local, data.VoiceIndex)); break;
+                            case 2: listener.m_Cue?.Invoke(new MusicSetCue(data.Source, AudioCalls.ReadMusicName(data, listener.Names))); break;
+                            case 3: listener.m_State?.Invoke(new MusicSetCue(data.Source, AudioCalls.ReadMusicName(data, listener.Names))); break;
+                        }
+                    }
+                    catch (Exception error) { Log.Error(error.ToString()); }
+                }
+        }
+
+        internal static void ResetEvents()
+        {
+            foreach (var listener in s_Listeners)
+            {
+                listener.m_Listening = false;
+                listener.m_Beat = listener.m_Bar = null;
+                listener.m_Cue = listener.m_State = null;
+            }
+            s_Listeners = Array.Empty<MusicSetPlayer>();
+        }
+    }
+
     public static class AudioBus
     {
         public static float? GetUserVolumeDb(string bus) => AudioCalls.ReadBusSetting(AudioOperation.UserBusVolume, bus ?? "");
@@ -287,7 +390,8 @@ namespace Kans
         EnumerateDevices, ReadDevice, LastDeviceChange, PushGenerator, GeneratorRoom, GeneratorUnderruns, ProfileStats,
         Spatializer, SpatialBlend, ActiveHRTF,
         Occlusion, Transmission, OcclusionStrength, TransmissionStrength, OcclusionLayerMask,
-        OcclusionRadius, OcclusionSamples, CurrentOcclusion
+        OcclusionRadius, OcclusionSamples, CurrentOcclusion,
+        MusicPlay, MusicStop, MusicSetState, MusicSetParameter, MusicStinger, MusicPosition, MusicListen, MusicEvent
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -336,6 +440,35 @@ namespace Kans
 
         internal static int Send(ulong entity, AudioOperation operation, AudioCommandData data = default, string? bus = null) =>
             Call(entity, operation, &data, bus);
+
+        internal static MusicSetPosition? ReadMusicPosition(ulong entity, List<(byte[] Bytes, string Text)> names)
+        {
+            AudioCommandData data = default;
+            if (Call(entity, AudioOperation.MusicPosition, &data) == 0) return null;
+            return new MusicSetPosition(ReadMusicName(data, names),
+                CachedName(new ReadOnlySpan<byte>(data.DeviceName, data.DeviceNameLength), names),
+                data.Source, data.Value, data.Pitch);
+        }
+
+        internal static string ReadMusicName(AudioCommandData data, List<(byte[] Bytes, string Text)> names) =>
+            CachedName(new ReadOnlySpan<byte>(data.Bus, data.BusLength), names);
+
+        private static string CachedName(ReadOnlySpan<byte> bytes, List<(byte[] Bytes, string Text)> names)
+        {
+            foreach (var name in names)
+                if (bytes.SequenceEqual(name.Bytes)) return name.Text;
+            string text = Encoding.UTF8.GetString(bytes);
+            names.Add((bytes.ToArray(), text));
+            return text;
+        }
+
+        internal static bool ReadMusicEvent(ulong entity, out AudioCommandData data)
+        {
+            AudioCommandData result = default;
+            bool success = Call(entity, AudioOperation.MusicEvent, &result) != 0;
+            data = result;
+            return success;
+        }
 
         internal static string ReadBus(ulong entity)
         {

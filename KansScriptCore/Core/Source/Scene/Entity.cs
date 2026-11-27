@@ -21,6 +21,7 @@ namespace Kans
         private SpringBoneComponent m_SpringBone;
         private MotionColliderComponent m_MotionCollider;
         private AudioSource m_AudioSource;
+        private MusicSetPlayer m_MusicSet;
 
         public Entity() : this(0) { }
         public Entity(ulong id)
@@ -42,6 +43,7 @@ namespace Kans
             m_SpringBone = new SpringBoneComponent { Entity = this };
             m_MotionCollider = new MotionColliderComponent { Entity = this };
             m_AudioSource = new AudioSource { Entity = this };
+            m_MusicSet = new MusicSetPlayer { Entity = this };
         }
 
         protected virtual void OnCreate() { }
@@ -137,6 +139,7 @@ namespace Kans
             if (typeof(T) == typeof(SpringBone) || typeof(T) == typeof(SpringBoneComponent)) return (T)(Component)m_SpringBone;
             if (typeof(T) == typeof(MotionCollider) || typeof(T) == typeof(MotionColliderComponent)) return (T)(Component)m_MotionCollider;
             if (typeof(T) == typeof(AudioSource)) return (T)(Component)m_AudioSource;
+            if (typeof(T) == typeof(MusicSetPlayer)) return (T)(Component)m_MusicSet;
             return new T { Entity = this };
         }
         public unsafe T AddComponent<T>() where T : Component, new()
@@ -172,6 +175,7 @@ namespace Kans
             (typeof(T) == typeof(SpringBone) || typeof(T) == typeof(SpringBoneComponent)) ? ComponentIds.SpringBoneComponent :
             (typeof(T) == typeof(MotionCollider) || typeof(T) == typeof(MotionColliderComponent)) ? ComponentIds.MotionColliderComponent :
             typeof(T) == typeof(AudioSource) ? ComponentIds.AudioSourceComponent :
+            typeof(T) == typeof(MusicSetPlayer) ? ComponentIds.MusicSetPlayerComponent :
             typeof(T) == typeof(TextComponent) ? ComponentIds.TextComponent :
             typeof(T) == typeof(SpriteRendererComponent) ? ComponentIds.SpriteRendererComponent :
             typeof(T) == typeof(UIScreenComponent) ? ComponentIds.UIScreenComponent :

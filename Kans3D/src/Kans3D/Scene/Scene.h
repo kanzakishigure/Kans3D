@@ -28,6 +28,8 @@ namespace Kans
     }
     class AssetManager;
     class AssetChangeObserver;
+    class MusicSetPlayer;
+    struct MusicSetEvent;
     class RenderWorld;
     class RenderAssetCache;
     class VideoDecoder;
@@ -289,6 +291,11 @@ namespace Kans
         float GetTimeScale() const { return m_TimeScale; }
         void SetAudioEngine(AudioEngine* engine);
         void PlayAudioSource(Entity entity);
+        bool            PlayMusicSet(Entity entity, double fadeSeconds = 0);
+        void            StopMusicSet(Entity entity, double fadeSeconds = 0);
+        MusicSetPlayer* GetMusicSetPlayer(Entity entity) const;
+        void            ListenToMusicSet(Entity entity, bool listen);
+        bool            ReadMusicSetEvent(Entity entity, MusicSetEvent& event);
         void StopAudioSource(Entity entity);
         // The clip must be ready in this scene's AssetManager. An invalid handle means no start.
         AudioEventTriggerResult PlayEvent(AssetID event, const AudioEventParams& params = {});
@@ -364,6 +371,9 @@ namespace Kans
         void              StartAudio();
         void              StopAudio();
         void              UpdateAudio(double seconds);
+        void              UpdateMusicSets();
+        bool              PrepareMusicSet(Entity entity, bool restart, bool reload, double fadeSeconds = 0);
+        std::shared_ptr<AssetChangeObserver> m_MusicSetChanges;
         void               UpdateAudioListeners(double seconds);
         void               UpdateAudioZones(AudioListenerState* listeners, size_t listenerCount);
         AudioEventTriggerResult

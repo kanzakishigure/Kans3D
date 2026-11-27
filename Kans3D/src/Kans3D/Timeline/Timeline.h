@@ -164,7 +164,8 @@ namespace Kans
     enum class TimelineClockSource : uint8_t
     {
         Timeline,
-        Audio
+        Audio,
+        MusicSet
     };
     struct TimelinePlayerComponent
     {

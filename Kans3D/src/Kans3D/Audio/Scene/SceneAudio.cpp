@@ -2,6 +2,7 @@
 #include <cmath>
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Audio/AudioEventPlayer.h"
+#include "Kans3D/Audio/MusicSetPlayer.h"
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Scene/Scene.h"
 #include "Kans3D/Timeline/TimelineAudioPlayer.h"
@@ -30,6 +31,214 @@ namespace Kans
         }
     } // namespace
 
+    struct MusicSetPlayerComponent::Runtime
+    {
+        explicit Runtime(AudioEngine& engine, const MusicSetPlayerSettings& settings) :
+            Settings(settings), Player(engine)
+        {}
+        MusicSetPlayerSettings                       Settings;
+        AudioClipRegistry                            Clips;
+        MusicSetPlayer                               Player;
+        Ref<const MusicSetAsset>                     Source;
+        std::map<AssetID, Ref<const AudioClipAsset>> RegisteredClips;
+
+        void Listen(bool listen)
+        {
+            Read = Size = 0;
+            if (!listen)
+                Player.SetEventCallback({});
+            else
+                Player.SetEventCallback([this](const MusicSetEvent& event) {
+                    if (Size == Events.size())
+                        return;
+                    Events[(Read + Size++) % Events.size()] = event;
+                });
+        }
+        std::array<MusicSetEvent, 256> Events;
+        size_t                         Read = 0, Size = 0;
+    };
+
+    MusicSetPlayerComponent::MusicSetPlayerComponent()  = default;
+    MusicSetPlayerComponent::~MusicSetPlayerComponent() = default;
+    MusicSetPlayerComponent::MusicSetPlayerComponent(const MusicSetPlayerComponent& other) :
+        MusicSetPlayerSettings(other)
+    {}
+    MusicSetPlayerComponent::MusicSetPlayerComponent(MusicSetPlayerComponent&&) noexcept            = default;
+    MusicSetPlayerComponent& MusicSetPlayerComponent::operator=(MusicSetPlayerComponent&&) noexcept = default;
+    MusicSetPlayerComponent& MusicSetPlayerComponent::operator=(const MusicSetPlayerComponent& other)
+    {
+        if (this != &other)
+        {
+            MusicSetPlayerSettings::operator=(other);
+            m_Runtime.reset();
+            m_PlayRequested = m_Listen = false;
+        }
+        return *this;
+    }
+    bool MusicSetPlayerComponent::operator==(const MusicSetPlayerComponent& other) const
+    {
+        return MusicSetPlayerSettings::operator==(other);
+    }
+
+    bool Scene::PrepareMusicSet(Entity entity, bool restart, bool reload, double fadeSeconds)
+    {
+        if (!m_AudioRunning || !m_AudioEngine || !m_PrefabAssets || !entity ||
+            !entity.HasComponent<MusicSetPlayerComponent>())
+            return false;
+        auto& component = entity.GetComponent<MusicSetPlayerComponent>();
+        if (!component.Asset.IsValid())
+        {
+            component.m_Runtime.reset();
+            return false;
+        }
+        auto* current = component.m_Runtime.get();
+        if (!reload && current && current->Settings.Asset == component.Asset &&
+            current->Settings.BusOverride == component.BusOverride)
+        {
+            if (!current->Player.GetData())
+                return false;
+            if (current->Settings != static_cast<const MusicSetPlayerSettings&>(component))
+            {
+                const auto& parameters = current->Player.GetData()->Parameters;
+                for (const auto& parameter : parameters)
+                    if (current->Settings.Parameters.count(parameter.Name) &&
+                        !component.Parameters.count(parameter.Name))
+                        current->Player.SetParameter(parameter.Name, parameter.Default);
+                for (const auto& [name, value] : component.Parameters)
+                {
+                    const auto old = current->Settings.Parameters.find(name);
+                    if (old == current->Settings.Parameters.end() || old->second != value)
+                        current->Player.SetParameter(name, value);
+                }
+                current->Settings = component;
+            }
+            return !restart || current->Player.Play(component.InitialState, fadeSeconds);
+        }
+        auto       next = std::make_unique<MusicSetPlayerComponent::Runtime>(*m_AudioEngine, component);
+        const auto fail = [&](const AssetError& error) {
+            WarnAudioOnce("Music set " + component.Asset.ToString() + " " + error.Message);
+            if (!component.m_Runtime ||
+                static_cast<const MusicSetPlayerSettings&>(component) != component.m_Runtime->Settings)
+                component.m_Runtime = std::move(next);
+            return false;
+        };
+        const auto asset = m_PrefabAssets->Load<MusicSetAsset>(component.Asset);
+        if (const auto* error = std::get_if<AssetError>(&asset))
+            return fail(*error);
+        const auto resolve = [&](AssetID id) -> MusicSetClip {
+            const auto audio = m_PrefabAssets->Load<AudioClipAsset>(id);
+            if (const auto* clip = std::get_if<Ref<const AudioClipAsset>>(&audio))
+                if (const auto sound = next->Clips.Acquire(*m_AudioEngine, *clip))
+                {
+                    const MusicSetClip result {*sound, (*clip)->GetData().Volume};
+                    next->RegisteredClips.emplace(id, *clip);
+                    return result;
+                }
+            return {};
+        };
+        next->Source = std::get<Ref<const MusicSetAsset>>(asset);
+        if (auto error = next->Player.Load(next->Source, resolve, component.BusOverride, uint64_t(entity.GetUUID())))
+            return fail(*error);
+        for (const auto& [name, value] : component.Parameters)
+            next->Player.SetParameter(name, value);
+        next->Listen(component.m_Listen);
+        const auto position = !restart && current ? current->Player.GetPosition() : std::nullopt;
+        if (restart || component.m_PlayRequested || position)
+        {
+            const auto& states    = next->Player.GetData()->States;
+            const auto  keepState = position && std::any_of(states.begin(), states.end(), [&](const auto& state) {
+                                       return state.Name == position->State;
+                                    });
+            if (!next->Player.Play(keepState ? position->State : std::string_view(component.InitialState), fadeSeconds))
+                return fail({AssetErrorCode::InvalidData, "Could not start its initial state"});
+            if (keepState)
+                if (const auto newPosition = next->Player.GetPosition();
+                    newPosition && newPosition->Segment == position->Segment)
+                    next->Player.SeekSeconds(position->Seconds);
+        }
+        component.m_Runtime = std::move(next);
+        return true;
+    }
+
+    bool Scene::PlayMusicSet(Entity entity, double fadeSeconds)
+    {
+        if (!entity || entity.m_Scene != this || !entity.HasComponent<MusicSetPlayerComponent>())
+            return false;
+        auto& component           = entity.GetComponent<MusicSetPlayerComponent>();
+        component.m_PlayRequested = true;
+        return PrepareMusicSet(entity, true, false, fadeSeconds);
+    }
+
+    void Scene::StopMusicSet(Entity entity, double fadeSeconds)
+    {
+        if (!entity || entity.m_Scene != this || !entity.HasComponent<MusicSetPlayerComponent>())
+            return;
+        entity.GetComponent<MusicSetPlayerComponent>().m_PlayRequested = false;
+        if (auto* player = GetMusicSetPlayer(entity))
+            player->Stop(fadeSeconds);
+    }
+
+    MusicSetPlayer* Scene::GetMusicSetPlayer(Entity entity) const
+    {
+        if (!entity || entity.m_Scene != this || !entity.HasComponent<MusicSetPlayerComponent>())
+            return nullptr;
+        const auto& runtime = entity.GetComponent<MusicSetPlayerComponent>().m_Runtime;
+        return runtime && runtime->Player.GetData() ? &runtime->Player : nullptr;
+    }
+
+    void Scene::ListenToMusicSet(Entity entity, bool listen)
+    {
+        if (!entity || entity.m_Scene != this || !entity.HasComponent<MusicSetPlayerComponent>())
+            return;
+        auto& component    = entity.GetComponent<MusicSetPlayerComponent>();
+        component.m_Listen = listen;
+        if (auto* runtime = component.m_Runtime.get())
+            runtime->Listen(listen);
+    }
+
+    bool Scene::ReadMusicSetEvent(Entity entity, MusicSetEvent& event)
+    {
+        if (!entity || entity.m_Scene != this || !entity.HasComponent<MusicSetPlayerComponent>())
+            return false;
+        auto* runtime = entity.GetComponent<MusicSetPlayerComponent>().m_Runtime.get();
+        if (!runtime || !runtime->Size)
+            return false;
+        event         = runtime->Events[runtime->Read];
+        runtime->Read = (runtime->Read + 1) % runtime->Events.size();
+        --runtime->Size;
+        return true;
+    }
+
+    void Scene::UpdateMusicSets()
+    {
+        if (!m_AudioEngine || !m_AudioRunning)
+            return;
+        const auto changes = m_MusicSetChanges ? m_MusicSetChanges->Drain() : std::vector<AssetID>();
+        for (auto handle : m_Registry.view<MusicSetPlayerComponent>())
+        {
+            auto& component = m_Registry.get<MusicSetPlayerComponent>(handle);
+            auto* runtime   = component.m_Runtime.get();
+            if (!runtime && !component.m_PlayRequested)
+                component.m_PlayRequested = component.PlayOnStart;
+            const auto reload = std::any_of(changes.begin(), changes.end(), [&](AssetID changed) {
+                if (!m_PrefabAssets)
+                    return false;
+                if (changed == component.Asset)
+                    return !runtime || !runtime->Source ||
+                           m_PrefabAssets->GetLoaded<MusicSetAsset>(changed) != runtime->Source;
+                if (runtime)
+                    if (auto clip = runtime->RegisteredClips.find(changed); clip != runtime->RegisteredClips.end())
+                        return m_PrefabAssets->GetLoaded<AudioClipAsset>(changed) != clip->second;
+                return false;
+            });
+            if (reload || (runtime && static_cast<const MusicSetPlayerSettings&>(component) != runtime->Settings) ||
+                (!runtime && component.Asset.IsValid()))
+                PrepareMusicSet({handle, this}, false, reload);
+            if (component.m_Runtime)
+                component.m_Runtime->Player.Update();
+        }
+    }
+
     bool Scene::OwnsAudioSource(Entity entity) const
     {
         return entity.m_Scene == this && m_Registry.valid(entity.m_EntityHandle) &&
@@ -39,9 +248,14 @@ namespace Kans
     {
         if (std::isfinite(scale) && scale >= 0)
         {
+            const bool changedHold = (m_TimeScale == 0) != (scale == 0);
             m_TimeScale = scale;
             if (m_AudioEngine && m_AudioRunning)
+            {
                 m_AudioEngine->SetTimeScale(scale);
+                if (changedHold)
+                    UpdateMusicSets();
+            }
         }
     }
     void Scene::SetAudioEngine(AudioEngine* engine)
@@ -94,6 +308,7 @@ namespace Kans
         for (auto handle : m_Registry.view<AudioSourceComponent>())
             if (m_Registry.get<AudioSourceComponent>(handle).PlayOnStart)
                 PlayAudioSource({handle, this});
+        UpdateMusicSets();
     }
     void Scene::StopAudio()
     {
@@ -104,6 +319,12 @@ namespace Kans
             m_Registry.get<AudioSourceComponent>(handle).m_Runtime.reset();
         for (auto handle : m_Registry.view<AudioListenerComponent>())
             m_Registry.get<AudioListenerComponent>(handle).m_HasPosition = false;
+        for (auto handle : m_Registry.view<MusicSetPlayerComponent>())
+        {
+            auto& component = m_Registry.get<MusicSetPlayerComponent>(handle);
+            component.m_Runtime.reset();
+            component.m_PlayRequested = component.m_Listen = false;
+        }
         m_EntityAudioEvents.clear();
         m_AudioClips.Clear();
         m_AudioZones.clear();
@@ -814,6 +1035,7 @@ namespace Kans
         if (m_AudioEngine)
         {
             m_AudioEngine->SetGamePaused(true);
+            UpdateMusicSets();
             for (auto handle : m_Registry.view<TimelinePlayerComponent>())
                 if (const auto& player = m_Registry.get<TimelinePlayerComponent>(handle).Player;
                     player && player->m_Audio)
@@ -833,6 +1055,7 @@ namespace Kans
             if (const auto& player = m_Registry.get<TimelinePlayerComponent>(handle).Player; player && player->m_Audio)
                 player->m_Audio->SetGamePaused(false);
         m_AudioEngine->SetGamePaused(false);
+        UpdateMusicSets();
         UpdateAudio(0);
     }
 } // namespace Kans

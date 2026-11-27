@@ -212,6 +212,7 @@ namespace Kans
     };
 
     class AudioMusicPlayer;
+    class MusicSetPlayer;
 
     // All public calls are main-thread only. Handles must be used with their owning engine.
     class AudioEngine
@@ -423,6 +424,15 @@ namespace Kans
         friend class Scene;
         void SetVoiceEmitter(AudioVoiceHandle handle, const AudioSpatialParams& emitter, bool followPoint);
         friend class AudioMusicPlayer;
+        friend class MusicSetPlayer;
+        void                    ReserveMusicScheduling(size_t voices);
+        void                    BeginMusicSchedule();
+        void                    EndMusicSchedule();
+        uint64_t                MusicSchedulingLead() const;
+        float                   MusicBusRate(const std::string& bus) const;
+        bool                    MusicBusPoliciesMatch(const std::string& a, const std::string& b) const;
+        std::optional<uint64_t> GetMusicVoiceStart(AudioVoiceHandle voice) const;
+        void                    RecordMusicEvent(AudioProfileEventType type, AudioVoiceHandle voice, uint64_t frame);
         friend class AudioEventPlayer;
         void
         ProfileRejection(AudioVoiceReason reason, AudioVoiceOwner owner, AssetID clip = {}, AudioSoundID sound = 0);
@@ -444,11 +454,13 @@ namespace Kans
                                                AssetID                                      attenuationOverride = {});
         AudioVoiceHandle
         CreateVoice(const AudioVoiceDesc& desc, uint64_t loopStart, uint64_t loopEnd, bool oneShot = false);
-        uint64_t                   StartVoice(AudioVoiceHandle        handle,
-                                              uint64_t                clockFrame,
-                                              uint64_t                fadeFrames,
-                                              AudioFadeCurve          curve,
-                                              const AudioVoiceWindow* window = nullptr);
+        uint64_t StartVoice(AudioVoiceHandle        handle,
+                            uint64_t                clockFrame,
+                            uint64_t                fadeFrames,
+                            AudioFadeCurve          curve,
+                            const AudioVoiceWindow* window      = nullptr,
+                            std::optional<uint64_t> sourceFrame = std::nullopt,
+                            float                   initialGain = 1);
         std::optional<std::string> RebuildOutput(std::string_view id, SpeakerMode mode, AudioDeviceChangeReason reason);
         std::optional<std::string> ReformatMix(const AudioOutputFormat& format);
         void                       UpdateOutput();

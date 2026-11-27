@@ -85,6 +85,8 @@ namespace Kans
                         return entity.HasComponent<TimelinePlayerComponent>();
                     case Scripting::ComponentType::AudioSourceComponent:
                         return entity.HasComponent<AudioSourceComponent>();
+                    case Scripting::ComponentType::MusicSetPlayerComponent:
+                        return entity.HasComponent<MusicSetPlayerComponent>();
                     case Scripting::ComponentType::AnimatorComponent:
                         return entity.HasComponent<AnimatorComponent>();
                     case Scripting::ComponentType::TransformComponent:

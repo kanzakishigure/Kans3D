@@ -4,6 +4,7 @@
 #include "Kans3D/Animation/ContactTracks.h"
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Asset/Runtime/MaterialParameterCollection.h"
+#include "Kans3D/Audio/MusicSetPlayer.h"
 #include "Kans3D/Renderer/Shading/Skinning.h"
 #include "Kans3D/Scene/Entity.h"
 #include "Kans3D/Script/ScriptEngine.h"
@@ -1194,6 +1195,9 @@ namespace Kans
         if (!Evaluate(to))
             return false;
         m_Time = to;
+        if (const auto* c = Component(); c && c->ClockSource == TimelineClockSource::MusicSet)
+            if (auto* music = m_Scene.GetMusicSetPlayer(m_Scene.GetEntityByUUID(m_Owner)))
+                music->SeekSeconds(std::max(0.0, to - c->AudioOffset));
         UpdateAudio(true);
         // Per pass dedup survives backward seeks: rewinding alone does not rearm a marker.
         if (m_Playing && to > from)
@@ -1256,19 +1260,28 @@ namespace Kans
             }
             return evaluated;
         };
-        if (m_Audio && !m_Scene.m_AudioPaused && c->Speed > 0 && c->ClockSource == TimelineClockSource::Audio)
-            if (auto clock = m_Audio->GetClockTime(c->AudioClockTrack))
+        std::optional<double> clock;
+        if (c->Speed > 0)
+        {
+            if (m_Audio && !m_Scene.m_AudioPaused && c->ClockSource == TimelineClockSource::Audio)
+                clock = m_Audio->GetClockTime(c->AudioClockTrack);
+            else if (c->ClockSource == TimelineClockSource::MusicSet)
+                if (const auto* music = m_Scene.GetMusicSetPlayer(m_Scene.GetEntityByUUID(m_Owner)))
+                    if (auto position = music->GetPosition())
+                        clock = position->Seconds + c->AudioOffset;
+        }
+        if (clock)
+        {
+            const auto target = std::clamp(*clock, 0.0, length);
+            if (target < m_Time)
             {
-                const auto target = std::clamp(*clock, 0.0, length);
-                if (target < m_Time)
-                {
-                    m_Time = target;
-                    if (evaluate(m_Time))
-                        UpdateAudio();
-                    return;
-                }
-                remaining = target - m_Time;
+                m_Time = target;
+                if (evaluate(m_Time))
+                    UpdateAudio();
+                return;
             }
+            remaining = target - m_Time;
+        }
         bool wrapped = false;
         while (m_Playing && remaining > 0)
         {

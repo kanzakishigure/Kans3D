@@ -57,7 +57,7 @@ namespace Kans
                     x->second.SphereCollider != y->second.SphereCollider ||
                     x->second.CapsuleCollider != y->second.CapsuleCollider ||
                     x->second.MeshCollider != y->second.MeshCollider || x->second.GlobalWind != y->second.GlobalWind ||
-                    !(x->second.AudioSource == y->second.AudioSource) ||
+                    !(x->second.AudioSource == y->second.AudioSource) || x->second.MusicSet != y->second.MusicSet ||
                     x->second.AudioReverbZone != y->second.AudioReverbZone ||
                     x->second.ForceField != y->second.ForceField || x->second.Ragdoll != y->second.Ragdoll ||
                     x->second.Particles != y->second.Particles || x->second.Vehicle != y->second.Vehicle ||
@@ -208,6 +208,9 @@ namespace Kans
             change.AudioSource = part.HasComponent<AudioSourceComponent>() ?
                                      std::optional<AudioSourceComponent>(part.GetComponent<AudioSourceComponent>()) :
                                      std::nullopt;
+            change.MusicSet        = part.HasComponent<MusicSetPlayerComponent>() ?
+                                         std::optional(part.GetComponent<MusicSetPlayerComponent>()) :
+                                         std::nullopt;
             change.AudioReverbZone = part.HasComponent<AudioReverbZoneComponent>() ?
                                          std::optional(part.GetComponent<AudioReverbZoneComponent>()) :
                                          std::nullopt;
@@ -492,6 +495,15 @@ namespace Kans
             }
             else if (entity.HasComponent<AudioSourceComponent>())
                 entity.RemoveComponent<AudioSourceComponent>();
+            if (change != instance.Overrides.end() && change->second.MusicSet)
+            {
+                if (!entity.HasComponent<MusicSetPlayerComponent>())
+                    entity.AddComponent<MusicSetPlayerComponent>(*change->second.MusicSet);
+                else if (entity.GetComponent<MusicSetPlayerComponent>() != *change->second.MusicSet)
+                    entity.SetComponent<MusicSetPlayerComponent>(*change->second.MusicSet);
+            }
+            else if (entity.HasComponent<MusicSetPlayerComponent>())
+                entity.RemoveComponent<MusicSetPlayerComponent>();
             if (change != instance.Overrides.end() && change->second.AudioReverbZone)
             {
                 if (!entity.HasComponent<AudioReverbZoneComponent>())

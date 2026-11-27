@@ -89,6 +89,44 @@ namespace Kans
             Require(std::isfinite(value), "Non-finite Scene number");
             return value;
         }
+        AssetID Identity(const YAML::Node& node);
+
+        YAML::Node EncodeMusicSet(const MusicSetPlayerComponent& component)
+        {
+            YAML::Node node;
+            if (component.Asset.IsValid())
+                node["Asset"] = component.Asset.ToString();
+            node["BusOverride"]  = component.BusOverride;
+            node["InitialState"] = component.InitialState;
+            node["PlayOnStart"]  = component.PlayOnStart;
+            node["Parameters"]   = YAML::Node(YAML::NodeType::Map);
+            for (const auto& [name, value] : component.Parameters)
+                node["Parameters"][name] = value;
+            return node;
+        }
+
+        MusicSetPlayerComponent DecodeMusicSet(const YAML::Node& node)
+        {
+            Keys(node, {"Asset", "BusOverride", "InitialState", "PlayOnStart", "Parameters"});
+            MusicSetPlayerComponent component;
+            if (node["Asset"])
+                component.Asset = Identity(node["Asset"]);
+            if (node["BusOverride"])
+                component.BusOverride = Text(node["BusOverride"]);
+            if (node["InitialState"])
+                component.InitialState = Text(node["InitialState"]);
+            if (node["PlayOnStart"])
+                component.PlayOnStart = node["PlayOnStart"].as<bool>();
+            if (const auto parameters = node["Parameters"])
+            {
+                Require(parameters.IsMap(), "Music set parameters must be a map");
+                for (const auto& pair : parameters)
+                    Require(component.Parameters.emplace(Text(pair.first), Number(pair.second)).second,
+                            "Duplicate music set parameter override");
+            }
+            return component;
+        }
+
         YAML::Node EncodeAudioSource(const AudioSourceComponent& c)
         {
             YAML::Node v;
@@ -1186,6 +1224,8 @@ namespace Kans
                     item["JointComponent"] = PhysicsYaml::Encode(*change.Joint);
                 if (change.GlobalWind)
                     item["WindZoneComponent"] = PhysicsYaml::Encode(*change.GlobalWind);
+                if (change.MusicSet)
+                    item["MusicSetPlayerComponent"] = EncodeMusicSet(*change.MusicSet);
                 if (change.AudioSource)
                     item["AudioSourceComponent"] = EncodeAudioSource(*change.AudioSource);
                 if (change.AudioReverbZone)
@@ -1253,6 +1293,7 @@ namespace Kans
                       "MeshColliderComponent",
                       "WindZoneComponent",
                       "AudioSourceComponent",
+                      "MusicSetPlayerComponent",
                       "AudioReverbZoneComponent",
                       "ForceFieldComponent",
                       "RagdollComponent",
@@ -1318,6 +1359,8 @@ namespace Kans
                     PhysicsYaml::Decode(item["WindZoneComponent"], c);
                     change.GlobalWind = c;
                 }
+                if (item["MusicSetPlayerComponent"])
+                    change.MusicSet = DecodeMusicSet(item["MusicSetPlayerComponent"]);
                 if (item["AudioSourceComponent"])
                     change.AudioSource = DecodeAudioSource(item["AudioSourceComponent"]);
                 if (item["AudioReverbZoneComponent"])
@@ -1819,6 +1862,8 @@ namespace Kans
                 node["SpringBoneComponent"] = PhysicsYaml::Encode(entity.GetComponent<SpringBoneComponent>());
             if (entity.HasComponent<ClothComponent>())
                 node["ClothComponent"] = PhysicsYaml::Encode(entity.GetComponent<ClothComponent>());
+            if (entity.HasComponent<MusicSetPlayerComponent>())
+                node["MusicSetPlayerComponent"] = EncodeMusicSet(entity.GetComponent<MusicSetPlayerComponent>());
             if (entity.HasComponent<AudioSourceComponent>())
                 node["AudioSourceComponent"] = EncodeAudioSource(entity.GetComponent<AudioSourceComponent>());
             if (entity.HasComponent<AudioListenerComponent>())
@@ -1869,6 +1914,8 @@ namespace Kans
                 v["WrapMode"]    = c.WrapMode == TimelineWrapMode::Reset ? "Reset" : "Hold";
                 if (c.ClockSource == TimelineClockSource::Audio)
                     v["ClockSource"] = "Audio";
+                else if (c.ClockSource == TimelineClockSource::MusicSet)
+                    v["ClockSource"] = "MusicSet";
                 if (c.AudioClockTrack != 0)
                     v["AudioClockTrack"] = c.AudioClockTrack;
                 if (c.AudioOffset != 0)
@@ -2388,6 +2435,7 @@ namespace Kans
                       "CharacterControllerComponent",
                       "JointComponent",
                       "AudioSourceComponent",
+                      "MusicSetPlayerComponent",
                       "AudioListenerComponent",
                       "AudioReverbZoneComponent",
                       "TextComponent",
@@ -2532,6 +2580,8 @@ namespace Kans
                     PhysicsYaml::Decode(node["ClothComponent"], c);
                     entity.AddComponent<ClothComponent>(c);
                 }
+                if (node["MusicSetPlayerComponent"])
+                    entity.AddComponent<MusicSetPlayerComponent>(DecodeMusicSet(node["MusicSetPlayerComponent"]));
                 if (node["AudioSourceComponent"])
                     entity.AddComponent<AudioSourceComponent>(DecodeAudioSource(node["AudioSourceComponent"]));
                 if (node["AudioReverbZoneComponent"])
@@ -2615,9 +2665,12 @@ namespace Kans
                     if (v["ClockSource"])
                     {
                         const auto clock = v["ClockSource"].as<std::string>();
-                        Require(clock == "Timeline" || clock == "Audio", "Invalid timeline clock source");
+                        Require(clock == "Timeline" || clock == "Audio" || clock == "MusicSet",
+                                "Invalid timeline clock source");
                         if (clock == "Audio")
                             c.ClockSource = TimelineClockSource::Audio;
+                        else if (clock == "MusicSet")
+                            c.ClockSource = TimelineClockSource::MusicSet;
                     }
                     if (v["AudioClockTrack"])
                         c.AudioClockTrack = v["AudioClockTrack"].as<size_t>();

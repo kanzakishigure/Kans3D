@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "ScriptAudio.h"
 #include "Kans3D/Asset/Manager/AssetManager.h"
+#include "Kans3D/Audio/MusicSetPlayer.h"
 #include "Kans3D/Core/Utilities/StringUtils.h"
 #include "Kans3D/Scene/Entity.h"
 #include "ScriptEngine.h"
@@ -51,7 +52,15 @@ namespace Kans::ScriptAudio
             OcclusionLayerMask,
             OcclusionRadius,
             OcclusionSamples,
-            CurrentOcclusion
+            CurrentOcclusion,
+            MusicPlay,
+            MusicStop,
+            MusicSetState,
+            MusicSetParameter,
+            MusicStinger,
+            MusicPosition,
+            MusicListen,
+            MusicEvent
         };
         constexpr int32_t Write = 1, EntityTarget = 2;
         using Data   = Scripting::AudioCommandData;
@@ -433,6 +442,68 @@ namespace Kans::ScriptAudio
             }
         }
 
+        int32_t MusicCommand(Scene& scene, Entity entity, Operation operation, Data& data)
+        {
+            if (!entity || !entity.HasComponent<MusicSetPlayerComponent>())
+                return 0;
+            if (operation == Operation::MusicPlay)
+                return std::isfinite(data.Value) && data.Value >= 0 && scene.PlayMusicSet(entity, data.Value);
+            if (operation == Operation::MusicStop)
+            {
+                if (!std::isfinite(data.Value) || data.Value < 0)
+                    return 0;
+                scene.StopMusicSet(entity, data.Value);
+                return 1;
+            }
+            if (operation == Operation::MusicListen)
+            {
+                scene.ListenToMusicSet(entity, data.Flags != 0);
+                return 1;
+            }
+            if (operation == Operation::MusicEvent)
+            {
+                MusicSetEvent event {};
+                if (!scene.ReadMusicSetEvent(entity, event))
+                    return 0;
+                data.Priority   = int32_t(event.Type);
+                data.Source     = event.Frame;
+                data.Local      = event.Bar;
+                data.VoiceIndex = event.Beat;
+                data.Bus        = event.Name.data();
+                data.BusLength  = int32_t(event.Name.size());
+                return 1;
+            }
+            auto* player = scene.GetMusicSetPlayer(entity);
+            if (!player)
+                return 0;
+            const std::string_view name(data.Bus ? data.Bus : "", data.BusLength);
+            switch (operation)
+            {
+                case Operation::MusicSetState:
+                    return player->SetState(name);
+                case Operation::MusicSetParameter:
+                    return player->SetParameter(name, data.Value);
+                case Operation::MusicStinger:
+                    return player->TriggerStinger(name);
+                case Operation::MusicPosition:
+                    if (const auto position = player->GetPosition())
+                    {
+                        data.Bus              = position->State.data();
+                        data.BusLength        = int32_t(position->State.size());
+                        data.DeviceName       = position->Segment.data();
+                        data.DeviceNameLength = int32_t(position->Segment.size());
+                        data.Source           = position->Bar;
+                        data.Value            = float(position->BeatInBar);
+                        data.Pitch            = float(position->Seconds);
+                        return 1;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            return 0;
+        }
+
         int32_t KANS_SCRIPT_CALL Command(uint64_t entityID, int32_t command, Data* data) noexcept
         {
             const auto operation = Operation(command);
@@ -514,6 +585,8 @@ namespace Kans::ScriptAudio
                     return 1;
                 }
                 auto entity = scene->GetEntityByUUID(entityID);
+                if (operation >= Operation::MusicPlay && operation <= Operation::MusicEvent)
+                    return MusicCommand(*scene, entity, operation, *data);
                 if (!entity || !entity.HasComponent<AudioSourceComponent>())
                 {
                     scene->WarnAudioOnce("missing audio source on entity " + std::to_string(entityID));

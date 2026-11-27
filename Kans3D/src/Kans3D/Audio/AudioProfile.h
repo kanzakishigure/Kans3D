@@ -95,6 +95,7 @@ namespace Kans
         AudioOcclusionResult    Acoustics;
         std::optional<uint64_t> OcclusionAgeFrames;
         bool                    OcclusionStale = false;
+        std::optional<uint64_t> PendingMusicFrame;
     };
 
     enum class AudioProfileEventType
@@ -106,7 +107,11 @@ namespace Kans
         Virtualised,
         Revived,
         Underrun,
-        DeviceChanged
+        DeviceChanged,
+        TransitionScheduled,
+        TransitionStarted,
+        StingerScheduled,
+        StingerStarted
     };
     struct AudioProfileEvent
     {

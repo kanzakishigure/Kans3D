@@ -35,6 +35,7 @@ namespace Kans
         std::optional<ShapeKeysComponent>      ShapeKeys;
         std::optional<MaterialParameterDriversComponent> MaterialDrivers;
         std::optional<AudioSourceComponent>              AudioSource;
+        std::optional<MusicSetPlayerComponent>           MusicSet;
         std::optional<AudioListenerComponent>            AudioListener;
         std::optional<AudioReverbZoneComponent>          AudioReverbZone;
         std::optional<PrefabAttachmentComponent>         PrefabParent;
