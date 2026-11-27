@@ -8,14 +8,14 @@ namespace Kans
     OrthographicCamera::OrthographicCamera(float left, float right, float bottom, float top) :
         m_ProjectionMatrix(glm::ortho(left, right, bottom, top)), m_ViewMatrix(glm::mat4(1.0f))
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         m_ViewProjectionMatrtix = m_ProjectionMatrix * m_ViewMatrix;
     }
 
     void OrthographicCamera::SetProjection(float left, float right, float bottom, float top)
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         m_ProjectionMatrix      = glm::ortho(left, right, bottom, top);
         m_ViewProjectionMatrtix = m_ProjectionMatrix * m_ViewMatrix;
@@ -23,7 +23,7 @@ namespace Kans
 
     void OrthographicCamera::RecalculateViewMatrix()
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         glm::mat4 transform = glm::translate(glm::mat4(1.0), m_Position) *
                               glm::rotate(glm::mat4(1.0),

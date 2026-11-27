@@ -24,7 +24,7 @@ namespace Kans
     void EditorLayer::OnAttach()
     {
         EnsureBuiltinComponents();
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
         // Before anything logs, so the console shows the whole session.
         m_Console.Attach();
         RegisterPanels();
@@ -278,7 +278,7 @@ namespace Kans
         m_Assets.reset();
         m_HierarchyPanel.SetScene({});
 
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
         CLIENT_INFO_TAG("Editor", "editor layer call detach");
 
         EditorResources::ShutDown();
@@ -290,7 +290,7 @@ namespace Kans
 
     void EditorLayer::OnUpdate(TimeStep ts)
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
         // The startup splash runs the startup stages (OnImGuiRender); nothing else runs until then.
         if (!m_Startup.Finished())
             return;

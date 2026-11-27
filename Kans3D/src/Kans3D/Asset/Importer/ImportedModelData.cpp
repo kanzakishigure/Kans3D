@@ -389,11 +389,11 @@ namespace Kans
         aiFileIO io {OpenModelFile, [](aiFileIO*, aiFile* f) { delete &File(f); }, reinterpret_cast<char*>(&context)};
         // C callbacks keep STL state on our side of the DLL boundary. Serialize
         // import/error retrieval because the C error string is process-global.
-        static std::mutex importMutex;
+        static KANS_PROFILE_LOCKABLE(std::mutex, importMutex, "Model importer");
         const aiScene*    rawScene;
         std::string       parseError;
         {
-            std::lock_guard<std::mutex> lock(importMutex);
+            std::lock_guard             lock(importMutex);
             const unsigned              flags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices |
                                                 aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace;
             rawScene = aiImportFileExWithProperties(path.u8string().c_str(),

@@ -463,6 +463,7 @@ namespace Kans
 {
     RenderResult Renderer::Render(RenderWorld& world, const RenderView& input, ViewTarget& target)
     {
+        KANS_PROFILE_SCOPE("Render view");
         if (target.GetDevice() != m_Device)
             throw std::invalid_argument("Renderer target belongs to another device");
         const auto   totalStart = RenderClockMilliseconds();

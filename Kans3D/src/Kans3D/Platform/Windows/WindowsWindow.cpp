@@ -31,7 +31,7 @@ namespace Kans
 
     void WindowsWindow::Init()
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         CORE_INFO(
             "create window [{0}] : ({1},{2})", m_Specification.Title, m_Specification.Width, m_Specification.Height);
@@ -113,7 +113,7 @@ namespace Kans
     }
     void WindowsWindow::Shutdown()
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
         // GLFWapi
 #ifdef _WIN32
         m_CustomFrame.reset(); // Unhook before GLFW destroys its HWND.
@@ -124,7 +124,7 @@ namespace Kans
     }
     void WindowsWindow::ProcessEvents()
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
         UpdateNormalRectangle();
         glfwPollEvents();
         if (m_PendingPlacement)
@@ -398,7 +398,7 @@ namespace Kans
 
     void WindowsWindow::SetVSync(bool enable)
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         RenderHardware::SetWindowVSync(*this, enable);
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <set>
 #include <stdexcept>
+#include "Kans3D/RHI/ProfileSubmission.h"
 #include "GraphCapture.h"
 
 namespace Kans
@@ -537,7 +538,11 @@ namespace Kans
             commands->WriteTimestamp(m_Queries, (stats.ExecutionIndex - m_QueryBase) * 2, true);
             commands->WriteTimestamp(m_Queries, (stats.ExecutionIndex - m_QueryBase) * 2 + 1);
         }
+#ifdef TRACY_ENABLE
+        RenderHardware::SubmitProfiled(device, commands, pass.Name);
+#else
         device.Submit(commands);
+#endif
         pass.Submitted = true;
         m_Submitted.push_back(p);
     }

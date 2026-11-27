@@ -17,6 +17,7 @@
 #include "Kans3D/Core/Window.h"
 #include "Kans3D/RHI/DeferredDestruction.h"
 #include "Kans3D/RHI/PipelineKey.h"
+#include "Kans3D/RHI/ProfileSubmission.h"
 #include "VulkanInternal.h"
 #include "VulkanPresentation.h"
 #include "VulkanTestProbes.h"
@@ -47,6 +48,10 @@ namespace Kans::RenderHardware
             uint64_t        CommandBufferAllocations = 0;
             VulkanTestProbes::BufferWriteObserver BufferWrites;
             VulkanTestProbes::BarrierObserver     Barriers;
+#ifdef TRACY_ENABLE
+            bool     ForceTracyRecording = false;
+            uint64_t TracyPassZones = 0, TracyCollections = 0;
+#endif
             DeviceStats     Stats;
             bool            InFrame = false, Alive = true;
             bool                                  WindowResourcesReady = false;
@@ -188,7 +193,10 @@ namespace Kans::RenderHardware
             }
             void Retire();
             void BeginWindowFrame();
-            void FinishWindowFrame();
+            void FinishWindowFrame(const std::shared_ptr<State>& owner);
+#ifdef TRACY_ENABLE
+            void CollectProfiler(const std::shared_ptr<State>& owner);
+#endif
         };
         struct Allocation
         {
@@ -250,14 +258,24 @@ namespace Kans::RenderHardware
                 VmaAllocationInfo info {};
                 auto              allocator = Memory.Owner->Native.Allocator;
                 Check(vmaCreateBuffer(allocator, &buffer, &allocation, &Native, &Alloc, &info));
+                try
+                {
+                    Memory.Delete =
+                        [allocator, buffer = Native, alloc = Alloc, owner = Memory.Owner.get(), bytes = info.size] {
+                            KANS_PROFILE_FREE(alloc, VmaProfilerPool);
+                            vmaDestroyBuffer(allocator, buffer, alloc);
+                            owner->Native.BufferAllocationBytes -= bytes;
+                        };
+                }
+                catch (...)
+                {
+                    vmaDestroyBuffer(allocator, Native, Alloc);
+                    throw;
+                }
                 ++Memory.Owner->BufferCreations;
-                Mapped        = info.pMappedData;
+                Mapped = info.pMappedData;
                 Memory.Owner->Native.BufferAllocationBytes += info.size;
-                Memory.Delete =
-                    [allocator, buffer = Native, alloc = Alloc, owner = Memory.Owner.get(), bytes = info.size] {
-                        vmaDestroyBuffer(allocator, buffer, alloc);
-                        owner->Native.BufferAllocationBytes -= bytes;
-                    };
+                KANS_PROFILE_ALLOC(Alloc, info.size, VmaProfilerPool);
             }
             const BufferDesc& GetDesc() const override { return Desc; }
             bool              IsReadbackReady() const override
@@ -587,9 +605,11 @@ namespace Kans::RenderHardware
                             vkDestroyImageView(device, sampled, nullptr);
                         for (auto view : views)
                             vkDestroyImageView(device, view, nullptr);
+                        KANS_PROFILE_FREE(alloc, VmaProfilerPool);
                         vmaDestroyImage(allocator, image, alloc);
                     };
                     Memory.Owner->Native.TextureAllocationBytes += allocationInfo.size;
+                    KANS_PROFILE_ALLOC(Alloc, allocationInfo.size, VmaProfilerPool);
                 }
                 catch (...)
                 {
@@ -1009,6 +1029,66 @@ namespace Kans::RenderHardware
                         }
             }
         };
+#ifdef TRACY_ENABLE
+        // A packed transfer can split one pass across native command buffers.
+        // Use the queue context's query ring and emit a single pair after submission succeeds.
+        struct GpuPassZone
+        {
+            TracyVkCtx Context;
+            uint16_t   BeginQuery, EndQuery = 0;
+            int64_t    BeginTime, EndTime   = 0;
+
+            GpuPassZone(TracyVkCtx context, VkCommandBuffer commands) :
+                Context(context), BeginQuery(Write(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT)),
+                BeginTime(tracy::Profiler::GetTime())
+            {}
+
+            void End(VkCommandBuffer commands)
+            {
+                EndQuery = Write(commands, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+                EndTime  = tracy::Profiler::GetTime();
+            }
+
+            void Publish(std::string_view name) const
+            {
+                constexpr char   function[] = "FrameGraph";
+                constexpr size_t nameLimit  = UINT16_MAX - sizeof(__FILE__) - sizeof(function) - 10;
+                const auto       source     = tracy::Profiler::AllocSourceLocation(__LINE__,
+                                                                                   __FILE__,
+                                                                                   sizeof(__FILE__) - 1,
+                                                                                   function,
+                                                                                   sizeof(function) - 1,
+                                                                                   name.data(),
+                                                                                   std::min(name.size(), nameLimit));
+                const auto       context    = uint8_t(Context->GetId());
+                const auto       thread     = tracy::GetThreadHandle();
+                auto*            item       = tracy::Profiler::QueueSerial();
+                item->hdr.type              = tracy::QueueType::GpuZoneBeginAllocSrcLocSerial;
+                item->gpuZoneBegin.cpuTime  = BeginTime;
+                item->gpuZoneBegin.srcloc   = source;
+                item->gpuZoneBegin.thread   = thread;
+                item->gpuZoneBegin.queryId  = BeginQuery;
+                item->gpuZoneBegin.context  = context;
+                tracy::Profiler::QueueSerialFinish();
+
+                item                     = tracy::Profiler::QueueSerial();
+                item->hdr.type           = tracy::QueueType::GpuZoneEndSerial;
+                item->gpuZoneEnd.cpuTime = EndTime;
+                item->gpuZoneEnd.thread  = thread;
+                item->gpuZoneEnd.queryId = EndQuery;
+                item->gpuZoneEnd.context = context;
+                tracy::Profiler::QueueSerialFinish();
+            }
+
+        private:
+            uint16_t Write(VkCommandBuffer commands, VkPipelineStageFlagBits stage)
+            {
+                const auto query = uint16_t(Context->NextQueryId());
+                vkCmdWriteTimestamp(commands, stage, Context->GetQueryPool(), query);
+                return query;
+            }
+        };
+#endif
         struct Commands final : CommandList
         {
             std::shared_ptr<State>                       Owner;
@@ -1960,10 +2040,26 @@ namespace Kans::RenderHardware
             ResetCommandPool(frame);
             WindowResourcesReady = true;
         }
-        void State::FinishWindowFrame()
+#ifdef TRACY_ENABLE
+        void State::CollectProfiler(const std::shared_ptr<State>& owner)
+        {
+            if (!Native.TracyQueue || Native.TracyQueriesAbandoned ||
+                (!ForceTracyRecording &&
+                 (!KANS_PROFILE_CONNECTED() || Native.TracyConnection != tracy::GetProfiler().ConnectionId())))
+                return;
+            Execution collector(owner);
+            TracyVkCollect(Native.TracyQueue, collector.Native);
+            collector.Submit();
+            ++TracyCollections;
+        }
+#endif
+        void State::FinishWindowFrame([[maybe_unused]] const std::shared_ptr<State>& owner)
         {
             Require(!InFrame, "Present inside an active scene frame");
             BeginWindowFrame();
+#ifdef TRACY_ENABLE
+            CollectProfiler(owner);
+#endif
             auto& frame = Frames[FrameIndex];
             frame.Lists = std::move(Submitted);
             Submitted.clear();
@@ -2019,6 +2115,9 @@ namespace Kans::RenderHardware
                 // Destructors cannot throw. Normal WaitIdle reports device loss.
                 vkDeviceWaitIdle(Owner->Native.Logical);
                 Owner->Retire();
+#ifdef TRACY_ENABLE
+                Owner->Native.DestroyProfiler();
+#endif
                 Owner->Alive = false;
             }
             const Context&        GetContext() const { return Owner->Native; }
@@ -2222,6 +2321,12 @@ namespace Kans::RenderHardware
             }
             void Submit(const Handle<CommandList>& commands) override
             {
+#ifdef TRACY_ENABLE
+                SubmitProfiled(commands, nullptr);
+            }
+            void SubmitProfiled(const Handle<CommandList>& commands, const std::string_view* name)
+            {
+#endif
                 Owner->CheckThread();
                 auto list = std::dynamic_pointer_cast<Commands>(commands);
                 Require(list && list->Owner == Owner && !list->Sealed && !list->Rendering,
@@ -2229,15 +2334,42 @@ namespace Kans::RenderHardware
                 list->Sealed = true;
                 Owner->Submitted.push_back(list);
                 Execution execution(Owner);
+#ifdef TRACY_ENABLE
+                std::optional<GpuPassZone> zone;
+#endif
                 try
                 {
+#ifdef TRACY_ENABLE
+                    if (name && Owner->Native.PrepareProfiler(Owner->ForceTracyRecording))
+                        zone.emplace(Owner->Native.TracyQueue, execution.Native);
+#endif
                     for (const auto& command : list->Recorded)
                         command(execution);
+#ifdef TRACY_ENABLE
+                    if (zone)
+                    {
+                        execution.FlushBarriers();
+                        zone->End(execution.Native);
+                    }
+#endif
                     execution.Submit();
+#ifdef TRACY_ENABLE
+                    if (zone)
+                    {
+                        ++Owner->TracyPassZones;
+                        if (KANS_PROFILE_CONNECTED() &&
+                            Owner->Native.TracyConnection == tracy::GetProfiler().ConnectionId())
+                            zone->Publish(*name);
+                    }
+#endif
                     list->Temporary = std::move(execution.Temporary);
                 }
                 catch (...)
                 {
+#ifdef TRACY_ENABLE
+                    if (zone)
+                        Owner->Native.TracyQueriesAbandoned = true;
+#endif
                     // A packed transfer may already have submitted a prefix.
                     // Keep every staging allocation alive until explicit retirement.
                     list->Temporary = std::move(execution.Temporary);
@@ -2253,6 +2385,9 @@ namespace Kans::RenderHardware
                     Owner->InFrame = false;
                     return;
                 }
+#ifdef TRACY_ENABLE
+                Owner->CollectProfiler(Owner);
+#endif
                 auto& frame = Owner->Frames[Owner->FrameIndex];
                 Check(vkResetFences(Owner->Native.Logical, 1, &frame.Fence));
                 VkSubmitInfo2 tail {VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
@@ -2321,6 +2456,16 @@ namespace Kans::RenderHardware
             }
         };
     } // namespace
+
+#ifdef TRACY_ENABLE
+    void SubmitProfiled(Device& device, const Handle<CommandList>& commands, std::string_view name)
+    {
+        if (auto* vulkan = dynamic_cast<VKDevice*>(&device))
+            vulkan->SubmitProfiled(commands, &name);
+        else
+            device.Submit(commands);
+    }
+#endif
     const VulkanDetail::Context& GetVulkanContext(Device& device)
     {
         return dynamic_cast<VKDevice&>(device).GetContext();
@@ -2331,7 +2476,8 @@ namespace Kans::RenderHardware
     }
     void FinishVulkanDeviceWindowFrame(Device& device)
     {
-        dynamic_cast<VKDevice&>(device).GetOwner()->FinishWindowFrame();
+        const auto owner = dynamic_cast<VKDevice&>(device).GetOwner();
+        owner->FinishWindowFrame(owner);
     }
     Handle<Texture> RenderVulkanImGuiOffscreen(Device& device, ImDrawData* data, VkRenderPass pass)
     {
@@ -2532,6 +2678,25 @@ namespace Kans::RenderHardware
 
 namespace Kans::RenderHardware::VulkanTestProbes
 {
+#ifdef TRACY_ENABLE
+    void ForceTracyRecording(const Device& device)
+    {
+        auto owner = dynamic_cast<const VKDevice&>(device).GetOwner();
+        owner->CheckThread();
+        owner->ForceTracyRecording = true;
+    }
+    TracyDiagnostics InspectTracy(const Device& device)
+    {
+        const auto& owner = dynamic_cast<const VKDevice&>(device).GetState();
+        owner.CheckThread();
+        TracyDiagnostics result;
+        if (owner.Native.TracyQueue)
+            result.ContextId = owner.Native.TracyQueue->GetId();
+        result.PassZones   = owner.TracyPassZones;
+        result.Collections = owner.TracyCollections;
+        return result;
+    }
+#endif
     void SetBarrierObserver(const Device& device, BarrierObserver observer)
     {
         auto owner = dynamic_cast<const VKDevice&>(device).GetOwner();

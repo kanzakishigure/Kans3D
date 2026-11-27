@@ -137,6 +137,8 @@ namespace Kans
                     add(bus, slot);
         }
 
+        const AudioProfileCallback& LatestCallback() const { return m_Current; }
+
         void Collect()
         {
             const auto end  = m_Published.load(std::memory_order_acquire);

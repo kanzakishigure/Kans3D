@@ -38,7 +38,7 @@ namespace Kans
         KansFileSystem::Init(spec.ConfigPath);
 
         CORE_INFO("Application [{:>8}]  is Create :", spec.Name);
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
         s_Instance = this;
 
         //-------------create application Surface and init the render context-----------------//
@@ -101,9 +101,10 @@ namespace Kans
     }
     void Application::run()
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
         while (m_Running)
         {
+            KANS_PROFILE_SCOPE("Application frame");
             ++m_FrameNumber;
             float time      = GetTime();
             m_Frametime     = TimeStep(float(glfwGetTime() - m_LastFrameTime));
@@ -121,7 +122,7 @@ namespace Kans
                     m_CapturePath.clear();
                 }
                 {
-                    PROFILE_SCOPE("application_layerstark_update");
+                    KANS_PROFILE_SCOPE("Layer updates");
                     // 普通layer进行渲染
                     for (Layer* layer : m_LayerStack)
                     {
@@ -132,7 +133,7 @@ namespace Kans
                     }
                 }
                 {
-                    PROFILE_SCOPE("application_imgui_layerstark_update");
+                    KANS_PROFILE_SCOPE("ImGui layer updates");
                     // 处理 ImGuiLayer渲染
                     m_ImGuiLayer->Begin();
                     for (Layer* layer : m_LayerStack)
@@ -167,11 +168,12 @@ namespace Kans
             m_PostFrame.clear();
             for (auto& task : tasks)
                 task();
+            KANS_PROFILE_FRAME();
         }
     }
     void Application::OnEvent(Event& e)
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
         EventDispatcher dispatcher(e);
         dispatcher.Dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::OnWindowClose));
         dispatcher.Dispatch<WindowResizeEvent>(BIND_EVENT_FN(Application::OnWindowResize));
@@ -189,7 +191,7 @@ namespace Kans
     }
     void Application::PushLayer(Layer* layer)
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         m_LayerStack.PushLayer(layer);
         layer->OnAttach();
@@ -202,7 +204,7 @@ namespace Kans
     }
     void Application::PushOverlay(Layer* overlay)
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         m_LayerStack.PushLayer(overlay);
         overlay->OnAttach();
@@ -218,7 +220,7 @@ namespace Kans
     }
     bool Application::OnWindowResize(WindowResizeEvent& e)
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         if (e.GetHeight() == 0 || e.GetWidth() == 0)
         {

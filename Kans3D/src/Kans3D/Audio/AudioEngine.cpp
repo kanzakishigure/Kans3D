@@ -33,6 +33,31 @@ namespace Kans
 {
     namespace
     {
+#ifdef TRACY_ENABLE
+        void NameAudioDeviceThread(const ma_device& device)
+        {
+            const auto& callbacks = device.pContext->callbacks;
+            ma_thread   thread {};
+#ifdef MA_SUPPORT_NULL
+            if (device.pContext->backend == ma_backend_null)
+                thread = device.null_device.deviceThread;
+            else
+#endif
+                if (callbacks.onDeviceRead || callbacks.onDeviceWrite || callbacks.onDeviceDataLoop)
+                thread = device.thread;
+            if (!thread)
+                return; // An asynchronous backend owns its callback thread.
+#ifdef _WIN32
+            using SetDescription      = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+            const auto setDescription = reinterpret_cast<SetDescription>(
+                GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetThreadDescription"));
+            if (setDescription)
+                setDescription(thread, L"Kans audio");
+#elif defined(__linux__)
+            pthread_setname_np(thread, "Kans audio");
+#endif
+        }
+#endif
         constexpr auto NoFrame = std::numeric_limits<uint64_t>::max();
         constexpr float RealVoiceMargin  = 1.12201845f; // 1 dB in linear amplitude.
         constexpr float RadiansPerDegree = 3.14159265358979323846f / 180.f;
@@ -2956,6 +2981,7 @@ namespace Kans
                 p.StreamChanged = false;
                 p.StreamWorkerPasses.store(0);
                 p.StreamWorker = std::thread([&p] {
+                    KANS_PROFILE_THREAD("Audio streaming");
                     std::vector<std::shared_ptr<Impl::VoiceSource>> streams;
                     std::unique_lock<std::mutex>                    lock(p.StreamMutex);
                     const auto changed = [&] { return p.StopWorker || p.StreamChanged; };
@@ -3238,6 +3264,9 @@ namespace Kans
             }
         };
         config.dataCallback = [](ma_device* device, void* outputFrames, const void*, ma_uint32 frames) {
+#ifdef KANS_TRACY_MEMORY
+            const ProfilerMemoryPause pause;
+#endif
             auto&          impl    = *static_cast<OutputDevice*>(device->pUserData)->Mixer;
             impl.MixPCM(static_cast<float*>(outputFrames), frames);
         };
@@ -3249,6 +3278,10 @@ namespace Kans
             result                   = ma_device_init(&Context, &config, &output.Device);
         }
         output.Open = result == MA_SUCCESS;
+#ifdef TRACY_ENABLE
+        if (output.Open)
+            NameAudioDeviceThread(output.Device);
+#endif
         return result;
     }
 
@@ -3851,6 +3884,10 @@ namespace Kans
             return;
         p.DrainJobs();
         p.Profile.Collect();
+#ifdef TRACY_ENABLE
+        if (const auto& sample = p.Profile.LatestCallback(); KANS_PROFILE_CONNECTED() && sample.BudgetNanoseconds)
+            KANS_PROFILE_PLOT("Audio mixer load (%)", sample.LoadPercent());
+#endif
         p.CollectSchedules();
         const auto now          = GetClockFrames();
         const auto heard        = GetPlaybackClockFrames();

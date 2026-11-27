@@ -23,7 +23,7 @@
 #include <Kans3D/Core/Log/Log.h>
 #include <Kans3D/Core/Memory.h>
 
-#include <Kans3D/Core/Debug/Instrumentor.h>
+#include <Kans3D/Core/Debug/Profiler.h>
 #ifdef PLATFORM_WINDOWS
 #include <Windows.h>
 #endif // PLATFORM_WINDOWS

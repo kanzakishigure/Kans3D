@@ -5,6 +5,9 @@
 #include <stdexcept>
 #include <thread>
 #include "VulkanDevice.h"
+#ifdef TRACY_ENABLE
+#include <tracy/TracyVulkan.hpp>
+#endif
 
 namespace Kans::RenderHardware::VulkanDetail
 {
@@ -27,6 +30,10 @@ namespace Kans::RenderHardware::VulkanDetail
     {
         Require(offset <= capacity && bytes <= capacity - offset, "Buffer range exceeds allocation");
     }
+#ifdef TRACY_ENABLE
+    // Tracy identifies named memory pools by the address of their name.
+    inline constexpr char VmaProfilerPool[] = "VMA";
+#endif
     struct Context
     {
         VkSurfaceKHR               Surface   = VK_NULL_HANDLE;
@@ -42,6 +49,15 @@ namespace Kans::RenderHardware::VulkanDetail
         mutable uint64_t           TextureAllocationBytes = 0, BufferAllocationBytes = 0;
         VulkanDeviceOptions        Options;
         bool                       BresenhamLines = false;
+#ifdef TRACY_ENABLE
+        TracyVkCtx                                         TracyQueue              = nullptr;
+        PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT GetTimeDomains          = nullptr;
+        PFN_vkGetCalibratedTimestampsEXT                   GetCalibratedTimestamps = nullptr;
+        bool                                               PrepareProfiler(bool forceRecording);
+        void                                               DestroyProfiler();
+        uint64_t                                           TracyConnection       = 0;
+        bool                                               TracyQueriesAbandoned = false;
+#endif
         explicit Context(const VulkanDeviceOptions& options);
         ~Context();
         void Destroy();

@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include "Kans3D/Asset/SourceAssetMetaData.h"
 #include "Kans3D/Asset/Storage/ProductStore.h"
+#include "Kans3D/Core/Debug/Profiler.h"
 #include "ImporterRegistry.h"
 
 namespace Kans
@@ -66,7 +67,7 @@ namespace Kans
             std::filesystem::file_time_type Time;
             std::string                     Digest;
         };
-        std::mutex                             m_Mutex;
+        KANS_PROFILE_LOCKABLE(std::mutex, m_Mutex, "Asset file digest cache");
         std::unordered_map<std::string, Entry> m_Entries;
     };
 

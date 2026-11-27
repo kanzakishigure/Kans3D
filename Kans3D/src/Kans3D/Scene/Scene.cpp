@@ -354,6 +354,7 @@ namespace Kans
 
     void Scene::OnUpdate(TimeStep ts)
     {
+        KANS_PROFILE_SCOPE("Scene update");
         const double realSeconds = ts.GetSeconds();
         if (m_PhysicsWorld && !m_PhysicsSingleStep)
             ts = TimeStep(ts.GetSeconds() * m_TimeScale);

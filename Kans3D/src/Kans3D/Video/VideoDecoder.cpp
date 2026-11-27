@@ -617,6 +617,7 @@ namespace Kans
         if (IsVideoDecodingAvailable() && clip && clip->GetData().Encoded)
         {
             m_State->Worker = std::thread([state = m_State.get(), clip = std::move(clip), hook = std::move(hook)] {
+                KANS_PROFILE_THREAD("Video decoder");
                 ++Workers;
                 try
                 {

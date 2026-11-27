@@ -13,7 +13,7 @@ namespace Kans
         catch (...)
         {
             {
-                std::lock_guard<std::mutex> lock(m_Mutex);
+                std::lock_guard lock(m_Mutex);
                 m_Stop = true;
             }
             m_Start.notify_all();
@@ -25,7 +25,7 @@ namespace Kans
     ParallelFor::~ParallelFor()
     {
         {
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard lock(m_Mutex);
             m_Stop = true;
         }
         m_Start.notify_all();
@@ -40,7 +40,7 @@ namespace Kans
                 function(context, i);
             return;
         }
-        std::unique_lock<std::mutex> lock(m_Mutex);
+        std::unique_lock lock(m_Mutex);
         m_Count     = count;
         m_Context   = context;
         m_Function  = function;
@@ -52,8 +52,9 @@ namespace Kans
     }
     void ParallelFor::Worker()
     {
+        KANS_PROFILE_THREAD("Parallel jobs");
         size_t                       generation = 0;
-        std::unique_lock<std::mutex> lock(m_Mutex);
+        std::unique_lock             lock(m_Mutex);
         for (;;)
         {
             m_Start.wait(lock, [&] { return m_Stop || generation != m_Generation; });

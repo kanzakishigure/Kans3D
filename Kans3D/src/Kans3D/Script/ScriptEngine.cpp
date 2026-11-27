@@ -314,6 +314,7 @@ namespace Kans
     float        ScriptEngine::GetPhysicsDeltaTime() { return s_PhysicsDeltaTime; }
     void         ScriptEngine::OnUpdate(TimeStep ts)
     {
+        KANS_PROFILE_SCOPE("Script update");
         if (s_Initialized && s_Scene)
         {
             ScriptUI::BeginFrame();

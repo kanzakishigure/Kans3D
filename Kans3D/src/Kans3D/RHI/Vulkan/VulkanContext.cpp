@@ -218,12 +218,44 @@ namespace Kans::RenderHardware::VulkanDetail
                 enabledExtensions.push_back(lineExtension);
             if (Surface)
                 enabledExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+#ifdef TRACY_ENABLE
+            // The KHR extension promotes the EXT commands with identical signatures.
+            constexpr char khrCalibration[] = "VK_KHR_calibrated_timestamps";
+            constexpr char extCalibration[] = VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME;
+            const auto     supports         = [&](const char* name) {
+                return std::any_of(deviceExtensions.begin(), deviceExtensions.end(), [name](const auto& extension) {
+                    return std::strcmp(extension.extensionName, name) == 0;
+                });
+            };
+            const char* calibration = nullptr;
+            if (TimestampValidBits)
+            {
+                if (supports(khrCalibration))
+                    calibration = khrCalibration;
+                else if (supports(extCalibration))
+                    calibration = extCalibration;
+            }
+            if (calibration)
+                enabledExtensions.push_back(calibration);
+#endif
             device.enabledExtensionCount   = uint32_t(enabledExtensions.size());
             device.ppEnabledExtensionNames = enabledExtensions.data();
             device.queueCreateInfoCount = 1;
             device.pQueueCreateInfos    = &queue;
             Check(vkCreateDevice(Physical, &device, nullptr, &Logical));
             vkGetDeviceQueue(Logical, QueueFamily, 0, &Queue);
+#ifdef TRACY_ENABLE
+            if (calibration)
+            {
+                const bool khr = calibration == khrCalibration;
+                GetTimeDomains = reinterpret_cast<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT>(
+                    vkGetInstanceProcAddr(Instance,
+                                          khr ? "vkGetPhysicalDeviceCalibrateableTimeDomainsKHR" :
+                                                "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT"));
+                GetCalibratedTimestamps = reinterpret_cast<PFN_vkGetCalibratedTimestampsEXT>(vkGetDeviceProcAddr(
+                    Logical, khr ? "vkGetCalibratedTimestampsKHR" : "vkGetCalibratedTimestampsEXT"));
+            }
+#endif
             VmaAllocatorCreateInfo allocator {};
             allocator.instance         = Instance;
             allocator.physicalDevice   = Physical;
@@ -237,9 +269,65 @@ namespace Kans::RenderHardware::VulkanDetail
             throw;
         }
     }
+#ifdef TRACY_ENABLE
+    bool Context::PrepareProfiler(bool forceRecording)
+    {
+        if (!TimestampValidBits || (!forceRecording && !KANS_PROFILE_CONNECTED()))
+            return false;
+        const auto connection = tracy::GetProfiler().ConnectionId();
+        if (TracyQueue && (TracyConnection != connection || TracyQueriesAbandoned))
+        {
+            // A new capture has no zone records for queries submitted to the old one.
+            // A failed submission can likewise leave a gap in Tracy's result ring.
+            Check(vkQueueWaitIdle(Queue));
+            DestroyProfiler();
+        }
+        if (!TracyQueue)
+        {
+            VkCommandPoolCreateInfo poolInfo {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+            poolInfo.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+            poolInfo.queueFamilyIndex = QueueFamily;
+            VkCommandPool pool        = VK_NULL_HANDLE;
+            if (vkCreateCommandPool(Logical, &poolInfo, nullptr, &pool) != VK_SUCCESS)
+                return false;
+            VkCommandBufferAllocateInfo allocation {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+            allocation.commandPool        = pool;
+            allocation.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocation.commandBufferCount = 1;
+            VkCommandBuffer commands      = VK_NULL_HANDLE;
+            const auto      allocated     = vkAllocateCommandBuffers(Logical, &allocation, &commands);
+            if (allocated == VK_SUCCESS)
+            {
+                TracyQueue = GetTimeDomains && GetCalibratedTimestamps ?
+                                 TracyVkContextCalibrated(
+                                     Physical, Logical, Queue, commands, GetTimeDomains, GetCalibratedTimestamps) :
+                                 TracyVkContext(Physical, Logical, Queue, commands);
+                TracyVkContextName(TracyQueue, "Graphics", 8);
+            }
+            vkDestroyCommandPool(Logical, pool, nullptr);
+            if (allocated != VK_SUCCESS)
+                return false;
+            TracyConnection       = connection;
+            TracyQueriesAbandoned = false;
+        }
+        return true;
+    }
+
+    void Context::DestroyProfiler()
+    {
+        if (TracyQueue)
+        {
+            TracyVkDestroy(TracyQueue);
+            TracyQueue = nullptr;
+        }
+    }
+#endif
     Context::~Context() { Destroy(); }
     void Context::Destroy()
     {
+#ifdef TRACY_ENABLE
+        DestroyProfiler();
+#endif
         if (Allocator)
         {
             vmaDestroyAllocator(Allocator);

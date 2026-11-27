@@ -17,7 +17,7 @@ namespace Kans
             return AssetError {AssetErrorCode::NotFound, "Cannot read " + file.u8string() + ": " + error.message()};
         const auto key = file.lexically_normal().u8string();
         {
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard             lock(m_Mutex);
             const auto                  found = m_Entries.find(key);
             if (found != m_Entries.end() && found->second.Size == size && found->second.Time == time)
                 return found->second.Digest;
@@ -26,7 +26,7 @@ namespace Kans
         if (auto* failure = std::get_if<AssetError>(&bytes))
             return std::move(*failure);
         auto                        digest = ComputeContentDigest(std::get<std::vector<std::byte>>(bytes));
-        std::lock_guard<std::mutex> lock(m_Mutex);
+        std::lock_guard             lock(m_Mutex);
         m_Entries[key] = {size, time, digest};
         return digest;
     }
@@ -71,6 +71,16 @@ namespace Kans
                                                                         FileDigestCache&         digests,
                                                                         const fs::path&          workRoot)
     {
+#ifdef TRACY_ENABLE
+        // Editor imports enter through an async worker. Preserve names already assigned
+        // by the application and asset loader when they build a product directly.
+        [[maybe_unused]] static thread_local const bool named = [] {
+            if (!tracy::GetThreadNameData(tracy::GetThreadHandle()))
+                KANS_PROFILE_THREAD("Asset importer");
+            return true;
+        }();
+#endif
+        KANS_PROFILE_SCOPE("Asset import job");
         const auto source = inputs.Source.sourceAssetID;
         if (!source.IsValid() || !inputs.Importer.Importer || !inputs.SourceFile.is_absolute() ||
             options.Toolchain.empty() || !IsProductTarget(options.Target))

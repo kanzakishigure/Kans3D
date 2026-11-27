@@ -190,7 +190,7 @@ namespace Kans
 
     void EditorLayer::OnImGuiRender()
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
         if (!m_Startup.Finished())
         {
             DrawStartupSplash();

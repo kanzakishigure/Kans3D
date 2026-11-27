@@ -1317,6 +1317,7 @@ namespace Kans
     }
     void PhysicsWorld::Step(double seconds)
     {
+        KANS_PROFILE_SCOPE("Physics step");
         SynchronizeChanges();
         auto& i = *m_Impl;
         i.StepVelocities.clear();
@@ -1500,6 +1501,7 @@ namespace Kans
             command();
         // Commit callback-authored transforms before render interpolation can overwrite them.
         SynchronizeChanges();
+        KANS_PROFILE_FRAME_NAMED("Physics steps");
     }
     void PhysicsWorld::WriteTransforms(float alpha)
     {

@@ -30,3 +30,6 @@
 	path = Kans3D/vendor/PhysX
 	url = https://github.com/NVIDIA-Omniverse/PhysX.git
 	shallow = true
+[submodule "Kans3D/vendor/tracy"]
+	path = Kans3D/vendor/tracy
+	url = https://github.com/wolfpld/tracy.git

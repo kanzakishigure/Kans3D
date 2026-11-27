@@ -90,6 +90,7 @@ namespace Kans
     }
     void ForwardPipeline::Begin(RenderGraph& graph, RenderFrame& renderer)
     {
+        KANS_PROFILE_SCOPE("Forward pipeline setup");
         if (HasSpotBeams(renderer))
             renderer.Output.EnsureSampledDepth();
         const auto& view = renderer.View;
@@ -331,6 +332,7 @@ namespace Kans
     }
     void ForwardPipeline::Build(RenderGraph& graph, RenderFrame& renderer)
     {
+        KANS_PROFILE_SCOPE("Forward pipeline passes");
         PreparePostMaterials(renderer);
         if (HasSpotBeams(renderer))
             renderer.Output.EnsureSampledDepth();
@@ -826,6 +828,7 @@ namespace Kans
     }
     void ForwardPipeline::Finish(RenderGraph& graph, RenderFrame& renderer)
     {
+        KANS_PROFILE_SCOPE("Forward pipeline finish");
         using namespace RenderHardware;
         const auto&           view = renderer.View;
         std::vector<GraphUse> target;

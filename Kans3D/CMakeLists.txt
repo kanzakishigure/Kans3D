@@ -17,6 +17,42 @@ add_library(Kans3D STATIC
     ${KANS3D_SOURCES}
 )
 
+option(KANS_TRACY "Enable on-demand Tracy profiling in Debug and Release" ON)
+option(KANS_TRACY_MEMORY "Track global C++ allocations in Tracy" OFF)
+if(KANS_TRACY AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tracy/public/TracyClient.cpp")
+    message(WARNING "Tracy profiling disabled: Kans3D/vendor/tracy is not checked out "
+                    "(run: git submodule update --init Kans3D/vendor/tracy)")
+    set(KANS_TRACY OFF)
+    set(KANS_TRACY OFF PARENT_SCOPE)
+endif()
+if(KANS_TRACY)
+    set(kans_tracy_config "$<CONFIG:Debug,Release>")
+    set(kans_tracy_public "${CMAKE_CURRENT_SOURCE_DIR}/vendor/tracy/public")
+    set(kans_tracy_client "${kans_tracy_public}/TracyClient.cpp")
+    target_sources(Kans3D PRIVATE "$<${kans_tracy_config}:${kans_tracy_client}>")
+    set_source_files_properties("${kans_tracy_client}" PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_include_directories(Kans3D SYSTEM PUBLIC "$<${kans_tracy_config}:${kans_tracy_public}>")
+    # Hosts that mask invariant TSC can use Tracy's monotonic clock fallback.
+    target_compile_definitions(Kans3D PUBLIC "$<${kans_tracy_config}:TRACY_ENABLE;TRACY_ON_DEMAND;TRACY_TIMER_FALLBACK>"
+        PRIVATE "$<${kans_tracy_config}:TRACY_NO_CRASH_HANDLER;TRACY_NO_SYSTEM_TRACING>")
+    find_package(Threads REQUIRED)
+    target_link_libraries(Kans3D PRIVATE "$<${kans_tracy_config}:Threads::Threads;${CMAKE_DL_LIBS}>")
+    if(KANS_TRACY_MEMORY)
+        # Separate the archive members so allocation-counting tests that supply
+        # ordinary new/delete can still resolve the aligned replacements.
+        target_sources(Kans3D PRIVATE
+            "$<${kans_tracy_config}:${CMAKE_CURRENT_SOURCE_DIR}/profiling/GlobalNew.cpp>"
+            "$<${kans_tracy_config}:${CMAKE_CURRENT_SOURCE_DIR}/profiling/GlobalNewAligned.cpp>")
+        target_compile_definitions(Kans3D PRIVATE "$<${kans_tracy_config}:KANS_TRACY_MEMORY>")
+    endif()
+    if(WIN32)
+        # FatalError owns the DbgHelp session. Avoid Tracy's startup symbol
+        # preload and shared DbgHelp state; source locations still label zones.
+        target_compile_definitions(Kans3D PUBLIC "$<${kans_tracy_config}:TRACY_NO_CALLSTACK>")
+        target_link_libraries(Kans3D PRIVATE "$<${kans_tracy_config}:ws2_32;dbghelp;secur32>")
+    endif()
+endif()
+
 # Embed only the source closure used by the seven FSR compute passes. Byte arrays
 # avoid MSVC's string-literal size limits, including for the large FFX core headers.
 set(KANS_FSR_EMBED_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedFsrSources.cmake")

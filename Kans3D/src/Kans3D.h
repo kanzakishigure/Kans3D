@@ -34,7 +34,7 @@
 //------渲染效果---------------
 #include "Kans3D/VFX/VfxWorld.h"
 //------辅助工具---------------
-#include "Kans3D/Core/Debug/Instrumentor.h"
+#include "Kans3D/Core/Debug/Profiler.h"
 //------程序入口点--------------
 
 // #include"Kans3D/Core/EntryPoint.h"

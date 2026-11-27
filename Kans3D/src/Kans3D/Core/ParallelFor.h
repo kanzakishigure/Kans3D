@@ -4,6 +4,7 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include "Kans3D/Core/Debug/Profiler.h"
 namespace Kans
 {
     // Persistent workers; caller publishes immutable inputs and disjoint output slots.
@@ -20,8 +21,8 @@ namespace Kans
     private:
         void                     Worker();
         std::vector<std::thread> m_Threads;
-        std::mutex               m_Mutex;
-        std::condition_variable  m_Start, m_Done;
+        KANS_PROFILE_LOCKABLE(std::mutex, m_Mutex, "Parallel jobs");
+        ProfilerConditionVariable m_Start, m_Done;
         std::atomic<size_t>      m_Next {0};
         size_t                   m_Count = 0, m_Generation = 0, m_Remaining = 0;
         bool                     m_Stop    = false;

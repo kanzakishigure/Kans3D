@@ -2,7 +2,7 @@
 #include "Kans3D/Core/Application.h"
 #include "Kans3D/Core/Base/Base.h"
 #include "Kans3D/Core/Debug/FatalError.h"
-#include "Kans3D/Core/Debug/Instrumentor.h"
+#include "Kans3D/Core/Debug/Profiler.h"
 #include "Kans3D/RHI/Backend.h"
 
 extern Kans::Application* Kans::createApplication(int argc, char** argv);
@@ -11,23 +11,23 @@ namespace Kans
 {
     int Main(int argc, char** argv)
     {
+        KANS_PROFILE_THREAD("Main");
         Log::Init();
         Log::StartFileLogging();
         FatalError::Install();
         RenderHardware::SetStartupArguments(argc, argv);
 
         const auto lifecycle = [&] {
-            PROFILE_BEGIN_SESSION("startup", "ProfileSpecication/startup-profile.json");
-            Application* app = Kans::createApplication(argc, argv);
-            PROFILE_END_SESSION();
-
-            PROFILE_BEGIN_SESSION("runtime", "ProfileSpecication/runtime-profile.json");
+            Application* app;
+            {
+                KANS_PROFILE_SCOPE("Startup");
+                app = Kans::createApplication(argc, argv);
+            }
             app->run();
-            PROFILE_END_SESSION();
-
-            PROFILE_BEGIN_SESSION("shutdown", "ProfileSpecication/shutdown-profile.json");
-            delete app;
-            PROFILE_END_SESSION();
+            {
+                KANS_PROFILE_SCOPE("Shutdown");
+                delete app;
+            }
         };
         // No catch here: an exception nothing handles reaches std::terminate (FatalError's handler)
         // before the stack unwinds, so the report and the minidump show the throw site, and a

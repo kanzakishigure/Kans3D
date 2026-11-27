@@ -23,7 +23,7 @@ namespace Kans
 
         Ref<const ProductGeneration> AcquireGeneration(const fs::path& root, const std::string& generation)
         {
-            std::lock_guard<std::mutex> lock(leaseMutex);
+            std::lock_guard             lock(leaseMutex);
             auto&                       weak = leases[root / fs::u8path(generation)];
             if (auto existing = weak.lock())
                 return existing;
@@ -35,7 +35,7 @@ namespace Kans
 
         bool GenerationInUse(const fs::path& path)
         {
-            std::lock_guard<std::mutex> lock(leaseMutex);
+            std::lock_guard lock(leaseMutex);
             for (auto it = leases.begin(); it != leases.end();)
                 it = it->second.expired() ? leases.erase(it) : std::next(it);
             return leases.count(path) != 0;
@@ -288,7 +288,7 @@ namespace Kans
 
     Ref<const ProductStore::Catalog> ProductStore::Current() const
     {
-        std::lock_guard<std::mutex> lock(m_Mutex);
+        std::lock_guard lock(m_Mutex);
         return m_Catalog;
     }
 
@@ -347,7 +347,7 @@ namespace Kans
         {
             return AssetError {AssetErrorCode::IoError, std::string("Cannot write Product catalog: ") + error.what()};
         }
-        std::lock_guard<std::mutex> lock(m_Mutex);
+        std::lock_guard lock(m_Mutex);
         m_Catalog = std::move(catalog);
         return std::monostate {};
     }

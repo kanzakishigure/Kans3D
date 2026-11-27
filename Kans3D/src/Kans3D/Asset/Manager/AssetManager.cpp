@@ -8,7 +8,7 @@ namespace Kans
 {
     std::vector<AssetID> AssetChangeObserver::Drain()
     {
-        std::lock_guard<std::mutex> lock(m_Mutex);
+        std::lock_guard             lock(m_Mutex);
         std::vector<AssetID>        result;
         result.swap(m_Changes);
         return result;
@@ -16,7 +16,7 @@ namespace Kans
     std::shared_ptr<AssetChangeObserver> AssetManager::ObserveChanges()
     {
         auto                        observer = std::make_shared<AssetChangeObserver>();
-        std::lock_guard<std::mutex> lock(m_Mutex);
+        std::lock_guard             lock(m_Mutex);
         m_Observers.push_back(observer);
         return observer;
     }
@@ -25,7 +25,7 @@ namespace Kans
         for (auto it = m_Observers.begin(); it != m_Observers.end();)
             if (auto observer = it->lock())
             {
-                std::lock_guard<std::mutex> lock(observer->m_Mutex);
+                std::lock_guard lock(observer->m_Mutex);
                 observer->m_Changes.push_back(id);
                 ++it;
             }
@@ -50,7 +50,7 @@ namespace Kans
     AssetManager::~AssetManager()
     {
         {
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard lock(m_Mutex);
             m_Stopping = true;
             m_Queue.clear();
         }
@@ -101,7 +101,7 @@ namespace Kans
             std::optional<ModelSectionIdentity> part;
             Ref<const MeshAsset>                source;
             {
-                std::lock_guard<std::mutex> lock(m_Mutex);
+                std::lock_guard lock(m_Mutex);
                 for (const auto& [modelID, entry] : m_Entries)
                     if (entry.Type == AssetType::Model && entry.Value)
                     {
@@ -134,7 +134,7 @@ namespace Kans
                     // Share the decoded group with subsequent compatibility requests.
                     // Do not replace an independently loading canonical asset.
                     {
-                        std::lock_guard<std::mutex> lock(m_Mutex);
+                        std::lock_guard lock(m_Mutex);
                         if (m_Registry == registry && !m_Entries.count(part->Mesh))
                         {
                             BeginLoad(part->Mesh, type);
@@ -223,7 +223,7 @@ namespace Kans
                 {
                     uint64_t shaderTicket = 0;
                     {
-                        std::lock_guard<std::mutex> lock(m_Mutex);
+                        std::lock_guard lock(m_Mutex);
                         // Own a new dependency load inline: waiting for a queued shader here
                         // could deadlock a pool occupied by materials. An existing load proceeds.
                         if (m_Registry == registry && m_Entries.find(shaderID) == m_Entries.end())
@@ -247,7 +247,7 @@ namespace Kans
     {
         AssetType type;
         {
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard             lock(m_Mutex);
             const auto                  found = m_Entries.find(id);
             if (found == m_Entries.end() || found->second.Ticket != ticket)
                 return;
@@ -256,7 +256,7 @@ namespace Kans
         auto             result = ReadAndDecode(id, type);
         Ref<const Asset> discarded;
         {
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard             lock(m_Mutex);
             const auto                  found = m_Entries.find(id);
             // The entry was evicted or restarted while loading; drop this result.
             if (found == m_Entries.end() || found->second.Ticket != ticket)
@@ -284,7 +284,7 @@ namespace Kans
         if (!id.IsValid())
             return AssetError {AssetErrorCode::InvalidArgument, "Invalid asset ID"};
         uint64_t                     attempted = 0;
-        std::unique_lock<std::mutex> lock(m_Mutex);
+        std::unique_lock             lock(m_Mutex);
         while (true)
         {
             auto found = m_Entries.find(id);
@@ -323,7 +323,7 @@ namespace Kans
             return status;
         }
         {
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard             lock(m_Mutex);
             const auto                  found = m_Entries.find(id);
             if (found == m_Entries.end() ||
                 (found->second.Type != type && found->second.State == AssetLoadState::Failed))
@@ -351,7 +351,7 @@ namespace Kans
 
     Ref<const Asset> AssetManager::GetLoadedUntyped(AssetID id, AssetType type) const
     {
-        std::lock_guard<std::mutex> lock(m_Mutex);
+        std::lock_guard             lock(m_Mutex);
         const auto                  found = m_Entries.find(id);
         if (found == m_Entries.end() || found->second.Type != type)
             return nullptr;
@@ -360,7 +360,8 @@ namespace Kans
 
     void AssetManager::WorkerLoop()
     {
-        std::unique_lock<std::mutex> lock(m_Mutex);
+        KANS_PROFILE_THREAD("Asset loader");
+        std::unique_lock lock(m_Mutex);
         while (true)
         {
             m_Changed.wait(lock, [this] { return m_Stopping || !m_Queue.empty(); });
@@ -369,7 +370,10 @@ namespace Kans
             const auto [id, ticket] = m_Queue.front();
             m_Queue.pop_front();
             lock.unlock();
-            RunLoad(id, ticket);
+            {
+                KANS_PROFILE_SCOPE("Asset loader job");
+                RunLoad(id, ticket);
+            }
             lock.lock();
         }
     }
@@ -381,7 +385,7 @@ namespace Kans
         std::vector<Ref<const Asset>> retired;
         ProductChangeSet              changes;
         {
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard             lock(m_Mutex);
             auto                        compared = CompareAssetRegistries(*m_Registry, *registry, m_Target);
             if (auto* error = std::get_if<AssetError>(&compared))
                 return std::move(*error);
@@ -421,7 +425,7 @@ namespace Kans
 
     Ref<const AssetRegistry> AssetManager::GetRegistry() const
     {
-        std::lock_guard<std::mutex> lock(m_Mutex);
+        std::lock_guard lock(m_Mutex);
         return m_Registry;
     }
 
@@ -429,7 +433,7 @@ namespace Kans
     {
         Ref<const Asset> retired;
         {
-            std::lock_guard<std::mutex> lock(m_Mutex);
+            std::lock_guard             lock(m_Mutex);
             const auto                  found = m_Entries.find(id);
             if (found == m_Entries.end())
                 return;
@@ -443,7 +447,7 @@ namespace Kans
     size_t AssetManager::CollectUnused()
     {
         std::vector<Ref<const Asset>> retired;
-        std::lock_guard<std::mutex>   lock(m_Mutex);
+        std::lock_guard               lock(m_Mutex);
         for (auto it = m_Entries.begin(); it != m_Entries.end();)
         {
             if (it->second.State == AssetLoadState::Ready && it->second.Value.use_count() == 1)
@@ -459,7 +463,7 @@ namespace Kans
 
     size_t AssetManager::GetResidentCount() const
     {
-        std::lock_guard<std::mutex> lock(m_Mutex);
+        std::lock_guard             lock(m_Mutex);
         size_t                      count = 0;
         for (const auto& [id, entry] : m_Entries)
             count += entry.State == AssetLoadState::Ready;

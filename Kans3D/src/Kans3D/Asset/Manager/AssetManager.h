@@ -1,4 +1,5 @@
 #pragma once
+#include "Kans3D/Core/Debug/Profiler.h"
 
 #include <condition_variable>
 #include <deque>
@@ -135,8 +136,8 @@ namespace Kans
         const std::string         m_Target;
         const AssetLoaderRegistry m_Loaders;
 
-        mutable std::mutex                       m_Mutex;
-        std::condition_variable                  m_Changed;
+        mutable KANS_PROFILE_LOCKABLE(std::mutex, m_Mutex, "Asset registry and load queue");
+        ProfilerConditionVariable                m_Changed;
         Ref<const AssetRegistry>                 m_Registry;
         std::unordered_map<AssetID, Entry>       m_Entries;
         std::deque<std::pair<AssetID, uint64_t>> m_Queue;

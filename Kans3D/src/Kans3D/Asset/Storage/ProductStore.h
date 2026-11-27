@@ -3,6 +3,7 @@
 #include <mutex>
 #include "Kans3D/Asset/AssetRegistry.h"
 #include "Kans3D/Asset/Importer/ImportContext.h"
+#include "Kans3D/Core/Debug/Profiler.h"
 #include "ProductFiles.h"
 
 namespace Kans
@@ -91,7 +92,7 @@ namespace Kans
         std::filesystem::path   m_Root;
         Scope<ProductStoreLock> m_WriterLock;
         std::vector<AssetError> m_Warnings;
-        mutable std::mutex      m_Mutex;
+        mutable KANS_PROFILE_LOCKABLE(std::mutex, m_Mutex, "Asset product registry");
         Ref<const Catalog>      m_Catalog;
     };
 } // namespace Kans

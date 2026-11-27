@@ -24,6 +24,17 @@ namespace Kans::RenderHardware::VulkanTestProbes
     using BufferWriteObserver = std::function<void(const BufferDesc&, size_t, const void*, size_t)>;
     void        SetBufferWriteObserver(const Device& device, BufferWriteObserver observer);
     Diagnostics Inspect(const Device& device);
+#ifdef TRACY_ENABLE
+    struct TracyDiagnostics
+    {
+        std::optional<int32_t> ContextId;
+        uint64_t               PassZones   = 0;
+        uint64_t               Collections = 0;
+    };
+    // Exercise native timestamps and query resets under validation without a Tracy server.
+    void             ForceTracyRecording(const Device& device);
+    TracyDiagnostics InspectTracy(const Device& device);
+#endif
     VkPhysicalDeviceDriverProperties DriverProperties(const Device& device);
     void                             ReportDeviceOnce(const Device& device);
     // Test-only injection at the native pipeline creation boundary; empty disables it.

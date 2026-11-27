@@ -19,7 +19,7 @@ namespace Kans
 
     void ImGuiLayer::OnAttach()
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         // Setup Dear ImGui context
         IMGUI_CHECKVERSION();
@@ -42,7 +42,7 @@ namespace Kans
 
     void ImGuiLayer::OnDetach()
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         m_Renderer.reset();
         ImGui::DestroyContext();
@@ -50,7 +50,7 @@ namespace Kans
 
     void ImGuiLayer::Begin()
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         m_Renderer->NewFrame();
         ImGui::NewFrame();
@@ -58,7 +58,7 @@ namespace Kans
 
     void ImGuiLayer::End()
     {
-        PROFILE_FUCTION();
+        KANS_PROFILE_FUNCTION();
 
         ImGuiIO&     io  = ImGui::GetIO();
         Application& app = Application::Get();
