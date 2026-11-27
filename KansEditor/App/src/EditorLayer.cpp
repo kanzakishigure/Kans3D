@@ -201,6 +201,8 @@ namespace Kans
         m_AudioMixerPanel.SetProjectLayoutCallback({});
         m_AudioEventPanel.Bind(nullptr, nullptr, nullptr);
         m_AudioAttenuationPanel.Bind(nullptr);
+        m_MusicSetPanel.Bind(nullptr, nullptr, nullptr);
+        m_MusicSetPanel.SetAssetChoices({});
         m_ActionMarkersPanel.Bind(nullptr);
         m_ActionMarkersPanel.SetAssetChoices({});
         m_AudioEventPanel.SetAssetChoices({});
@@ -348,6 +350,10 @@ namespace Kans
         m_ActionMarkersPanel.Bind(m_AssetImports.get());
         if (!m_Panels.IsOpen(PanelID::AudioEvent))
             m_AudioEventPanel.StopPreview();
+        // The Music Set editor's audition, likewise.
+        m_MusicSetPanel.Bind(m_AssetImports.get(), AudioSystem::Get(), m_Assets.get());
+        if (!m_Panels.IsOpen(PanelID::MusicSet))
+            m_MusicSetPanel.StopPreview();
         m_TimelinePanel.SetAudioEngine(AudioSystem::Get()); // Its preview's audio tracks.
 
         // The scene only runs in play mode; IK and saved shape keys of models without an

@@ -19,6 +19,7 @@
 #include "KansEditorCore/Audio/AudioAttenuationEditing.h"
 #include "KansEditorCore/Audio/AudioEditing.h"
 #include "KansEditorCore/Audio/AudioEventEditing.h"
+#include "KansEditorCore/Audio/MusicSetEditing.h"
 #include "KansEditorCore/Components/MaterialAssignment.h"
 #include "KansEditorCore/Launcher/LauncherModel.h"
 #include "KansEditorCore/Physics/PhysicsEditing.h"
@@ -170,6 +171,13 @@ namespace Kans
                 else
                     Record(AssetError {AssetErrorCode::InvalidData, m_AudioEventPanel.GetStatus()});
             }
+            else if (path.extension() == ".musicset")
+            {
+                if (m_MusicSetPanel.Open(path))
+                    m_Panels.Open(PanelID::MusicSet);
+                else
+                    Record(AssetError {AssetErrorCode::InvalidData, m_MusicSetPanel.GetStatus()});
+            }
             else if (path.extension() == ".audioattenuation")
             {
                 if (m_AudioAttenuationPanel.Open(path))
@@ -227,6 +235,13 @@ namespace Kans
         });
         m_ContentBrowserPanel.SetCreateAudioAttenuationCallback(
             [this](const std::filesystem::path& directory) { CreateAudioAttenuation(directory); });
+        m_ContentBrowserPanel.SetCreateMusicSetCallback(
+            [this](const std::filesystem::path& directory) { CreateMusicSet(directory); });
+        m_ContentBrowserPanel.SetCreateMusicSetFromClipsCallback(
+            [this](const std::vector<std::filesystem::path>& files) {
+                if (!files.empty())
+                    CreateMusicSet(files.front().parent_path(), files);
+            });
         m_ContentBrowserPanel.SetCreateAudioEventFromClipsCallback(
             [this](const std::vector<std::filesystem::path>& files) { CreateAudioEventFromClips(files); });
         m_ContentBrowserPanel.SetCreateMaterialParameterCollectionCallback(
@@ -312,6 +327,7 @@ namespace Kans
         m_UIDesignerPanel.SetAssetChoices(choices);
         m_RagdollEditor.SetAssetChoices(choices);
         m_AudioEventPanel.SetAssetChoices(choices);
+        m_MusicSetPanel.SetAssetChoices(choices);
         m_ActionMarkersPanel.SetAssetChoices(choices);
         m_AudioProfilerPanel.SetAssetChoices(choices);
         m_ProjectSettingsPanel.SetAssetChoices(choices);
@@ -393,7 +409,8 @@ namespace Kans
                 choice.Name = id.GetSourceID().ToString();
             // Products other than a source's main Model are distinguished by LocalID; an audio file has one clip.
             if (choice.Type != AssetType::Model && choice.Type != AssetType::AudioClip &&
-                choice.Type != AssetType::AudioEvent && choice.Type != AssetType::AudioAttenuation)
+                choice.Type != AssetType::AudioEvent && choice.Type != AssetType::AudioAttenuation &&
+                choice.Type != AssetType::MusicSet)
                 choice.Name += " #" + std::to_string(id.GetLocalID());
             choices.push_back(std::move(choice));
         }
@@ -451,6 +468,46 @@ namespace Kans
         BuildSavedSource(m_AssetImports.get(), file);
         if (m_AudioAttenuationPanel.Open(file))
             m_Panels.Open(PanelID::AudioAttenuation);
+        m_ContentBrowserPanel.Reveal(file);
+    }
+
+    void EditorLayer::CreateMusicSet(const std::filesystem::path&              directory,
+                                     const std::vector<std::filesystem::path>& clips)
+    {
+        MusicSetData data;
+        std::string  stem = "NewMusicSet";
+        if (!clips.empty())
+        {
+            // Each file's published AudioClip, in the order selected.
+            const auto registry = m_AssetImports ? m_AssetImports->GetRuntimeAssetRegistry() : nullptr;
+            if (!registry)
+                return;
+            const auto           choices = CollectAssetChoices(*registry);
+            std::vector<AssetID> ids;
+            for (const auto& file : clips)
+            {
+                std::error_code error;
+                const auto      path = std::filesystem::weakly_canonical(file, error);
+                for (const auto& choice : choices)
+                    if (choice.Type == AssetType::AudioClip && choice.SourcePath == path)
+                    {
+                        ids.push_back(choice.ID);
+                        break;
+                    }
+            }
+            if (ids.empty())
+                return Record(
+                    AssetError {AssetErrorCode::NotFound, "Import the audio files before making a music set of them"});
+            stem = clips.front().stem().u8string();
+            data = MusicSetEditing::FromClips(ids, stem);
+        }
+        auto created = MusicSetEditing::CreateMusicSetFile(directory, stem, data);
+        if (const auto* error = std::get_if<AssetError>(&created))
+            return Record(*error);
+        const auto file = std::get<std::filesystem::path>(created);
+        BuildSavedSource(m_AssetImports.get(), file);
+        if (m_MusicSetPanel.Open(file))
+            m_Panels.Open(PanelID::MusicSet);
         m_ContentBrowserPanel.Reveal(file);
     }
 

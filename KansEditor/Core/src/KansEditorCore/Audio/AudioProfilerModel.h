@@ -174,8 +174,8 @@ namespace Kans::AudioProfiler
         AudioProfileEvent Event;
     };
     using EventMask                       = uint16_t;
-    inline constexpr EventMask AllEvents  = 0xFF;
-    inline constexpr size_t    EventKinds = 8;
+    inline constexpr size_t    EventKinds = size_t(AudioProfileEventType::StingerStarted) + 1;
+    inline constexpr EventMask AllEvents  = EventMask((1u << EventKinds) - 1);
     inline EventMask           Bit(AudioProfileEventType type) { return EventMask(1u << unsigned(type)); }
 
     class EventLog

@@ -46,6 +46,7 @@ namespace Kans::Browser
             {".audioevent", AssetKind::AudioEvent},
             {".audioattenuation", AssetKind::AudioAttenuation},
             {".sofa", AssetKind::AudioHRTF},
+            {".musicset", AssetKind::MusicSet},
             {".ogg", AssetKind::Audio},
             {".mp3", AssetKind::Audio},
             {".flac", AssetKind::Audio},
@@ -94,6 +95,8 @@ namespace Kans::Browser
                 return "Audio Event";
             case AssetKind::AudioHRTF:
                 return "Audio HRTF";
+            case AssetKind::MusicSet:
+                return "Music Set";
             case AssetKind::Font:
                 return "Font";
             case AssetKind::UI:

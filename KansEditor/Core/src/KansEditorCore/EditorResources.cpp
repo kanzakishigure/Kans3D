@@ -118,7 +118,8 @@ namespace Kans
             {".wav", &AudioFileIcon},
             {".audioevent", &AudioFileIcon},
             {".audioattenuation", &AudioFileIcon},
-            {".sofa", &AudioFileIcon}, // A HRTF data set: no icon of its own yet, the audio one.
+            {".sofa", &AudioFileIcon},     // A HRTF data set: no icon of its own yet, the audio one.
+            {".musicset", &AudioFileIcon}, // Interactive music: the audio icon too.
             {".mp3", &AudioFileIcon},
             {".ogg", &AudioFileIcon},
             {".flac", &AudioFileIcon},

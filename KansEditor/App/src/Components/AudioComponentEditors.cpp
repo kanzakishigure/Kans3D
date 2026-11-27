@@ -4,6 +4,7 @@
 #include <cstdio>
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Audio/AudioEventPlayer.h"
+#include "Kans3D/Audio/MusicSetPlayer.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Scene/Scene.h"
@@ -14,6 +15,7 @@
 #include "KansEditorCore/Audio/AudioEventEditing.h"
 #include "KansEditorCore/Audio/AudioMixerEditing.h"
 #include "KansEditorCore/Audio/AudioSpatialEditing.h"
+#include "KansEditorCore/Audio/MusicSetEditing.h"
 #include "KansEditorCore/Physics/PhysicsEditing.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
@@ -329,6 +331,266 @@ namespace Kans::ComponentEditors
             bus = fallback, changed = true;
         ImGui::PopID();
         return changed;
+    }
+
+    bool AudioBusCombo(const char* id, std::string& bus, const AudioEngine* engine, const char* empty)
+    {
+        const auto& buses = BusesOf(engine);
+        const bool  known = (empty && bus.empty()) || HasAudioBus(engine, bus);
+        char        preview[160];
+        std::snprintf(preview,
+                      sizeof(preview),
+                      !known ? ICON_FA_TRIANGLE_EXCLAMATION " %s (missing)" : "%s",
+                      bus.empty() ? (empty ? empty : MasterAudioBus) : bus.c_str());
+        if (!known)
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().Warning);
+        const bool open = ImGui::BeginCombo(id, preview);
+        if (!known)
+            ImGui::PopStyleColor();
+        if (!known && !open && ImGui::IsItemHovered())
+            ImGui::SetTooltip("Not a bus of the active layout: the sound plays through Master");
+        bool changed = false;
+        if (open)
+        {
+            if (empty && ImGui::Selectable(empty, bus.empty()) && !bus.empty())
+                bus.clear(), changed = true;
+            for (const auto& entry : AudioMixerEditing::TreeOrder(AudioBusLayout {buses}))
+            {
+                const auto& name = buses[entry.Index].Name;
+                ImGui::Indent(EditorTheme::Px(10.0f) * float(entry.Depth) + 1.0f);
+                if (ImGui::Selectable(name.c_str(), name == bus) && name != bus)
+                    bus = name, changed = true;
+                ImGui::Unindent(EditorTheme::Px(10.0f) * float(entry.Depth) + 1.0f);
+            }
+            ImGui::EndCombo();
+        }
+        return changed;
+    }
+
+    MusicSetCardBoxes& LastMusicSetCardBoxes()
+    {
+        static MusicSetCardBoxes boxes;
+        return boxes;
+    }
+
+    void DrawMusicSetPlayer(Entity entity, ComponentUI& ui)
+    {
+        const auto& p             = EditorTheme::Colors();
+        auto&       boxes         = LastMusicSetCardBoxes();
+        boxes                     = {};
+        Scene*             scene  = ui.GetScene();
+        MusicSetPlayer*    player = scene ? scene->GetMusicSetPlayer(entity) : nullptr;
+        const AudioEngine* engine = scene ? scene->GetAudioEngine() : nullptr;
+        if (!engine && ui.GetAudioPreview())
+            engine = ui.GetAudioPreview()->GetEngine();
+        // The set's states and parameters: the running player's, else the published asset's.
+        const auto&              current = entity.GetComponent<MusicSetPlayerComponent>();
+        Ref<const MusicSetAsset> asset;
+        const MusicSetData*      data = player ? player->GetData() : nullptr;
+        if (!data && current.Asset.IsValid() && ui.GetAssets())
+        {
+            auto loaded = ui.GetAssets()->Load<MusicSetAsset>(current.Asset);
+            if (const auto* found = std::get_if<Ref<const MusicSetAsset>>(&loaded))
+                asset = *found, data = &asset->GetData();
+            else
+                boxes.Warning = std::get<AssetError>(loaded).Message;
+        }
+        static const MusicSetPlayerComponent defaults;
+        entity.PatchComponent<MusicSetPlayerComponent>([&](MusicSetPlayerComponent& c) {
+            if (PropertyGrid::BeginGroup("Music set"))
+            {
+                ui.AssetPicker("Music set", AssetType::MusicSet, c.Asset);
+                boxes.Asset = LastItem();
+                if (!boxes.Warning.empty() && PropertyGrid::Row(""))
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Text, p.Warning);
+                    ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION " %s", boxes.Warning.c_str());
+                    ImGui::PopStyleColor();
+                }
+                const bool busModified = !c.BusOverride.empty();
+                if (PropertyGrid::Row("Bus override",
+                                      "Play every stem and stinger through this bus instead of their own",
+                                      busModified))
+                {
+                    ImGui::PushID("BusOverride");
+                    AudioBusCombo("##value", c.BusOverride, engine, "Each stem's own bus");
+                    boxes.Bus = LastItem();
+                    if (PropertyGrid::RowReset(busModified))
+                        c.BusOverride.clear();
+                    ImGui::PopID();
+                }
+                const bool stateModified = !c.InitialState.empty();
+                if (PropertyGrid::Row(
+                        "Initial state", "The state Play starts in (empty: the set's first state)", stateModified))
+                {
+                    ImGui::PushID("InitialState");
+                    const bool known =
+                        c.InitialState.empty() ||
+                        (data && std::any_of(data->States.begin(), data->States.end(), [&](const MusicState& s) {
+                             return s.Name == c.InitialState;
+                         }));
+                    std::string preview = c.InitialState.empty() ? (data && !data->States.empty() ?
+                                                                        "First (" + data->States.front().Name + ")" :
+                                                                        std::string("First state")) :
+                                                                   c.InitialState;
+                    if (!known)
+                        preview = ICON_FA_TRIANGLE_EXCLAMATION " " + preview + " (not in the set)";
+                    if (!known)
+                        ImGui::PushStyleColor(ImGuiCol_Text, p.Warning);
+                    const bool open = ImGui::BeginCombo("##value", preview.c_str());
+                    if (!known)
+                        ImGui::PopStyleColor();
+                    boxes.InitialState = LastItem();
+                    if (open)
+                    {
+                        if (ImGui::Selectable("First state", c.InitialState.empty()))
+                            c.InitialState.clear();
+                        boxes.StateItems.emplace_back(std::string(), LastItem());
+                        if (data)
+                            for (const auto& state : data->States)
+                            {
+                                if (ImGui::Selectable(state.Name.c_str(), state.Name == c.InitialState))
+                                    c.InitialState = state.Name;
+                                boxes.StateItems.emplace_back(state.Name, LastItem());
+                            }
+                        ImGui::EndCombo();
+                    }
+                    if (PropertyGrid::RowReset(stateModified))
+                        c.InitialState.clear();
+                    ImGui::PopID();
+                }
+                CheckboxRow("Play on start",
+                            c.PlayOnStart,
+                            &defaults.PlayOnStart,
+                            boxes.PlayOnStart,
+                            "Start playing when the scene starts");
+                PropertyGrid::EndGroup();
+            }
+            if (data && (!data->Parameters.empty() || !c.Parameters.empty()) && PropertyGrid::BeginGroup("Parameters"))
+            {
+                for (const auto& parameter : data->Parameters)
+                {
+                    const auto found    = c.Parameters.find(parameter.Name);
+                    const bool modified = found != c.Parameters.end();
+                    char       tooltip[160];
+                    std::snprintf(tooltip,
+                                  sizeof(tooltip),
+                                  "Start value of %s (the set's default is %.2f)",
+                                  parameter.Name.c_str(),
+                                  double(parameter.Default));
+                    if (!PropertyGrid::Row(parameter.Name.c_str(), tooltip, modified))
+                        continue;
+                    ImGui::PushID(parameter.Name.c_str());
+                    float value = modified ? found->second : parameter.Default;
+                    if (ImGui::SliderFloat("##value",
+                                           &value,
+                                           parameter.Min,
+                                           std::max(parameter.Max, parameter.Min + 1e-3f),
+                                           modified ? "%.2f" : "%.2f (default)",
+                                           ImGuiSliderFlags_AlwaysClamp))
+                        c.Parameters[parameter.Name] = value;
+                    boxes.Parameters.emplace_back(parameter.Name, LastItem());
+                    if (PropertyGrid::RowReset(modified))
+                        c.Parameters.erase(parameter.Name);
+                    ImGui::PopID();
+                }
+                // Overrides of parameters the set no longer has.
+                for (auto it = c.Parameters.begin(); it != c.Parameters.end();)
+                {
+                    const auto& name = it->first;
+                    if (std::any_of(data->Parameters.begin(), data->Parameters.end(), [&](const MusicParameter& q) {
+                            return q.Name == name;
+                        }))
+                    {
+                        ++it;
+                        continue;
+                    }
+                    bool erase = false;
+                    if (PropertyGrid::Row(name.c_str(), "Not a parameter of the set: ignored", true))
+                    {
+                        ImGui::PushID(name.c_str());
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextColored(
+                            p.Warning, ICON_FA_TRIANGLE_EXCLAMATION " %.2f, not in the set", double(it->second));
+                        erase = PropertyGrid::RowReset(true);
+                        ImGui::PopID();
+                    }
+                    it = erase ? c.Parameters.erase(it) : std::next(it);
+                }
+                PropertyGrid::EndGroup();
+            }
+        });
+
+        // Play mode: what the running player plays, and buttons that drive it (not saved).
+        if (!player || !PropertyGrid::BeginGroup("Playing"))
+            return;
+        const auto position = player->GetPosition();
+        if (position)
+            boxes.Live = std::string(position->State) + " \xC2\xB7 " + std::string(position->Segment) + " \xC2\xB7 " +
+                         MusicSetEditing::BarBeatLabel(position->Bar, position->BeatInBar);
+        else
+            boxes.Live = "Stopped";
+        PropertyGrid::Text("Now", boxes.Live, !position);
+        if (const auto pending = player->GetPendingTransition())
+        {
+            boxes.Pending = std::string(pending->State) + " at the next sync point";
+            PropertyGrid::Text("Next", boxes.Pending);
+        }
+        if (PropertyGrid::Row("Transport"))
+        {
+            if (ImGui::Button(ICON_FA_PLAY " Play"))
+                scene->PlayMusicSet(entity);
+            boxes.Play = LastItem();
+            ImGui::SameLine();
+            if (ImGui::Button(ICON_FA_STOP " Stop"))
+                scene->StopMusicSet(entity);
+            boxes.Stop = LastItem();
+        }
+        const auto* data2 = player->GetData();
+        if (data2 && !data2->States.empty() && PropertyGrid::Row("Go to state", "Through the set's transition rules"))
+        {
+            for (size_t i = 0; i < data2->States.size(); ++i)
+            {
+                const auto& name = data2->States[i].Name;
+                if (i)
+                    ImGui::SameLine();
+                if (ImGui::GetCursorPosX() + ImGui::CalcTextSize(name.c_str()).x + EditorTheme::Px(16.0f) >
+                    ImGui::GetWindowContentRegionMax().x)
+                    ImGui::NewLine();
+                const bool now = position && position->State == name;
+                if (now)
+                {
+                    ImGui::PushStyleColor(ImGuiCol_Button, p.Selection);
+                    ImGui::PushStyleColor(ImGuiCol_Text, p.Text);
+                }
+                ImGui::PushID(int(i));
+                if (ImGui::Button(name.c_str()))
+                    player->SetState(name);
+                ImGui::PopID();
+                if (now)
+                    ImGui::PopStyleColor(2);
+                boxes.LiveStates.emplace_back(name, LastItem());
+            }
+        }
+        if (data2)
+            for (const auto& parameter : data2->Parameters)
+            {
+                const std::string label = parameter.Name + " now";
+                if (!PropertyGrid::Row(label.c_str(), "Drives the running player only (not saved)"))
+                    continue;
+                ImGui::PushID(label.c_str());
+                float value = player->GetParameter(parameter.Name).value_or(parameter.Default);
+                if (ImGui::SliderFloat("##live",
+                                       &value,
+                                       parameter.Min,
+                                       std::max(parameter.Max, parameter.Min + 1e-3f),
+                                       "%.2f",
+                                       ImGuiSliderFlags_AlwaysClamp))
+                    player->SetParameter(parameter.Name, value);
+                boxes.LiveParameters.emplace_back(parameter.Name, LastItem());
+                ImGui::PopID();
+            }
+        PropertyGrid::EndGroup();
     }
 
     AudioSpatialBoxes& LastAudioSpatialBoxes()

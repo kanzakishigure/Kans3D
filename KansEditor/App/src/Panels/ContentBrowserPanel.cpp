@@ -191,6 +191,7 @@ namespace Kans
                 case Browser::AssetKind::AudioAttenuation:
                 case Browser::AssetKind::AudioEvent:
                 case Browser::AssetKind::AudioHRTF:
+                case Browser::AssetKind::MusicSet:
                 case Browser::AssetKind::Audio:
                     return p.TypeAudio;
                 case Browser::AssetKind::Font:
@@ -604,6 +605,8 @@ namespace Kans
                                 false,
                                 bool(m_CreateAudioAttenuation)))
                 m_CreateAudioAttenuation(m_Current), Refresh();
+            if (ImGui::MenuItem(Label(ICON_FA_MUSIC, "Music Set").c_str(), nullptr, false, bool(m_CreateMusicSet)))
+                m_CreateMusicSet(m_Current), Refresh();
             if (ImGui::MenuItem(
                     Label(ICON_FA_ATOM, "Physics Material").c_str(), nullptr, false, bool(m_CreatePhysicsMaterial)))
                 m_CreatePhysicsMaterial(m_Current), Refresh();
@@ -774,6 +777,10 @@ namespace Kans
     {
         using EditorTheme::Px;
         m_FilterRow.MenuRows.clear();
+        // The list stays under the Filters button and scrolls when the types outgrow the space there.
+        const auto* viewport = ImGui::GetMainViewport();
+        const float room     = viewport->WorkPos.y + viewport->WorkSize.y - m_FilterRow.ButtonMax.y - Px(8.0f);
+        ImGui::SetNextWindowSizeConstraints({0.0f, 0.0f}, {FLT_MAX, std::max(room, Px(120.0f))});
         if (!ImGui::BeginPopup("##TypeFilters"))
             return;
         float width = Px(160.0f);
@@ -1778,6 +1785,9 @@ namespace Kans
             {
                 if (ImGui::MenuItem(Label(ICON_FA_LAYER_GROUP, "Create Audio Event from selection").c_str()))
                     m_CreateAudioEventFromClips(targets), Refresh();
+                if (m_CreateMusicSetFromClips &&
+                    ImGui::MenuItem(Label(ICON_FA_MUSIC, "Create Music Set from selection").c_str()))
+                    m_CreateMusicSetFromClips(targets), Refresh();
                 ImGui::Separator();
             }
             if (ImGui::MenuItem(Label(ICON_FA_PEN, "Rename").c_str(), "F2", false, single))
@@ -1835,6 +1845,8 @@ namespace Kans
                     m_CreateAudioEvent(folder);
                 if (ImGui::MenuItem(Label(ICON_FA_CHART_LINE, "Audio Attenuation").c_str()) && m_CreateAudioAttenuation)
                     m_CreateAudioAttenuation(folder), Refresh();
+                if (ImGui::MenuItem(Label(ICON_FA_MUSIC, "Music Set").c_str()) && m_CreateMusicSet)
+                    m_CreateMusicSet(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_ATOM, "Physics Material").c_str()) && m_CreatePhysicsMaterial)
                     m_CreatePhysicsMaterial(folder), Refresh();
                 if (ImGui::MenuItem(Label(ICON_FA_WAND_MAGIC_SPARKLES, "VFX System").c_str()) && m_CreateVfxSystem)

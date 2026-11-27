@@ -930,13 +930,22 @@ namespace Kans
     void AudioProfilerPanel::DrawEvents()
     {
         const auto& p = EditorTheme::Colors();
+        const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
         for (size_t k = 0; k < EventKinds; ++k)
         {
+            // The music kinds (transitions, stingers) wrap onto the next line when the row is full.
+            const char* kind = EventLabel(AudioProfileEventType(k));
             if (k)
+            {
                 ImGui::SameLine(0.0f, Px(2.0f));
+                if (ImGui::GetCursorScreenPos().x + ImGui::CalcTextSize(kind).x +
+                        ImGui::GetStyle().FramePadding.x * 2.0f >
+                    right)
+                    ImGui::NewLine();
+            }
             const auto bit = Bit(AudioProfileEventType(k));
-            char       label[40];
-            std::snprintf(label, sizeof(label), "%s##kind%zu", EventLabel(AudioProfileEventType(k)), k);
+            char       label[48];
+            std::snprintf(label, sizeof(label), "%s##kind%zu", kind, k);
             if (ToggleButton(label, nullptr, (m_Kinds & bit) != 0, p.AccentHover))
                 m_Kinds = EventMask(m_Kinds ^ bit);
             m_Boxes.Kinds[k] = LastItem();

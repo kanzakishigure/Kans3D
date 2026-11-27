@@ -304,7 +304,10 @@ namespace Kans
 
     std::optional<AssetError> ValidateMusicSet(const MusicSetData& data, const MusicClipDuration& duration)
     {
-        if (data.Segments.empty() || data.States.empty())
+        // A new, empty set is valid (nothing to play yet); once it has content it needs both.
+        const bool empty = data.Segments.empty() && data.States.empty() && data.Parameters.empty() &&
+                           data.Transitions.empty() && data.Stingers.empty();
+        if (!empty && (data.Segments.empty() || data.States.empty()))
             return Invalid("Music set needs segments and states");
         if (!UniqueNames(data.Segments) || !UniqueNames(data.Parameters) || !UniqueNames(data.States) ||
             !UniqueNames(data.Stingers) || HasName(data.States, "Any"))

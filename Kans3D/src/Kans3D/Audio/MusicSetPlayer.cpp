@@ -76,6 +76,8 @@ namespace Kans
         };
         if (auto error = ValidateMusicSet(data, duration))
             return error;
+        if (data.Segments.empty())
+            return AssetError {AssetErrorCode::InvalidData, "Music set is empty: add a segment and a state"};
         const auto bus = [&](const MusicLayer& layer) {
             return busOverride.empty() ? layer.Bus : std::string(busOverride);
         };
@@ -967,5 +969,39 @@ namespace Kans
                                  beat,
                                  Frames(std::floor(beat / segment.BeatsPerBar)),
                                  std::fmod(beat, segment.BeatsPerBar)};
+    }
+
+    std::optional<MusicSetPendingTransition> MusicSetPlayer::GetPendingTransition() const
+    {
+        if (!GetData())
+            return std::nullopt;
+        const auto  clock   = Heard();
+        const auto* current = At(clock);
+        const Run*  first   = nullptr;
+        const Run*  target  = nullptr;
+        for (const auto& run : m_Runs)
+        {
+            if (run.Voices == &m_Segments[run.SegmentIndex].Tail || double(run.Sync) <= clock || run.Sync >= run.End)
+                continue;
+            if (!first || run.Sync < first->Sync)
+                first = &run;
+            if (run.StateChange && (!target || run.Sync < target->Sync))
+                target = &run;
+        }
+        if (!first)
+            return std::nullopt;
+        const auto& data = *GetData();
+        return MusicSetPendingTransition {data.States[(target ? target : first)->StateIndex].Name,
+                                          data.Segments[first->SegmentIndex].Name,
+                                          current ? WrappedAt(*current, double(first->Sync)) : first->Offset,
+                                          first->Sync};
+    }
+
+    std::optional<float> MusicSetPlayer::GetParameter(std::string_view name) const
+    {
+        if (!GetData())
+            return std::nullopt;
+        const auto index = Named(GetData()->Parameters, name);
+        return index == SIZE_MAX ? std::nullopt : std::optional<float>(m_Parameters[index]);
     }
 } // namespace Kans

@@ -491,6 +491,14 @@ namespace Kans::AudioProfiler
                 return "Underrun";
             case AudioProfileEventType::DeviceChanged:
                 return "Device changed";
+            case AudioProfileEventType::TransitionScheduled:
+                return "Transition scheduled";
+            case AudioProfileEventType::TransitionStarted:
+                return "Transition started";
+            case AudioProfileEventType::StingerScheduled:
+                return "Stinger scheduled";
+            case AudioProfileEventType::StingerStarted:
+                return "Stinger started";
         }
         return "?";
     }

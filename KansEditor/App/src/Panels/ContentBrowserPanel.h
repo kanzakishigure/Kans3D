@@ -52,6 +52,12 @@ namespace Kans
         {
             m_CreateAudioAttenuation = std::move(callback);
         }
+        // "Create > Music Set" in a folder (an empty set), and one segment with the selected audio files as stems.
+        void SetCreateMusicSetCallback(PathCallback callback) { m_CreateMusicSet = std::move(callback); }
+        void SetCreateMusicSetFromClipsCallback(std::function<void(const std::vector<std::filesystem::path>&)> callback)
+        {
+            m_CreateMusicSetFromClips = std::move(callback);
+        }
         void
         SetCreateAudioEventFromClipsCallback(std::function<void(const std::vector<std::filesystem::path>&)> callback)
         {
@@ -214,8 +220,9 @@ namespace Kans
         PathCallback m_OpenFile, m_CreateMaterial, m_Import, m_ImportSettings, m_ExtractMaterials;
         PathCallback m_CreateUI, m_CreateTimeline, m_CreatePhysicsMaterial, m_CreateRagdoll, m_CreateRenderTexture;
         PathCallback m_CreateMaterialParameterCollection;
-        PathCallback m_CreateAudioEvent, m_CreateAudioAttenuation;
-        std::function<void(const std::vector<std::filesystem::path>&)> m_CreateAudioEventFromClips;
+        PathCallback m_CreateAudioEvent, m_CreateAudioAttenuation, m_CreateMusicSet;
+        std::function<void(const std::vector<std::filesystem::path>&)> m_CreateAudioEventFromClips,
+            m_CreateMusicSetFromClips;
         std::function<void(AssetID)> m_CreateRagdollFromSkeleton;
         PathCallback              m_CreateVfxModule, m_CreateVfxSystem, m_CreateVfxEmitter;
         MaterialThumbnailProvider m_MaterialThumbnail;

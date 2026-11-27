@@ -20,6 +20,15 @@ namespace Kans
         double           BeatInBar = 0;
     };
 
+    // A transition (or the next playlist segment) scheduled but not heard yet: the state and segment that
+    // start, and where in the playing segment's clip (seconds) they take over.
+    struct MusicSetPendingTransition
+    {
+        std::string_view State, Segment;
+        double           Seconds = 0;
+        uint64_t         Frame   = 0;
+    };
+
     enum class MusicSetEventType
     {
         Beat,
@@ -61,6 +70,9 @@ namespace Kans
         void                            SetPaused(bool paused);
         void                            Update();
         std::optional<MusicSetPosition> GetPosition() const;
+        std::optional<MusicSetPendingTransition> GetPendingTransition() const;
+        // The value a parameter plays with (its default until set); none for an unknown name.
+        std::optional<float>            GetParameter(std::string_view name) const;
         void                            SetEventCallback(EventCallback callback);
         const MusicSetData*             GetData() const { return m_Asset ? &m_Asset->GetData() : nullptr; }
 

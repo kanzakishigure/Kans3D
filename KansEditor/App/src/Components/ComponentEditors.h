@@ -119,6 +119,24 @@ namespace Kans::ComponentEditors
                      const char*        fallback = MasterAudioBus,
                      const char*        missing  = nullptr,
                      ImRect*            box      = nullptr);
+    // A compact dropdown of `engine`'s buses (the default layout without one); `empty` (when given) names
+    // the empty choice. A name the layout lacks is kept and shown as missing. True when changed.
+    bool AudioBusCombo(const char* id, std::string& bus, const AudioEngine* engine, const char* empty = nullptr);
+    // The Music Set Player card: the set (published Music Sets), bus override, initial state (the set's
+    // states), play on start and parameter start values (the set's parameters, reset to its default); in
+    // Play, the running player's state, segment and bar.beat, transport, state buttons and live parameter
+    // sliders that drive it. The boxes are where the last frame drew them, for tooltips and UI tests.
+    void DrawMusicSetPlayer(Entity entity, ComponentUI& ui);
+    struct MusicSetCardBoxes
+    {
+        ImRect                                      Asset, Bus, InitialState, PlayOnStart, Play, Stop;
+        std::vector<std::pair<std::string, ImRect>> StateItems;     // The open initial-state list ("": first).
+        std::vector<std::pair<std::string, ImRect>> Parameters;     // Start-value sliders.
+        std::vector<std::pair<std::string, ImRect>> LiveStates;     // Play: state buttons.
+        std::vector<std::pair<std::string, ImRect>> LiveParameters; // Play: live sliders.
+        std::string                                 Live, Pending, Warning;
+    };
+    MusicSetCardBoxes& LastMusicSetCardBoxes();
     // A send level in dB with Off (-inf) at the field's left end; reset turns it off. True when changed.
     bool AudioSendRow(const char* label, float& db, const char* tooltip = nullptr, ImRect* box = nullptr);
     // The Stats panel's Audio card: the engine, its voices and concurrency groups, timeline audio and,

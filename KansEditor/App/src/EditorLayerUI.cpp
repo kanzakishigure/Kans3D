@@ -105,6 +105,7 @@ namespace Kans
         m_TimelinePanel.SetViewThroughCamera([this](bool show) { m_ViewportPanel.SetPreviewSceneCamera(show); });
         m_TimelinePanel.SetPlayModeQuery([this] { return m_Play.IsActive(); }); // Follows the running player.
         m_AudioEventPanel.SetPlayModeQuery([this] { return m_Play.IsActive(); }); // No audition in Play.
+        m_MusicSetPanel.SetPlayModeQuery([this] { return m_Play.IsActive(); });
         m_Panels.Register(
             spec(
                 PanelID::UIDesigner, "UI Designer", ICON_FA_DESKTOP, PanelCategory::Assets, PanelDock::Floating, false),
@@ -157,6 +158,9 @@ namespace Kans
                                PanelDock::Right,
                                false),
                           [this] { m_AudioAttenuationPanel.Draw(); });
+        m_Panels.Register(
+            spec(PanelID::MusicSet, "Music Set", ICON_FA_MUSIC, PanelCategory::Assets, PanelDock::Bottom, false),
+            [this] { m_MusicSetPanel.Draw(); });
         m_Panels.Register(
             spec(
                 PanelID::ActionMarkers, "Action Markers", ICON_FA_FLAG, PanelCategory::Assets, PanelDock::Right, false),
@@ -464,7 +468,8 @@ namespace Kans
             m_MaterialEditorPanel.HasFocus() || m_RenderTexturePanel.HasFocus() ||
             m_MaterialParameterCollectionPanel.HasFocus() || m_PhysicsMaterialPanel.HasFocus() ||
             m_AudioMixerPanel.HasFocus() || m_AudioEventPanel.HasFocus() || m_AudioAttenuationPanel.HasFocus() ||
-            m_ActionMarkersPanel.HasFocus() || m_TimelinePanel.HasFocus() || m_RagdollEditor.HasFocus() ||
+            m_MusicSetPanel.HasFocus() || m_ActionMarkersPanel.HasFocus() || m_TimelinePanel.HasFocus() ||
+            m_RagdollEditor.HasFocus() ||
             std::any_of(
                 m_VfxModuleEditors.begin(), m_VfxModuleEditors.end(), [](const auto& e) { return e->HasFocus(); }) ||
             std::any_of(
@@ -537,6 +542,7 @@ namespace Kans
         m_TimelinePanel.StopPreview(); // Play starts from the scene as saved, not a previewed frame.
         m_AudioPreview.Stop();         // The scene's own sources take over.
         m_AudioEventPanel.StopPreview();
+        m_MusicSetPanel.StopPreview();
         m_VideoPreview.End();          // Before the runtime starts: the players start over from their clock.
         if (!m_Play.IsActive())
         {
@@ -560,6 +566,7 @@ namespace Kans
         m_TimelinePanel.StopPreview();
         m_AudioPreview.Stop();
         m_AudioEventPanel.StopPreview();
+        m_MusicSetPanel.StopPreview();
         m_VideoPreview.End();
         FinishClothPaint();
         SecondaryMotionEditing::SetPreview(*m_ActiveScene, false);

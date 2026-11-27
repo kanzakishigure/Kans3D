@@ -265,6 +265,10 @@ namespace Kans
         listener.CreateOrder = 1;
         listener.Create      = listener.Add;
 
+        auto& musicSet    = registry.Register<MusicSetPlayerComponent>("Music Set Player", ICON_FA_MUSIC, "Audio");
+        musicSet.IconRank = 7;
+        musicSet.Draw     = DrawMusicSetPlayer;
+
         // Physics: bodies, colliders, characters, joints and fields.
         auto& body    = registry.Register<RigidBodyComponent>("Rigid Body", ICON_FA_WEIGHT_HANGING, "Physics");
         body.IconRank = 10;

@@ -35,6 +35,7 @@
 #include "Panels/HierarchyPanel.h"
 #include "Panels/MaterialEditorPanel.h"
 #include "Panels/MaterialParameterCollectionPanel.h"
+#include "Panels/MusicSetEditorPanel.h"
 #include "Panels/PhysicsMaterialPanel.h"
 #include "Panels/PluginsPanel.h"
 #include "Panels/ProductImportPanel.h"
@@ -77,6 +78,7 @@ namespace Kans
         inline constexpr const char* AudioMixer                   = "AudioMixer";
         inline constexpr const char* AudioEvent                   = "AudioEvent";
         inline constexpr const char* AudioAttenuation             = "AudioAttenuation";
+        inline constexpr const char* MusicSet                     = "MusicSet";
         inline constexpr const char* ActionMarkers                = "ActionMarkers";
         inline constexpr const char* AudioProfiler                = "AudioProfiler";
     } // namespace PanelID
@@ -147,6 +149,10 @@ namespace Kans
         void CreateAudioEventFromClips(const std::vector<std::filesystem::path>& files);
         // Content Browser: a new .audioattenuation (the built-in Inverse model) in `directory`, opened in its editor.
         void CreateAudioAttenuation(const std::filesystem::path& directory);
+        // Content Browser: a new .musicset (empty, or one segment with the selected audio files as stems),
+        // opened in the Music Set editor.
+        void CreateMusicSet(const std::filesystem::path&              directory,
+                            const std::vector<std::filesystem::path>& clips = {});
         // Adds a dropped model to the scene, importing it first if needed.
         // `parent` (may be null) receives the placed model entity; `position`
         // (world space) is where it goes, the parent's origin otherwise.
@@ -412,6 +418,7 @@ namespace Kans
         AudioProfilerPanel                       m_AudioProfilerPanel;
         AudioEventEditorPanel                    m_AudioEventPanel;
         AudioAttenuationEditorPanel              m_AudioAttenuationPanel;
+        MusicSetEditorPanel                      m_MusicSetPanel;
         ActionMarkersPanel                       m_ActionMarkersPanel;
         std::unordered_map<AssetID, std::string> m_AudioEventNames; // Published AudioEvents by ID.
         RenderTexturePanel   m_RenderTexturePanel;
