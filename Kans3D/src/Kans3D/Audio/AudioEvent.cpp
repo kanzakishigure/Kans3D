@@ -12,6 +12,7 @@ namespace Kans
         constexpr const char* Selections[] = {"Random", "Shuffle", "Sequential"};
         constexpr const char* Rules[]      = {"StopOldest", "StopQuietest", "StopLowestPriority", "RejectNew"};
         constexpr const char* Models[]     = {"None", "Inverse", "Linear", "Exponential"};
+        constexpr const char* Spatializers[] = {"Panning", "HRTF"};
 
         template<class T, size_t N>
         T ReadEnum(const YAML::Node& node, const char* field, T fallback, const char* const (&names)[N])
@@ -101,6 +102,10 @@ namespace Kans
             return Invalid("StartOffsetSeconds must have finite 0 <= min <= max");
         if (!Nonnegative(data.CooldownSeconds))
             return Invalid("CooldownSeconds must be finite and nonnegative");
+        if ((data.Spatializer && *data.Spatializer != AudioSpatializer::Panning &&
+             *data.Spatializer != AudioSpatializer::HRTF) ||
+            !Nonnegative(data.SpatialBlend) || data.SpatialBlend > 1)
+            return Invalid("Invalid audio event Spatializer or SpatialBlend");
         if (!data.InstanceLimit.MaxCount)
             return Invalid("InstanceLimit MaxCount must be greater than zero");
         if (data.InstanceLimit.Rule < AudioConcurrencyRule::StopOldest ||
@@ -149,10 +154,19 @@ namespace Kans
             if (documents.size() != 1 || !documents.front().IsMap())
                 return Invalid("Expected one audio event mapping");
             const auto& root = documents.front();
-            if (root["Version"].as<unsigned>() != 1)
+            const auto  version = root["Version"].as<unsigned>();
+            if (version != 1 && version != 2)
                 return AssetError {AssetErrorCode::UnsupportedVersion, "Unsupported audio event version"};
 
             AudioEventData data;
+            if (version == 1)
+                data.Spatializer = AudioSpatializer::Panning;
+            else
+            {
+                if (root["Spatializer"])
+                    data.Spatializer = ReadEnum(root, "Spatializer", AudioSpatializer::Panning, Spatializers);
+                Read(root, "SpatialBlend", data.SpatialBlend);
+            }
             const auto     entries = root["Entries"];
             if (!entries || !entries.IsSequence())
                 return Invalid("Expected an Entries sequence");
@@ -215,9 +229,13 @@ namespace Kans
         if (auto error = ValidateAudioEvent(data))
             return *error;
         YAML::Node root;
-        root["Version"]   = 1;
+        root["Version"]   = 2;
         root["Selection"] = Selections[int(data.Selection)];
         Fields(data, [&](const char* key, const auto& value) { root[key] = value; });
+        if (data.Spatializer)
+            root["Spatializer"] = Spatializers[int(*data.Spatializer)];
+        if (data.SpatialBlend != 1)
+            root["SpatialBlend"] = data.SpatialBlend;
         if (!data.ReverbZoneSend)
             root["ReverbZoneSend"] = false;
         if (data.LfeSendDb != AudioSendOffDb)

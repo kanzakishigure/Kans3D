@@ -241,6 +241,8 @@ namespace Kans
         desc.Priority         = params.Priority.value_or(data.Priority);
         desc.Bus              = params.Bus ? *params.Bus : data.Bus;
         desc.Loop             = params.Loop.value_or(data.Loop);
+        desc.Spatializer      = params.Spatializer ? params.Spatializer : data.Spatializer;
+        desc.SpatialBlend     = params.SpatialBlend.value_or(data.SpatialBlend);
         desc.ReverbZoneSend   = params.ReverbZoneSend && data.ReverbZoneSend;
         desc.LfeSendDb        = params.LfeSendDb.value_or(data.LfeSendDb);
         desc.PinToCenter      = params.PinToCenter;

@@ -8,7 +8,9 @@
 #include "AudioBusGraph.h"
 #include "AudioChannelRouting.h"
 #include "AudioGainRamp.h"
+#include "AudioHRTF.h"
 #include "AudioProfileCapture.h"
+#include "SteamAudio.h"
 
 #include <miniaudio.h>
 #include <array>
@@ -209,6 +211,8 @@ namespace Kans
             uint32_t                             Listener          = 0;
             bool                                 HasNative         = false;
             AudioSpatialParams                   Native;
+            float                                BinauralBlend = 0, BinauralGain = 1;
+            bool                                 BinauralEnabled = false, BinauralReversed = false;
             bool                                 operator==(const SpatialMix& other) const
             {
                 return Gains == other.Gains && FilterCoefficient == other.FilterCoefficient &&
@@ -220,7 +224,9 @@ namespace Kans
                        Native.DopplerFactor == other.Native.DopplerFactor &&
                        Native.ConeInnerAngle == other.Native.ConeInnerAngle &&
                        Native.ConeOuterAngle == other.Native.ConeOuterAngle &&
-                       Native.ConeOuterGain == other.Native.ConeOuterGain;
+                       Native.ConeOuterGain == other.Native.ConeOuterGain && BinauralBlend == other.BinauralBlend &&
+                       BinauralGain == other.BinauralGain && BinauralEnabled == other.BinauralEnabled &&
+                       BinauralReversed == other.BinauralReversed;
             }
         };
 
@@ -270,6 +276,12 @@ namespace Kans
             // Exact digital -3 dB cutoff for y += coefficient * (x - y).
             const float sine = std::sin(pi * std::min(cutoff / sampleRate, 0.5f));
             return 2 * sine / (std::sqrt(1 + sine * sine) + sine);
+        }
+
+        glm::vec3 UnitVector(glm::vec3 value, glm::vec3 fallback)
+        {
+            const auto squared = glm::dot(value, value);
+            return squared > 1e-12f && std::isfinite(squared) ? value / std::sqrt(squared) : fallback;
         }
 
         float ConeGain(const glm::vec3&            direction,
@@ -362,6 +374,13 @@ namespace Kans
                 CORE_WARN("Audio: {}", message);
             else
                 std::fprintf(stderr, "Audio: %s\n", message.c_str());
+        }
+
+        void WarnSteamAudio(const std::string& reason)
+        {
+            static std::atomic_flag warned = ATOMIC_FLAG_INIT;
+            if (!warned.test_and_set(std::memory_order_relaxed))
+                Warn("Steam Audio HRTF unavailable, using panning: " + reason);
         }
 
         std::string Error(const char* operation, ma_result result)
@@ -931,6 +950,9 @@ namespace Kans
                 uint64_t                                       ListenerIdentity   = 0;
                 uint32_t                                       HandoffRemaining   = 0;
                 std::array<float, MaxOutputChannels>           HandoffGains {};
+                SteamAudioVoice                                Binaural;
+                uint32_t                                       BinauralTail = 0;
+                std::atomic<bool>                              BinauralBuffered {false}, ResetBinauralPending {false};
 
                 void SetSpatialTarget()
                 {
@@ -964,7 +986,8 @@ namespace Kans
                             SpatialCurrent = next;
                         else if (SpatialTarget.Gains != next.Gains ||
                                  SpatialTarget.FilterCoefficient != next.FilterCoefficient ||
-                                 SpatialTarget.CustomPan != next.CustomPan)
+                                 SpatialTarget.CustomPan != next.CustomPan ||
+                                 SpatialTarget.BinauralGain != next.BinauralGain)
                             SpatialRamp = std::max(1u, ma_engine_get_sample_rate(ma_sound_get_engine(this)) / 100);
                         SpatialTarget = next;
                     }
@@ -1018,10 +1041,10 @@ namespace Kans
                     }
                 }
 
-                void ApplySpatialMix(float* output, uint32_t frames, uint32_t channels)
+                void ApplySpatialMix(float* output, uint32_t frames, uint32_t channels, float* mono = nullptr)
                 {
                     // The mixer leaves legacy PCM untouched, including the original miniaudio gainer.
-                    if (!SpatialRamp && SpatialCurrent.Gains == SpatialMix {}.Gains &&
+                    if (!mono && !SpatialRamp && SpatialCurrent.Gains == SpatialMix {}.Gains &&
                         SpatialCurrent.FilterCoefficient == 1)
                         return;
                     for (uint32_t frame = 0; frame < frames; ++frame)
@@ -1031,6 +1054,8 @@ namespace Kans
                             const float step = 1.f / SpatialRamp;
                             SpatialCurrent.FilterCoefficient =
                                 glm::mix(SpatialCurrent.FilterCoefficient, SpatialTarget.FilterCoefficient, step);
+                            SpatialCurrent.BinauralGain =
+                                glm::mix(SpatialCurrent.BinauralGain, SpatialTarget.BinauralGain, step);
                             for (uint32_t ch = 0; ch < channels; ++ch)
                             {
                                 auto&       gain   = SpatialCurrent.Gains[ch];
@@ -1049,7 +1074,73 @@ namespace Kans
                             history       = coefficient == 1 ? sample : glm::mix(history, sample, coefficient);
                             sample        = history * SpatialCurrent.Gains[ch];
                         }
+                        if (mono)
+                            mono[frame] = (AirHistory[0] + AirHistory[1]) * (0.5f * SpatialCurrent.BinauralGain);
                     }
+                }
+
+                void ResetBinaural()
+                {
+                    Binaural.Reset();
+                    BinauralTail = 0;
+                    BinauralBuffered.store(false, std::memory_order_release);
+                }
+
+                void ProcessSpatial(float* output, uint32_t& frames, uint32_t requested, uint32_t channels)
+                {
+                    const float blend = SpatialTarget.BinauralBlend;
+                    if (!SpatialTarget.BinauralEnabled)
+                    {
+                        if (Binaural.HasSignal())
+                            ResetBinaural();
+                        ApplySpatialMix(output, frames, channels);
+                        return;
+                    }
+
+                    const auto& engine   = *ma_sound_get_engine(this);
+                    const auto& listener = engine.listeners[ma_sound_get_pinned_listener_index(this)];
+                    // The listener mailbox is consumed by this same mixer before processing voices.
+                    // Read its owned pose directly, avoiding the native spatializer's vector locks.
+                    const auto& pos       = listener.position.v;
+                    const auto& look      = listener.direction.v;
+                    const auto& up        = listener.config.worldUp;
+                    const auto  forward   = UnitVector({look.x, look.y, look.z}, {0, 0, -1});
+                    const auto  right     = UnitVector(glm::cross(forward, glm::vec3(up.x, up.y, up.z)), {1, 0, 0});
+                    const auto  toSource  = SpatialTarget.Native.Position - glm::vec3(pos.x, pos.y, pos.z);
+                    const auto  direction = UnitVector({glm::dot(toSource, right),
+                                                        glm::dot(toSource, glm::cross(right, forward)),
+                                                        -glm::dot(toSource, forward)},
+                                                       {0, 0, -1});
+                    const bool  reversed  = SpatialTarget.BinauralReversed;
+                    std::array<float, SteamAudioMaxBlock> mono;
+                    for (uint32_t offset = 0; offset < frames;)
+                    {
+                        const auto count       = std::min<uint32_t>(mono.size(), frames - offset);
+                        auto*      destination = output + offset * channels;
+                        ApplySpatialMix(destination, count, channels, mono.data());
+                        Binaural.Process(destination, mono.data(), count, direction, blend, reversed);
+                        offset += count;
+                    }
+                    const bool ended = ma_sound_at_end(this) != MA_FALSE;
+                    if (ended && !BinauralTail && Binaural.HasSignal())
+                        BinauralTail = Binaural.DrainFrames();
+                    if (BinauralTail || (!ended && frames < requested))
+                    {
+                        const auto count =
+                            BinauralTail ? std::min(requested - frames, BinauralTail) : requested - frames;
+                        std::fill_n(output + frames * channels, count * channels, 0.f);
+                        if (count && Binaural.HasSignal())
+                            Binaural.Process(output + frames * channels, nullptr, count, direction, blend, reversed);
+                        if (BinauralTail)
+                        {
+                            BinauralTail -= count;
+                            if (!BinauralTail)
+                                ResetBinaural();
+                        }
+                        frames += count;
+                    }
+                    if (!Binaural.HasSignal())
+                        BinauralBuffered.store(false, std::memory_order_release);
                 }
 
                 void ResetSpatialMix()
@@ -1062,6 +1153,8 @@ namespace Kans
                     HandoffRemaining                                    = 0;
                     ListenerIdentity                                    = 0;
                     engineNode.spatializer.minSpatializationChannelGain = NativePanFloor;
+                    ResetBinaural();
+                    ResetBinauralPending.store(false, std::memory_order_relaxed);
                 }
 
                 void
@@ -1209,11 +1302,21 @@ namespace Kans
                         std::copy_n(gainer.pNewGains, gainer.config.channels, gainer.pOldGains);
                         gainer.t = UINT32_MAX;
                     }
-                    if (self.Pitch.Driven)
+                    if (voice.Desc.Spatial)
+                    {
+                        if (self.ResetBinauralPending.load(std::memory_order_acquire) &&
+                            self.ResetBinauralPending.exchange(false, std::memory_order_acq_rel))
+                            self.ResetBinaural();
+                        if (self.SpatialTarget.BinauralEnabled && !self.Binaural.HasSignal())
+                            self.BinauralBuffered.store(true, std::memory_order_release);
+                    }
+                    if (self.BinauralTail)
+                        *outCount = 0;
+                    else if (self.Pitch.Driven)
                         self.ProcessPitch(node, in, inCount, out, outCount);
                     else
                         self.ProcessNative(node, in, inCount, out, outCount);
-                    if (*outCount < requested && voice.Source->Stream && !ma_sound_at_end(&self))
+                    if (*outCount < requested && voice.Source->Stream && !self.BinauralTail && !ma_sound_at_end(&self))
                     {
                         const auto missing = requested - *outCount;
                         voice.Source->Starved(missing);
@@ -1240,7 +1343,7 @@ namespace Kans
                     }
                     if (voice.Desc.Spatial)
                     {
-                        self.ApplySpatialMix(out[0], *outCount, channels);
+                        self.ProcessSpatial(out[0], *outCount, requested, channels);
                         self.HasMixed |= *outCount != 0;
                     }
                     if (self.ResumeRemaining || self.Envelope.Out || self.Envelope.In.From != 1 ||
@@ -1277,6 +1380,7 @@ namespace Kans
 
                 void Seek(double position)
                 {
+                    ResetBinaural();
                     const auto frame = static_cast<uint64_t>(position);
                     ma_data_source_seek_to_pcm_frame(pDataSource, frame);
                     processingCacheFramesRemaining = 0;
@@ -1416,6 +1520,8 @@ namespace Kans
             std::shared_ptr<Control> Commands = std::make_shared<Control>();
             Fades                    Envelope;
             AudioSpatialParams           Spatial;
+            uint64_t                           HRTFRevision  = 0;
+            bool                               HasHRTFEffect = false;
             float                        ConeInnerCos = -1, ConeOuterCos = -1;
             AssetID                            EventAttenuationAsset, AttenuationID;
             AssetManager*                      AttenuationAssets = nullptr;
@@ -1441,13 +1547,18 @@ namespace Kans
 
             const Transport& Current() const { return History.back(); }
 
+            bool NativeEnded() const
+            {
+                return ma_sound_at_end(&Sound) && !Sound.BinauralBuffered.load(std::memory_order_acquire);
+            }
+
             bool Ended(double clock) const
             {
                 const auto& state = Current();
                 if (state.Start == NoFrame)
                     return false;
                 return Virtual ? !state.Loop && state.Position(clock, StreamDelay.load()) >= Info.LengthFrames :
-                                 ma_sound_at_end(&Sound) != MA_FALSE;
+                                 NativeEnded();
             }
 
             bool Active(uint64_t clock) const
@@ -1707,6 +1818,9 @@ namespace Kans
         ma_uint64                        MixBlock(float* output, ma_uint64 count);
         ma_uint64                        MixOutput(float* output, ma_uint64 count);
         AudioProfileCapture              Profile;
+        std::unique_ptr<SteamAudio>      HRTF;
+        Ref<const AudioHRTFAsset>        ActiveHRTF;
+        uint64_t                         HRTFRevision         = 1;
         uint64_t                         ProfileGraphRevision = 0, RetiredUnderruns = 0, RetiredUnderrunFrames = 0;
 
         void LogProfile(AudioProfileEvent event, uint64_t frame)
@@ -2022,7 +2136,8 @@ namespace Kans
             ma_spatializer_set_position(&PanProbe, relative.x, relative.y, relative.z);
             std::array<float, MaxOutputChannels> input {}, output {};
             ma_spatializer_process_pcm_frames(&PanProbe, &listener, output.data(), input.data(), 1);
-            const auto channels = Config.Channels;
+            const auto channels =
+                mix.BinauralEnabled ? MixFormat.Channels : std::min(Config.Channels, MixFormat.Channels);
             float      power    = 0;
             for (uint32_t ch = 0; ch < channels; ++ch)
             {
@@ -2040,6 +2155,45 @@ namespace Kans
                         mix.Gains[ch] = std::sqrt(
                             glm::mix(mix.Gains[ch] * mix.Gains[ch], power / (channels - (LfeChannel >= 0)), spread));
             mix.CustomPan = true;
+        }
+
+        AudioSpatializer Spatializer(const Voice& voice) const
+        {
+            return voice.Desc.Spatializer.value_or(Config.DefaultSpatializer);
+        }
+
+        AudioHRTFFallback HRTFFallback(const Voice& voice) const
+        {
+            if (Spatializer(voice) != AudioSpatializer::HRTF)
+                return AudioHRTFFallback::None;
+            if (!voice.Desc.Spatial)
+                return AudioHRTFFallback::NonSpatial;
+            if (MixFormat.Channels != 2 || NativeFormat.Channels != 2)
+                return AudioHRTFFallback::NonStereoOutput;
+            if (!HRTF || !HRTF->IsReady())
+                return AudioHRTFFallback::SteamAudioUnavailable;
+            if (!voice.HasHRTFEffect && voice.Desc.SpatialBlend > 0)
+                return AudioHRTFFallback::EffectCreationFailed;
+            return AudioHRTFFallback::None;
+        }
+
+        bool PrepareBinaural(Voice& voice)
+        {
+            if (Spatializer(voice) != AudioSpatializer::HRTF || voice.Desc.SpatialBlend == 0)
+                return false;
+            if (MixFormat.Channels != 2 || NativeFormat.Channels != 2 || !HRTF || !HRTF->IsReady())
+                return false;
+            if (voice.HRTFRevision != HRTFRevision)
+            {
+                voice.HRTFRevision  = HRTFRevision;
+                auto effect         = HRTF->CreateEffect();
+                voice.HasHRTFEffect = bool(effect);
+                if (effect)
+                    voice.Sound.Binaural.Publish(std::move(effect));
+                else
+                    WarnSteamAudio("could not create a binaural effect");
+            }
+            return voice.HasHRTFEffect;
         }
 
         void ApplySpatial(Voice& voice)
@@ -2082,6 +2236,9 @@ namespace Kans
             params.Direction     = direction;
 
             SpatialMix mix;
+            const bool binaural  = PrepareBinaural(voice) && listenerIndex < Config.MaxListeners;
+            mix.BinauralEnabled  = binaural;
+            mix.BinauralReversed = binaural && MixFormat.ChannelMap[0] == MA_CHANNEL_FRONT_RIGHT;
             mix.Listener = listenerIndex;
             if (enhanced && listenerIndex < MaxAudioListeners)
             {
@@ -2124,19 +2281,37 @@ namespace Kans
                 if (attenuation)
                     params.DopplerFactor = attenuation->DopplerFactor;
 
-                if (shaped || (attenuation && voice.AttenuationHasSpread))
+                if (binaural)
+                    mix.BinauralBlend = voice.Desc.SpatialBlend * boundary * (1.f - sample.Spread);
+                if (shaped || (attenuation && voice.AttenuationHasSpread) || binaural)
                     SetCustomPan(mix, params.Position, listenerIndex, boundary, sample.Spread);
                 const float postGain = (nativePreset ? 1.f : sample.Gain) * (shaped ? angularGain : 1.f);
+                if (binaural)
+                    mix.BinauralGain = postGain;
                 for (auto& gain : mix.Gains)
                     gain *= postGain;
                 mix.FilterCoefficient = AirFilterCoefficient(sample.CutoffHz, Config.SampleRate);
             }
             else
+            {
                 voice.SpatialAudibility.reset();
+                if (binaural)
+                {
+                    mix.BinauralBlend = voice.Desc.SpatialBlend;
+                    SetCustomPan(mix, params.Position, listenerIndex, 1.f, 0.f);
+                }
+            }
 
             mix.HasNative = true;
             mix.Native    = params;
             sound->SpatialMailbox.Publish(mix);
+        }
+
+        void RefreshSpatializers()
+        {
+            for (const auto& slot : Slots)
+                if (slot.Value && slot.Value->Desc.Spatial)
+                    ApplySpatial(*slot.Value);
         }
 
         bool RefreshAttenuation(Voice& voice)
@@ -2438,6 +2613,9 @@ namespace Kans
             }
         }
         static std::atomic<uint64_t> nextInstance {0};
+        p.HRTF = std::make_unique<SteamAudio>();
+        if (auto error = p.HRTF->Init(p.Config.SampleRate, ma_engine_get_node_graph(&p.Engine)->processingSizeInFrames))
+            WarnSteamAudio(*error);
         p.InstanceID = ++nextInstance;
         p.Listeners[0].Active = true;
         for (uint32_t i = 1; i < config.MaxListeners; ++i)
@@ -2473,6 +2651,8 @@ namespace Kans
                 DestroyVoice({i, p.Slots[i].Generation});
         while (!p.Sounds.empty())
             UnregisterSound(p.Sounds.begin()->first);
+        p.ActiveHRTF.reset();
+        p.HRTF.reset();
         p.Buses.reset();
         p.UserSettings = {};
         p.MixFormat = p.NativeFormat = {};
@@ -2678,7 +2858,7 @@ namespace Kans
         const auto elapsed       = ProfileNanoseconds(end - start);
         if (frame)
         {
-            frame->Callback = {first, count, elapsed, budget};
+            frame->Callback = {first, count, elapsed, budget, frame->Callback.SteamAudioNanoseconds};
             frame->Tick     = AudioProfileCapture::Tick(end);
         }
         Profile.End(frame, elapsed > budget);
@@ -2906,6 +3086,8 @@ namespace Kans
         }
         const auto lastNative = p.NativeFormat;
         p.NativeFormat        = native;
+        if (!startup && native.Channels != lastNative.Channels)
+            p.RefreshSpatializers();
         std::swap(p.OutputConversion, conversion);
         auto*    output  = keepDevice ? p.Output.get() : next.get();
         uint64_t latency = 0;
@@ -2928,6 +3110,7 @@ namespace Kans
                 if (mix != lastMix)
                     if (auto error = ReformatMix(lastMix))
                         return error;
+                p.RefreshSpatializers();
                 restartOld();
                 return Error("Start audio output device", result);
             }
@@ -3271,6 +3454,7 @@ namespace Kans
             if (!slot.Value)
                 continue;
             auto&       voice = *slot.Value;
+            voice.Sound.Binaural.Collect();
             const auto& state = voice.Current();
             p.ObserveVoice(voice, now, heard);
             if (voice.Desc.AutoRelease && ((voice.Ended(heard) && (voice.Virtual || !voice.Timed.load() ||
@@ -3420,6 +3604,9 @@ namespace Kans
             row.ConcurrencyGroup = voice.Desc.ConcurrencyGroup;
             row.Reason           = voice.ProfileReason;
             row.Priority         = voice.Desc.Priority;
+            row.Spatializer      = p.Spatializer(voice);
+            row.SpatialBlend     = voice.Desc.SpatialBlend;
+            row.HRTFFallback     = p.HRTFFallback(voice);
             if (voice.BusHeld)
             {
                 row.State  = AudioVoiceState::HeldByGamePause;
@@ -4120,6 +4307,7 @@ namespace Kans
         else
             voice = std::make_unique<Impl::Voice>();
         voice->Desc = desc;
+        voice->Desc.SpatialBlend = std::isfinite(desc.SpatialBlend) ? std::clamp(desc.SpatialBlend, 0.f, 1.f) : 1.f;
         if (generator)
             voice->Desc.Owner.Kind = AudioVoiceOwnerKind::Generator;
         voice->ProfileReason = AudioVoiceReason::None;
@@ -4241,6 +4429,8 @@ namespace Kans
     {
         AudioVoiceDesc desc;
         desc.Owner            = {AudioVoiceOwnerKind::OneShot, params.OwnerEntity, {}};
+        desc.Spatializer      = params.Spatializer;
+        desc.SpatialBlend     = params.SpatialBlend;
         desc.Volume           = params.Volume;
         desc.Pitch            = params.Pitch;
         desc.Bus              = params.Bus;
@@ -4505,7 +4695,7 @@ namespace Kans
         {
             auto       state = voice->Current();
             const auto now   = voice->Scheduled ? m_Impl->WritableClock() : GetClockFrames();
-            const bool ended = voice->Ended(static_cast<double>(now)) || ma_sound_at_end(&voice->Sound);
+            const bool ended = voice->Ended(static_cast<double>(now)) || voice->NativeEnded();
             if (voice->Active(now) && !voice->Stolen)
                 return true;
             if (voice->BusHeld && IsBusPaused(voice->Desc.Bus))
@@ -4593,7 +4783,11 @@ namespace Kans
             }
             ma_sound_set_start_time_in_pcm_frames(&voice->Sound, state.Start);
             ma_sound_set_stop_time_in_pcm_frames(&voice->Sound, state.Stop);
-            ma_sound_start(&voice->Sound);
+            if (ma_sound_at_end(&voice->Sound) && voice->Sound.BinauralBuffered.load(std::memory_order_acquire) &&
+                !voice->Sound.ResetBinauralPending.load(std::memory_order_acquire))
+                ma_node_set_state(&voice->Sound, ma_node_state_started);
+            else
+                ma_sound_start(&voice->Sound);
             return true;
         }
         return false;
@@ -4785,7 +4979,11 @@ namespace Kans
                 voice->PendingSeek.store(0);
             }
             else
+            {
                 ma_sound_seek_to_pcm_frame(&voice->Sound, 0);
+                if (voice->HasHRTFEffect)
+                    voice->Sound.ResetBinauralPending.store(true, std::memory_order_release);
+            }
         }
     }
     void AudioEngine::Pause(AudioVoiceHandle handle)
@@ -4908,7 +5106,11 @@ namespace Kans
             frame      = std::min(frame, voice->Info.LengthFrames);
             if (state.Loop && frame >= state.LoopEnd)
                 frame = state.LoopBegin + (frame - state.LoopBegin) % (state.LoopEnd - state.LoopBegin);
-            const bool prepare = voice->Source->Stream && !voice->Source->Offline && !voice->Virtual;
+            const bool streamingDevice = voice->Source->Stream && !voice->Source->Offline;
+            const bool binaural = voice->HasHRTFEffect && m_Impl->Spatializer(*voice) == AudioSpatializer::HRTF &&
+                                  voice->Desc.SpatialBlend > 0 &&
+                                  m_Impl->HRTFFallback(*voice) == AudioHRTFFallback::None;
+            const bool prepare  = (streamingDevice || binaural) && !voice->Virtual;
             if (prepare)
             {
                 const bool attached = voice->Attached;
@@ -4921,7 +5123,8 @@ namespace Kans
                 voice->Sound.atEnd      = MA_FALSE;
                 voice->Sound.ResumeAt   = NoFrame;
                 voice->Sound.Seek(frame);
-                m_Impl->WakeStreams();
+                if (streamingDevice)
+                    m_Impl->WakeStreams();
                 if (attached)
                     m_Impl->Attach(*voice);
             }
@@ -5003,7 +5206,11 @@ namespace Kans
                 // A shortened loop may put the prefetched source cursor beyond its new end.
                 // Queue a public seek so that only the current processing block can retain old loop samples.
                 if (ma_sound_is_looping(&voice->Sound) && cursor >= end)
+                {
+                    if (voice->HasHRTFEffect)
+                        voice->Sound.ResetBinaural();
                     ma_sound_seek_to_pcm_frame(&voice->Sound, beginFrame);
+                }
                 if (attached)
                     m_Impl->Attach(*voice);
                 auto state      = voice->Current();
@@ -5026,6 +5233,59 @@ namespace Kans
         voice->Spatial = params;
         m_Impl->RefreshAttenuation(*voice);
         m_Impl->ApplySpatial(*voice);
+    }
+
+    void
+    AudioEngine::SetVoiceSpatializer(AudioVoiceHandle handle, std::optional<AudioSpatializer> spatializer, float blend)
+    {
+        auto* voice = m_Impl->Find(handle);
+        if (!voice || !std::isfinite(blend))
+            return;
+        blend = std::clamp(blend, 0.f, 1.f);
+        if (voice->Desc.Spatializer == spatializer && voice->Desc.SpatialBlend == blend)
+            return;
+        voice->Desc.Spatializer  = spatializer;
+        voice->Desc.SpatialBlend = blend;
+        if (voice->Desc.Spatial)
+            m_Impl->ApplySpatial(*voice);
+    }
+
+    void AudioEngine::SetDefaultSpatializer(AudioSpatializer spatializer)
+    {
+        if (m_Impl->Config.DefaultSpatializer != spatializer)
+        {
+            m_Impl->Config.DefaultSpatializer = spatializer;
+            m_Impl->RefreshSpatializers();
+        }
+    }
+
+    AudioSpatializer AudioEngine::GetDefaultSpatializer() const { return m_Impl->Config.DefaultSpatializer; }
+    bool             AudioEngine::IsHRTFAvailable() const { return m_Impl->HRTF && m_Impl->HRTF->IsReady(); }
+    AssetID AudioEngine::GetActiveHRTF() const { return m_Impl->ActiveHRTF ? m_Impl->ActiveHRTF->assetID : AssetID {}; }
+
+    std::optional<std::string> AudioEngine::SetActiveHRTF(AssetManager* assets, AssetID id)
+    {
+        auto&                     impl = *m_Impl;
+        Ref<const AudioHRTFAsset> requested;
+        if (id.IsValid())
+        {
+            if (!assets)
+                return "Audio HRTF selection requires an asset manager";
+            auto loaded = assets->Load<AudioHRTFAsset>(id);
+            if (const auto* error = std::get_if<AssetError>(&loaded))
+                return error->Message;
+            requested = std::get<Ref<const AudioHRTFAsset>>(std::move(loaded));
+        }
+        if (requested == impl.ActiveHRTF)
+            return std::nullopt;
+        if (!impl.HRTF)
+            return "Steam Audio context unavailable";
+        if (auto error = impl.HRTF->Select(requested.get()))
+            return error;
+        impl.ActiveHRTF = std::move(requested);
+        ++impl.HRTFRevision;
+        impl.RefreshSpatializers();
+        return std::nullopt;
     }
 
     void AudioEngine::SetVoiceAttenuationAsset(AudioVoiceHandle handle, AssetManager* assets, AssetID id)

@@ -1,0 +1,48 @@
+set(KANS_STEAM_AUDIO_ROOT "${KANS3D_DIR}/vendor/steamaudio-bin")
+set(steam_audio_default OFF)
+if(IS_DIRECTORY "${KANS_STEAM_AUDIO_ROOT}")
+    set(steam_audio_default ON)
+endif()
+option(KANS_STEAM_AUDIO "Enable Steam Audio binaural spatialization (x64)" ${steam_audio_default})
+
+if(KANS_STEAM_AUDIO)
+    if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64)$")
+        set(KANS_PHONON_RUNTIME "${KANS_STEAM_AUDIO_ROOT}/lib/windows-x64/phonon.dll")
+        set(KANS_PHONON_LINK "${KANS_STEAM_AUDIO_ROOT}/lib/windows-x64/phonon.lib")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64)$")
+        set(KANS_PHONON_RUNTIME "${KANS_STEAM_AUDIO_ROOT}/lib/linux-x64/libphonon.so")
+        set(KANS_PHONON_LINK "${KANS_PHONON_RUNTIME}")
+    endif()
+    if(NOT EXISTS "${KANS_PHONON_LINK}" OR NOT EXISTS "${KANS_PHONON_RUNTIME}" OR
+       NOT EXISTS "${KANS_STEAM_AUDIO_ROOT}/include/phonon.h")
+        message(FATAL_ERROR "KANS_STEAM_AUDIO requires the Steam Audio x64 SDK for this platform. Run Setup.py or disable the option.")
+    endif()
+else()
+    message(STATUS "Steam Audio disabled (HRTF voices fall back to panning)")
+endif()
+
+function(kans_configure_steam_audio target source)
+    if(KANS_STEAM_AUDIO)
+        set_property(SOURCE "${source}" APPEND PROPERTY INCLUDE_DIRECTORIES "${KANS_STEAM_AUDIO_ROOT}/include")
+        set_property(SOURCE "${source}" APPEND PROPERTY COMPILE_DEFINITIONS KANS_STEAM_AUDIO=1)
+        if(WIN32)
+            target_link_libraries(${target} PRIVATE "${KANS_PHONON_LINK}")
+        else()
+            # Symbols are resolved at runtime so a missing SDK binary cannot prevent application startup.
+            target_link_libraries(${target} PRIVATE "-Wl,--push-state,--as-needed" "${KANS_PHONON_LINK}"
+                "-Wl,--pop-state" ${CMAKE_DL_LIBS})
+        endif()
+    endif()
+endfunction()
+
+function(kans_copy_steam_audio_runtime target)
+    if(KANS_STEAM_AUDIO)
+        if(NOT WIN32)
+            set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH "$ORIGIN")
+            set_property(TARGET ${target} APPEND PROPERTY INSTALL_RPATH "$ORIGIN")
+        endif()
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${KANS_PHONON_RUNTIME}" "$<TARGET_FILE_DIR:${target}>"
+            VERBATIM)
+    endif()
+endfunction()

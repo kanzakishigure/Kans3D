@@ -121,6 +121,10 @@ namespace Kans
             v["PlayOnStart"]    = c.PlayOnStart;
             v["Loop"]           = c.Loop;
             v["Spatial"]        = c.Spatial;
+            if (c.Spatializer)
+                v["Spatializer"] = int(*c.Spatializer);
+            if (c.SpatialBlend)
+                v["SpatialBlend"] = *c.SpatialBlend;
             v["Pan"]            = c.Pan;
             if (!c.ReverbZoneSend)
                 v["ReverbZoneSend"] = false;
@@ -210,6 +214,8 @@ namespace Kans
                   "PlayOnStart",
                   "Loop",
                   "Spatial",
+                  "Spatializer",
+                  "SpatialBlend",
                   "Pan",
                   "ReverbZoneSend",
                   "LfeSendDb",
@@ -278,6 +284,18 @@ namespace Kans
             c.PlayOnStart          = node["PlayOnStart"].as<bool>();
             c.Loop                 = node["Loop"].as<bool>();
             c.Spatial              = node["Spatial"].as<bool>();
+            if (node["Spatializer"])
+            {
+                const auto mode = node["Spatializer"].as<int>();
+                Require(mode == int(AudioSpatializer::Panning) || mode == int(AudioSpatializer::HRTF),
+                        "Invalid audio source Spatializer");
+                c.Spatializer = static_cast<AudioSpatializer>(mode);
+            }
+            if (node["SpatialBlend"])
+            {
+                c.SpatialBlend = Number(node["SpatialBlend"]);
+                Require(*c.SpatialBlend >= 0 && *c.SpatialBlend <= 1, "Invalid audio source SpatialBlend");
+            }
             c.Pan                  = Number(node["Pan"]);
             if (node["ReverbZoneSend"])
                 c.ReverbZoneSend = node["ReverbZoneSend"].as<bool>();

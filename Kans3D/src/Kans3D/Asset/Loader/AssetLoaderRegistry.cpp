@@ -9,6 +9,7 @@
 #include "Kans3D/Audio/AudioAttenuation.h"
 #include "Kans3D/Audio/AudioBusLayout.h"
 #include "Kans3D/Audio/AudioEvent.h"
+#include "Kans3D/Audio/AudioHRTF.h"
 #include "Kans3D/Physics/ClothAsset.h"
 #include "Kans3D/Physics/PhysicsMaterial.h"
 #include "Kans3D/Physics/RagdollAsset.h"
@@ -82,6 +83,7 @@ namespace Kans
         AssetLoaderRegistry registry;
         registry.m_Decoders.emplace(AudioAttenuationAsset::GetStaticType(), Decode<AudioAttenuationAsset>);
         registry.m_Decoders.emplace(AudioEventAsset::GetStaticType(), Decode<AudioEventAsset>);
+        registry.m_Decoders.emplace(AudioHRTFAsset::GetStaticType(), Decode<AudioHRTFAsset>);
         registry.m_Decoders.emplace(AudioBusLayoutAsset::GetStaticType(), Decode<AudioBusLayoutAsset>);
         registry.m_Decoders.emplace(MaterialParameterCollectionAsset::GetStaticType(),
                                     Decode<MaterialParameterCollectionAsset>);

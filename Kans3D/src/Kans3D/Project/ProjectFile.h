@@ -8,6 +8,8 @@ namespace Kans
     {
         std::map<std::string, bool> Plugins;
         AssetID                     AudioBusLayout;
+        AssetID                     AudioHRTF;
+        AudioSpatializer            DefaultAudioSpatializer = AudioSpatializer::Panning;
         PhysicsSettings       Physics;
         std::string           Name;
         uint32_t              FormatVersion = 1;

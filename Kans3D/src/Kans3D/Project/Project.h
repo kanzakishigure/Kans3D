@@ -4,6 +4,7 @@
 #include "Kans3D/Asset/Importer/AssetBuildService.h"
 #include "Kans3D/Asset/SourceAssetDatabase.h"
 #include "Kans3D/Asset/Storage/AssetProvider.h"
+#include "Kans3D/Audio/AudioSpatializer.h"
 #include "Kans3D/Physics/PhysicsSettings.h"
 
 #include <filesystem>
@@ -25,6 +26,8 @@ namespace Kans
     public:
         std::map<std::string, bool> Plugins;
         AssetID                     AudioBusLayout;
+        AssetID                     AudioHRTF;
+        AudioSpatializer            DefaultAudioSpatializer = AudioSpatializer::Panning;
         PhysicsSettings       Physics;
         std::string           Name;
         std::filesystem::path RootDirectory;

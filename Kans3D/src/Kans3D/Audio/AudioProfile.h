@@ -6,6 +6,7 @@
 #include <optional>
 #include <string_view>
 #include "Kans3D/Asset/Asset.h"
+#include "AudioSpatializer.h"
 
 namespace Kans
 {
@@ -87,6 +88,9 @@ namespace Kans
         double             PositionSeconds = 0, LengthSeconds = 0;
         AudioVoiceStorage  Storage = AudioVoiceStorage::Decoded;
         AudioStreamProfile Stream;
+        AudioSpatializer   Spatializer  = AudioSpatializer::Panning;
+        float              SpatialBlend = 1;
+        AudioHRTFFallback  HRTFFallback = AudioHRTFFallback::None;
     };
 
     enum class AudioProfileEventType
@@ -129,6 +133,7 @@ namespace Kans
         uint64_t Frame = 0, Frames = 0;
         uint64_t WallNanoseconds   = 0;
         double   BudgetNanoseconds = 0;
+        uint64_t SteamAudioNanoseconds = 0;
         double   LoadPercent() const { return BudgetNanoseconds > 0 ? 100 * WallNanoseconds / BudgetNanoseconds : 0; }
     };
 

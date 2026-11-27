@@ -29,6 +29,15 @@ namespace Kans
     };
 
     class AudioAttenuationAsset;
+    class AudioHRTFAsset;
+
+    template<>
+    class Loader<AudioHRTFAsset>
+    {
+    public:
+        std::variant<Ref<AudioHRTFAsset>, AssetError> Load(const AssetLoadContext&) const;
+    };
+
     template<>
     class Loader<AudioAttenuationAsset>
     {

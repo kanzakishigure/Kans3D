@@ -71,6 +71,7 @@ namespace Kans
         float           VirtualizationThreshold = 0.001f; // Linear amplitude (-60 dB). Zero disables the threshold.
         std::filesystem::path UserSettingsFile;                 // Empty leaves persistence disabled.
         uint32_t              StreamBufferFrames = 0;           // Source frames. Zero uses the default capacity.
+        AudioSpatializer      DefaultSpatializer = AudioSpatializer::Panning;
     };
 
     enum class AudioLoadMode { Decompress, Stream };
@@ -126,6 +127,8 @@ namespace Kans
         std::optional<AudioGeneratorFormat> Generator;
         AudioVoiceOwner                     Owner;
         AssetID                             Clip;
+        std::optional<AudioSpatializer>     Spatializer; // Empty inherits the project default.
+        float                               SpatialBlend = 1;
     };
 
     enum class AudioConcurrencyRule
@@ -151,6 +154,8 @@ namespace Kans
         std::string              ConcurrencyGroup;
         bool                     Spatial = true; // Applies when Position is supplied.
         uint64_t                 OwnerEntity = 0;
+        std::optional<AudioSpatializer> Spatializer;
+        float                           SpatialBlend = 1;
     };
 
     struct AudioVoiceStats
@@ -382,6 +387,12 @@ namespace Kans
         void FadeTo(AudioVoiceHandle handle, float targetVolume, float seconds);
         void SetLoopRegion(AudioVoiceHandle handle, uint64_t beginFrame, uint64_t endFrame);
         void SetSpatialParams(AudioVoiceHandle handle, const AudioSpatialParams& params);
+        void SetVoiceSpatializer(AudioVoiceHandle handle, std::optional<AudioSpatializer> spatializer, float blend);
+        void SetDefaultSpatializer(AudioSpatializer spatializer);
+        AudioSpatializer           GetDefaultSpatializer() const;
+        bool                       IsHRTFAvailable() const;
+        AssetID                    GetActiveHRTF() const;
+        std::optional<std::string> SetActiveHRTF(AssetManager* assets, AssetID id);
         // An empty ID restores an event's authored asset, or the voice's built-in settings.
         void SetVoiceAttenuationAsset(AudioVoiceHandle handle, AssetManager* assets, AssetID id);
         void SetListener(uint32_t index, const AudioListenerState& state);

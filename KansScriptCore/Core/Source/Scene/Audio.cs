@@ -63,6 +63,7 @@ namespace Kans
     public readonly record struct AudioEventTriggerResult(AudioEventTriggerStatus Status, AudioVoiceHandle Voice);
 
     public enum SpeakerMode { Auto, Mono, Stereo, Surround51, Surround71 }
+    public enum AudioSpatializer { Panning, HRTF }
     public enum AudioDeviceChangeReason { Selected, Rerouted, FellBackToDefault, SpeakerModeChanged }
     public readonly record struct AudioOutputFormat(int Channels, ulong PackedChannelMap)
     {
@@ -91,6 +92,20 @@ namespace Kans
         }
 
         public static event Action<AudioDeviceChange>? DeviceChanged;
+
+        /// <summary>The active SOFA asset. An empty handle selects the built-in HRTF.</summary>
+        public static AssetHandle ActiveHRTF
+        {
+            get
+            {
+                var data = AudioCalls.Read(0, AudioOperation.ActiveHRTF);
+                return new AssetHandle(data.Source, data.Local);
+            }
+            set => SetActiveHRTF(value);
+        }
+
+        public static bool SetActiveHRTF(AssetHandle asset) => AudioCalls.Send(0, AudioOperation.ActiveHRTF,
+            new AudioCommandData { Source = asset.Source, Local = asset.Local, Flags = AudioCalls.Write }) != 0;
 
         public static SpeakerMode SpeakerMode
         {
@@ -165,6 +180,17 @@ namespace Kans
 
         public float Volume { get => ReadNumber(AudioOperation.Volume); set => WriteNumber(AudioOperation.Volume, value); }
         public float Pitch { get => ReadNumber(AudioOperation.Pitch); set => WriteNumber(AudioOperation.Pitch, value); }
+        public AudioSpatializer Spatializer
+        {
+            get => (AudioSpatializer)AudioCalls.Read(Entity.ID, AudioOperation.Spatializer).Priority;
+            set => AudioCalls.Send(Entity.ID, AudioOperation.Spatializer,
+                new AudioCommandData { Priority = (int)value, Flags = AudioCalls.Write });
+        }
+        public float SpatialBlend
+        {
+            get => ReadNumber(AudioOperation.SpatialBlend);
+            set => WriteNumber(AudioOperation.SpatialBlend, value);
+        }
         public bool Loop { get => ReadNumber(AudioOperation.Loop) != 0; set => WriteNumber(AudioOperation.Loop, value ? 1 : 0); }
         /// <summary>Source playback position in seconds.</summary>
         public float Time { get => ReadNumber(AudioOperation.Time); set => WriteNumber(AudioOperation.Time, value); }
@@ -215,7 +241,8 @@ namespace Kans
         Volume, Pitch, Loop, Clip, Event, Bus, Time,
         PlayOneShot, TriggerEvent, StopVoice, BusVolume, BusMute,
         UserBusVolume, UserBusMute, SaveUserSettings, LoadUserSettings, SpeakerMode, SelectDevice,
-        EnumerateDevices, ReadDevice, LastDeviceChange, PushGenerator, GeneratorRoom, GeneratorUnderruns, ProfileStats
+        EnumerateDevices, ReadDevice, LastDeviceChange, PushGenerator, GeneratorRoom, GeneratorUnderruns, ProfileStats,
+        Spatializer, SpatialBlend, ActiveHRTF
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -79,6 +79,7 @@ target_link_libraries(Kans3D PUBLIC
 
 target_link_libraries(Kans3D PRIVATE miniaudio msdfgen-core)
 kans_configure_ffmpeg(Kans3D "${KANS3D_SRC}/Kans3D/Video/VideoDecoder.cpp")
+kans_configure_steam_audio(Kans3D "${KANS3D_SRC}/Kans3D/Audio/SteamAudio.cpp")
 
 # Vulkan SDK (shaderc, spirv-cross, vulkan loader)
 if(VULKAN_SDK_DIR)

@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include "ScriptAudio.h"
+#include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Core/Utilities/StringUtils.h"
 #include "Kans3D/Scene/Entity.h"
 #include "ScriptEngine.h"
@@ -39,7 +40,10 @@ namespace Kans::ScriptAudio
             PushGenerator,
             GeneratorRoom,
             GeneratorUnderruns,
-            ProfileStats
+            ProfileStats,
+            Spatializer,
+            SpatialBlend,
+            ActiveHRTF
         };
         constexpr int32_t Write = 1, EntityTarget = 2;
         using Data   = Scripting::AudioCommandData;
@@ -66,6 +70,46 @@ namespace Kans::ScriptAudio
             const bool write  = (data.Flags & Write) != 0;
             switch (operation)
             {
+                case Operation::Spatializer:
+                case Operation::SpatialBlend: {
+                    if (write)
+                    {
+                        if (operation == Operation::Spatializer)
+                        {
+                            const auto spatializer = static_cast<AudioSpatializer>(data.Priority);
+                            if (spatializer != AudioSpatializer::Panning && spatializer != AudioSpatializer::HRTF)
+                                return 0;
+                            source.Spatializer = spatializer;
+                        }
+                        else
+                        {
+                            if (!std::isfinite(data.Value) || data.Value < 0 || data.Value > 1)
+                                return 0;
+                            source.SpatialBlend = data.Value;
+                        }
+                        scene.SyncAudioSource(entity);
+                        return 1;
+                    }
+                    auto  spatializer = source.Spatializer;
+                    auto  blend       = source.SpatialBlend;
+                    auto* assets      = scene.GetAssetManager();
+                    if ((operation == Operation::Spatializer ? !spatializer : !blend) && assets &&
+                        source.GetSourceKind() == AudioSourceKind::Event && source.Event.IsValid())
+                    {
+                        const auto loaded = assets->Load<AudioEventAsset>(source.Event);
+                        if (const auto* asset = std::get_if<Ref<const AudioEventAsset>>(&loaded))
+                        {
+                            const auto& event = (*asset)->GetData();
+                            if (!spatializer)
+                                spatializer = event.Spatializer;
+                            if (!blend)
+                                blend = event.SpatialBlend;
+                        }
+                    }
+                    data.Priority = static_cast<int32_t>(spatializer.value_or(engine.GetDefaultSpatializer()));
+                    data.Value    = blend.value_or(1.f);
+                    return 1;
+                }
                 case Operation::PushGenerator:
                     return data.SampleCount <= 0 ? 0 :
                                                    static_cast<int32_t>(engine.PushGeneratorFrames(
@@ -300,6 +344,24 @@ namespace Kans::ScriptAudio
                     return failure;
                 if (trigger)
                     return int32_t(Trigger(*scene, *engine, entityID, operation, *data));
+                if (operation == Operation::ActiveHRTF)
+                {
+                    if (data->Flags & Write)
+                    {
+                        const auto id = ReadAsset(*data);
+                        if ((data->Source || data->Local) && !id.IsValid())
+                            return 0;
+                        if (auto error = engine->SetActiveHRTF(scene->GetAssetManager(), id))
+                        {
+                            scene->WarnAudioOnce(*error);
+                            return 0;
+                        }
+                    }
+                    const auto id = engine->GetActiveHRTF();
+                    data->Source  = id.GetSourceID().GetUUID();
+                    data->Local   = id.GetLocalID();
+                    return 1;
+                }
                 if (operation == Operation::ProfileStats)
                 {
                     const auto stats      = engine->GetProfileStats();

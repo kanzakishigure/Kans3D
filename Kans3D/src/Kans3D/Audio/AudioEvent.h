@@ -40,6 +40,8 @@ namespace Kans
         std::string                  Bus      = MasterAudioBus;
         uint8_t                      Priority = DefaultAudioVoicePriority;
         bool                         Loop = false, Spatial = false;
+        std::optional<AudioSpatializer> Spatializer;
+        float                           SpatialBlend   = 1;
         bool                         ReverbZoneSend = true;
         float                        LfeSendDb      = AudioSendOffDb;
         AssetID                      AttenuationAsset;
@@ -70,6 +72,8 @@ namespace Kans
         std::optional<glm::mat4>          EntityTransform;
         AudioEmitterShape                 EntityShape;
         std::optional<bool>               Spatial, Loop;
+        std::optional<AudioSpatializer>   Spatializer;
+        std::optional<float>              SpatialBlend;
         bool                              ReverbZoneSend = true, PinToCenter = false;
         std::optional<float>              LfeSendDb;
         float                             Pan = 0;

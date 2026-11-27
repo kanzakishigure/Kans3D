@@ -25,6 +25,8 @@ namespace Kans
                             c.PlayOnStart,
                             c.Loop,
                             c.Spatial,
+                            c.Spatializer,
+                            c.SpatialBlend,
                             c.Pan,
                             c.ReverbZoneSend,
                             c.PinToCenter,

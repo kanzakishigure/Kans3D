@@ -18,6 +18,7 @@ import hashlib
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,13 @@ FFMPEG_URL = (
 )
 FFMPEG_SHA256 = "fd6d485f1ed515b1ca30c99f934dbb4a9c18de2949d5f5c2a03b069a8420ce38"
 FFMPEG_LIBRARIES = ("avformat", "avcodec", "avutil")
+STEAM_AUDIO_DIR = ROOT / "Kans3D" / "vendor" / "steamaudio-bin"
+STEAM_AUDIO_VERSION = "4.8.1"
+STEAM_AUDIO_URL = (
+    f"https://github.com/ValveSoftware/steam-audio/releases/download/v{STEAM_AUDIO_VERSION}/"
+    f"steamaudio_{STEAM_AUDIO_VERSION}.zip"
+)
+STEAM_AUDIO_SHA256 = "4a0aa5ec1176f38f0b0993a37c2259d9e86f27e22d5e24f83ec4c3cb9a1d5449"
 TEST_DIR = ROOT / "test"
 VENDORED_GTEST = TEST_DIR / "vendor" / "googletest"
 
@@ -165,6 +173,74 @@ def install_windows_ffmpeg():
     return True
 
 
+def steam_audio_platform():
+    if platform.machine().lower() not in ("amd64", "x86_64"):
+        return None, ()
+    if platform.system() == "Windows":
+        return "windows-x64", ("phonon.dll", "phonon.lib")
+    if platform.system() == "Linux":
+        return "linux-x64", ("libphonon.so",)
+    return None, ()
+
+
+def steam_audio_files(directory, target, libraries):
+    headers = ("phonon.h", "phonon_interfaces.h", "phonon_version.h")
+    return ((directory / "THIRDPARTY.md").is_file()
+            and all((directory / "include" / name).is_file() for name in headers)
+            and all((directory / "lib" / target / name).is_file() for name in libraries))
+
+
+def check_steam_audio():
+    target, libraries = steam_audio_platform()
+    if not target:
+        return False, "the pinned SDK requires x64 Linux or Windows"
+    stamp = STEAM_AUDIO_DIR / ".sha256"
+    if (stamp.is_file() and stamp.read_text().strip() == STEAM_AUDIO_SHA256
+            and steam_audio_files(STEAM_AUDIO_DIR, target, libraries)):
+        return True, STEAM_AUDIO_VERSION
+    return False, "pinned Steam Audio SDK not installed"
+
+
+def install_steam_audio():
+    target, libraries = steam_audio_platform()
+    if not target:
+        return False
+    if check_steam_audio()[0]:
+        return True
+    try:
+        with tempfile.TemporaryDirectory(prefix="steamaudio-", dir=STEAM_AUDIO_DIR.parent) as temp:
+            archive = Path(temp) / "steamaudio.zip"
+            digest = hashlib.sha256()
+            with urllib.request.urlopen(STEAM_AUDIO_URL, timeout=60) as response, archive.open("wb") as output:
+                for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    output.write(chunk)
+            if digest.hexdigest() != STEAM_AUDIO_SHA256:
+                raise ValueError("Steam Audio archive SHA-256 mismatch")
+            with zipfile.ZipFile(archive) as packed:
+                for name in packed.namelist():
+                    if (name.startswith("steamaudio/include/") or name == "steamaudio/THIRDPARTY.md"
+                            or name in {f"steamaudio/lib/{target}/{library}" for library in libraries}):
+                        packed.extract(name, temp)
+            extracted = Path(temp) / "steamaudio"
+            if not steam_audio_files(extracted, target, libraries):
+                raise ValueError("Steam Audio archive is missing headers, libraries or license notices")
+            (extracted / ".sha256").write_text(STEAM_AUDIO_SHA256 + "\n")
+            previous = Path(temp) / "previous"
+            if STEAM_AUDIO_DIR.exists():
+                STEAM_AUDIO_DIR.rename(previous)
+            try:
+                extracted.rename(STEAM_AUDIO_DIR)
+            except OSError:
+                if previous.exists():
+                    previous.rename(STEAM_AUDIO_DIR)
+                raise
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        print(f"Optional Steam Audio install failed: {error}", file=sys.stderr)
+        return False
+    return True
+
+
 def check_library(*names):
     """Looks for a library file in the usual Linux locations (no pkg-config file for some packages)."""
     def check():
@@ -276,6 +352,8 @@ def linux_dependencies():
                    {"pacman": "ffmpeg", "apt": "libavformat-dev libavcodec-dev libavutil-dev",
                     "dnf": "ffmpeg-free-devel"}, required=False,
                    note="requires a shared LGPL build; some distributions ship GPL builds"),
+        Dependency("Steam Audio (binaural HRTF)", check_steam_audio, {}, required=False,
+                   note="downloads the SHA-256-pinned x64 SDK"),
         Dependency("GoogleTest", check_googletest,
                    {"pacman": "gtest", "apt": "libgtest-dev", "dnf": "gtest-devel"}, required=False, tests_only=True,
                    note="Configure pulls it into test/vendor/googletest when the package is missing"),
@@ -296,6 +374,8 @@ def windows_dependencies():
                    note="without it the engine builds with C# scripting disabled"),
         Dependency("FFmpeg (video decoding)", check_windows_ffmpeg, {}, required=False,
                    note="downloads the SHA-256-pinned LGPL shared build"),
+        Dependency("Steam Audio (binaural HRTF)", check_steam_audio, {}, required=False,
+                   note="downloads the SHA-256-pinned x64 SDK"),
         Dependency("GoogleTest", check_googletest, {}, required=False, tests_only=True,
                    note="Configure pulls it into test/vendor/googletest"),
     ]
@@ -387,6 +467,9 @@ def dependency_commands(manager, dependencies):
     commands = install_commands(manager, packages) if manager and packages else []
     if any(d.check is check_windows_ffmpeg for d in dependencies):
         commands.append(subprocess.list2cmdline([sys.executable, str(Path(__file__).resolve()), "--install-ffmpeg"]))
+    if steam_audio_platform()[0] and any(d.check is check_steam_audio for d in dependencies):
+        quote_command = subprocess.list2cmdline if platform.system() == "Windows" else shlex.join
+        commands.append(quote_command([sys.executable, str(Path(__file__).resolve()), "--install-steam-audio"]))
     return commands
 
 
@@ -529,6 +612,7 @@ def interactive(prompts, preset, tests, build):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--install-ffmpeg", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--install-steam-audio", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--check", action="store_true", help="report only, install nothing")
     parser.add_argument("--yes", action="store_true", help="install everything missing without asking")
     parser.add_argument("--tests", action="store_true", help="include test dependencies")
@@ -541,6 +625,8 @@ def main():
     windows = platform.system() == "Windows"
     if args.install_ffmpeg:
         sys.exit(0 if windows and install_windows_ffmpeg() else 1)
+    if args.install_steam_audio:
+        sys.exit(0 if install_steam_audio() else 1)
     preset = args.preset or ("windows-msvc" if windows else "linux-gcc")
     terminal = sys.stdin.isatty() and sys.stdout.isatty()
     if terminal and not (args.check or args.yes or args.non_interactive):

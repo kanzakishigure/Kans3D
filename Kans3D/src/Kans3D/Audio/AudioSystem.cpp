@@ -16,6 +16,37 @@ namespace Kans
             else
                 std::fprintf(stderr, "Audio bus layout: %s\n", message.c_str());
         }
+
+        void SelectProjectHRTF(AudioEngine& engine, AssetManager& assets, AssetID id)
+        {
+            if (!engine.IsHRTFAvailable())
+                return;
+            if (auto error = engine.SetActiveHRTF(&assets, id))
+            {
+                if (Log::GetCoreLogger())
+                    CORE_WARN("Audio HRTF {}: {}", id.ToString(), *error);
+                else
+                    std::fprintf(stderr, "Audio HRTF %s: %s\n", id.ToString().c_str(), error->c_str());
+                (void)engine.SetActiveHRTF(nullptr, {});
+            }
+        }
+
+        void LoadBusLayout(AudioEngine& engine, AssetManager& assets, AssetID id)
+        {
+            if (id.IsValid())
+            {
+                auto loaded = assets.Load<AudioBusLayoutAsset>(id);
+                if (auto* error = std::get_if<AssetError>(&loaded))
+                    LogLayoutError(id.ToString() + ": " + error->Message);
+                else if (auto error =
+                             engine.ApplyBusLayout(std::get<Ref<const AudioBusLayoutAsset>>(loaded)->GetData()))
+                    LogLayoutError(*error);
+                else
+                    return;
+            }
+            if (auto error = engine.ApplyBusLayout(AudioBusLayout::Default()))
+                LogLayoutError(*error);
+        }
     }
 
     std::optional<std::string> AudioSystem::Init(const AudioEngineConfig& config)
@@ -35,33 +66,28 @@ namespace Kans
     {
         if (!s_Engine)
             return;
-        if (config.AudioBusLayout.IsValid())
-        {
-            auto loaded = assets.Load<AudioBusLayoutAsset>(config.AudioBusLayout);
-            if (auto* error = std::get_if<AssetError>(&loaded))
-                LogLayoutError(config.AudioBusLayout.ToString() + ": " + error->Message);
-            else
-            {
-                const auto& asset = std::get<Ref<const AudioBusLayoutAsset>>(loaded);
-                if (auto error = s_Engine->ApplyBusLayout(asset->GetData()))
-                    LogLayoutError(*error);
-                else
-                    return;
-            }
-        }
-        // A project without a layout reference uses the default layout; that is not an error.
-        if (auto error = s_Engine->ApplyBusLayout(AudioBusLayout::Default()))
-            LogLayoutError(*error);
+        SelectProjectHRTF(*s_Engine, assets, config.AudioHRTF);
+        s_Engine->SetDefaultSpatializer(config.DefaultAudioSpatializer);
+        LoadBusLayout(*s_Engine, assets, config.AudioBusLayout);
     }
 
     void AudioSystem::ReloadProjectBusLayout(const ProjectConfig&    config,
                                              AssetManager&           assets,
                                              const ProductChangeSet& changes)
     {
-        const auto contains = [&](const std::vector<AssetID>& ids) {
-            return std::find(ids.begin(), ids.end(), config.AudioBusLayout) != ids.end();
+        if (!s_Engine)
+            return;
+        const auto changed = [&](AssetID id) {
+            const auto contains = [id](const std::vector<AssetID>& ids) {
+                return std::find(ids.begin(), ids.end(), id) != ids.end();
+            };
+            return id.IsValid() && (contains(changes.Added) || contains(changes.Modified) || contains(changes.Removed));
         };
-        if (contains(changes.Added) || contains(changes.Modified) || contains(changes.Removed))
-            LoadProjectBusLayout(config, assets);
+        if (changed(config.AudioBusLayout))
+            LoadBusLayout(*s_Engine, assets, config.AudioBusLayout);
+        const auto active   = s_Engine->GetActiveHRTF();
+        const auto selected = active.IsValid() ? active : config.AudioHRTF;
+        if (changed(selected))
+            SelectProjectHRTF(*s_Engine, assets, selected);
     }
 }

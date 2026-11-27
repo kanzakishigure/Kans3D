@@ -42,5 +42,6 @@ namespace Kans
         VideoClip                   = 28,
         AudioEvent                  = 29,
         AudioAttenuation            = 30,
+        AudioHRTF                   = 31,
     };
 } // namespace Kans

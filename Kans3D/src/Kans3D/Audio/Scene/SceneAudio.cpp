@@ -160,6 +160,10 @@ namespace Kans
             params.EntityShape = source.Shape;
             params.ReverbZoneSend &= source.ReverbZoneSend;
             params.PinToCenter |= source.PinToCenter;
+            if (source.Spatializer)
+                params.Spatializer = source.Spatializer;
+            if (source.SpatialBlend)
+                params.SpatialBlend = source.SpatialBlend;
             if (source.LfeSendDb != AudioSendOffDb && !params.LfeSendDb)
                 params.LfeSendDb = source.LfeSendDb;
             if (source.AttenuationAsset.IsValid())
@@ -243,6 +247,8 @@ namespace Kans
                     emitter ? std::optional<glm::vec3>(glm::vec3(GetWorldTransform(emitter)[3])) : params.Position;
                 clipParams.Volume = params.Volume;
                 clipParams.Pitch  = params.Pitch;
+                clipParams.Spatializer  = params.Spatializer;
+                clipParams.SpatialBlend = params.SpatialBlend.value_or(1.f);
                 if (emitter && OwnsAudioSource(emitter))
                 {
                     const auto& source          = emitter.GetComponent<AudioSourceComponent>();
@@ -250,6 +256,10 @@ namespace Kans
                     clipParams.Spatial          = source.Spatial;
                     clipParams.Priority         = source.Priority;
                     clipParams.ConcurrencyGroup = source.ConcurrencyGroup;
+                    if (source.Spatializer)
+                        clipParams.Spatializer = source.Spatializer;
+                    if (source.SpatialBlend)
+                        clipParams.SpatialBlend = *source.SpatialBlend;
                 }
                 if (params.Bus)
                     clipParams.Bus = *params.Bus;
@@ -338,6 +348,9 @@ namespace Kans
         if (runtime->EventAsset)
         {
             const auto& event = runtime->EventAsset->GetData();
+            m_AudioEngine->SetVoiceSpatializer(runtime->Voice,
+                                               source.Spatializer ? source.Spatializer : event.Spatializer,
+                                               source.SpatialBlend.value_or(event.SpatialBlend));
             m_AudioEngine->SetVolume(runtime->Voice, source.Volume * runtime->EventVolume);
             m_AudioEngine->SetPitch(runtime->Voice, source.Pitch * runtime->EventPitch);
             m_AudioEngine->SetLooping(runtime->Voice, source.Loop || event.Loop);
@@ -387,6 +400,8 @@ namespace Kans
             params.Pan                      = c.Pan;
             params.ReverbZoneSend           = c.ReverbZoneSend;
             params.PinToCenter              = c.PinToCenter;
+            params.Spatializer              = c.Spatializer;
+            params.SpatialBlend             = c.SpatialBlend;
             if (c.LfeSendDb != AudioSendOffDb)
                 params.LfeSendDb = c.LfeSendDb;
             params.Emitter                  = GetAudioSpatialParams(entity);
@@ -459,6 +474,8 @@ namespace Kans
         desc.Pan     = c.Spatial ? 0 : c.Pan;
         desc.Loop    = c.Loop;
         desc.Spatial = c.Spatial;
+        desc.Spatializer      = c.Spatializer;
+        desc.SpatialBlend     = c.SpatialBlend.value_or(1.f);
         desc.ReverbZoneSend   = c.ReverbZoneSend;
         desc.LfeSendDb        = c.LfeSendDb;
         desc.PinToCenter      = c.PinToCenter;
@@ -497,6 +514,10 @@ namespace Kans
     {
         auto& c = entity.GetComponent<AudioSourceComponent>();
         auto& r = *c.m_Runtime;
+        const auto* event = r.EventAsset ? &r.EventAsset->GetData() : nullptr;
+        m_AudioEngine->SetVoiceSpatializer(r.Voice,
+                                           c.Spatializer ? c.Spatializer : (event ? event->Spatializer : std::nullopt),
+                                           c.SpatialBlend.value_or(event ? event->SpatialBlend : 1.f));
         if (!r.EventAsset)
         {
             m_AudioEngine->SetVoiceBus(r.Voice, c.Bus);

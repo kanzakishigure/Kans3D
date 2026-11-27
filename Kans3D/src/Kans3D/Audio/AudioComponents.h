@@ -32,6 +32,8 @@ namespace Kans
         std::string           ConcurrencyGroup;
         float                 Volume = 1, Pitch = 1;
         bool                  PlayOnStart = true, Loop = false, Spatial = true;
+        std::optional<AudioSpatializer> Spatializer;
+        std::optional<float>            SpatialBlend;
         float                 Pan         = 0;
         bool                  ReverbZoneSend = true, PinToCenter = false;
         float                 LfeSendDb   = AudioSendOffDb;

@@ -97,6 +97,7 @@ function(kans_configure_ffmpeg target source)
 endfunction()
 
 function(kans_copy_ffmpeg_runtime target)
+    kans_copy_steam_audio_runtime(${target})
     if(WIN32)
         get_target_property(dlls Kans3D KANS_FFMPEG_DLLS)
         if(dlls)

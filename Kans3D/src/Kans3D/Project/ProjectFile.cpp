@@ -71,6 +71,19 @@ namespace Kans
                 project.FormatVersion = node["FormatVersion"].as<uint32_t>();
             if (const auto layout = node["AudioBusLayout"]; layout && layout.IsScalar())
                 project.AudioBusLayout = AssetID::FromString(layout.Scalar());
+            if (const auto hrtf = node["AudioHRTF"])
+            {
+                project.AudioHRTF = AssetID::FromString(hrtf.as<std::string>());
+                if (!project.AudioHRTF.IsValid())
+                    return ProjectYaml::Error(AssetErrorCode::InvalidData, kproj, "Invalid AudioHRTF asset ID");
+            }
+            if (const auto spatializer = node["DefaultAudioSpatializer"])
+            {
+                const auto name = spatializer.as<std::string>();
+                if (name != "Panning" && name != "HRTF")
+                    return ProjectYaml::Error(AssetErrorCode::InvalidData, kproj, "Invalid DefaultAudioSpatializer");
+                project.DefaultAudioSpatializer = name == "HRTF" ? AudioSpatializer::HRTF : AudioSpatializer::Panning;
+            }
             if (node["StartupScene"])
                 project.StartupScene = fs::u8path(node["StartupScene"].as<std::string>());
             if (node["AssetDirectory"])
@@ -129,6 +142,10 @@ namespace Kans
             << project.CacheDirectory.generic_u8string();
         if (project.AudioBusLayout.IsValid())
             out << YAML::Key << "AudioBusLayout" << YAML::Value << project.AudioBusLayout.ToString();
+        if (project.AudioHRTF.IsValid())
+            out << YAML::Key << "AudioHRTF" << YAML::Value << project.AudioHRTF.ToString();
+        if (project.DefaultAudioSpatializer == AudioSpatializer::HRTF)
+            out << YAML::Key << "DefaultAudioSpatializer" << YAML::Value << "HRTF";
         if (!project.Plugins.empty())
         {
             out << YAML::Key << "Plugins" << YAML::Value << YAML::BeginMap;
@@ -167,6 +184,8 @@ namespace Kans
         ProjectConfig config;
         config.Plugins        = project.Plugins;
         config.AudioBusLayout = project.AudioBusLayout;
+        config.AudioHRTF               = project.AudioHRTF;
+        config.DefaultAudioSpatializer = project.DefaultAudioSpatializer;
         config.Physics        = project.Physics;
         config.Name           = project.Name;
         config.RootDirectory  = fs::absolute(root).lexically_normal();

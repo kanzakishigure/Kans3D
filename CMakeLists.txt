@@ -205,6 +205,7 @@ add_subdirectory(${VENDOR_DIR})
 # Core - Kans3D engine static library
 # ============================================================
 include("${KANS3D_DIR}/cmake/VideoFFmpeg.cmake")
+include("${KANS3D_DIR}/cmake/SteamAudio.cmake")
 add_subdirectory(${KANS3D_DIR})
 
 # ============================================================
