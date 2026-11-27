@@ -1,6 +1,7 @@
 #include "kspch.h"
 #include "AudioEvent.h"
 #include <cmath>
+#include <set>
 #include <yaml-cpp/yaml.h>
 
 namespace Kans
@@ -13,6 +14,18 @@ namespace Kans
         constexpr const char* Rules[]      = {"StopOldest", "StopQuietest", "StopLowestPriority", "RejectNew"};
         constexpr const char* Models[]     = {"None", "Inverse", "Linear", "Exponential"};
         constexpr const char* Spatializers[] = {"Panning", "HRTF"};
+        constexpr const char* OcclusionModes[]    = {"Off", "Raycast", "Volumetric"};
+        constexpr const char* TransmissionModes[] = {"Off", "FrequencyIndependent", "FrequencyDependent"};
+
+        template<class Data, class Visit>
+        void OcclusionFields(Data& data, Visit visit)
+        {
+            visit("OcclusionStrength", data.OcclusionStrength);
+            visit("TransmissionStrength", data.TransmissionStrength);
+            visit("OcclusionLayerMask", data.OcclusionLayerMask);
+            visit("SourceRadius", data.SourceRadius);
+            visit("Samples", data.Samples);
+        }
 
         template<class T, size_t N>
         T ReadEnum(const YAML::Node& node, const char* field, T fallback, const char* const (&names)[N])
@@ -88,8 +101,63 @@ namespace Kans
         }
     } // namespace
 
+    bool IsValidAudioOcclusion(const AudioOcclusionSettings& settings)
+    {
+        return settings.Mode <= AudioOcclusionMode::Volumetric &&
+               settings.Transmission <= AudioTransmissionMode::FrequencyDependent &&
+               Nonnegative(settings.OcclusionStrength) && settings.OcclusionStrength <= 1 &&
+               Nonnegative(settings.TransmissionStrength) && settings.TransmissionStrength <= 1 &&
+               Nonnegative(settings.SourceRadius) && settings.Samples >= 1 &&
+               settings.Samples <= MaxAudioOcclusionSamples;
+    }
+
+    YAML::Node EncodeAudioOcclusion(const AudioOcclusionOverrides& data)
+    {
+        if (!IsValidAudioOcclusion(data.Resolve()))
+            throw std::invalid_argument("Invalid acoustic occlusion settings");
+        YAML::Node node(YAML::NodeType::Map);
+        if (data.Mode)
+            node["Occlusion"] = OcclusionModes[unsigned(*data.Mode)];
+        if (data.Transmission)
+            node["Transmission"] = TransmissionModes[unsigned(*data.Transmission)];
+        OcclusionFields(data, [&](const char* key, const auto& field) {
+            if (field)
+                node[key] = *field;
+        });
+        return node;
+    }
+
+    AudioOcclusionOverrides DecodeAudioOcclusion(const YAML::Node& node)
+    {
+        if (!node.IsMap())
+            throw std::runtime_error("Acoustic occlusion settings must be a map");
+        AudioOcclusionOverrides data;
+        std::set<std::string>   keys;
+        for (const auto& item : node)
+        {
+            const auto key   = item.first.as<std::string>();
+            bool       known = key == "Occlusion" || key == "Transmission";
+            OcclusionFields(data, [&](const char* field, const auto&) { known |= key == field; });
+            if (!known || !keys.insert(key).second)
+                throw std::runtime_error("Unknown or duplicate acoustic occlusion field: " + key);
+        }
+        if (node["Occlusion"])
+            data.Mode = ReadEnum(node, "Occlusion", AudioOcclusionMode::Off, OcclusionModes);
+        if (node["Transmission"])
+            data.Transmission = ReadEnum(node, "Transmission", AudioTransmissionMode::Off, TransmissionModes);
+        OcclusionFields(data, [&](const char* key, auto& field) {
+            if (node[key])
+                field = node[key].as<typename std::decay_t<decltype(field)>::value_type>();
+        });
+        if (!IsValidAudioOcclusion(data.Resolve()))
+            throw std::runtime_error("Invalid acoustic occlusion settings");
+        return data;
+    }
+
     std::optional<AssetError> ValidateAudioEvent(const AudioEventData& data)
     {
+        if (!IsValidAudioOcclusion(data.Occlusion.Resolve()))
+            return Invalid("Invalid acoustic occlusion settings");
         if (data.Entries.empty())
             return Invalid("Audio event Entries must not be empty");
         if (data.Selection < AudioEventSelection::Random || data.Selection > AudioEventSelection::Sequential)
@@ -155,7 +223,7 @@ namespace Kans
                 return Invalid("Expected one audio event mapping");
             const auto& root = documents.front();
             const auto  version = root["Version"].as<unsigned>();
-            if (version != 1 && version != 2)
+            if (version < 1 || version > 3)
                 return AssetError {AssetErrorCode::UnsupportedVersion, "Unsupported audio event version"};
 
             AudioEventData data;
@@ -167,6 +235,9 @@ namespace Kans
                     data.Spatializer = ReadEnum(root, "Spatializer", AudioSpatializer::Panning, Spatializers);
                 Read(root, "SpatialBlend", data.SpatialBlend);
             }
+            if (version >= 3)
+                if (const auto occlusion = root["AcousticOcclusion"])
+                    data.Occlusion = DecodeAudioOcclusion(occlusion);
             const auto     entries = root["Entries"];
             if (!entries || !entries.IsSequence())
                 return Invalid("Expected an Entries sequence");
@@ -229,13 +300,15 @@ namespace Kans
         if (auto error = ValidateAudioEvent(data))
             return *error;
         YAML::Node root;
-        root["Version"]   = 2;
+        root["Version"]   = 3;
         root["Selection"] = Selections[int(data.Selection)];
         Fields(data, [&](const char* key, const auto& value) { root[key] = value; });
         if (data.Spatializer)
             root["Spatializer"] = Spatializers[int(*data.Spatializer)];
         if (data.SpatialBlend != 1)
             root["SpatialBlend"] = data.SpatialBlend;
+        if (data.Occlusion != AudioOcclusionOverrides {})
+            root["AcousticOcclusion"] = EncodeAudioOcclusion(data.Occlusion);
         if (!data.ReverbZoneSend)
             root["ReverbZoneSend"] = false;
         if (data.LfeSendDb != AudioSendOffDb)

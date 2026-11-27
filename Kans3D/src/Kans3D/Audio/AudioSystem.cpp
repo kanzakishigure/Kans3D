@@ -68,6 +68,8 @@ namespace Kans
             return;
         SelectProjectHRTF(*s_Engine, assets, config.AudioHRTF);
         s_Engine->SetDefaultSpatializer(config.DefaultAudioSpatializer);
+        s_Engine->SetOcclusionDefaults(
+            config.DefaultAudioOcclusion, config.MaxOcclusionRaysPerFrame, config.OcclusionStaleFrames);
         LoadBusLayout(*s_Engine, assets, config.AudioBusLayout);
     }
 

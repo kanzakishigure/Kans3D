@@ -25,6 +25,8 @@ namespace Kans
         }
         std::optional<AssetError> Validate(const fs::path& file, const ProjectFile& project)
         {
+            if (!IsValidAudioOcclusion(project.DefaultAudioOcclusion.Resolve()))
+                return ProjectYaml::Error(AssetErrorCode::InvalidData, file, "Invalid DefaultAudioOcclusion");
             if (project.Name.empty())
                 return ProjectYaml::Error(AssetErrorCode::InvalidData, file, "Missing or empty Name");
             for (const auto& [name, enabled] : project.Plugins)
@@ -84,6 +86,12 @@ namespace Kans
                     return ProjectYaml::Error(AssetErrorCode::InvalidData, kproj, "Invalid DefaultAudioSpatializer");
                 project.DefaultAudioSpatializer = name == "HRTF" ? AudioSpatializer::HRTF : AudioSpatializer::Panning;
             }
+            if (const auto occlusion = node["DefaultAudioOcclusion"])
+                project.DefaultAudioOcclusion = DecodeAudioOcclusion(occlusion);
+            if (const auto budget = node["MaxOcclusionRaysPerFrame"])
+                project.MaxOcclusionRaysPerFrame = budget.as<uint32_t>();
+            if (const auto stale = node["OcclusionStaleFrames"])
+                project.OcclusionStaleFrames = stale.as<uint32_t>();
             if (node["StartupScene"])
                 project.StartupScene = fs::u8path(node["StartupScene"].as<std::string>());
             if (node["AssetDirectory"])
@@ -146,6 +154,13 @@ namespace Kans
             out << YAML::Key << "AudioHRTF" << YAML::Value << project.AudioHRTF.ToString();
         if (project.DefaultAudioSpatializer == AudioSpatializer::HRTF)
             out << YAML::Key << "DefaultAudioSpatializer" << YAML::Value << "HRTF";
+        if (project.DefaultAudioOcclusion != AudioOcclusionOverrides {})
+            out << YAML::Key << "DefaultAudioOcclusion" << YAML::Value
+                << EncodeAudioOcclusion(project.DefaultAudioOcclusion);
+        if (project.MaxOcclusionRaysPerFrame != DefaultMaxOcclusionRaysPerFrame)
+            out << YAML::Key << "MaxOcclusionRaysPerFrame" << YAML::Value << project.MaxOcclusionRaysPerFrame;
+        if (project.OcclusionStaleFrames != DefaultOcclusionStaleFrames)
+            out << YAML::Key << "OcclusionStaleFrames" << YAML::Value << project.OcclusionStaleFrames;
         if (!project.Plugins.empty())
         {
             out << YAML::Key << "Plugins" << YAML::Value << YAML::BeginMap;
@@ -186,6 +201,9 @@ namespace Kans
         config.AudioBusLayout = project.AudioBusLayout;
         config.AudioHRTF               = project.AudioHRTF;
         config.DefaultAudioSpatializer = project.DefaultAudioSpatializer;
+        config.DefaultAudioOcclusion    = project.DefaultAudioOcclusion;
+        config.MaxOcclusionRaysPerFrame = project.MaxOcclusionRaysPerFrame;
+        config.OcclusionStaleFrames     = project.OcclusionStaleFrames;
         config.Physics        = project.Physics;
         config.Name           = project.Name;
         config.RootDirectory  = fs::absolute(root).lexically_normal();

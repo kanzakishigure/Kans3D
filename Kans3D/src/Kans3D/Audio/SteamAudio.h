@@ -34,6 +34,20 @@ namespace Kans
         uint32_t               m_TailFrames  = 0;
     };
 
+    class SteamAudioDirectEffect
+    {
+    public:
+        ~SteamAudioDirectEffect();
+        void Render(float* frame, float visibility, const std::array<float, 3>& gains);
+        void Reset();
+
+    private:
+        friend class SteamAudio;
+        SteamAudioDirectEffect();
+        struct State;
+        std::unique_ptr<State> m_State;
+    };
+
     class SteamAudio
     {
     public:
@@ -44,6 +58,7 @@ namespace Kans
         static std::optional<std::string> Validate(const AudioHRTFAsset& asset);
         std::unique_ptr<SteamAudioEffect> CreateEffect() const;
         bool                              IsReady() const;
+        std::unique_ptr<SteamAudioDirectEffect> CreateDirectEffect(uint32_t channels) const;
 
     private:
         struct State;

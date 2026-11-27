@@ -14,6 +14,7 @@
 #include "Kans3D/Audio/AudioBusLayout.h"
 #include "AudioAttenuation.h"
 #include "AudioEmitterShape.h"
+#include "AudioOcclusion.h"
 #include "AudioProfile.h"
 #include "AudioUserSettings.h"
 
@@ -72,6 +73,9 @@ namespace Kans
         std::filesystem::path UserSettingsFile;                 // Empty leaves persistence disabled.
         uint32_t              StreamBufferFrames = 0;           // Source frames. Zero uses the default capacity.
         AudioSpatializer      DefaultSpatializer = AudioSpatializer::Panning;
+        AudioOcclusionOverrides DefaultOcclusion;
+        uint32_t                MaxOcclusionRaysPerFrame = DefaultMaxOcclusionRaysPerFrame;
+        uint32_t                OcclusionStaleFrames     = DefaultOcclusionStaleFrames;
     };
 
     enum class AudioLoadMode { Decompress, Stream };
@@ -129,6 +133,7 @@ namespace Kans
         AssetID                             Clip;
         std::optional<AudioSpatializer>     Spatializer; // Empty inherits the project default.
         float                               SpatialBlend = 1;
+        AudioOcclusionOverrides             Occlusion;
     };
 
     enum class AudioConcurrencyRule
@@ -156,6 +161,7 @@ namespace Kans
         uint64_t                 OwnerEntity = 0;
         std::optional<AudioSpatializer> Spatializer;
         float                           SpatialBlend = 1;
+        AudioOcclusionOverrides         Occlusion;
     };
 
     struct AudioVoiceStats
@@ -387,6 +393,13 @@ namespace Kans
         void FadeTo(AudioVoiceHandle handle, float targetVolume, float seconds);
         void SetLoopRegion(AudioVoiceHandle handle, uint64_t beginFrame, uint64_t endFrame);
         void SetSpatialParams(AudioVoiceHandle handle, const AudioSpatialParams& params);
+        void                 SetVoiceOcclusion(AudioVoiceHandle, const AudioOcclusionOverrides&);
+        AudioOcclusionResult GetVoiceOcclusion(AudioVoiceHandle) const;
+        void SetOcclusionDefaults(const AudioOcclusionOverrides&, uint32_t budget, uint32_t staleFrames);
+        AudioOcclusionSettings GetOcclusionDefaults() const;
+        void                   SetOcclusionQuery(const AudioOcclusionQuery&);
+        void                   ClearOcclusionQuery(const void* context);
+        void                   SetOcclusionDebugDraw(AudioOcclusionDebugDraw, void* context = nullptr);
         void SetVoiceSpatializer(AudioVoiceHandle handle, std::optional<AudioSpatializer> spatializer, float blend);
         void SetDefaultSpatializer(AudioSpatializer spatializer);
         AudioSpatializer           GetDefaultSpatializer() const;

@@ -7,7 +7,8 @@ namespace Kans
 {
     namespace
     {
-        std::variant<PhysicsMaterialValues, AssetError> Read(const ImportContext& c)
+        std::variant<PhysicsMaterialValues, AssetError> Read(const ImportContext&      c,
+                                                             std::vector<std::string>* warnings = nullptr)
         {
             auto bytes = ReadProductFile(c.SourceFile, 1024 * 1024);
             if (auto error = std::get_if<AssetError>(&bytes))
@@ -16,7 +17,7 @@ namespace Kans
             try
             {
                 return DecodePhysicsMaterialNode(
-                    YAML::Load(std::string(reinterpret_cast<const char*>(b.data()), b.size())));
+                    YAML::Load(std::string(reinterpret_cast<const char*>(b.data()), b.size())), warnings);
             }
             catch (const std::exception& e)
             {
@@ -51,13 +52,13 @@ namespace Kans
                 !std::filesystem::is_empty(c.StagingDirectory, ec) || ec)
                 return AssetError {AssetErrorCode::InvalidArgument,
                                    "PhysicsMaterial staging must be empty and exclusive"};
-            auto data = Read(c);
+            ImportResult out;
+            auto         data = Read(c, &out.Warnings);
             if (auto error = std::get_if<AssetError>(&data))
                 return *error;
             auto ids = AllocateLocalIDs(c.PreviousLocalIDs, {RootObjectKey});
             if (auto error = std::get_if<AssetError>(&ids))
                 return *error;
-            ImportResult out;
             out.LocalIDs     = std::get<LocalIDMap>(ids);
             const auto local = out.LocalIDs.at(RootObjectKey);
             auto       bytes = EncodePhysicsMaterialProduct(std::get<PhysicsMaterialValues>(data));

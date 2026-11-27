@@ -40,6 +40,11 @@ namespace Kans
             decltype(&iplBinauralEffectReset)       ResetEffect    = nullptr;
             decltype(&iplBinauralEffectGetTailSize) GetTailSize    = nullptr;
 
+            decltype(&iplDirectEffectCreate)  CreateDirect  = nullptr;
+            decltype(&iplDirectEffectRelease) ReleaseDirect = nullptr;
+            decltype(&iplDirectEffectApply)   ApplyDirect   = nullptr;
+            decltype(&iplDirectEffectReset)   ResetDirect   = nullptr;
+
             ~Phonon()
             {
                 if (Library)
@@ -75,7 +80,10 @@ namespace Kans
                        Bind(ReleaseContext, "iplContextRelease") && Bind(CreateHRTF, "iplHRTFCreate") &&
                        Bind(ReleaseHRTF, "iplHRTFRelease") && Bind(CreateEffect, "iplBinauralEffectCreate") &&
                        Bind(ReleaseEffect, "iplBinauralEffectRelease") && Bind(ApplyEffect, "iplBinauralEffectApply") &&
-                       Bind(ResetEffect, "iplBinauralEffectReset") && Bind(GetTailSize, "iplBinauralEffectGetTailSize");
+                       Bind(ResetEffect, "iplBinauralEffectReset") &&
+                       Bind(GetTailSize, "iplBinauralEffectGetTailSize") &&
+                       Bind(CreateDirect, "iplDirectEffectCreate") && Bind(ReleaseDirect, "iplDirectEffectRelease") &&
+                       Bind(ApplyDirect, "iplDirectEffectApply") && Bind(ResetDirect, "iplDirectEffectReset");
             }
         };
 
@@ -159,6 +167,87 @@ namespace Kans
         }
 #endif
     };
+
+    struct SteamAudioDirectEffect::State
+    {
+#if defined(KANS_STEAM_AUDIO)
+        std::shared_ptr<Context> Owner;
+        IPLDirectEffect          Effect   = nullptr;
+        int                      Channels = 0;
+
+        ~State()
+        {
+            if (Effect)
+                Owner->Api.ReleaseDirect(&Effect);
+        }
+#endif
+    };
+
+    SteamAudioDirectEffect::SteamAudioDirectEffect()  = default;
+    SteamAudioDirectEffect::~SteamAudioDirectEffect() = default;
+
+    std::unique_ptr<SteamAudioDirectEffect> SteamAudio::CreateDirectEffect(uint32_t channels) const
+    {
+#if defined(KANS_STEAM_AUDIO)
+        if (!m_State || channels == 0 || channels > 8)
+            return {};
+        auto effect     = std::unique_ptr<SteamAudioDirectEffect>(new SteamAudioDirectEffect());
+        effect->m_State = std::make_unique<SteamAudioDirectEffect::State>();
+        auto& state     = *effect->m_State;
+        state.Owner     = m_State->Owner;
+        state.Channels  = static_cast<int>(channels);
+        // The SDK requires a fixed frame size. One sample preserves exact timing
+        // for irregular, scheduled and Offline pulls without delaying clear voices.
+        IPLAudioSettings        audio {state.Owner->Settings.samplingRate, 1};
+        IPLDirectEffectSettings settings {state.Channels};
+        if (state.Owner->Api.CreateDirect(state.Owner->Handle, &audio, &settings, &state.Effect) != IPL_STATUS_SUCCESS)
+            return {};
+        std::array<float, 8> silence {};
+        effect->Render(silence.data(), 0.f, {.8f, .6f, .4f});
+        effect->Reset();
+        return effect;
+#else
+        (void)channels;
+        return {};
+#endif
+    }
+
+    void SteamAudioDirectEffect::Render(float* frame, float visibility, const std::array<float, 3>& gains)
+    {
+#if defined(KANS_STEAM_AUDIO)
+        auto&                 state = *m_State;
+        std::array<float*, 8> rows;
+        for (int channel = 0; channel < state.Channels; ++channel)
+            rows[channel] = frame + channel;
+        IPLAudioBuffer        buffer {state.Channels, 1, rows.data()};
+        IPLDirectEffectParams params {};
+        params.flags     = IPL_DIRECTEFFECTFLAGS_APPLYOCCLUSION;
+        params.occlusion = visibility;
+        if (visibility < 1 && (gains[0] != visibility || gains[1] != visibility || gains[2] != visibility))
+        {
+            params.flags            = static_cast<IPLDirectEffectFlags>(IPL_DIRECTEFFECTFLAGS_APPLYOCCLUSION |
+                                                                        IPL_DIRECTEFFECTFLAGS_APPLYTRANSMISSION);
+            params.transmissionType = gains[0] == gains[1] && gains[1] == gains[2] ?
+                                          IPL_TRANSMISSIONTYPE_FREQINDEPENDENT :
+                                          IPL_TRANSMISSIONTYPE_FREQDEPENDENT;
+            // The SDK evaluates visibility + (1 - visibility) * transmission.
+            for (size_t band = 0; band < gains.size(); ++band)
+                params.transmission[band] = std::clamp((gains[band] - visibility) / (1 - visibility), 0.f, 1.f);
+        }
+        state.Owner->Api.ApplyDirect(state.Effect, &params, &buffer, &buffer);
+#else
+        (void)frame;
+        (void)visibility;
+        (void)gains;
+#endif
+    }
+
+    void SteamAudioDirectEffect::Reset()
+    {
+#if defined(KANS_STEAM_AUDIO)
+        m_State->Owner->Api.ResetDirect(m_State->Effect);
+#endif
+    }
 
     SteamAudio::SteamAudio()              = default;
     SteamAudio::~SteamAudio()             = default;

@@ -4,6 +4,7 @@
 #include "Kans3D/Asset/Importer/AssetBuildService.h"
 #include "Kans3D/Asset/SourceAssetDatabase.h"
 #include "Kans3D/Asset/Storage/AssetProvider.h"
+#include "Kans3D/Audio/AudioOcclusion.h"
 #include "Kans3D/Audio/AudioSpatializer.h"
 #include "Kans3D/Physics/PhysicsSettings.h"
 
@@ -28,6 +29,9 @@ namespace Kans
         AssetID                     AudioBusLayout;
         AssetID                     AudioHRTF;
         AudioSpatializer            DefaultAudioSpatializer = AudioSpatializer::Panning;
+        AudioOcclusionOverrides     DefaultAudioOcclusion;
+        uint32_t                    MaxOcclusionRaysPerFrame = DefaultMaxOcclusionRaysPerFrame;
+        uint32_t                    OcclusionStaleFrames     = DefaultOcclusionStaleFrames;
         PhysicsSettings       Physics;
         std::string           Name;
         std::filesystem::path RootDirectory;

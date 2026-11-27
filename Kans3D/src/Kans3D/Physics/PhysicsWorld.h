@@ -39,6 +39,13 @@ namespace Kans
         bool        InitialOverlap = false;
         std::string BoneName;
     };
+    struct BoundedRaycastHit
+    {
+        glm::vec3        Point {0};
+        float            Distance       = 0;
+        UUID             ColliderEntity = 0;
+        AcousticMaterial Acoustics;
+    };
     enum class PhysicsEventPhase : uint32_t
     {
         Enter,
@@ -199,6 +206,14 @@ namespace Kans
         // Singles return the nearest All distance; exact-distance ties may be resolved differently by PhysX.
         std::optional<RaycastHit>
         Raycast(glm::vec3 origin, glm::vec3 direction, float distance, const QueryFilter& = {});
+        // Returns the nearest hits in increasing distance order, up to the caller's capacity.
+        // The caller must synchronize the world once before a batch of these queries.
+        size_t RaycastBounded(glm::vec3 origin,
+                              glm::vec3 direction,
+                              float     distance,
+                              const QueryFilter&,
+                              BoundedRaycastHit* hits,
+                              size_t             capacity) const;
         std::vector<RaycastHit>
         RaycastAll(glm::vec3 origin, glm::vec3 direction, float distance, const QueryFilter& = {});
         std::optional<RaycastHit> Cast(const PhysicsQueryShape&,

@@ -203,6 +203,17 @@ namespace Kans
             }
         };
 
+        struct AcousticMix
+        {
+            std::array<float, 3> Dry {1, 1, 1};
+            float                Visibility = 1, Wet = 1, Filter = 1;
+            bool                 operator==(const AcousticMix& other) const
+            {
+                return Dry == other.Dry && Visibility == other.Visibility && Wet == other.Wet && Filter == other.Filter;
+            }
+            bool operator!=(const AcousticMix& other) const { return !(*this == other); }
+        };
+
         struct SpatialMix
         {
             std::array<float, MaxOutputChannels> Gains {1, 1, 1, 1, 1, 1, 1, 1};
@@ -259,12 +270,12 @@ namespace Kans
                 return true;
             }
 
-            void Reset()
+            void Reset(const T& initial = {})
             {
                 Exchanged.store(2, std::memory_order_relaxed);
                 WriteSlot = 0;
                 ReadSlot  = 1;
-                Published = {};
+                Published = initial;
             }
         };
 
@@ -276,6 +287,30 @@ namespace Kans
             // Exact digital -3 dB cutoff for y += coefficient * (x - y).
             const float sine = std::sin(pi * std::min(cutoff / sampleRate, 0.5f));
             return 2 * sine / (std::sqrt(1 + sine * sine) + sine);
+        }
+
+        float OnePole(float sample, float& history, float coefficient)
+        {
+            history = coefficient == 1 ? sample : glm::mix(history, sample, coefficient);
+            return history;
+        }
+
+        AcousticMix EvaluateAcoustics(const AudioOcclusionResult& result, float clear, uint32_t rate)
+        {
+            AcousticMix mix;
+            // Geometry alone leaves a small direct residual. Transmission then
+            // accounts for the additional loss along obstructed paths.
+            const float obstructionGain = 1 - .75f * result.Occlusion;
+            mix.Visibility              = obstructionGain * clear;
+            for (size_t band = 0; band < mix.Dry.size(); ++band)
+                mix.Dry[band] = obstructionGain * result.Transmission[band];
+            mix.Wet = .5f + .5f * mix.Dry[1];
+            if (mix.Dry[0] != mix.Dry[2])
+            {
+                const float midpoint = std::clamp((mix.Dry[1] - mix.Dry[2]) / (mix.Dry[0] - mix.Dry[2]), 0.f, 1.f);
+                mix.Filter           = AirFilterCoefficient(glm::mix(600.f, 4000.f, midpoint), rate);
+            }
+            return mix;
         }
 
         glm::vec3 UnitVector(glm::vec3 value, glm::vec3 fallback)
@@ -1071,8 +1106,7 @@ namespace Kans
                         {
                             auto& sample  = output[frame * channels + ch];
                             auto& history = AirHistory[ch];
-                            history       = coefficient == 1 ? sample : glm::mix(history, sample, coefficient);
-                            sample        = history * SpatialCurrent.Gains[ch];
+                            sample        = OnePole(sample, history, coefficient) * SpatialCurrent.Gains[ch];
                         }
                         if (mono)
                             mono[frame] = (AirHistory[0] + AirHistory[1]) * (0.5f * SpatialCurrent.BinauralGain);
@@ -1424,6 +1458,120 @@ namespace Kans
                 int                              Lfe   = -1;
                 bool                             Ready = false;
 
+                MixMailbox<AcousticMix>                 AcousticMailbox;
+                AcousticMix                             AcousticTarget;
+                std::array<AudioGainRamp, 3>            DryAcoustics;
+                AudioGainRamp                           Visibility, WetAcoustics, AcousticFilter;
+                std::array<float, MaxOutputChannels>    AcousticHistory {};
+                std::unique_ptr<SteamAudioDirectEffect> DirectOwner;
+                static_assert(std::atomic<SteamAudioDirectEffect*>::is_always_lock_free);
+                std::atomic<SteamAudioDirectEffect*> Direct {nullptr};
+                // Steam Audio 4.8.1 retains four gain interpolator samples with a one-sample effect.
+                static constexpr uint32_t DirectGainLag   = 4;
+                uint32_t                  DirectSettling  = 0;
+                bool                      DirectAttempted = false, MixedAcoustics = false;
+
+                void PrepareDirect(const SteamAudio* steam)
+                {
+                    if (DirectAttempted || !steam)
+                        return;
+                    DirectAttempted = true;
+                    DirectOwner     = steam->CreateDirectEffect(Channels);
+                    Direct.store(DirectOwner.get(), std::memory_order_release);
+                }
+
+                void InitializeAcoustics(const AcousticMix& mix)
+                {
+                    const auto initialize = [](AudioGainRamp& value, float target) {
+                        value.Remaining = 0;
+                        value.Initialize(target);
+                    };
+                    for (size_t band = 0; band < mix.Dry.size(); ++band)
+                        initialize(DryAcoustics[band], mix.Dry[band]);
+                    initialize(Visibility, mix.Visibility);
+                    initialize(WetAcoustics, mix.Wet);
+                    initialize(AcousticFilter, mix.Filter);
+                }
+
+                // Control thread only, with the route detached.
+                void ResetAcoustics(const AcousticMix& mix)
+                {
+                    AcousticMailbox.Reset(mix);
+                    AcousticTarget = mix;
+                    InitializeAcoustics(mix);
+                    AcousticHistory = {};
+                    if (DirectSettling)
+                        DirectOwner->Reset();
+                    DirectSettling = 0;
+                    MixedAcoustics = false;
+                }
+
+                void ProcessAcoustics(float** output, uint32_t frames)
+                {
+                    if (!frames)
+                        return;
+                    if (AcousticMailbox.Consume(AcousticTarget))
+                    {
+                        if (!MixedAcoustics)
+                            InitializeAcoustics(AcousticTarget);
+                        else
+                        {
+                            const auto dryRamp = Direct.load(std::memory_order_acquire) && RampFrames > DirectGainLag ?
+                                                     RampFrames - DirectGainLag :
+                                                     RampFrames;
+                            for (size_t band = 0; band < AcousticTarget.Dry.size(); ++band)
+                                DryAcoustics[band].Prepare(dryRamp, AcousticTarget.Dry[band]);
+                            Visibility.Prepare(dryRamp, AcousticTarget.Visibility);
+                            WetAcoustics.Prepare(RampFrames, AcousticTarget.Wet);
+                            AcousticFilter.Prepare(RampFrames, AcousticTarget.Filter);
+                        }
+                    }
+                    MixedAcoustics = true;
+                    if (AcousticTarget == AcousticMix {} && !Visibility.Remaining && !WetAcoustics.Remaining &&
+                        !DryAcoustics[0].Remaining && !DryAcoustics[1].Remaining && !DryAcoustics[2].Remaining &&
+                        !AcousticFilter.Remaining && !DirectSettling)
+                        return;
+
+                    auto*      direct  = Direct.load(std::memory_order_acquire);
+                    const bool profile = direct && AudioProfileActiveMix && AudioProfileActiveMix->Frame;
+                    const auto start   = profile ? AudioProfileClock::now() : AudioProfileClock::time_point {};
+                    for (uint32_t frame = 0; frame < frames; ++frame)
+                    {
+                        const auto                 offset = size_t(frame) * Channels;
+                        auto*                      dry    = output[0] + offset;
+                        const std::array<float, 3> gains {
+                            DryAcoustics[0].Next(), DryAcoustics[1].Next(), DryAcoustics[2].Next()};
+                        const float visibility = Visibility.Next();
+                        const float filter     = AcousticFilter.Next();
+                        const float wet        = WetAcoustics.Next();
+                        const bool  obstructed = gains[0] != 1 || gains[1] != 1 || gains[2] != 1;
+                        if (direct && (obstructed || DirectSettling))
+                        {
+                            direct->Render(dry, visibility, gains);
+                            if (obstructed)
+                                DirectSettling = DirectGainLag + 1;
+                            else if (--DirectSettling == 0)
+                                direct->Reset();
+                        }
+                        else
+                        {
+                            for (uint32_t channel = 0; channel < Channels; ++channel)
+                            {
+                                const float filtered = OnePole(dry[channel], AcousticHistory[channel], filter);
+                                if (gains[0] != 1 || gains[2] != 1)
+                                    dry[channel] = dry[channel] * gains[2] + filtered * (gains[0] - gains[2]);
+                            }
+                        }
+                        if (wet != 1)
+                            for (size_t lane = 0; lane < Sends.size(); ++lane)
+                                for (uint32_t channel = 0; channel < Channels; ++channel)
+                                    output[lane + 1][offset + channel] *= wet;
+                    }
+                    if (profile)
+                        AudioProfileActiveMix->Frame->Callback.SteamAudioNanoseconds +=
+                            ProfileNanoseconds(AudioProfileClock::now() - start);
+                }
+
                 ma_result Init(ma_engine& engine, int lfe)
                 {
                     Channels   = ma_engine_get_channels(&engine);
@@ -1450,6 +1598,10 @@ namespace Kans
                     {
                         Disconnect();
                         ma_node_uninit(this, nullptr);
+                        ResetAcoustics({});
+                        Direct.store(nullptr, std::memory_order_relaxed);
+                        DirectOwner.reset();
+                        DirectAttempted = false;
                         Ready = false;
                     }
                 }
@@ -1491,6 +1643,7 @@ namespace Kans
                             lane.SilentRevision.store(uint32_t(command >> 32), std::memory_order_relaxed);
                         lane.Level.Publish();
                     }
+                    self.ProcessAcoustics(outputs, frames);
                     *inputFrames = *outputFrames = frames;
                 }
 
@@ -1541,6 +1694,19 @@ namespace Kans
             uint64_t                     PlayOrder = 0, PinnedStart = NoFrame;
             bool                         Attached = false, Virtual = false, CountedReal = false, Stolen = false;
             bool                         Poolable = false;
+            struct OcclusionWork
+            {
+                AudioOcclusionSettings Settings;
+                AudioOcclusionResult   Result;
+                AcousticMix            Mix;
+                AudioOcclusionRay      Ray;
+                glm::vec3              Right {0}, Up {0};
+                std::array<float, 3>   TransmissionSum {};
+                uint64_t               ListenerIdentity = 0, LastRayFrame = 0, LastServiceFrame = 0;
+                uint32_t               ListenerIndex = MaxAudioListeners, Samples = 0, Blocked = 0;
+                bool                   ReadyToRevive = false, HeldForOcclusion = false;
+                float                  Clear = 1;
+            } Acoustics;
             uint64_t                 PausedAt = NoFrame, RemainingStart = 0, RemainingStop = NoFrame;
             bool                               Initialized = false, Scheduled = false, BusHeld = false;
             ~Voice() { if (Initialized) ma_sound_uninit(&Sound); }
@@ -1962,6 +2128,18 @@ namespace Kans
             bool   Eligible;
         };
         std::vector<Candidate> Candidates;
+        struct OcclusionCandidate
+        {
+            Voice* Instance;
+            float  Weight;
+            bool   Complete = false;
+        };
+        std::vector<OcclusionCandidate> OcclusionCandidates;
+        AudioOcclusionQuery             OcclusionQuery;
+        AudioOcclusionDebugDraw         OcclusionDebugDraw    = nullptr;
+        void*                           OcclusionDebugContext = nullptr;
+        AudioOcclusionStats             OcclusionStats;
+        uint64_t                        OcclusionFrame = 0;
 
         void CountReal(Voice& voice, bool real)
         {
@@ -2403,6 +2581,201 @@ namespace Kans
             return std::isfinite(attenuation) && attenuation > 0 ? gain * std::min(attenuation, 1.f) : 0;
         }
 
+        bool WantsOcclusion(const Voice& voice) const
+        {
+            return OcclusionQuery.Trace && voice.Acoustics.Settings.Enabled() &&
+                   ((voice.Desc.Spatial && voice.Listener < Config.MaxListeners) ||
+                    (voice.Desc.ReverbPosition && voice.Listener < Config.MaxListeners));
+        }
+
+        void SetAcoustics(Voice& voice, const AudioOcclusionResult& result, float clear)
+        {
+            auto& work = voice.Acoustics;
+            if (!work.HeldForOcclusion && work.Result == result && work.Clear == clear)
+                return;
+            work.Clear            = clear;
+            work.Result           = result;
+            work.HeldForOcclusion = false;
+            work.Mix              = EvaluateAcoustics(result, clear, Config.SampleRate);
+            if (work.Mix != AcousticMix {})
+                voice.Route.PrepareDirect(HRTF.get());
+            voice.Route.AcousticMailbox.Publish(work.Mix);
+        }
+
+        void RefreshOcclusionSettings(Voice& voice)
+        {
+            auto&      work     = voice.Acoustics;
+            const auto settings = voice.Desc.Occlusion.Resolve(Config.DefaultOcclusion.Resolve());
+            if (work.Settings == settings)
+                return;
+            work.Settings      = settings;
+            work.Samples       = 0;
+            work.ReadyToRevive = false;
+            if (!WantsOcclusion(voice))
+            {
+                work.LastServiceFrame = 0;
+                SetAcoustics(voice, {}, 1);
+            }
+        }
+
+        void QueueOcclusion(Voice& voice, float audibility)
+        {
+            if (!WantsOcclusion(voice))
+            {
+                auto& work = voice.Acoustics;
+                if (work.LastServiceFrame || work.HeldForOcclusion)
+                {
+                    work.LastServiceFrame = 0;
+                    work.Samples          = 0;
+                    work.ReadyToRevive    = false;
+                    SetAcoustics(voice, {}, 1);
+                }
+                return;
+            }
+            const auto  position  = voice.Desc.Spatial ? voice.Spatial.Position : *voice.Desc.ReverbPosition;
+            const float distance  = glm::length(position - Listeners[voice.Listener].Position);
+            const float audible   = std::clamp(audibility, 0.f, 1.f);
+            const float proximity = std::isfinite(distance) ? 1.f / (1.f + distance) : 0.f;
+            const float weight    = (voice.Desc.Priority / 255.f + audible + proximity) / 3.f;
+            auto&       work      = voice.Acoustics;
+            if (work.ListenerIndex != voice.Listener || work.ListenerIdentity != Listeners[voice.Listener].Identity)
+            {
+                work.Samples          = 0;
+                work.ReadyToRevive    = false;
+                work.ListenerIndex    = voice.Listener;
+                work.ListenerIdentity = Listeners[voice.Listener].Identity;
+            }
+            OcclusionCandidates.push_back({&voice, weight});
+        }
+
+        void UpdateOcclusion()
+        {
+            auto& stats = OcclusionStats;
+            stats.Rays = stats.VoicesServiced = 0;
+            stats.DeferredVoices              = 0;
+            if (OcclusionCandidates.empty())
+                return;
+            std::sort(OcclusionCandidates.begin(), OcclusionCandidates.end(), [](const auto& a, const auto& b) {
+                const auto lastA = a.Instance->Acoustics.LastRayFrame;
+                const auto lastB = b.Instance->Acoustics.LastRayFrame;
+                if (lastA != lastB)
+                    return lastA < lastB;
+                if (a.Weight != b.Weight)
+                    return a.Weight > b.Weight;
+                return a.Instance->ProfileHandle.Index < b.Instance->ProfileHandle.Index;
+            });
+
+            bool       began  = false;
+            const auto budget = Config.MaxOcclusionRaysPerFrame;
+            // Oldest turn first. A weight gives up to four rays within a turn
+            // for volumetric work. Partial sweeps continue on later frames.
+            for (bool progressed = true; stats.Rays < budget && progressed;)
+            {
+                progressed = false;
+                for (auto& candidate : OcclusionCandidates)
+                {
+                    if (candidate.Complete || stats.Rays == budget)
+                        continue;
+                    auto&       voice    = *candidate.Instance;
+                    auto&       work     = voice.Acoustics;
+                    const auto& settings = work.Settings;
+                    const auto  samples = settings.Mode == AudioOcclusionMode::Volumetric && settings.SourceRadius > 0 ?
+                                              settings.Samples :
+                                              1;
+                    const bool  transmission =
+                        settings.Transmission != AudioTransmissionMode::Off && settings.TransmissionStrength > 0;
+                    if (!work.Samples)
+                    {
+                        const auto position  = voice.Desc.Spatial ? voice.Spatial.Position : *voice.Desc.ReverbPosition;
+                        work.Ray             = {Listeners[voice.Listener].Position,
+                                                position,
+                                                voice.Desc.Owner.Entity,
+                                                settings.OcclusionLayerMask};
+                        const auto axis      = UnitVector(position - work.Ray.Start, {0, 0, -1});
+                        const auto reference = std::abs(axis.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+                        work.Right           = UnitVector(glm::cross(axis, reference), {1, 0, 0});
+                        work.Up              = glm::cross(work.Right, axis);
+                        work.Blocked         = 0;
+                        work.TransmissionSum = {};
+                    }
+                    const uint32_t burst = 1 + static_cast<uint32_t>(3 * candidate.Weight);
+                    work.LastRayFrame    = OcclusionFrame;
+                    progressed           = true;
+                    for (uint32_t turn = 0; turn < burst && work.Samples < samples && stats.Rays < budget;
+                         ++turn, ++work.Samples)
+                    {
+                        auto ray = work.Ray;
+                        // Opposed pairs on a projected disc give a centered sample distribution.
+                        if (samples > 1 && work.Samples >= samples % 2)
+                        {
+                            const auto  offset = work.Samples - samples % 2;
+                            const auto  pair   = offset / 2;
+                            const float angle  = 2.39996323f * pair;
+                            const float radius = settings.SourceRadius * std::sqrt((pair + .5f) / (samples / 2));
+                            const float side   = offset % 2 ? -1.f : 1.f;
+                            ray.End += (side * radius) * (std::cos(angle) * work.Right + std::sin(angle) * work.Up);
+                        }
+                        std::array<AudioOcclusionHit, MaxAudioTransmissionHits> hits;
+                        const size_t capacity  = transmission ? hits.size() : 1;
+                        size_t       count     = 0;
+                        const auto   delta     = ray.End - ray.Start;
+                        const float  lengthSqr = glm::dot(delta, delta);
+                        if (std::isfinite(lengthSqr) && lengthSqr > 1e-12f)
+                        {
+                            if (!std::exchange(began, true) && OcclusionQuery.Begin)
+                                OcclusionQuery.Begin(OcclusionQuery.Context);
+                            count = std::min(capacity,
+                                             OcclusionQuery.Trace(OcclusionQuery.Context, ray, hits.data(), capacity));
+                            ++stats.Rays;
+                            if (OcclusionDebugDraw)
+                                OcclusionDebugDraw(OcclusionDebugContext, ray, hits.data(), count);
+                        }
+                        work.Blocked += count != 0;
+                        if (transmission)
+                            for (size_t band = 0; band < work.TransmissionSum.size(); ++band)
+                            {
+                                // Summing attenuation in dB is multiplication in linear gain.
+                                float gain = 1;
+                                for (size_t hit = 0; hit < count; ++hit)
+                                    gain *= hits[hit].Transmission[band];
+                                work.TransmissionSum[band] += gain;
+                            }
+                    }
+                    if (work.Samples == samples)
+                    {
+                        const float          blocked = float(work.Blocked) / samples;
+                        AudioOcclusionResult result;
+                        if (settings.Mode != AudioOcclusionMode::Off)
+                            result.Occlusion = blocked * settings.OcclusionStrength;
+                        if (transmission)
+                        {
+                            for (size_t band = 0; band < result.Transmission.size(); ++band)
+                                result.Transmission[band] =
+                                    glm::mix(1.f, work.TransmissionSum[band] / samples, settings.TransmissionStrength);
+                            if (settings.Transmission == AudioTransmissionMode::FrequencyIndependent)
+                                result.Transmission.fill(
+                                    (result.Transmission[0] + result.Transmission[1] + result.Transmission[2]) / 3);
+                        }
+                        SetAcoustics(voice, result, transmission ? 1 - blocked * settings.TransmissionStrength : 1);
+                        work.Samples          = 0;
+                        work.LastServiceFrame = OcclusionFrame;
+                        work.ReadyToRevive    = true;
+                        candidate.Complete    = true;
+                        ++stats.VoicesServiced;
+                    }
+                }
+            }
+            stats.DeferredVoices = static_cast<uint32_t>(OcclusionCandidates.size()) - stats.VoicesServiced;
+            stats.BudgetOverruns += stats.DeferredVoices != 0;
+        }
+
+        static AcousticMix CurrentAcousticMix(const Voice& voice)
+        {
+            if (voice.Acoustics.HeldForOcclusion)
+                return {{0, 0, 0}, 0, 0, 1};
+            return voice.Acoustics.Mix;
+        }
+
         void Virtualize(Voice& voice, uint64_t clock, AudioVoiceReason reason)
         {
             if (!voice.Virtual)
@@ -2413,6 +2786,8 @@ namespace Kans
             ma_sound_stop(&voice.Sound);
             SetStreamActive(voice, false);
             voice.Virtual = true;
+            voice.Acoustics.Samples       = 0;
+            voice.Acoustics.ReadyToRevive = false;
             CountReal(voice, false);
         }
 
@@ -2444,6 +2819,7 @@ namespace Kans
             ma_sound_set_start_time_in_pcm_frames(&sound, start);
             ma_sound_set_stop_time_in_pcm_frames(&sound, state.Stop);
             ma_node_set_state(&sound, ma_node_state_started);
+            voice.Route.ResetAcoustics(voice.Acoustics.Mix);
             if (!Attach(voice))
                 return false;
             voice.Virtual = false;
@@ -2514,8 +2890,8 @@ namespace Kans
             for (const auto& reason : reasons)
                 Warn(reason);
         }
-        if (config.MaxListeners < 1 || config.MaxListeners > MaxAudioListeners || config.Channels == 0 ||
-            config.Channels > MaxOutputChannels ||
+        if (!IsValidAudioOcclusion(config.DefaultOcclusion.Resolve()) || config.MaxListeners < 1 ||
+            config.MaxListeners > MaxAudioListeners || config.Channels == 0 || config.Channels > MaxOutputChannels ||
             (config.Mode == AudioOutputMode::Offline && config.SampleRate == 0) ||
             !std::isfinite(config.VirtualizationThreshold) || config.VirtualizationThreshold < 0)
             return "Invalid audio engine configuration";
@@ -2709,6 +3085,12 @@ namespace Kans
         p.Stats        = {};
         p.PlaySequence = p.PendingSteals = 0;
         p.Candidates.clear();
+        p.OcclusionCandidates.clear();
+        p.OcclusionQuery        = {};
+        p.OcclusionDebugDraw    = nullptr;
+        p.OcclusionDebugContext = nullptr;
+        p.OcclusionFrame        = 0;
+        p.OcclusionStats        = {};
         p.Profile.Reset();
         p.RetiredUnderruns = p.RetiredUnderrunFrames = 0;
     }
@@ -2743,7 +3125,12 @@ namespace Kans
             node.ResetResampler();
         result = voice.Route.Init(Engine, LfeChannel);
         if (result == MA_SUCCESS)
+        {
+            if (voice.Acoustics.Mix != AcousticMix {})
+                voice.Route.PrepareDirect(HRTF.get());
+            voice.Route.ResetAcoustics(CurrentAcousticMix(voice));
             result = ma_node_attach_output_bus(&node, 0, &voice.Route, 0);
+        }
         return result;
     }
 
@@ -3447,6 +3834,8 @@ namespace Kans
         for (auto& [name, count] : p.Stats.GroupActiveCounts)
             count = 0;
         p.Candidates.clear();
+        p.OcclusionCandidates.clear();
+        ++p.OcclusionFrame;
         uint32_t protectedCount = 0;
         for (uint32_t i = 0; i < p.Slots.size(); ++i)
         {
@@ -3483,6 +3872,8 @@ namespace Kans
             if (voice.Protected(now))
             {
                 ++protectedCount;
+                if (!voice.Virtual)
+                    p.QueueOcclusion(voice, p.Audibility(voice, now));
                 continue;
             }
             const auto audibility = p.Audibility(voice, now);
@@ -3511,18 +3902,29 @@ namespace Kans
             const auto reason  = candidate.Eligible ? AudioVoiceReason::Priority : AudioVoiceReason::Inaudible;
             candidate.Eligible = candidate.Eligible && selected < budget;
             if (candidate.Eligible)
+            {
                 ++selected;
+                p.QueueOcclusion(*candidate.Instance, candidate.Score);
+            }
             else
             {
                 if (!candidate.Instance->Virtual)
                     p.Virtualize(*candidate.Instance, now, reason);
+                candidate.Instance->Acoustics.Samples       = 0;
+                candidate.Instance->Acoustics.ReadyToRevive = false;
                 ++p.Stats.VirtualVoices;
             }
         }
+        p.UpdateOcclusion();
         const auto resume = p.WritableClock();
         for (const auto& candidate : p.Candidates)
-            if (candidate.Eligible && candidate.Instance->Virtual && !p.Realize(*candidate.Instance, resume))
+        {
+            auto& voice = *candidate.Instance;
+            if (!candidate.Eligible || !voice.Virtual)
+                continue;
+            if ((p.WantsOcclusion(voice) && !voice.Acoustics.ReadyToRevive) || !p.Realize(voice, resume))
                 ++p.Stats.VirtualVoices;
+        }
         p.Stats.RealVoices = p.RealCount;
     }
 
@@ -3547,6 +3949,7 @@ namespace Kans
         p.Profile.Collect();
         AudioProfileStats stats;
         p.Profile.ReadStats(stats);
+        stats.Occlusion      = p.OcclusionStats;
         stats.Underruns      = p.RetiredUnderruns;
         stats.UnderrunFrames = p.RetiredUnderrunFrames;
         if (!p.Ready)
@@ -3627,9 +4030,16 @@ namespace Kans
             }
             const auto audibility = p.Audibility(voice, now);
             row.Audibility        = voice.Virtual ? audibility : audibility * RealVoiceMargin;
+            row.Acoustics         = voice.Acoustics.Result;
+            if (voice.Acoustics.LastServiceFrame)
+            {
+                row.OcclusionAgeFrames = p.OcclusionFrame - voice.Acoustics.LastServiceFrame;
+                row.OcclusionStale     = *row.OcclusionAgeFrames > p.Config.OcclusionStaleFrames;
+            }
             if (row.State == AudioVoiceState::Playing || row.State == AudioVoiceState::Stopping)
             {
-                const auto dryGain = p.VoiceGain(voice, now, p.Buses->DryGain(voice.Desc.Bus));
+                const auto dryGain =
+                    p.VoiceGain(voice, now, p.Buses->DryGain(voice.Desc.Bus)) * Impl::CurrentAcousticMix(voice).Dry[1];
                 if (dryGain > 0)
                     row.FinalGainDb = 20 * std::log10(dryGain);
             }
@@ -4307,6 +4717,15 @@ namespace Kans
         else
             voice = std::make_unique<Impl::Voice>();
         voice->Desc = desc;
+        voice->Acoustics              = {};
+        voice->Acoustics.LastRayFrame = m_Impl->OcclusionFrame;
+        voice->Acoustics.Settings     = desc.Occlusion.Resolve(m_Impl->Config.DefaultOcclusion.Resolve());
+        if (!IsValidAudioOcclusion(voice->Acoustics.Settings))
+        {
+            voice->Desc.Occlusion     = {};
+            voice->Acoustics.Settings = m_Impl->Config.DefaultOcclusion.Resolve();
+        }
+        voice->Route.ResetAcoustics({});
         voice->Desc.SpatialBlend = std::isfinite(desc.SpatialBlend) ? std::clamp(desc.SpatialBlend, 0.f, 1.f) : 1.f;
         if (generator)
             voice->Desc.Owner.Kind = AudioVoiceOwnerKind::Generator;
@@ -4404,6 +4823,8 @@ namespace Kans
             if (index == UINT32_MAX)
                 return {};
             m_Impl->Slots.emplace_back();
+            m_Impl->Candidates.reserve(m_Impl->Slots.capacity());
+            m_Impl->OcclusionCandidates.reserve(m_Impl->Slots.capacity());
         }
         auto& slot       = m_Impl->Slots[index];
         m_Impl->FreeSlot = slot.NextFree;
@@ -4431,6 +4852,7 @@ namespace Kans
         desc.Owner            = {AudioVoiceOwnerKind::OneShot, params.OwnerEntity, {}};
         desc.Spatializer      = params.Spatializer;
         desc.SpatialBlend     = params.SpatialBlend;
+        desc.Occlusion        = params.Occlusion;
         desc.Volume           = params.Volume;
         desc.Pitch            = params.Pitch;
         desc.Bus              = params.Bus;
@@ -4762,7 +5184,7 @@ namespace Kans
             }
             if (voice->Virtual)
             {
-                if (!m_Impl->Realize(*voice, m_Impl->WritableClock()))
+                if (!m_Impl->WantsOcclusion(*voice) && !m_Impl->Realize(*voice, m_Impl->WritableClock()))
                     return false;
                 voice->ProfilePendingStart = true;
                 if (state.Start <= now)
@@ -4860,6 +5282,14 @@ namespace Kans
                     start, window->FadeOut, 1, 0, window->OutCurve, AddFrames(window->FadeOutElapsed, start - begin)};
                 voice->Envelope.Multiply = true;
             }
+        }
+        if (voice->Virtual && m_Impl->WantsOcclusion(*voice))
+        {
+            // An explicit scheduled start keeps its transport deadline, but its
+            // route stays silent until the next complete fresh query.
+            voice->Acoustics.HeldForOcclusion = true;
+            voice->Acoustics.Samples          = 0;
+            voice->Route.ResetAcoustics(Impl::CurrentAcousticMix(*voice));
         }
         if (!m_Impl->Attach(*voice))
             return NoFrame;
@@ -5233,6 +5663,73 @@ namespace Kans
         voice->Spatial = params;
         m_Impl->RefreshAttenuation(*voice);
         m_Impl->ApplySpatial(*voice);
+    }
+
+    void AudioEngine::SetVoiceOcclusion(AudioVoiceHandle handle, const AudioOcclusionOverrides& overrides)
+    {
+        auto& p     = *m_Impl;
+        auto* voice = p.Find(handle);
+        if (!voice || voice->Desc.Occlusion == overrides ||
+            !IsValidAudioOcclusion(overrides.Resolve(p.Config.DefaultOcclusion.Resolve())))
+            return;
+        voice->Desc.Occlusion = overrides;
+        p.RefreshOcclusionSettings(*voice);
+    }
+
+    AudioOcclusionResult AudioEngine::GetVoiceOcclusion(AudioVoiceHandle handle) const
+    {
+        const auto* voice = m_Impl->Find(handle);
+        return voice ? voice->Acoustics.Result : AudioOcclusionResult {};
+    }
+
+    void
+    AudioEngine::SetOcclusionDefaults(const AudioOcclusionOverrides& overrides, uint32_t budget, uint32_t staleFrames)
+    {
+        auto& p = *m_Impl;
+        if (!IsValidAudioOcclusion(overrides.Resolve()))
+            return;
+        p.Config.DefaultOcclusion         = overrides;
+        p.Config.MaxOcclusionRaysPerFrame = budget;
+        p.Config.OcclusionStaleFrames     = staleFrames;
+        for (auto& slot : p.Slots)
+            if (slot.Value)
+                p.RefreshOcclusionSettings(*slot.Value);
+    }
+
+    AudioOcclusionSettings AudioEngine::GetOcclusionDefaults() const
+    {
+        return m_Impl->Config.DefaultOcclusion.Resolve();
+    }
+
+    void AudioEngine::SetOcclusionQuery(const AudioOcclusionQuery& query)
+    {
+        auto& p = *m_Impl;
+        if (p.OcclusionQuery.Context == query.Context && p.OcclusionQuery.Trace == query.Trace &&
+            p.OcclusionQuery.Begin == query.Begin)
+            return;
+        p.OcclusionQuery = query;
+        for (auto& slot : p.Slots)
+            if (slot.Value)
+            {
+                auto& voice           = *slot.Value;
+                auto& work            = voice.Acoustics;
+                work.Samples          = 0;
+                work.ReadyToRevive    = false;
+                work.LastServiceFrame = 0;
+                p.SetAcoustics(voice, {}, 1);
+            }
+    }
+
+    void AudioEngine::ClearOcclusionQuery(const void* context)
+    {
+        if (m_Impl->OcclusionQuery.Context == context)
+            SetOcclusionQuery({});
+    }
+
+    void AudioEngine::SetOcclusionDebugDraw(AudioOcclusionDebugDraw draw, void* context)
+    {
+        m_Impl->OcclusionDebugDraw    = draw;
+        m_Impl->OcclusionDebugContext = context;
     }
 
     void

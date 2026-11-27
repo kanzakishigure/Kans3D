@@ -43,7 +43,15 @@ namespace Kans::ScriptAudio
             ProfileStats,
             Spatializer,
             SpatialBlend,
-            ActiveHRTF
+            ActiveHRTF,
+            Occlusion,
+            Transmission,
+            OcclusionStrength,
+            TransmissionStrength,
+            OcclusionLayerMask,
+            OcclusionRadius,
+            OcclusionSamples,
+            CurrentOcclusion
         };
         constexpr int32_t Write = 1, EntityTarget = 2;
         using Data   = Scripting::AudioCommandData;
@@ -64,8 +72,102 @@ namespace Kans::ScriptAudio
             return false;
         }
 
+        bool SourceOcclusion(Scene& scene, AudioEngine& engine, Entity entity, Operation operation, Data& data)
+        {
+            auto& source = entity.GetComponent<AudioSourceComponent>();
+            if (operation == Operation::CurrentOcclusion)
+            {
+                if (data.Flags & Write)
+                    return false;
+                data.Value = engine.GetVoiceOcclusion(source.GetVoiceHandle()).Occlusion;
+                return true;
+            }
+            if (data.Flags & Write)
+            {
+                auto next = source.Occlusion;
+                switch (operation)
+                {
+                    case Operation::Occlusion:
+                        if (data.Priority < 0 || data.Priority > int(AudioOcclusionMode::Volumetric))
+                            return false;
+                        next.Mode = AudioOcclusionMode(data.Priority);
+                        break;
+                    case Operation::Transmission:
+                        if (data.Priority < 0 || data.Priority > int(AudioTransmissionMode::FrequencyDependent))
+                            return false;
+                        next.Transmission = AudioTransmissionMode(data.Priority);
+                        break;
+                    case Operation::OcclusionStrength:
+                        next.OcclusionStrength = data.Value;
+                        break;
+                    case Operation::TransmissionStrength:
+                        next.TransmissionStrength = data.Value;
+                        break;
+                    case Operation::OcclusionLayerMask:
+                        if (data.Local > UINT32_MAX)
+                            return false;
+                        next.OcclusionLayerMask = uint32_t(data.Local);
+                        break;
+                    case Operation::OcclusionRadius:
+                        next.SourceRadius = data.Value;
+                        break;
+                    case Operation::OcclusionSamples:
+                        if (data.Local > MaxAudioOcclusionSamples)
+                            return false;
+                        next.Samples = uint32_t(data.Local);
+                        break;
+                    default:
+                        return false;
+                }
+                if (!IsValidAudioOcclusion(next.Resolve()))
+                    return false;
+                source.Occlusion = next;
+                scene.SyncAudioSource(entity);
+                return true;
+            }
+
+            auto effective = source.Occlusion;
+            if (auto* assets = scene.GetAssetManager();
+                assets && source.GetSourceKind() == AudioSourceKind::Event && source.Event.IsValid())
+            {
+                const auto loaded = assets->Load<AudioEventAsset>(source.Event);
+                if (const auto* asset = std::get_if<Ref<const AudioEventAsset>>(&loaded))
+                    effective = effective.Over((*asset)->GetData().Occlusion);
+            }
+            const auto settings = effective.Resolve(engine.GetOcclusionDefaults());
+            switch (operation)
+            {
+                case Operation::Occlusion:
+                    data.Priority = int32_t(settings.Mode);
+                    break;
+                case Operation::Transmission:
+                    data.Priority = int32_t(settings.Transmission);
+                    break;
+                case Operation::OcclusionStrength:
+                    data.Value = settings.OcclusionStrength;
+                    break;
+                case Operation::TransmissionStrength:
+                    data.Value = settings.TransmissionStrength;
+                    break;
+                case Operation::OcclusionLayerMask:
+                    data.Local = settings.OcclusionLayerMask;
+                    break;
+                case Operation::OcclusionRadius:
+                    data.Value = settings.SourceRadius;
+                    break;
+                case Operation::OcclusionSamples:
+                    data.Local = settings.Samples;
+                    break;
+                default:
+                    return false;
+            }
+            return true;
+        }
+
         int32_t Source(Scene& scene, AudioEngine& engine, Entity entity, Operation operation, Data& data)
         {
+            if (operation >= Operation::Occlusion && operation <= Operation::CurrentOcclusion)
+                return SourceOcclusion(scene, engine, entity, operation, data);
             auto&      source = entity.GetComponent<AudioSourceComponent>();
             const bool write  = (data.Flags & Write) != 0;
             switch (operation)

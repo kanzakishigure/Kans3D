@@ -10,6 +10,9 @@ namespace Kans
         AssetID                     AudioBusLayout;
         AssetID                     AudioHRTF;
         AudioSpatializer            DefaultAudioSpatializer = AudioSpatializer::Panning;
+        AudioOcclusionOverrides     DefaultAudioOcclusion;
+        uint32_t                    MaxOcclusionRaysPerFrame = DefaultMaxOcclusionRaysPerFrame;
+        uint32_t                    OcclusionStaleFrames     = DefaultOcclusionStaleFrames;
         PhysicsSettings       Physics;
         std::string           Name;
         uint32_t              FormatVersion = 1;

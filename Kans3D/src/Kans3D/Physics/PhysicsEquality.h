@@ -55,8 +55,17 @@ namespace Kans
 {
     inline bool operator==(const PhysicsMaterialValues& a, const PhysicsMaterialValues& b)
     {
-        return std::tie(a.StaticFriction, a.DynamicFriction, a.Restitution, a.FrictionCombine, a.RestitutionCombine) ==
-               std::tie(b.StaticFriction, b.DynamicFriction, b.Restitution, b.FrictionCombine, b.RestitutionCombine);
+        return std::tie(a.StaticFriction,
+                        a.DynamicFriction,
+                        a.Restitution,
+                        a.FrictionCombine,
+                        a.RestitutionCombine,
+                        a.Acoustics) == std::tie(b.StaticFriction,
+                                                 b.DynamicFriction,
+                                                 b.Restitution,
+                                                 b.FrictionCombine,
+                                                 b.RestitutionCombine,
+                                                 b.Acoustics);
     }
     inline bool operator!=(const PhysicsMaterialValues& a, const PhysicsMaterialValues& b) { return !(a == b); }
 } // namespace Kans

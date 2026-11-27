@@ -2,6 +2,7 @@
 #include "Kans3D/Physics/PhysicsWorld.h"
 #include <PxPhysicsAPI.h>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <mutex>
 #include <set>
@@ -206,9 +207,12 @@ namespace Kans
         double                            Time = 0;
         struct SharedMaterial
         {
-            PxMaterial* Material = nullptr;
+            PxMaterial*      Material = nullptr;
+            AcousticMaterial Acoustics;
         };
         std::map<AssetID, SharedMaterial> Materials;
+        // PhysX materials borrow these stable values for the lifetime of the world.
+        std::deque<AcousticMaterial> InlineAcoustics;
         struct Listeners
         {
             uint64_t                                                                    Next = 0;
@@ -464,8 +468,9 @@ namespace Kans
                 ScriptEngine::OnPhysicsEvent(Owner, e, trigger);
             }
         }
-        void UpdateMaterial(AssetID id, PxMaterial* material)
+        void UpdateMaterial(AssetID id, SharedMaterial& shared)
         {
+            auto* material = shared.Material;
             auto values = Settings.DefaultMaterial;
             bool loaded = false;
             if (auto* assets = Owner.GetAssetManager())
@@ -479,6 +484,9 @@ namespace Kans
             }
             if (!loaded)
                 Error(0, "Physics material unavailable: " + id.ToString());
+            shared.Acoustics = values.Acoustics;
+            SanitizeAcousticMaterial(shared.Acoustics);
+            material->userData = &shared.Acoustics;
             bool changed = material->getStaticFriction() != values.StaticFriction ||
                            material->getDynamicFriction() != values.DynamicFriction ||
                            material->getRestitution() != values.Restitution ||
@@ -530,7 +538,7 @@ namespace Kans
                     const auto& d = Settings.DefaultMaterial;
                     it->second.Material =
                         Sdk().Physics->createMaterial(d.StaticFriction, d.DynamicFriction, d.Restitution);
-                    UpdateMaterial(c.Asset, it->second.Material);
+                    UpdateMaterial(c.Asset, it->second);
                 }
                 it->second.Material->acquireReference();
                 return it->second.Material;
@@ -543,11 +551,20 @@ namespace Kans
             {
                 material->setFrictionCombineMode(PxCombineMode::Enum(m.FrictionCombine));
                 material->setRestitutionCombineMode(PxCombineMode::Enum(m.RestitutionCombine));
+                if (!c.UseDefault)
+                {
+                    auto values = m.Acoustics;
+                    SanitizeAcousticMaterial(values);
+                    const auto found = std::find(InlineAcoustics.begin(), InlineAcoustics.end(), values);
+                    material->userData =
+                        found == InlineAcoustics.end() ? &InlineAcoustics.emplace_back(values) : &*found;
+                }
             }
             return material;
         }
         Impl(Scene& owner, PhysicsSettings settings) : Owner(owner), Settings(std::move(settings))
         {
+            SanitizeAcousticMaterial(Settings.DefaultMaterial.Acoustics);
             Settings.Validate();
             std::lock_guard lock(SdkMutex());
             auto&           sdk = Sdk();
@@ -1191,7 +1208,7 @@ namespace Kans
     {
         auto& i = *m_Impl;
         if (auto m = i.Materials.find(asset); m != i.Materials.end())
-            i.UpdateMaterial(asset, m->second.Material);
+            i.UpdateMaterial(asset, m->second);
         if (auto users = i.MeshUsers.find(asset); users != i.MeshUsers.end())
             for (auto collider : users->second)
             {
@@ -1203,7 +1220,7 @@ namespace Kans
     void PhysicsWorld::NotifyAssetProviderChanged()
     {
         for (auto& [id, m] : m_Impl->Materials)
-            m_Impl->UpdateMaterial(id, m.Material);
+            m_Impl->UpdateMaterial(id, m);
         for (const auto& [asset, users] : m_Impl->MeshUsers)
             NotifyAssetChanged(asset);
     }
@@ -1955,6 +1972,73 @@ namespace Kans
                          &callback);
         return result.hasBlock ? std::optional<RaycastHit>(ConvertHit(result.block, i.ShapeBones)) : std::nullopt;
     }
+    size_t PhysicsWorld::RaycastBounded(glm::vec3          origin,
+                                        glm::vec3          direction,
+                                        float              distance,
+                                        const QueryFilter& filter,
+                                        BoundedRaycastHit* hits,
+                                        size_t             capacity) const
+    {
+        if (!hits || !capacity || !Finite(origin) || !Direction(direction, distance))
+            return 0;
+        using namespace physx;
+        const auto&             i         = *m_Impl;
+        const auto              owner     = i.ColliderOwners.find(filter.IgnoreEntity);
+        const bool              singleHit = capacity == 1;
+        QueryCallback           callback(filter,
+                                         i.Settings.QueriesHitTriggers,
+                                         owner == i.ColliderOwners.end() ? uint64_t(filter.IgnoreEntity) :
+                                                                           uint64_t(owner->second),
+                                         singleHit);
+        const PxQueryFilterData query(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
+        struct Collector : PxRaycastCallback
+        {
+            PxRaycastHit            Buffer[16];
+            BoundedRaycastHit*      Hits;
+            size_t                  Capacity;
+            const AcousticMaterial& Default;
+            size_t                  Count = 0;
+
+            Collector(BoundedRaycastHit* hits, size_t capacity, const AcousticMaterial& defaults) :
+                PxRaycastCallback(Buffer, 16), Hits(hits), Capacity(capacity), Default(defaults)
+            {}
+
+            void Insert(const PxRaycastHit& hit)
+            {
+                const uint64_t entity = reinterpret_cast<uintptr_t>(hit.shape->userData);
+                size_t         index  = Count;
+                while (index &&
+                       (Hits[index - 1].Distance > hit.distance || (Hits[index - 1].Distance == hit.distance &&
+                                                                    uint64_t(Hits[index - 1].ColliderEntity) > entity)))
+                    --index;
+                if (index == Capacity)
+                    return;
+                Count = std::min(Count + 1, Capacity);
+                std::move_backward(Hits + index, Hits + Count - 1, Hits + Count);
+                PxMaterial* material = nullptr;
+                hit.shape->getMaterials(&material, 1);
+                const auto* acoustics = material ? static_cast<const AcousticMaterial*>(material->userData) : nullptr;
+                Hits[index]           = {Gl(hit.position), hit.distance, entity, acoustics ? *acoustics : Default};
+            }
+
+            bool processTouches(const PxRaycastHit* data, PxU32 count) override
+            {
+                for (PxU32 index = 0; index < count; ++index)
+                    Insert(data[index]);
+                return true;
+            }
+
+            void finalizeQuery() override
+            {
+                if (hasBlock)
+                    Insert(block);
+                processTouches(touches, nbTouches);
+            }
+        } collector(hits, capacity, i.Settings.DefaultMaterial.Acoustics);
+        i.World->raycast(Px(origin), Px(direction), distance, collector, PxHitFlag::eDEFAULT, query, &callback);
+        return collector.Count;
+    }
+
     std::vector<RaycastHit>
     PhysicsWorld::RaycastAll(glm::vec3 origin, glm::vec3 direction, float distance, const QueryFilter& filter)
     {

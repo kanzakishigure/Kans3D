@@ -4,6 +4,7 @@
 #include <string>
 #include <thread>
 #include <glm/glm.hpp>
+#include "AcousticMaterial.h"
 
 namespace Kans
 {
@@ -19,6 +20,7 @@ namespace Kans
         float              StaticFriction = .6f, DynamicFriction = .6f, Restitution = 0;
         PhysicsCombineMode FrictionCombine    = PhysicsCombineMode::Average;
         PhysicsCombineMode RestitutionCombine = PhysicsCombineMode::Average;
+        AcousticMaterial   Acoustics;
     };
     enum class PhysicsDebugFlags : uint32_t
     {

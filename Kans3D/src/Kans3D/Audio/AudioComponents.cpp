@@ -27,6 +27,7 @@ namespace Kans
                             c.Spatial,
                             c.Spatializer,
                             c.SpatialBlend,
+                            c.Occlusion,
                             c.Pan,
                             c.ReverbZoneSend,
                             c.PinToCenter,

@@ -64,6 +64,31 @@ namespace Kans
             return;
         m_AudioEngine->SetTimeScale(m_TimeScale);
         m_AudioEngine->SetGamePaused(m_AudioPaused);
+        if (m_PhysicsWorld)
+        {
+            m_AudioEngine->SetOcclusionQuery(
+                {this,
+                 [](void* context) {
+                     if (auto* world = static_cast<Scene*>(context)->GetPhysicsWorld())
+                         world->SynchronizeChanges();
+                 },
+                 [](void* context, const AudioOcclusionRay& ray, AudioOcclusionHit* output, size_t capacity) -> size_t {
+                     auto* world = static_cast<Scene*>(context)->GetPhysicsWorld();
+                     if (!world)
+                         return 0;
+                     QueryFilter filter;
+                     filter.LayerMask    = ray.LayerMask;
+                     filter.IgnoreEntity = ray.Emitter;
+                     filter.Triggers     = QueryTriggerInteraction::Ignore;
+                     std::array<BoundedRaycastHit, MaxAudioTransmissionHits> hits;
+                     const auto                                              delta = ray.End - ray.Start;
+                     const size_t                                            count =
+                         world->RaycastBounded(ray.Start, delta, glm::length(delta), filter, hits.data(), capacity);
+                     for (size_t hit = 0; hit < count; ++hit)
+                         output[hit] = {hits[hit].Point, hits[hit].Acoustics.Transmission};
+                     return count;
+                 }});
+        }
         m_AudioZones.reserve(m_Registry.view<AudioReverbZoneComponent>().size());
         UpdateAudioListeners(0);
         for (auto handle : m_Registry.view<AudioSourceComponent>())
@@ -84,6 +109,7 @@ namespace Kans
         m_AudioZones.clear();
         if (m_AudioEngine && m_AudioRunning)
         {
+            m_AudioEngine->ClearOcclusionQuery(this);
             m_AudioEngine->SetGamePaused(false);
             m_AudioEngine->SetTimeScale(1);
         }
@@ -158,6 +184,7 @@ namespace Kans
         {
             const auto& source = emitter.GetComponent<AudioSourceComponent>();
             params.EntityShape = source.Shape;
+            params.Occlusion   = source.Occlusion.Over(params.Occlusion);
             params.ReverbZoneSend &= source.ReverbZoneSend;
             params.PinToCenter |= source.PinToCenter;
             if (source.Spatializer)
@@ -199,6 +226,8 @@ namespace Kans
         if (entity.m_Scene != this || !m_Registry.valid(entity.m_EntityHandle))
             return {};
         params.OwnerEntity = entity.GetUUID();
+        if (OwnsAudioSource(entity))
+            params.Occlusion = entity.GetComponent<AudioSourceComponent>().Occlusion.Over(params.Occlusion);
         return PlayOneShot(glm::vec3(GetWorldTransform(entity)[3]), clip, std::move(params));
     }
 
@@ -249,11 +278,13 @@ namespace Kans
                 clipParams.Pitch  = params.Pitch;
                 clipParams.Spatializer  = params.Spatializer;
                 clipParams.SpatialBlend = params.SpatialBlend.value_or(1.f);
+                clipParams.Occlusion    = params.Occlusion;
                 if (emitter && OwnsAudioSource(emitter))
                 {
                     const auto& source          = emitter.GetComponent<AudioSourceComponent>();
                     clipParams.Bus              = source.Bus;
                     clipParams.Spatial          = source.Spatial;
+                    clipParams.Occlusion        = source.Occlusion.Over(clipParams.Occlusion);
                     clipParams.Priority         = source.Priority;
                     clipParams.ConcurrencyGroup = source.ConcurrencyGroup;
                     if (source.Spatializer)
@@ -348,6 +379,7 @@ namespace Kans
         if (runtime->EventAsset)
         {
             const auto& event = runtime->EventAsset->GetData();
+            m_AudioEngine->SetVoiceOcclusion(runtime->Voice, source.Occlusion.Over(event.Occlusion));
             m_AudioEngine->SetVoiceSpatializer(runtime->Voice,
                                                source.Spatializer ? source.Spatializer : event.Spatializer,
                                                source.SpatialBlend.value_or(event.SpatialBlend));
@@ -402,6 +434,7 @@ namespace Kans
             params.PinToCenter              = c.PinToCenter;
             params.Spatializer              = c.Spatializer;
             params.SpatialBlend             = c.SpatialBlend;
+            params.Occlusion                = c.Occlusion;
             if (c.LfeSendDb != AudioSendOffDb)
                 params.LfeSendDb = c.LfeSendDb;
             params.Emitter                  = GetAudioSpatialParams(entity);
@@ -476,6 +509,7 @@ namespace Kans
         desc.Spatial = c.Spatial;
         desc.Spatializer      = c.Spatializer;
         desc.SpatialBlend     = c.SpatialBlend.value_or(1.f);
+        desc.Occlusion        = c.Occlusion;
         desc.ReverbZoneSend   = c.ReverbZoneSend;
         desc.LfeSendDb        = c.LfeSendDb;
         desc.PinToCenter      = c.PinToCenter;
@@ -515,6 +549,7 @@ namespace Kans
         auto& c = entity.GetComponent<AudioSourceComponent>();
         auto& r = *c.m_Runtime;
         const auto* event = r.EventAsset ? &r.EventAsset->GetData() : nullptr;
+        m_AudioEngine->SetVoiceOcclusion(r.Voice, event ? c.Occlusion.Over(event->Occlusion) : c.Occlusion);
         m_AudioEngine->SetVoiceSpatializer(r.Voice,
                                            c.Spatializer ? c.Spatializer : (event ? event->Spatializer : std::nullopt),
                                            c.SpatialBlend.value_or(event ? event->SpatialBlend : 1.f));

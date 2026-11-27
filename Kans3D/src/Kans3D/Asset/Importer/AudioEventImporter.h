@@ -7,7 +7,7 @@ namespace Kans
     {
     public:
         static constexpr const char*           RootObjectKey = "audio-event:root";
-        uint32_t                               GetVersion() const override { return 3; }
+        uint32_t                               GetVersion() const override { return 4; }
         std::variant<ImportInputs, AssetError> DiscoverInputs(const ImportContext&) const override;
         std::variant<ImportResult, AssetError> Import(const ImportContext&) const override;
     };

@@ -3,6 +3,7 @@
 #include <set>
 #include <stdexcept>
 #include <type_traits>
+#include "Kans3D/Physics/PhysicsMaterial.h"
 #include "ClothFields.h"
 #include "PhysicsMechanismFields.h"
 #include "VehicleFields.h"
@@ -65,6 +66,7 @@ namespace Kans::PhysicsYaml
             f("Restitution", c.Restitution);
             f("FrictionCombine", c.FrictionCombine);
             f("RestitutionCombine", c.RestitutionCombine);
+            f("Acoustics", c.Acoustics);
         }
         template<class T, class F>
         void FieldsColliderMaterial(T& c, F f)
@@ -646,7 +648,9 @@ namespace Kans::PhysicsYaml
         YAML::Node Write(const T& value)
         {
             YAML::Node n;
-            if constexpr (std::is_same_v<T, Physics::MotionColliderShape>)
+            if constexpr (std::is_same_v<T, AcousticMaterial>)
+                return EncodeAcousticMaterial(value);
+            else if constexpr (std::is_same_v<T, Physics::MotionColliderShape>)
             {
                 n["Type"] = uint32_t(value.index());
                 n["Data"] = std::visit([](const auto& shape) { return Write(shape); }, value);
@@ -685,7 +689,9 @@ namespace Kans::PhysicsYaml
         template<class T>
         void Read(const YAML::Node& n, T& value)
         {
-            if constexpr (std::is_same_v<T, Physics::MotionColliderShape>)
+            if constexpr (std::is_same_v<T, AcousticMaterial>)
+                value = DecodeAcousticMaterial(n);
+            else if constexpr (std::is_same_v<T, Physics::MotionColliderShape>)
             {
                 Require(n.IsMap() && n.size() == 2 && n["Type"] && n["Data"], "Invalid motion collider shape");
                 const auto type = n["Type"].as<uint32_t>();

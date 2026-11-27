@@ -64,6 +64,8 @@ namespace Kans
 
     public enum SpeakerMode { Auto, Mono, Stereo, Surround51, Surround71 }
     public enum AudioSpatializer { Panning, HRTF }
+    public enum AudioOcclusionMode { Off, Raycast, Volumetric }
+    public enum AudioTransmissionMode { Off, FrequencyIndependent, FrequencyDependent }
     public enum AudioDeviceChangeReason { Selected, Rerouted, FellBackToDefault, SpeakerModeChanged }
     public readonly record struct AudioOutputFormat(int Channels, ulong PackedChannelMap)
     {
@@ -191,6 +193,47 @@ namespace Kans
             get => ReadNumber(AudioOperation.SpatialBlend);
             set => WriteNumber(AudioOperation.SpatialBlend, value);
         }
+        public AudioOcclusionMode Occlusion
+        {
+            get => (AudioOcclusionMode)AudioCalls.Read(Entity.ID, AudioOperation.Occlusion).Priority;
+            set => AudioCalls.Send(Entity.ID, AudioOperation.Occlusion,
+                new AudioCommandData { Priority = (int)value, Flags = AudioCalls.Write });
+        }
+        public AudioTransmissionMode Transmission
+        {
+            get => (AudioTransmissionMode)AudioCalls.Read(Entity.ID, AudioOperation.Transmission).Priority;
+            set => AudioCalls.Send(Entity.ID, AudioOperation.Transmission,
+                new AudioCommandData { Priority = (int)value, Flags = AudioCalls.Write });
+        }
+        public float OcclusionStrength
+        {
+            get => ReadNumber(AudioOperation.OcclusionStrength);
+            set => WriteNumber(AudioOperation.OcclusionStrength, value);
+        }
+        public float TransmissionStrength
+        {
+            get => ReadNumber(AudioOperation.TransmissionStrength);
+            set => WriteNumber(AudioOperation.TransmissionStrength, value);
+        }
+        public uint OcclusionLayerMask
+        {
+            get => (uint)AudioCalls.Read(Entity.ID, AudioOperation.OcclusionLayerMask).Local;
+            set => AudioCalls.Send(Entity.ID, AudioOperation.OcclusionLayerMask,
+                new AudioCommandData { Local = value, Flags = AudioCalls.Write });
+        }
+        public float OcclusionRadius
+        {
+            get => ReadNumber(AudioOperation.OcclusionRadius);
+            set => WriteNumber(AudioOperation.OcclusionRadius, value);
+        }
+        public uint OcclusionSamples
+        {
+            get => (uint)AudioCalls.Read(Entity.ID, AudioOperation.OcclusionSamples).Local;
+            set => AudioCalls.Send(Entity.ID, AudioOperation.OcclusionSamples,
+                new AudioCommandData { Local = value, Flags = AudioCalls.Write });
+        }
+        /// <summary>Last measured strength-scaled obstruction, from zero (clear) to one (fully blocked).</summary>
+        public float CurrentOcclusion => ReadNumber(AudioOperation.CurrentOcclusion);
         public bool Loop { get => ReadNumber(AudioOperation.Loop) != 0; set => WriteNumber(AudioOperation.Loop, value ? 1 : 0); }
         /// <summary>Source playback position in seconds.</summary>
         public float Time { get => ReadNumber(AudioOperation.Time); set => WriteNumber(AudioOperation.Time, value); }
@@ -242,7 +285,9 @@ namespace Kans
         PlayOneShot, TriggerEvent, StopVoice, BusVolume, BusMute,
         UserBusVolume, UserBusMute, SaveUserSettings, LoadUserSettings, SpeakerMode, SelectDevice,
         EnumerateDevices, ReadDevice, LastDeviceChange, PushGenerator, GeneratorRoom, GeneratorUnderruns, ProfileStats,
-        Spatializer, SpatialBlend, ActiveHRTF
+        Spatializer, SpatialBlend, ActiveHRTF,
+        Occlusion, Transmission, OcclusionStrength, TransmissionStrength, OcclusionLayerMask,
+        OcclusionRadius, OcclusionSamples, CurrentOcclusion
     }
 
     [StructLayout(LayoutKind.Sequential)]

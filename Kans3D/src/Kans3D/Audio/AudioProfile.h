@@ -6,6 +6,7 @@
 #include <optional>
 #include <string_view>
 #include "Kans3D/Asset/Asset.h"
+#include "AudioOcclusion.h"
 #include "AudioSpatializer.h"
 
 namespace Kans
@@ -91,6 +92,9 @@ namespace Kans
         AudioSpatializer   Spatializer  = AudioSpatializer::Panning;
         float              SpatialBlend = 1;
         AudioHRTFFallback  HRTFFallback = AudioHRTFFallback::None;
+        AudioOcclusionResult    Acoustics;
+        std::optional<uint64_t> OcclusionAgeFrames;
+        bool                    OcclusionStale = false;
     };
 
     enum class AudioProfileEventType
@@ -154,5 +158,6 @@ namespace Kans
         uint64_t             DecodedBytes = 0, StreamingBufferBytes = 0, GeneratorBufferBytes = 0;
         uint32_t             RealVoices = 0, VirtualVoices = 0;
         size_t               UnprofiledNodes = 0;
+        AudioOcclusionStats  Occlusion;
     };
 } // namespace Kans

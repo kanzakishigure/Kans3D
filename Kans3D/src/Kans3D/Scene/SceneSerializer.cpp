@@ -125,6 +125,8 @@ namespace Kans
                 v["Spatializer"] = int(*c.Spatializer);
             if (c.SpatialBlend)
                 v["SpatialBlend"] = *c.SpatialBlend;
+            if (c.Occlusion != AudioOcclusionOverrides {})
+                v["AcousticOcclusion"] = EncodeAudioOcclusion(c.Occlusion);
             v["Pan"]            = c.Pan;
             if (!c.ReverbZoneSend)
                 v["ReverbZoneSend"] = false;
@@ -216,6 +218,7 @@ namespace Kans
                   "Spatial",
                   "Spatializer",
                   "SpatialBlend",
+                  "AcousticOcclusion",
                   "Pan",
                   "ReverbZoneSend",
                   "LfeSendDb",
@@ -291,6 +294,8 @@ namespace Kans
                         "Invalid audio source Spatializer");
                 c.Spatializer = static_cast<AudioSpatializer>(mode);
             }
+            if (const auto occlusion = node["AcousticOcclusion"])
+                c.Occlusion = DecodeAudioOcclusion(occlusion);
             if (node["SpatialBlend"])
             {
                 c.SpatialBlend = Number(node["SpatialBlend"]);

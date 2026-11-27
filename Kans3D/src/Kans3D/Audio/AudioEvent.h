@@ -42,6 +42,7 @@ namespace Kans
         bool                         Loop = false, Spatial = false;
         std::optional<AudioSpatializer> Spatializer;
         float                           SpatialBlend   = 1;
+        AudioOcclusionOverrides         Occlusion;
         bool                         ReverbZoneSend = true;
         float                        LfeSendDb      = AudioSendOffDb;
         AssetID                      AttenuationAsset;
@@ -74,6 +75,7 @@ namespace Kans
         std::optional<bool>               Spatial, Loop;
         std::optional<AudioSpatializer>   Spatializer;
         std::optional<float>              SpatialBlend;
+        AudioOcclusionOverrides           Occlusion;
         bool                              ReverbZoneSend = true, PinToCenter = false;
         std::optional<float>              LfeSendDb;
         float                             Pan = 0;
