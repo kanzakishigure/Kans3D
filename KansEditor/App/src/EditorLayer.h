@@ -39,6 +39,7 @@
 #include "Panels/PhysicsMaterialPanel.h"
 #include "Panels/PluginsPanel.h"
 #include "Panels/ProductImportPanel.h"
+#include "Panels/ProfilerPanel.h"
 #include "Panels/ProjectSettingsPanel.h"
 #include "Panels/PropertiesPanel.h"
 #include "Panels/RagdollEditorPanel.h"
@@ -81,6 +82,7 @@ namespace Kans
         inline constexpr const char* MusicSet                     = "MusicSet";
         inline constexpr const char* ActionMarkers                = "ActionMarkers";
         inline constexpr const char* AudioProfiler                = "AudioProfiler";
+        inline constexpr const char* Profiler                     = "Profiler";
     } // namespace PanelID
 
     class EditorLayer : public Kans::Layer
@@ -416,6 +418,7 @@ namespace Kans
         PhysicsMaterialPanel m_PhysicsMaterialPanel;
         AudioMixerPanel                  m_AudioMixerPanel;
         AudioProfilerPanel                       m_AudioProfilerPanel;
+        ProfilerPanel                            m_ProfilerPanel;
         AudioEventEditorPanel                    m_AudioEventPanel;
         AudioAttenuationEditorPanel              m_AudioAttenuationPanel;
         MusicSetEditorPanel                      m_MusicSetPanel;

@@ -81,6 +81,9 @@ namespace Kans
                                PanelDock::Bottom,
                                false),
                           [this] { m_AudioProfilerPanel.Draw(); });
+        m_Panels.Register(
+            spec(PanelID::Profiler, "Profiler", ICON_FA_ARROW_TREND_UP, PanelCategory::Debug, PanelDock::Bottom, false),
+            [this] { m_ProfilerPanel.Draw(); });
         m_AudioProfilerPanel.SetSceneProvider([this] { return m_ActiveScene.get(); });
         m_AudioProfilerPanel.SetSelectEntity([this](Entity entity) { m_HierarchyPanel.SetSelected(entity); });
         auto frameGraph  = spec(PanelID::FrameGraph, "Frame Graph", ICON_FA_DRAW_POLYGON, PanelCategory::Debug,
@@ -239,6 +242,22 @@ namespace Kans
                                                                                GraphCaptureSettings {});
         }
         m_Panels.Draw();
+        // The Profiler records every frame while it is open (Edit and Play), even behind another tab,
+        // after the panels drew: the viewport renders this frame inside its panel.
+        if (m_Panels.IsOpen(PanelID::Profiler))
+        {
+            const auto& app = Application::Get();
+#ifndef KS_DIST
+            const ApplicationFrameProfile& previous = app.GetLastFrameProfile();
+#else
+            // Dist keeps no application profile: the previous frame's wall time stands in for it.
+            const ApplicationFrameProfile previous {
+                app.GetFrameNumber() - 1, double(ImGui::GetIO().DeltaTime) * 1000.0, 0, 0, {}};
+#endif
+            m_ProfilerPanel.Record(app.GetFrameNumber(),
+                                   m_Viewport ? &m_Viewport->GetLastResult().FrameStats : nullptr,
+                                   previous.Frame ? &previous : nullptr);
+        }
         if (m_PlayErrorNotification)
         {
             ImGui::OpenPopup("Play stopped after an error");
