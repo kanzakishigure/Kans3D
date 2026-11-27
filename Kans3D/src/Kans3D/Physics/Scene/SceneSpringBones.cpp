@@ -288,6 +288,7 @@ namespace Kans
     } // namespace
     void Scene::RestoreSpringBoneTransforms()
     {
+        KANS_PROFILE_SCOPE("Scene restore spring bone transforms");
         for (auto h : m_Registry.view<SpringBoneComponent>())
             if (auto r = m_Registry.get<SpringBoneComponent>(h).Runtime)
                 RestoreSpringTransforms(*this, *r);
@@ -366,6 +367,7 @@ namespace Kans
     }
     void Scene::UpdateSpringBones(double seconds)
     {
+        KANS_PROFILE_SCOPE("Scene spring bones");
         const bool playing = bool(m_PhysicsWorld), preview = !playing && m_SpringBonePreview;
         if ((!playing && !preview) ||
             (m_Registry.view<SpringBoneComponent>().empty() && m_Registry.view<ClothComponent>().empty()))

@@ -208,6 +208,41 @@ namespace Kans::RenderHardware
     {
         uint32_t FramesInFlight = 2;
     };
+    struct HeapMemoryStatistics
+    {
+        uint64_t BudgetBytes = 0, UsageBytes = 0, AllocationBytes = 0;
+        bool     DeviceLocal = false;
+    };
+    struct DeviceFrameCounters
+    {
+        uint64_t            PipelineBinds = 0, DescriptorSetBinds = 0, PipelineCompiles = 0;
+        uint64_t            BufferUploads = 0, BufferUploadBytes = 0, TextureUploads = 0, TextureUploadBytes = 0;
+        uint64_t            FenceWaitNanoseconds = 0, AcquireWaitNanoseconds = 0, PresentWaitNanoseconds = 0;
+        uint64_t            ImGuiDrawCalls = 0, ImGuiTriangles = 0;
+        DeviceFrameCounters Since(const DeviceFrameCounters& earlier) const
+        {
+            return {PipelineBinds - earlier.PipelineBinds,
+                    DescriptorSetBinds - earlier.DescriptorSetBinds,
+                    PipelineCompiles - earlier.PipelineCompiles,
+                    BufferUploads - earlier.BufferUploads,
+                    BufferUploadBytes - earlier.BufferUploadBytes,
+                    TextureUploads - earlier.TextureUploads,
+                    TextureUploadBytes - earlier.TextureUploadBytes,
+                    FenceWaitNanoseconds - earlier.FenceWaitNanoseconds,
+                    AcquireWaitNanoseconds - earlier.AcquireWaitNanoseconds,
+                    PresentWaitNanoseconds - earlier.PresentWaitNanoseconds,
+                    ImGuiDrawCalls - earlier.ImGuiDrawCalls,
+                    ImGuiTriangles - earlier.ImGuiTriangles};
+        }
+    };
+    struct DeviceMemoryProfile
+    {
+        // Vulkan exposes at most 16 heaps. Only the first HeapCount entries are populated.
+        std::array<HeapMemoryStatistics, 16> Heaps {};
+        uint32_t                             HeapCount         = 0;
+        bool                                 DriverBudget      = false;
+        uint64_t                             RenderTargetBytes = 0;
+    };
     struct DeviceStats
     {
         // Native allocations, including allocations awaiting safe destruction.
@@ -451,10 +486,36 @@ namespace Kans::RenderHardware
         Handle<Buffer> Resource;
         size_t         Offset = 0;
     };
+    enum class DrawCategory : uint8_t
+    {
+        Auxiliary,
+        Opaque,
+        Transparent,
+        Shadow,
+        Post,
+        UI,
+        Count
+    };
+    struct CategoryDrawStatistics
+    {
+        uint64_t                DrawCalls = 0, Instances = 0, Triangles = 0, IndirectDraws = 0;
+        CategoryDrawStatistics& operator+=(const CategoryDrawStatistics& other)
+        {
+            DrawCalls += other.DrawCalls;
+            Instances += other.Instances;
+            Triangles += other.Triangles;
+            IndirectDraws += other.IndirectDraws;
+            return *this;
+        }
+    };
+    using DrawCategoryTotals = std::array<CategoryDrawStatistics, size_t(DrawCategory::Count)>;
     struct CommandStatistics
     {
         uint64_t DrawCalls = 0, Triangles = 0,
-                 IndirectDraws = 0; // Includes instances; lines/points contribute no triangles.
+                 IndirectDraws = 0; // Indirect arguments are GPU data; triangles cover direct draws only.
+#ifndef KS_DIST
+        DrawCategoryTotals Categories {};
+#endif
     };
     class TimestampQueryPool : public Resource
     {
@@ -469,6 +530,7 @@ namespace Kans::RenderHardware
     {
     public:
         virtual std::optional<CommandStatistics> GetStatistics() const { return {}; }
+        virtual void                             SetDrawCategory(DrawCategory) {}
         // Outside rendering. Beginning inserts before previously recorded commands. Each index
         // must be written once per submission, and a pool reused only after completion.
         virtual void WriteTimestamp(const Handle<TimestampQueryPool>&, uint32_t, bool beginning = false)
@@ -608,6 +670,11 @@ namespace Kans::RenderHardware
         virtual const DeviceDesc&     GetDesc() const                  = 0;
         virtual CoordinateConventions GetCoordinateConventions() const = 0;
         virtual DeviceStats           GetStats() const                 = 0;
+        virtual bool                  IsFrameProfilingEnabled() const { return false; }
+        virtual void                  SetFrameProfilingEnabled(bool) {}
+        // Monotonic counters on the device thread. Consumers subtract their frame-start sample.
+        virtual DeviceFrameCounters GetFrameCounters() const { return {}; }
+        virtual DeviceMemoryProfile GetMemoryProfile() const { return {}; }
         // Bit mask of supported sample counts (bits 1/2/4/8), for this format, usage and dimension.
         // Samples is ignored. Unsupported backends report single-sample only.
         virtual uint32_t GetSupportedSampleCounts(const TextureDesc&) const { return 1; }

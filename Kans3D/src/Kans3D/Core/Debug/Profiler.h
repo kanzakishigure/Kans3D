@@ -6,6 +6,7 @@
 #include <tracy/Tracy.hpp>
 
 #define KANS_PROFILE_SCOPE(name) ZoneScopedN(name)
+#define KANS_PROFILE_TEXT(text, size) ZoneText(text, size)
 #define KANS_PROFILE_FUNCTION() ZoneScoped
 #define KANS_PROFILE_FRAME() FrameMark
 #define KANS_PROFILE_FRAME_NAMED(name) FrameMarkNamed(name)
@@ -18,6 +19,7 @@
 #define KANS_PROFILE_CONNECTED() TracyIsConnected
 #else
 #define KANS_PROFILE_SCOPE(name)
+#define KANS_PROFILE_TEXT(text, size)
 #define KANS_PROFILE_FUNCTION()
 #define KANS_PROFILE_FRAME()
 #define KANS_PROFILE_FRAME_NAMED(name)
@@ -28,6 +30,13 @@
 #define KANS_PROFILE_ALLOC(ptr, size, pool)
 #define KANS_PROFILE_FREE(ptr, pool)
 #define KANS_PROFILE_CONNECTED() false
+#endif
+
+// Discard profiling-only operations and their arguments from Dist.
+#ifndef KS_DIST
+#define KANS_FRAME_STAT(...) __VA_ARGS__
+#else
+#define KANS_FRAME_STAT(...)
 #endif
 
 namespace Kans

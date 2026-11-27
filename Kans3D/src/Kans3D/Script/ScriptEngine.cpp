@@ -268,6 +268,7 @@ namespace Kans
     }
     void ScriptEngine::OnRuntimeStart(Scene* scene)
     {
+        KANS_PROFILE_SCOPE("Managed runtime start and create callbacks");
         if (!s_Initialized || s_Scene)
             return;
         ScriptUI::Reset();
@@ -281,6 +282,7 @@ namespace Kans
     }
     void ScriptEngine::OnRuntimeEnd()
     {
+        KANS_PROFILE_SCOPE("Managed runtime stop and destroy callbacks");
         if (s_Initialized)
             s_Api.SetPlaying(0);
         ScriptUI::Reset();
@@ -323,7 +325,18 @@ namespace Kans
             ++s_UpdateTransitions;
             CollectUpdateOrder(s_Scene);
             s_PhysicsDeltaTime = float(ts);
-            s_Api.Update(s_UpdateOrder.data(), int32_t(s_UpdateOrder.size()), float(ts));
+            {
+                KANS_PROFILE_SCOPE("Managed on-update callbacks");
+                s_Api.Update(s_UpdateOrder.data(), int32_t(s_UpdateOrder.size()), float(ts));
+            }
+#ifdef TRACY_ENABLE
+            if (KANS_PROFILE_CONNECTED())
+            {
+                KANS_PROFILE_PLOT("Managed gen 0 collections", int64_t(s_Api.CollectionCount(0)));
+                KANS_PROFILE_PLOT("Managed gen 1 collections", int64_t(s_Api.CollectionCount(1)));
+                KANS_PROFILE_PLOT("Managed gen 2 collections", int64_t(s_Api.CollectionCount(2)));
+            }
+#endif
         }
     }
     void ScriptEngine::OnFixedUpdate(Scene& scene, float dt)
@@ -333,7 +346,10 @@ namespace Kans
         CollectUpdateOrder(&scene);
         const auto previous = s_PhysicsDeltaTime;
         s_PhysicsDeltaTime  = dt;
-        s_Api.FixedUpdate(s_UpdateOrder.data(), int32_t(s_UpdateOrder.size()), dt);
+        {
+            KANS_PROFILE_SCOPE("Managed fixed-update callbacks");
+            s_Api.FixedUpdate(s_UpdateOrder.data(), int32_t(s_UpdateOrder.size()), dt);
+        }
         s_PhysicsDeltaTime = previous;
     }
     void ScriptEngine::OnPhysicsEvent(Scene& scene, const PhysicsPairEvent& pair, bool trigger)

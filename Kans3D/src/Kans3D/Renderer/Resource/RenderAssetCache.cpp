@@ -31,6 +31,7 @@ namespace Kans
 
     std::variant<GpuMesh, AssetError> UploadMesh(const MeshData& data, std::shared_ptr<RenderHardware::Device> device)
     {
+        KANS_PROFILE_SCOPE("Complete and upload mesh asset");
         auto valid = ValidateMeshData(data);
         if (auto* error = std::get_if<AssetError>(&valid))
             return *error;
@@ -82,6 +83,7 @@ namespace Kans
         }
         if (!data.MorphTargets.empty())
         {
+            KANS_PROFILE_SCOPE("Upload mesh morph targets");
             // Word 0 points to the debug-normal corner map. Each key has five words:
             // count, indices, positions, optional normals, optional tangents (absolute word offsets).
             // Indices stay integer; stream values are IEEE float bits, avoiding std430 vec3 padding.
@@ -698,6 +700,7 @@ namespace Kans
     const GpuMaterial* RenderAssetCache::GetMaterial(AssetID id)
     {
         return Resolve(m_Materials, id, [](const MaterialDataAsset& asset) {
+            KANS_PROFILE_SCOPE("Complete material asset");
             return std::variant<GpuMaterial, AssetError>(MakeGpuMaterial(asset.GetData()));
         });
     }
@@ -719,6 +722,7 @@ namespace Kans
     Ref<Texture2D> RenderAssetCache::GetTexture(AssetID id)
     {
         auto* texture = Resolve(m_Textures, id, [&](const TextureAsset& asset) {
+            KANS_PROFILE_SCOPE("Complete and upload texture asset");
             std::variant<Ref<Texture2D>, AssetError> uploaded;
             if (asset.GetData().RenderTexture)
             {
@@ -853,6 +857,7 @@ namespace Kans
         // separate Standard entry cannot erase that failure or its source identity.
         if (entry.Material != materialSource || entry.Shader != shaderSource)
         {
+            KANS_PROFILE_SCOPE("Upload material parameter bindings");
             entry.Material = materialSource;
             entry.Shader   = shaderSource;
             entry.Value.reset();
@@ -1013,6 +1018,7 @@ namespace Kans
 
     void RenderAssetCache::BeginFrame(uint64_t unusedFrames)
     {
+        KANS_PROFILE_SCOPE("Render asset cache frame maintenance");
         for (auto it = m_InstanceBindings.begin(); it != m_InstanceBindings.end();)
             if (it->second.Source.expired() || it->second.Base.expired() ||
                 m_Frame - it->second.LastUsedFrame > unusedFrames)

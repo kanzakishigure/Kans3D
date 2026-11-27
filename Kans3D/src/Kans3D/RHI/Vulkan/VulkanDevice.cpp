@@ -52,6 +52,14 @@ namespace Kans::RenderHardware
             bool     ForceTracyRecording = false;
             uint64_t TracyPassZones = 0, TracyCollections = 0;
 #endif
+#ifndef KS_DIST
+            uint32_t MemoryBudgetFrame = 0;
+            void     UpdateMemoryBudget()
+            {
+                if (Native.ProfileFrames && Native.DriverMemoryBudget)
+                    vmaSetCurrentFrameIndex(Native.Allocator, ++MemoryBudgetFrame);
+            }
+#endif
             DeviceStats     Stats;
             bool            InFrame = false, Alive = true;
             bool                                  WindowResourcesReady = false;
@@ -291,6 +299,10 @@ namespace Kans::RenderHardware
                 if (bytes)
                     std::memcpy(static_cast<uint8_t*>(Mapped) + offset, data, bytes);
                 Check(vmaFlushAllocation(Memory.Owner->Native.Allocator, Alloc, offset, bytes));
+                KANS_FRAME_STAT(if (bytes && Memory.Owner->Native.ProfileFrames) {
+                    ++Memory.Owner->Native.FrameCounters.BufferUploads;
+                    Memory.Owner->Native.FrameCounters.BufferUploadBytes += bytes;
+                })
                 // Host writes precede submission; the next inferred use includes
                 // the host access in its dependency (also for noncoherent memory).
                 Last = Writer = {VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_WRITE_BIT};
@@ -592,7 +604,14 @@ namespace Kans::RenderHardware
                                                  image.arrayLayers};
                         Check(vkCreateImageView(device, &view, nullptr, &SampledView));
                     }
+#ifndef KS_DIST
+                    const bool renderTarget =
+                        Has(Desc.Usage, TextureUsage::RenderTarget) || Has(Desc.Usage, TextureUsage::DepthStencil);
+#endif
                     Memory.Delete = [allocator,
+#ifndef KS_DIST
+                                     renderTarget,
+#endif
                                      device,
                                      image   = Native,
                                      alloc   = Alloc,
@@ -601,6 +620,7 @@ namespace Kans::RenderHardware
                                      owner   = Memory.Owner.get(),
                                      bytes   = allocationInfo.size] {
                         owner->Native.TextureAllocationBytes -= bytes;
+                        KANS_FRAME_STAT(if (renderTarget) owner->Native.RenderTargetAllocationBytes -= bytes;)
                         if (sampled)
                             vkDestroyImageView(device, sampled, nullptr);
                         for (auto view : views)
@@ -609,6 +629,8 @@ namespace Kans::RenderHardware
                         vmaDestroyImage(allocator, image, alloc);
                     };
                     Memory.Owner->Native.TextureAllocationBytes += allocationInfo.size;
+                    KANS_FRAME_STAT(if (renderTarget) Memory.Owner->Native.RenderTargetAllocationBytes +=
+                                    allocationInfo.size;)
                     KANS_PROFILE_ALLOC(Alloc, allocationInfo.size, VmaProfilerPool);
                 }
                 catch (...)
@@ -757,14 +779,20 @@ namespace Kans::RenderHardware
                 VkSubmitInfo2 submit {VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
                 submit.commandBufferInfoCount = 1;
                 submit.pCommandBufferInfos    = &buffer;
-                Check(vkQueueSubmit2(Owner->Native.Queue, 1, &submit, VK_NULL_HANDLE));
+                {
+                    KANS_PROFILE_SCOPE("Vulkan queue submit");
+                    Check(vkQueueSubmit2(Owner->Native.Queue, 1, &submit, VK_NULL_HANDLE));
+                }
             }
             void FlushAndWait()
             {
                 // Packed depth/stencil requires CPU repacking between aspect copies.
                 // Waiting here does NOT retire public readback tokens or lists.
                 Submit();
-                Check(vkQueueWaitIdle(Owner->Native.Queue));
+                {
+                    KANS_PROFILE_SCOPE("Vulkan queue idle wait");
+                    Check(vkQueueWaitIdle(Owner->Native.Queue));
+                }
                 Begin();
             }
             std::shared_ptr<VKBuffer> Staging(size_t bytes, MemoryUsage memory)
@@ -1095,14 +1123,32 @@ namespace Kans::RenderHardware
             bool                                         Sealed = false, Rendering = false;
             CommandStatistics                            Statistics;
             std::optional<CommandStatistics>             GetStatistics() const override { return Statistics; }
+#ifndef KS_DIST
+            DrawCategory Category = DrawCategory::Auxiliary;
+            void         SetDrawCategory(DrawCategory category) override { Category = category; }
+            void         CountCategory(uint64_t instances, uint64_t triangles, bool indirect)
+            {
+                if (Owner->Native.ProfileFrames)
+                {
+                    auto& stats = Statistics.Categories[size_t(Category)];
+                    ++stats.DrawCalls;
+                    stats.Instances += instances;
+                    stats.Triangles += triangles;
+                    stats.IndirectDraws += indirect;
+                }
+            }
+#endif
             void                                         CountDraw(uint32_t count, uint32_t instances)
             {
                 ++Statistics.DrawCalls;
                 auto primitive = BoundPipeline->Desc.Primitive;
+                uint64_t triangles = 0;
                 if (primitive == Topology::TriangleList)
-                    Statistics.Triangles += uint64_t(count / 3) * instances;
+                    triangles = uint64_t(count / 3) * instances;
                 if (primitive == Topology::TriangleStrip && count > 2)
-                    Statistics.Triangles += uint64_t(count - 2) * instances;
+                    triangles = uint64_t(count - 2) * instances;
+                Statistics.Triangles += triangles;
+                KANS_FRAME_STAT(CountCategory(instances, triangles, false);)
             }
             uint32_t                                     RenderingWidth = 0, RenderingHeight = 0;
             std::vector<std::function<void(Execution&)>> Recorded;
@@ -1625,6 +1671,10 @@ namespace Kans::RenderHardware
                                     indexOffset = IndexOffset,
                                     push        = PushData](Execution& e) {
                     vkCmdBindPipeline(e.Native, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->Native);
+                    KANS_FRAME_STAT(if (e.Owner->Native.ProfileFrames) {
+                        ++e.Owner->Native.FrameCounters.PipelineBinds;
+                        e.Owner->Native.FrameCounters.DescriptorSetBinds += pipeline->Desc.GroupLayouts.size();
+                    })
                     for (const auto& layout : pipeline->Desc.GroupLayouts)
                     {
                         auto        slot  = layout->GetDesc().Group;
@@ -1718,8 +1768,13 @@ namespace Kans::RenderHardware
                         "Texture upload usage mismatch");
                 Require(d->Desc.Samples == 1, "Cannot upload multisampled texture");
                 Require(offset % Info(d->Desc.PixelFormat).Bytes == 0, "Texture copy offset must be texel aligned");
-                Range(s->Desc.Bytes, offset, TextureBytes(d->Desc, sub));
-                Recorded.push_back([s, d, offset, sub](Execution& e) {
+                const auto bytes = TextureBytes(d->Desc, sub);
+                Range(s->Desc.Bytes, offset, bytes);
+                Recorded.push_back([s, d, offset, sub KANS_FRAME_STAT(, bytes)](Execution& e) {
+                    KANS_FRAME_STAT(if (e.Owner->Native.ProfileFrames) {
+                        ++e.Owner->Native.FrameCounters.TextureUploads;
+                        e.Owner->Native.FrameCounters.TextureUploadBytes += bytes;
+                    })
                     auto f = Info(d->Desc.PixelFormat);
                     if (f.Stencil())
                         e.PackedCopy(*s, offset, *d, sub, true);
@@ -1750,8 +1805,13 @@ namespace Kans::RenderHardware
                 Require(width && height && x <= w && y <= h && width <= w - x && height <= h - y,
                         "Texture region out of bounds");
                 Require(offset % f.Bytes == 0, "Texture region offset must be texel aligned");
-                Range(s->Desc.Bytes, offset, size_t(width) * height * f.Bytes);
-                Recorded.push_back([s, d, offset, sub, x, y, width, height](Execution& e) {
+                const auto bytes = size_t(width) * height * f.Bytes;
+                Range(s->Desc.Bytes, offset, bytes);
+                Recorded.push_back([s, d, offset, sub, x, y, width, height KANS_FRAME_STAT(, bytes)](Execution& e) {
+                    KANS_FRAME_STAT(if (e.Owner->Native.ProfileFrames) {
+                        ++e.Owner->Native.FrameCounters.TextureUploads;
+                        e.Owner->Native.FrameCounters.TextureUploadBytes += bytes;
+                    })
                     e.Use(*s, TransferRead);
                     e.Use(*d, sub, TransferWrite);
                     e.FlushBarriers();
@@ -2017,8 +2077,9 @@ namespace Kans::RenderHardware
             CheckThread();
             if (WindowResourcesReady)
                 return;
+            KANS_FRAME_STAT(UpdateMemoryBudget();)
             auto& frame = Frames[FrameIndex];
-            Check(vkWaitForFences(Native.Logical, 1, &frame.Fence, VK_TRUE, UINT64_MAX));
+            Native.WaitFence(frame.Fence);
             CompletedSerial = std::max(CompletedSerial, frame.Serial);
             Retiring        = true;
             for (auto& list : frame.Lists)
@@ -2066,7 +2127,10 @@ namespace Kans::RenderHardware
             frame.UIImages = TakeImGuiTextures();
             Check(vkResetFences(Native.Logical, 1, &frame.Fence));
             VkSubmitInfo2 tail {VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
-            Check(vkQueueSubmit2(Native.Queue, 1, &tail, frame.Fence));
+            {
+                KANS_PROFILE_SCOPE("Vulkan queue submit");
+                Check(vkQueueSubmit2(Native.Queue, 1, &tail, frame.Fence));
+            }
             frame.Serial         = NextSerial++;
             FrameIndex = (FrameIndex + 1) % Frames.size();
             WindowResourcesReady = false;
@@ -2136,6 +2200,40 @@ namespace Kans::RenderHardware
                 stats.BufferBytes  = Owner->Native.BufferAllocationBytes;
                 return stats;
             }
+#ifndef KS_DIST
+            bool IsFrameProfilingEnabled() const override { return Owner->Native.ProfileFrames; }
+            void SetFrameProfilingEnabled(bool enabled) override
+            {
+                Owner->CheckThread();
+                Owner->Native.ProfileFrames = enabled;
+            }
+            DeviceFrameCounters GetFrameCounters() const override
+            {
+                Owner->CheckThread();
+                return Owner->Native.FrameCounters;
+            }
+            DeviceMemoryProfile GetMemoryProfile() const override
+            {
+                Owner->CheckThread();
+                DeviceMemoryProfile result;
+                const auto&         context = Owner->Native;
+                if (!context.ProfileFrames)
+                    return result;
+                result.DriverBudget                            = context.DriverMemoryBudget;
+                result.RenderTargetBytes                       = context.RenderTargetAllocationBytes;
+                const VkPhysicalDeviceMemoryProperties* memory = nullptr;
+                vmaGetMemoryProperties(context.Allocator, &memory);
+                VmaBudget budgets[VK_MAX_MEMORY_HEAPS] {};
+                vmaGetHeapBudgets(context.Allocator, budgets);
+                result.HeapCount = memory->memoryHeapCount;
+                for (uint32_t i = 0; i < result.HeapCount; ++i)
+                    result.Heaps[i] = {budgets[i].budget,
+                                       budgets[i].usage,
+                                       budgets[i].statistics.allocationBytes,
+                                       bool(memory->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)};
+                return result;
+            }
+#endif
             size_t GetBufferBindingAlignment(BindingType type) const override
             {
                 // Upload suballocations may be written while older, disjoint ranges
@@ -2314,8 +2412,9 @@ namespace Kans::RenderHardware
                     Owner->BeginWindowFrame();
                 else
                 {
+                    KANS_FRAME_STAT(Owner->UpdateMemoryBudget();)
                     auto& frame = Owner->Frames[Owner->FrameIndex];
-                    Check(vkWaitForFences(Owner->Native.Logical, 1, &frame.Fence, VK_TRUE, UINT64_MAX));
+                    Owner->Native.WaitFence(frame.Fence);
                 }
                 Owner->InFrame = true;
             }
@@ -2391,8 +2490,11 @@ namespace Kans::RenderHardware
                 auto& frame = Owner->Frames[Owner->FrameIndex];
                 Check(vkResetFences(Owner->Native.Logical, 1, &frame.Fence));
                 VkSubmitInfo2 tail {VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
-                Check(vkQueueSubmit2(Owner->Native.Queue, 1, &tail, frame.Fence));
-                Check(vkWaitForFences(Owner->Native.Logical, 1, &frame.Fence, VK_TRUE, UINT64_MAX));
+                {
+                    KANS_PROFILE_SCOPE("Vulkan queue submit");
+                    Check(vkQueueSubmit2(Owner->Native.Queue, 1, &tail, frame.Fence));
+                }
+                Owner->Native.WaitFence(frame.Fence);
                 Owner->Retire();
                 Owner->InFrame    = false;
                 Owner->FrameIndex = (Owner->FrameIndex + 1) % Desc.FramesInFlight;
@@ -2401,6 +2503,7 @@ namespace Kans::RenderHardware
             {
                 Owner->CheckThread();
                 ++Owner->WaitIdleCalls;
+                KANS_PROFILE_SCOPE("Vulkan device idle wait");
                 Check(vkDeviceWaitIdle(Owner->Native.Logical));
                 Owner->Retire();
             }

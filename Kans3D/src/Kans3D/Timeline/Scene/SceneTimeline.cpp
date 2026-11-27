@@ -57,6 +57,7 @@ namespace Kans
 
     void Scene::UpdateTimelines(double seconds)
     {
+        KANS_PROFILE_SCOPE("Scene timeline");
         // Evaluation can instantiate prefabs and mutate ECS storage. Iterate stable UUIDs.
         std::vector<UUID> owners;
         for (auto h : m_Registry.view<TimelinePlayerComponent>())

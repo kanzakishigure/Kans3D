@@ -1249,6 +1249,7 @@ namespace Kans
     }
     void PhysicsWorld::SynchronizeChanges()
     {
+        KANS_PROFILE_SCOPE("Physics sync scene to PhysX");
         if (m_Impl->Dispatching)
             return;
         std::lock_guard lock(SdkMutex());
@@ -1485,9 +1486,18 @@ namespace Kans
         i.Dispatching = true;
         try
         {
-            i.DispatchPairs(false);
-            i.DispatchPairs(true);
-            i.DispatchMechanisms();
+            {
+                KANS_PROFILE_SCOPE("Physics collision callbacks");
+                i.DispatchPairs(false);
+            }
+            {
+                KANS_PROFILE_SCOPE("Physics trigger callbacks");
+                i.DispatchPairs(true);
+            }
+            {
+                KANS_PROFILE_SCOPE("Physics mechanism callbacks");
+                i.DispatchMechanisms();
+            }
         }
         catch (...)
         {
@@ -1505,6 +1515,7 @@ namespace Kans
     }
     void PhysicsWorld::WriteTransforms(float alpha)
     {
+        KANS_PROFILE_SCOPE("Physics sync PhysX to scene");
         auto& i = *m_Impl;
         struct Write
         {

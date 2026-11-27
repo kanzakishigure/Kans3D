@@ -465,6 +465,7 @@ namespace Kans
                     commands = batch.RecordAtSize(renderer.SceneTarget(LoadOp::Load), view.Viewport);
                 }
                 auto pass = graph.AddRecordedPass("Renderer2D batch", std::move(uses), std::move(commands));
+                KANS_FRAME_STAT(graph.SetPassDrawCategory(pass, DrawCategory::Transparent);)
                 if (pass)
                     graph.OrderAfter(pass, pass - 1);
             }
@@ -482,6 +483,7 @@ namespace Kans
                                                       std::move(batchUses),
                                                       std::move(commands),
                                                       sprites.GetLastRecordMilliseconds());
+                    KANS_FRAME_STAT(graph.SetPassDrawCategory(pass, DrawCategory::Transparent);)
                     if (pass)
                         graph.OrderAfter(pass, pass - 1);
                 });
@@ -848,6 +850,7 @@ namespace Kans
                 graph.OrderAfter(pass, pass - 1);
             return pass;
         };
+        KANS_FRAME_STAT(const auto firstPostPass = graph.PassCount();)
         AddReconstructionFilter(graph, renderer);
         if (!m_PostDraws.empty())
             m_CustomDepth = BuildCustomDepthPass(graph, renderer);
@@ -883,6 +886,8 @@ namespace Kans
             AddFXAA(graph, renderer);
         if (!renderer.RenderSource)
             renderer.BuildDebugBuffer(graph);
+        KANS_FRAME_STAT(for (size_t pass = firstPostPass; pass < graph.PassCount(); ++pass)
+                            graph.SetPassDrawCategory(GraphPass(pass), DrawCategory::Post);)
         AddScreenUI(graph, renderer);
         Inject(RenderExtensionPoint::Overlay, featureContext);
     }
@@ -907,6 +912,7 @@ namespace Kans
         auto srgb        = graph.CreateTexture("UI sRGB composite", desc);
         auto append      = [&](const char* name, std::vector<GraphUse> uses, RenderGraph::Record record) {
             auto p = graph.AddPass(name, std::move(uses), std::move(record));
+            KANS_FRAME_STAT(graph.SetPassDrawCategory(p, DrawCategory::UI);)
             if (p)
                 graph.OrderAfter(p, p - 1);
         };
@@ -1256,6 +1262,7 @@ namespace Kans
         RenderFeatureContext postFeatures {graph, view, resolved, &frame};
         // Bloom consumes the single-sample HDR resolve. Its build-time contract is HDR input.
         frame.PostProcessHDR = true;
+        KANS_FRAME_STAT(const auto firstPostPass = graph.PassCount();)
         AddReconstructionFilter(graph, frame);
         if (!m_PostDraws.empty())
             m_CustomDepth = BuildCustomDepthPass(graph, frame);
@@ -1282,6 +1289,8 @@ namespace Kans
             frame.DeferToneMapping = frame.PostProcessHDR = false;
         });
         AddPostMaterials(graph, frame, PostProcessStage::AfterToneMap);
+        KANS_FRAME_STAT(for (size_t pass = firstPostPass; pass < graph.PassCount(); ++pass)
+                            graph.SetPassDrawCategory(GraphPass(pass), DrawCategory::Post);)
         AddScreenUI(graph, frame);
         Inject(RenderExtensionPoint::Overlay, postFeatures);
     }

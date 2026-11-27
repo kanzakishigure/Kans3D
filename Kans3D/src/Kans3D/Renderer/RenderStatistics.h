@@ -50,6 +50,20 @@ namespace Kans
     struct CullingStatistics
     {
         uint64_t SectionProxies = 0, InFrustum = 0, Drawn = 0;
+#ifndef KS_DIST
+        uint64_t BoundsTested = 0, BoundsVisible = 0; // One test per draw proxy, including merged batches.
+#endif
+    };
+    enum class ShadowCacheMissReason : uint8_t
+    {
+        None,
+        FirstFrame,
+        StaticSetChanged,
+        LightMoved,
+        CascadeShifted,
+        SettingsChanged,
+        Invalidated,
+        Count
     };
     struct ShadowPassStatistics
     {
@@ -59,6 +73,10 @@ namespace Kans
         uint64_t    CastersDrawn = 0, CastersCulled = 0;
         uint64_t    CachedCasters = 0, StaticCastersRendered = 0, MovableCastersRendered = 0;
         bool        CacheHit = false, CacheUpdated = false;
+#ifndef KS_DIST
+        ShadowCacheMissReason CacheMissReason = ShadowCacheMissReason::None;
+        uint64_t              Light           = 0; // Scene light ID, when available.
+#endif
     };
     struct StaticBatchStatistics
     {
@@ -84,11 +102,23 @@ namespace Kans
         uint64_t CachedShadowCasters = 0, StaticShadowCastersRendered = 0, MovableShadowCastersRendered = 0;
         uint64_t StaticShadowCacheBytes = 0;
         uint32_t ShadowCacheHits = 0, ShadowCacheMisses = 0;
+#ifndef KS_DIST
+        RenderHardware::DrawCategoryTotals                         DrawCategories {};
+        RenderHardware::DeviceFrameCounters                        DeviceWork;
+        RenderHardware::DeviceMemoryProfile                        Memory;
+        std::array<uint32_t, size_t(ShadowCacheMissReason::Count)> ShadowMissReasons {};
+        uint32_t ShadowFullRedraws = 0, SpotLights = 0, AreaLights = 0;
+        uint64_t ApplicationFrame = 0, ShaderCompiles = 0;
+        bool     DetailedCounters = false;
+#endif
         uint32_t                          BloomMipCount  = 0;
         uint64_t                          ProxiesCreated = 0, ProxiesUpdated = 0, ProxiesRemoved = 0;
         size_t                            TransientTextureSlots = 0;
         std::optional<uint64_t>           DeviceTextureBytes, DeviceBufferBytes;
     };
+#ifndef KS_DIST
+    void PlotFrameStatistics(const FrameStatistics& statistics);
+#endif
     // Per-view query history. Poll never waits; pools are recycled only after every query completes.
     class FrameProfiler
     {

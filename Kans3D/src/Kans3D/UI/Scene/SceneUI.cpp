@@ -7,6 +7,7 @@ namespace Kans
 {
     void Scene::UpdateUI(const UIInputState& input, const UIViewport& viewport, float seconds)
     {
+        KANS_PROFILE_SCOPE("Scene UI input and update");
         m_UIViewport = viewport;
         GetRenderWorld().Synchronize();
         auto         runtime = MakeRuntimeView(*this, glm::uvec2(viewport.Pixels()));

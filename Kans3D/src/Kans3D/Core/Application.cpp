@@ -105,25 +105,32 @@ namespace Kans
         while (m_Running)
         {
             KANS_PROFILE_SCOPE("Application frame");
+#ifndef KS_DIST
+            const auto cpuStart    = RenderClockMilliseconds();
+            // Sample without holding the device: a device rebuild must be able to release the old one.
+            const auto deviceStart = RenderHardware::GetSharedDevice()->GetFrameCounters();
+            const auto shaderStart = ProfileShaderCompiles;
+            ProfileFixedSteps      = 0;
+#endif
             ++m_FrameNumber;
             float time      = GetTime();
             m_Frametime     = TimeStep(float(glfwGetTime() - m_LastFrameTime));
             m_TimeStep      = glm::min<float>(m_Frametime, 0.0333f);
             m_LastFrameTime = time;
 
-            if (!m_Minimized)
-            {
-                for (auto& [layer, state] : m_LayerFailures)
-                    state.Failure = {};
-                RenderHardware::BeginWindowFrame(*m_Window);
-                if (!m_CapturePath.empty() && ++m_CaptureFrame >= m_CaptureAfter)
-                {
-                    RenderHardware::RequestFrameCapture(*m_Window, m_CapturePath);
-                    m_CapturePath.clear();
-                }
-                {
-                    KANS_PROFILE_SCOPE("Layer updates");
-                    // 普通layer进行渲染
+            RunApplicationFrame(
+                !m_Minimized,
+                [&] {
+                    for (auto& [layer, state] : m_LayerFailures)
+                        state.Failure = {};
+                    RenderHardware::BeginWindowFrame(*m_Window);
+                    if (!m_CapturePath.empty() && ++m_CaptureFrame >= m_CaptureAfter)
+                    {
+                        RenderHardware::RequestFrameCapture(*m_Window, m_CapturePath);
+                        m_CapturePath.clear();
+                    }
+                },
+                [&] {
                     for (Layer* layer : m_LayerStack)
                     {
                         auto& state = m_LayerFailures[layer];
@@ -131,10 +138,8 @@ namespace Kans
                                               [&] { layer->OnUpdate(m_TimeStep); }))
                             state.Failure = state.Update.Exception();
                     }
-                }
-                {
-                    KANS_PROFILE_SCOPE("ImGui layer updates");
-                    // 处理 ImGuiLayer渲染
+                },
+                [&] {
                     m_ImGuiLayer->Begin();
                     for (Layer* layer : m_LayerStack)
                     {
@@ -151,23 +156,53 @@ namespace Kans
                     // Backend submission failures propagate to Main: swapchain acquisition or
                     // a lost device cannot be repaired by ImGui stack recovery.
                     m_ImGuiLayer->End();
-                }
-                for (Layer* layer : m_LayerStack)
-                {
-                    auto& state = m_LayerFailures[layer];
-                    if (state.Consecutive.EndFrame(bool(state.Failure)))
-                        FatalError::ReportException(
-                            state.Failure, ("Layer " + layer->GetName() + " failed on 3 consecutive frames").c_str());
-                }
-                m_Window->SwapBuffers();
+                },
+                [&] {
+                    for (Layer* layer : m_LayerStack)
+                    {
+                        auto& state = m_LayerFailures[layer];
+                        if (state.Consecutive.EndFrame(bool(state.Failure)))
+                            FatalError::ReportException(
+                                state.Failure,
+                                ("Layer " + layer->GetName() + " failed on 3 consecutive frames").c_str());
+                    }
+                    m_Window->SwapBuffers();
+                },
+                [&] {
+                    if (auto* audio = AudioSystem::Get())
+                        audio->Update();
+                },
+                [&] { ProcessEvents(); },
+                [&] {
+                    auto tasks = std::move(m_PostFrame);
+                    m_PostFrame.clear();
+                    for (auto& task : tasks)
+                        task();
+                });
+#ifndef KS_DIST
+            m_LastFrameProfile = {m_FrameNumber,
+                                  RenderClockMilliseconds() - cpuStart,
+                                  ProfileFixedSteps,
+                                  ProfileShaderCompiles - shaderStart,
+                                  RenderHardware::GetSharedDevice()->GetFrameCounters().Since(deviceStart)};
+#ifdef TRACY_ENABLE
+            if (KANS_PROFILE_CONNECTED())
+            {
+                KANS_PROFILE_PLOT("Application CPU frame (ms)", m_LastFrameProfile.CpuMilliseconds);
+                KANS_PROFILE_PLOT("Physics fixed steps", int64_t(m_LastFrameProfile.FixedSteps));
+                KANS_PROFILE_PLOT("Vulkan acquire wait (ms)",
+                                  m_LastFrameProfile.DeviceWork.AcquireWaitNanoseconds / 1e6);
+                KANS_PROFILE_PLOT("Vulkan present wait (ms)",
+                                  m_LastFrameProfile.DeviceWork.PresentWaitNanoseconds / 1e6);
+                KANS_PROFILE_PLOT("Vulkan fence wait (ms)", m_LastFrameProfile.DeviceWork.FenceWaitNanoseconds / 1e6);
+                KANS_PROFILE_PLOT("ImGui draw calls", int64_t(m_LastFrameProfile.DeviceWork.ImGuiDrawCalls));
+                KANS_PROFILE_PLOT("ImGui triangles", int64_t(m_LastFrameProfile.DeviceWork.ImGuiTriangles));
+                KANS_PROFILE_PLOT("Application shader stages compiled", int64_t(m_LastFrameProfile.ShaderCompiles));
+                KANS_PROFILE_PLOT("Application pipeline compiles",
+                                  int64_t(m_LastFrameProfile.DeviceWork.PipelineCompiles));
             }
-            if (auto* audio = AudioSystem::Get())
-                audio->Update();
-            ProcessEvents();
-            auto tasks = std::move(m_PostFrame);
-            m_PostFrame.clear();
-            for (auto& task : tasks)
-                task();
+#endif
+#endif
             KANS_PROFILE_FRAME();
         }
     }

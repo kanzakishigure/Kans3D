@@ -108,6 +108,10 @@ void PrepareCompute(const std::shared_ptr<VKBuffer>& indirect = {})
         uses->Prepare(e, {});
         e.FlushBarriers();
         vkCmdBindPipeline(e.Native, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline->Native);
+        KANS_FRAME_STAT(if (e.Owner->Native.ProfileFrames) {
+            ++e.Owner->Native.FrameCounters.PipelineBinds;
+            e.Owner->Native.FrameCounters.DescriptorSetBinds += pipeline->Desc.GroupLayouts.size();
+        })
         for (const auto& l : pipeline->Desc.GroupLayouts)
         {
             const auto  slot = l->GetDesc().Group;
@@ -216,6 +220,7 @@ void RecordIndirect(const Handle<Buffer>& buffer,
         Uses->Buffer(counter, {VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT});
     ++Statistics.DrawCalls;
     ++Statistics.IndirectDraws;
+    KANS_FRAME_STAT(CountCategory(0, 0, true);)
     Recorded.push_back([args, offset, count, stride, indexed, counter, countOffset](Execution& e) {
         if (counter)
         {

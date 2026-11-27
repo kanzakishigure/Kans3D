@@ -218,6 +218,14 @@ namespace Kans::RenderHardware::VulkanDetail
                 enabledExtensions.push_back(lineExtension);
             if (Surface)
                 enabledExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+#ifndef KS_DIST
+            DriverMemoryBudget =
+                std::any_of(deviceExtensions.begin(), deviceExtensions.end(), [](const auto& extension) {
+                    return std::strcmp(extension.extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0;
+                });
+            if (DriverMemoryBudget)
+                enabledExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+#endif
 #ifdef TRACY_ENABLE
             // The KHR extension promotes the EXT commands with identical signatures.
             constexpr char khrCalibration[] = "VK_KHR_calibrated_timestamps";
@@ -261,6 +269,10 @@ namespace Kans::RenderHardware::VulkanDetail
             allocator.physicalDevice   = Physical;
             allocator.device           = Logical;
             allocator.vulkanApiVersion = VK_API_VERSION_1_3;
+#ifndef KS_DIST
+            if (DriverMemoryBudget)
+                allocator.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+#endif
             Check(vmaCreateAllocator(&allocator, &Allocator));
         }
         catch (...)

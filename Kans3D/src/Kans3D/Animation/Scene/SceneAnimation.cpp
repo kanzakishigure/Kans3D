@@ -245,6 +245,7 @@ namespace Kans
     }
     void Scene::ApplyDeferredIK(double seconds)
     {
+        KANS_PROFILE_SCOPE("Scene deferred IK");
         auto finish = [&](Entity                   root,
                           const SkeletonData&      skeleton,
                           AnimationPose&           input,
@@ -440,6 +441,7 @@ namespace Kans
 
     void Scene::UpdateAnimations(double seconds, std::optional<bool> externalClock)
     {
+        KANS_PROFILE_SCOPE("Scene animation and animator evaluation");
         bool updatedPose = false;
         for (auto handle : m_Registry.view<AnimatorComponent>())
         {
@@ -564,6 +566,7 @@ namespace Kans
     }
     void Scene::UpdateModelPoses()
     {
+        KANS_PROFILE_SCOPE("Scene skinning pose evaluation and morph weights");
         // Expression references are useful with or without playback.
         for (auto handle : m_Registry.view<ShapeKeysComponent>())
         {

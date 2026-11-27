@@ -979,6 +979,7 @@ namespace Kans
 
     void Scene::UpdateAudio(double seconds)
     {
+        KANS_PROFILE_SCOPE("Scene audio sync");
         if (!m_AudioEngine || !m_AudioRunning)
             return;
         // Clip replacement also cancels paused voices; no stale registrations survive a Step.

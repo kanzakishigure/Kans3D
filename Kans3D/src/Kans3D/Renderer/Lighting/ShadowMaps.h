@@ -12,6 +12,10 @@ namespace Kans
         glm::vec4      Position {0};
         ShadowSettings Settings;
         float          Split = 0;
+#ifndef KS_DIST
+        glm::vec3 LightPosition {0}, LightDirection {0}, LightUp {0};
+        uint64_t  Light = 0;
+#endif
         bool           operator==(const StaticShadowKey& b) const;
     };
     struct StaticShadowCache
@@ -21,6 +25,10 @@ namespace Kans
         uint64_t                                        Casters = 0;
         bool                                            Valid   = false;
         uint32_t                                        Face = 0, X = 0, Y = 0;
+#ifndef KS_DIST
+        bool                  HasKey = false;
+        ShadowCacheMissReason MissReason(const StaticShadowKey& key, bool directional) const;
+#endif
         bool Matches(const StaticShadowKey& key) const { return Valid && Key == key; }
     };
     struct StaticShadowImage

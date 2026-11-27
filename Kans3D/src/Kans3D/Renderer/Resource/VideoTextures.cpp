@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstring>
 #include <shaderc/shaderc.hpp>
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 #include "Kans3D/Video/VideoDecoder.h"
 #include "RenderAssetCache.h"
 
@@ -94,7 +95,9 @@ void main()
         shaderc::CompileOptions options;
         options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
         auto add = [&](ShaderProductStage stage, shaderc_shader_kind kind, const char* text) {
-            auto code = compiler.CompileGlslToSpv(text, std::strlen(text), kind, "VideoTexture", options);
+            auto code = ProfileShaderCompile("VideoTexture", [&] {
+                return compiler.CompileGlslToSpv(text, std::strlen(text), kind, "VideoTexture", options);
+            });
             if (code.GetCompilationStatus() != shaderc_compilation_status_success)
                 throw std::runtime_error(code.GetErrorMessage());
             shader.Code.Modules.push_back({stage, "main", {code.cbegin(), code.cend()}});

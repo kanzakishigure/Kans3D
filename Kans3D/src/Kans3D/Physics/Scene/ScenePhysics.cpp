@@ -1,5 +1,6 @@
 #include "kspch.h"
 #include <cmath>
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/Physics/PhysicsWorld.h"
 #include "Kans3D/Renderer/DebugDraw.h"
@@ -95,6 +96,7 @@ namespace Kans
     }
     void Scene::UpdatePhysics(double seconds)
     {
+        KANS_PROFILE_SCOPE("Scene fixed-step loop");
         if (!m_PhysicsWorld)
             return;
         GetDebugDraw().BeginFrame();
@@ -105,6 +107,7 @@ namespace Kans
         {
             DispatchFixedUpdate(step);
             m_PhysicsWorld->Step(step);
+            KANS_FRAME_STAT(++ProfileFixedSteps;)
             m_PhysicsWorld->WriteTransforms(1);
         }
         else if (!m_PhysicsPaused)
@@ -122,6 +125,7 @@ namespace Kans
                 m_PhysicsAccumulator = std::max(0., m_PhysicsAccumulator - step);
                 ++count;
             }
+            KANS_FRAME_STAT(ProfileFixedSteps += count;)
             if (m_PhysicsAccumulator + epsilon >= step)
             {
                 const auto dropped   = std::floor((m_PhysicsAccumulator + epsilon) / step) * step;

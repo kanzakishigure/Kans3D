@@ -221,6 +221,7 @@ namespace Kans
     }
     void Scene::UpdateTransformConstraints(double seconds)
     {
+        KANS_PROFILE_SCOPE("Scene transform constraints");
         m_ConstraintsVisible = true;
         std::vector<UUID>    owners;
         for (auto h : m_Registry.view<AimConstraintComponent, IDComponent>())

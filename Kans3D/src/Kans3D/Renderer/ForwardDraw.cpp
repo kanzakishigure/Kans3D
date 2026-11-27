@@ -59,6 +59,7 @@ namespace Kans
 
     void RenderFrame::PrepareDrawLists()
     {
+        KANS_PROFILE_SCOPE("Prepare scene draw lists");
         if (!View.Highlights.Isolate.empty())
         {
             View.Draws.erase(std::remove_if(View.Draws.begin(),
@@ -148,6 +149,7 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::CommandList>*                               finalPost,
         std::optional<bool>                                                                transparentOnly)
     {
+        KANS_PROFILE_SCOPE("Record materials, skinning uploads, uniforms and descriptors");
         const auto& view = suppliedView ? *suppliedView : View;
         if (view.MaterialOrder.empty())
             return;
@@ -204,6 +206,7 @@ namespace Kans
                    hdr = writeTemporalMasks || ((deferToneMapping || HasBackgroundColor()) && PostProcessHDR);
         bool invalidatingNormals = false;
         auto resolve                = [&](RenderHardware::CommandList& output) {
+            KANS_FRAME_STAT(output.SetDrawCategory(RenderHardware::DrawCategory::Post);)
             Services.GetToneMapping().Record(
                 *Services.GetDevice(),
                 output,
@@ -226,6 +229,8 @@ namespace Kans
             if (hdr && !nextHDR)
                 resolve(*commands);
             if (nextHDR && !hdr)
+            {
+                KANS_FRAME_STAT(commands->SetDrawCategory(RenderHardware::DrawCategory::Post);)
                 Services.GetToneMapping().Record(
                     *Services.GetDevice(),
                     *commands,
@@ -239,6 +244,7 @@ namespace Kans
                         View.Assets->GetTextureResource(View.GetPostProcessSettings().ColorGrading.LUT) :
                         RenderHardware::Handle<RenderHardware::Texture> {},
                     View.GPUExposure);
+            }
             hdr = nextHDR;
             invalidatingNormals = invalidate;
             auto target         = materialTarget(LoadOp::Load, hdr, invalidate);
@@ -263,6 +269,7 @@ namespace Kans
                 if (!tag.empty())
                     continue;
                 beginTarget(true);
+                KANS_FRAME_STAT(commands->SetDrawCategory(RenderHardware::DrawCategory::UI);)
                 Services.GetUIRenderer().Draw(*commands,
                                               view.UIs[item.DrawIndex],
                                               frame.ViewProjection,
@@ -275,6 +282,7 @@ namespace Kans
                 if (!tag.empty())
                     continue;
                 beginTarget(true);
+                KANS_FRAME_STAT(commands->SetDrawCategory(RenderHardware::DrawCategory::Transparent);)
                 auto text      = view.Texts[item.DrawIndex];
                 text.Transform = TextWorldTransform(
                     text.Style, text.Transform, View.Scene.sceneCamera.Position, View.Scene.sceneCamera.viewMatrix);
@@ -420,6 +428,9 @@ namespace Kans
             const auto& images       = pass.PrepassCovered ? PrepassDraws.at(item.DrawIndex).Images :
                                        instance            ? instance->Images :
                                                              bindings->Images;
+            KANS_FRAME_STAT(commands->SetDrawCategory(IsTransparentMaterial(render.AlphaMode) ?
+                                                          RenderHardware::DrawCategory::Transparent :
+                                                          RenderHardware::DrawCategory::Opaque);)
             bool recorded     = false;
             if (tag.empty())
                 Complete &=
@@ -473,6 +484,7 @@ namespace Kans
         }
         if (View.EffectiveAA == AntiAliasing::TAA && !hdr)
         {
+            KANS_FRAME_STAT(commands->SetDrawCategory(RenderHardware::DrawCategory::Post);)
             Services.GetToneMapping().Record(
                 *GetDevice(),
                 *commands,

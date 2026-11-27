@@ -13,6 +13,33 @@ namespace Kans::RenderHardware
     namespace
     {
         using namespace VulkanDetail;
+#ifndef KS_DIST
+        void CountImGuiDraws(const Context& context, const ImDrawData& data)
+        {
+            if (!context.ProfileFrames)
+                return;
+            const int width  = int(data.DisplaySize.x * data.FramebufferScale.x);
+            const int height = int(data.DisplaySize.y * data.FramebufferScale.y);
+            if (width <= 0 || height <= 0)
+                return;
+            // Mirror the backend's clip decision. Application callbacks can encode independent work.
+            for (const auto* list : data.CmdLists)
+                for (const auto& command : list->CmdBuffer)
+                {
+                    if (command.UserCallback)
+                        continue;
+                    const auto clipLeft   = (command.ClipRect.x - data.DisplayPos.x) * data.FramebufferScale.x;
+                    const auto clipTop    = (command.ClipRect.y - data.DisplayPos.y) * data.FramebufferScale.y;
+                    const auto clipRight  = (command.ClipRect.z - data.DisplayPos.x) * data.FramebufferScale.x;
+                    const auto clipBottom = (command.ClipRect.w - data.DisplayPos.y) * data.FramebufferScale.y;
+                    if (std::min(float(width), clipRight) <= std::max(0.f, clipLeft) ||
+                        std::min(float(height), clipBottom) <= std::max(0.f, clipTop))
+                        continue;
+                    ++context.FrameCounters.ImGuiDrawCalls;
+                    context.FrameCounters.ImGuiTriangles += command.ElemCount / 3;
+                }
+        }
+#endif
         struct Swapchain
         {
             const Context&     C;
@@ -311,9 +338,19 @@ namespace Kans::RenderHardware
                 if (Dirty && !Recreate())
                     return;
                 auto& slot = Slots[SlotIndex];
-                Check(vkWaitForFences(C.Logical, 1, &slot.Fence, VK_TRUE, UINT64_MAX));
-                auto result =
-                    vkAcquireNextImageKHR(C.Logical, Chain, UINT64_MAX, slot.Acquired, VK_NULL_HANDLE, &ImageIndex);
+                C.WaitFence(slot.Fence);
+                const auto result = [&] {
+                    KANS_PROFILE_SCOPE("Vulkan acquire image");
+                    auto acquire = [&] {
+                        return vkAcquireNextImageKHR(
+                            C.Logical, Chain, UINT64_MAX, slot.Acquired, VK_NULL_HANDLE, &ImageIndex);
+                    };
+#ifndef KS_DIST
+                    return C.MeasureWait(&DeviceFrameCounters::AcquireWaitNanoseconds, acquire);
+#else
+                    return acquire();
+#endif
+                }();
                 if (result == VK_ERROR_OUT_OF_DATE_KHR)
                 {
                     Dirty = true;
@@ -347,6 +384,7 @@ namespace Kans::RenderHardware
                     ~UVScope() { FlipVulkanImGuiRenderTargetUVs(Owner, Data); }
                 };
                 {
+                    KANS_PROFILE_SCOPE("ImGui Vulkan command recording");
                     UVScope uv(*GetSharedDevice(), data);
                     ImGui_ImplVulkan_RenderDrawData(data, slot.Command, WindowPipeline);
                 }
@@ -369,14 +407,18 @@ namespace Kans::RenderHardware
                 submit.pCommandBuffers      = &slot.Command;
                 submit.signalSemaphoreCount = 1;
                 submit.pSignalSemaphores    = &Images[ImageIndex].Complete;
-                Check(vkQueueSubmit(C.Queue, 1, &submit, slot.Fence));
+                {
+                    KANS_PROFILE_SCOPE("Vulkan queue submit");
+                    Check(vkQueueSubmit(C.Queue, 1, &submit, slot.Fence));
+                }
+                KANS_FRAME_STAT(CountImGuiDraws(C, *data);)
                 Ready = true;
             }
             void CaptureImage()
             {
                 auto& slot = Slots[SlotIndex];
                 // Debug path only: rendering must finish before reusing this pool.
-                Check(vkWaitForFences(C.Logical, 1, &slot.Fence, VK_TRUE, UINT64_MAX));
+                C.WaitFence(slot.Fence);
                 Check(vkResetCommandPool(C.Logical, slot.Pool, 0));
                 VkCommandBufferBeginInfo begin {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
                 begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -445,7 +487,10 @@ namespace Kans::RenderHardware
                 submit.pCommandBuffers      = &slot.Command;
                 submit.signalSemaphoreCount = 1;
                 submit.pSignalSemaphores    = &CaptureComplete;
-                Check(vkQueueSubmit(C.Queue, 1, &submit, slot.Fence));
+                {
+                    KANS_PROFILE_SCOPE("Vulkan queue submit");
+                    Check(vkQueueSubmit(C.Queue, 1, &submit, slot.Fence));
+                }
             }
             void Present()
             {
@@ -459,14 +504,22 @@ namespace Kans::RenderHardware
                 present.swapchainCount     = 1;
                 present.pSwapchains        = &Chain;
                 present.pImageIndices      = &ImageIndex;
-                auto result                = vkQueuePresentKHR(C.Queue, &present);
+                const auto result          = [&] {
+                    KANS_PROFILE_SCOPE("Vulkan queue present");
+#ifndef KS_DIST
+                    return C.MeasureWait(&DeviceFrameCounters::PresentWaitNanoseconds,
+                                         [&] { return vkQueuePresentKHR(C.Queue, &present); });
+#else
+                    return vkQueuePresentKHR(C.Queue, &present);
+#endif
+                }();
                 if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
                     Dirty = true;
                 else
                     Check(result);
                 if (CaptureBuffer)
                 {
-                    Check(vkWaitForFences(C.Logical, 1, &Slots[SlotIndex].Fence, VK_TRUE, UINT64_MAX));
+                    C.WaitFence(Slots[SlotIndex].Fence);
                     Check(vmaInvalidateAllocation(C.Allocator, CaptureAllocation, 0, VK_WHOLE_SIZE));
                     if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
                     {
@@ -561,6 +614,7 @@ namespace Kans::RenderHardware
             {
                 PrepareVulkanImGuiTextures(*Owner, data);
                 Target = RenderVulkanImGuiOffscreen(*Owner, data, Pass);
+                KANS_FRAME_STAT(CountImGuiDraws(C, *data);)
             }
             void RenderPlatformWindows() override {}
             void EndFrame() override

@@ -638,6 +638,7 @@ namespace Kans
 
     void Scene::UpdatePrefabs()
     {
+        KANS_PROFILE_SCOPE("Scene prefab synchronization");
         PollAssetChanges();
         CapturePrefabOverrides();
         const PrefabUpdateBatch dirty(m_DirtyPrefabs, m_PrefabUpdateScratch);
@@ -808,6 +809,7 @@ namespace Kans
     }
     void Scene::UpdateBounds()
     {
+        KANS_PROFILE_SCOPE("Scene transform hierarchy and bounds");
         std::vector<Entity> dirty;
         for (auto handle : m_DirtyBounds)
             if (m_Registry.valid(handle) && m_Registry.all_of<RelationshipComponent, BoundsComponent>(handle))

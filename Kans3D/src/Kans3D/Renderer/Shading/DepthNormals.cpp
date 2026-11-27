@@ -6,6 +6,7 @@
 #include "Kans3D/Asset/Runtime/EngineShaderText.h"
 #include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "Kans3D/Asset/Runtime/StandardShader.h"
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 
 namespace Kans
 {
@@ -105,8 +106,10 @@ namespace Kans
                 shaderc::Compiler       compiler;
                 shaderc::CompileOptions compileOptions;
                 compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
-                auto compiled =
-                    compiler.CompileGlslToSpv(source, shaderc_fragment_shader, "TemporalMasks.frag", compileOptions);
+                auto compiled = ProfileShaderCompile("TemporalMasks.frag", [&] {
+                    return compiler.CompileGlslToSpv(
+                        source, shaderc_fragment_shader, "TemporalMasks.frag", compileOptions);
+                });
                 if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
                     throw std::runtime_error(compiled.GetErrorMessage());
                 module.Words.assign(compiled.cbegin(), compiled.cend());
@@ -192,8 +195,10 @@ namespace Kans
                 options.SetWarningsAsErrors();
                 options.AddMacroDefinition(ShaderText::Depth_KANS_FRAGMENT_STAGE);
                 options.SetIncluder(std::make_unique<EngineIncludes>());
-                const auto product =
-                    compiler.CompileGlslToSpv(fragment, shaderc_fragment_shader, "StandardDepthNormals.frag", options);
+                const auto product = ProfileShaderCompile("StandardDepthNormals.frag", [&] {
+                    return compiler.CompileGlslToSpv(
+                        fragment, shaderc_fragment_shader, "StandardDepthNormals.frag", options);
+                });
                 if (product.GetCompilationStatus() != shaderc_compilation_status_success)
                     return AssetError {AssetErrorCode::InvalidData, product.GetErrorMessage()};
                 return ShaderModuleCode {
@@ -247,8 +252,10 @@ namespace Kans
                     shaderc::Compiler       compiler;
                     shaderc::CompileOptions compileOptions;
                     compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
-                    auto compiled = compiler.CompileGlslToSpv(
-                        source, shaderc_fragment_shader, "DepthOnlyPrepass.frag", compileOptions);
+                    auto compiled = ProfileShaderCompile("DepthOnlyPrepass.frag", [&] {
+                        return compiler.CompileGlslToSpv(
+                            source, shaderc_fragment_shader, "DepthOnlyPrepass.frag", compileOptions);
+                    });
                     if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
                         throw std::runtime_error(compiled.GetErrorMessage());
                     module.Words.assign(compiled.cbegin(), compiled.cend());

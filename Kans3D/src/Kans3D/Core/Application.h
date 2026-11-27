@@ -1,6 +1,7 @@
 #pragma once
 #include <unordered_map>
 #include "Kans3D/Core/Base/Base.h"
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 #include "Kans3D/Core/Debug/ErrorBoundary.h"
 #include "Kans3D/Core/Events/ApplicationEvent.h"
 #include "Kans3D/Core/Events/Event.h"
@@ -61,6 +62,9 @@ namespace Kans
 
         static Application* TryGet() { return s_Instance; }
         uint64_t            GetFrameNumber() const { return m_FrameNumber; }
+#ifndef KS_DIST
+        const ApplicationFrameProfile& GetLastFrameProfile() const { return m_LastFrameProfile; }
+#endif
         float    GetTime() const;
         TimeStep GetTimestep() const { return m_TimeStep; }
         TimeStep GetFrametime() const { return m_Frametime; }
@@ -87,6 +91,9 @@ namespace Kans
         bool          m_Running   = true;
         bool          m_Minimized = false;
 
+#ifndef KS_DIST
+        ApplicationFrameProfile m_LastFrameProfile;
+#endif
         LayerStack m_LayerStack;
         struct LayerFailures
         {

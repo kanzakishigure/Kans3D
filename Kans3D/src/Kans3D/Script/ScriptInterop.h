@@ -11,7 +11,7 @@
 namespace Kans::Scripting
 {
     // Native and managed tables must change together.
-    constexpr uint32_t ApiVersion = 13;
+    constexpr uint32_t ApiVersion = 14;
     enum class ComponentType : uint32_t
     {
 #define KANS_COMPONENT(id, name) name = id,
@@ -172,11 +172,12 @@ namespace Kans::Scripting
         uint32_t(KANS_SCRIPT_CALL* PhysicsCallbacks)(uint64_t)                    = nullptr;
         void(KANS_SCRIPT_CALL* ControllerHit)(uint64_t, const ControllerHitData*) = nullptr;
         void(KANS_SCRIPT_CALL* JointBreak)(uint64_t, uint64_t)                    = nullptr;
+        int32_t(KANS_SCRIPT_CALL* CollectionCount)(int32_t)                       = nullptr;
     };
     using InitializeFn = int32_t(KANS_SCRIPT_CALL*)(const NativeApi*, int32_t, ManagedApi*, int32_t);
     static_assert(sizeof(Vector3) == 12);
     static_assert(sizeof(Value) == 24);
     static_assert(sizeof(UIEventData) == 64);
     static_assert(sizeof(NativeApi) == 8 + 26 * sizeof(void*));
-    static_assert(sizeof(ManagedApi) == 8 + 17 * sizeof(void*));
+    static_assert(sizeof(ManagedApi) == 8 + 18 * sizeof(void*));
 } // namespace Kans::Scripting

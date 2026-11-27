@@ -302,6 +302,7 @@ namespace Kans
     }
     void Scene::PollAssetChanges()
     {
+        KANS_PROFILE_SCOPE("Scene asset change notifications");
         if (!m_AssetChanges)
             return;
         for (auto id : m_AssetChanges->Drain())
@@ -381,8 +382,8 @@ namespace Kans
         ApplyDeferredIK(animationDelta);
         UpdateCloth(double(ts));
 
-        // update ScripteableEntity
         {
+            KANS_PROFILE_SCOPE("Native scripts on-update");
 
             m_Registry.view<NativeScriptComponent>().each([=](auto entity, auto& nsc) {
                 if (!m_RuntimeOptions.RunScripts || !IsEntityActive(Entity {entity, this}))

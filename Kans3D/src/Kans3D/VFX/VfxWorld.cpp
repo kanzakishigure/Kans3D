@@ -934,6 +934,7 @@ namespace Kans::Vfx
     }
     void VfxWorld::Tick(float delta, bool preview, glm::vec3 camera)
     {
+        KANS_PROFILE_SCOPE("Scene VFX simulation");
         m_FieldTime += std::max(0.f, delta);
         auto fields = std::make_shared<FieldSnapshot>();
         m_Scene.GatherForceFields(fields->Fields);

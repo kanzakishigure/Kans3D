@@ -853,10 +853,13 @@ struct VKPipeline final : Pipeline
             create.layout              = Layout;
             if (Desc.DebugName.empty())
                 Desc.DebugName = shader->DebugName;
-            const auto result =
-                InjectPipelineFailure(*Memory.Owner, Desc.DebugName) ?
-                    VK_ERROR_UNKNOWN :
-                    vkCreateGraphicsPipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native);
+            const auto result = InjectPipelineFailure(*Memory.Owner, Desc.DebugName) ? VK_ERROR_UNKNOWN : [&] {
+                KANS_PROFILE_SCOPE("Compile graphics pipeline");
+                KANS_PROFILE_TEXT(shader->DebugName.data(), shader->DebugName.size());
+                KANS_FRAME_STAT(
+                    if (Memory.Owner->Native.ProfileFrames)++ Memory.Owner->Native.FrameCounters.PipelineCompiles;)
+                return vkCreateGraphicsPipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native);
+            }();
             CheckPipeline(result, Desc.DebugName, *shader);
             NameObject(*Memory.Owner, VK_OBJECT_TYPE_PIPELINE, (uint64_t)Native, Desc.DebugName);
             ++Memory.Owner->PipelineCreations;
@@ -934,10 +937,13 @@ struct VKComputePipeline final : ComputePipeline
             create.stage.pName  = shader->EntryPoints[0].c_str();
             if (Desc.DebugName.empty())
                 Desc.DebugName = shader->DebugName;
-            const auto result =
-                InjectPipelineFailure(*Memory.Owner, Desc.DebugName) ?
-                    VK_ERROR_UNKNOWN :
-                    vkCreateComputePipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native);
+            const auto result = InjectPipelineFailure(*Memory.Owner, Desc.DebugName) ? VK_ERROR_UNKNOWN : [&] {
+                KANS_PROFILE_SCOPE("Compile compute pipeline");
+                KANS_PROFILE_TEXT(shader->DebugName.data(), shader->DebugName.size());
+                KANS_FRAME_STAT(
+                    if (Memory.Owner->Native.ProfileFrames)++ Memory.Owner->Native.FrameCounters.PipelineCompiles;)
+                return vkCreateComputePipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native);
+            }();
             CheckPipeline(result, Desc.DebugName, *shader);
             NameObject(*Memory.Owner, VK_OBJECT_TYPE_PIPELINE, (uint64_t)Native, Desc.DebugName);
             ++Memory.Owner->PipelineCreations;

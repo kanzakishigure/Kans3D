@@ -731,6 +731,7 @@ namespace Kans
                                   PatchFrameExposure(*frame, c.Commands, pass.Frame);
                                   const auto post  = frame->View.GetPostProcessSettings();
                                   const auto tone  = [&](bool inverse) {
+                                      KANS_FRAME_STAT(c.Commands.SetDrawCategory(DrawCategory::Post);)
                                       frame->Services.GetToneMapping().Record(
                                           c.Device,
                                           c.Commands,
@@ -752,6 +753,9 @@ namespace Kans
                                   if (!materialHDR)
                                       tone(false);
                                   c.Commands.BeginRendering(frame->MaterialTarget(LoadOp::Load, materialHDR));
+                                  KANS_FRAME_STAT(c.Commands.SetDrawCategory(
+                                      IsTransparentMaterial(pass.Render.AlphaMode) ? DrawCategory::Transparent :
+                                                                                     DrawCategory::Opaque);)
                                   GpuMesh empty;
                                   bool    recorded = false;
                                   try

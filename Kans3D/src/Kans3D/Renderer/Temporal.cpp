@@ -295,6 +295,7 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
     } // namespace
     void RenderFrame::BuildVelocity(RenderGraph& graph, VelocityPass pass)
     {
+        KANS_PROFILE_SCOPE("Record velocity pass");
         using namespace RenderHardware;
         const bool   drawStatic = pass == VelocityPass::Uncovered;
         const auto&  surfaces   = pass == VelocityPass::Prepass ? PrepassDraws : VelocitySurfaceDraws;

@@ -98,6 +98,7 @@ namespace Kans
 
     bool ScenePlaySession::UpdateSession(Scene& scene, TimeStep ts)
     {
+        KANS_PROFILE_SCOPE("Play session update");
         if (!IsActive() || m_Scene != &scene || (m_State == State::Paused && !m_StepRequested))
             return false;
 

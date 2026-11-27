@@ -3,6 +3,7 @@
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
 #include "Kans3D/Asset/Runtime/EngineShaderText.h"
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 #include "Kans3D/Renderer/Passes/ExposureBinding.h"
 #include "Kans3D/Renderer/RenderFrame.h"
 #include "Kans3D/Renderer/Shading/InternalShader.h"
@@ -1092,7 +1093,9 @@ namespace Kans
                 shaderc::Compiler       compiler;
                 shaderc::CompileOptions compile;
                 compile.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
-                auto compiled = compiler.CompileGlslToSpv(source, shaderc_fragment_shader, "FogSurface.frag", compile);
+                auto compiled = ProfileShaderCompile("FogSurface.frag", [&] {
+                    return compiler.CompileGlslToSpv(source, shaderc_fragment_shader, "FogSurface.frag", compile);
+                });
                 if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
                     throw std::runtime_error(compiled.GetErrorMessage());
                 module.Words = {compiled.cbegin(), compiled.cend()};

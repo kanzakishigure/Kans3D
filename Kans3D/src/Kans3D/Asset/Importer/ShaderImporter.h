@@ -1,4 +1,5 @@
 #pragma once
+#include <string_view>
 #include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "Kans3D/Asset/Runtime/ShaderData.h"
 #include "AssetImporterBase.h"
@@ -6,7 +7,8 @@ namespace Kans
 {
     // Engine-owned sources use the same compiler and Product validation as project sources.
     std::variant<ShaderData, AssetError> CompileEmbeddedShaderProgram(const std::string& manifest,
-                                                                      const std::map<std::string, std::string>& stages);
+                                                                      const std::map<std::string, std::string>& stages,
+                                                                      std::string_view profileName = {});
     // Compiles GLSL stages (.vert/.frag/.comp) or a .shaderprog stage list to a
     // SPIR-V Shader Product. Quoted includes are relative and resolved inside the
     // asset root; <Kans3D/...> includes are engine headers (MaterialShaderInterface.h).

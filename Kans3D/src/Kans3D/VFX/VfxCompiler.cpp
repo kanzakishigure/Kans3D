@@ -7,6 +7,7 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <shaderc/shaderc.hpp>
 #include "Kans3D/Asset/Runtime/EngineShaderText.h"
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 #include "Kans3D/Physics/PhysicsWorld.h"
 namespace Kans::Vfx
 {
@@ -1150,8 +1151,9 @@ namespace Kans::Vfx
                                                   GType(i.Kind) + ShaderText::Vfx_result + code +
                                                       ShaderText::Vfx_Punctuation_5;
                                 shaderc::Compiler compiler;
-                                auto              compiled =
-                                    compiler.CompileGlslToSpv(prelude, shaderc_compute_shader, "CustomGLSL");
+                                auto              compiled = ProfileShaderCompile("CustomGLSL", [&] {
+                                    return compiler.CompileGlslToSpv(prelude, shaderc_compute_shader, "CustomGLSL");
+                                });
                                 if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
                                     Error(id, guid, output, compiled.GetErrorMessage());
                             }
@@ -3697,7 +3699,9 @@ namespace Kans::Vfx
         shaderc::Compiler       compiler;
         shaderc::CompileOptions options;
         options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
-        auto result = compiler.CompileGlslToSpv(p.GLSL, shaderc_compute_shader, "VfxStage.comp", options);
+        auto result = ProfileShaderCompile("VfxStage.comp", [&] {
+            return compiler.CompileGlslToSpv(p.GLSL, shaderc_compute_shader, "VfxStage.comp", options);
+        });
         if (result.GetCompilationStatus() != shaderc_compilation_status_success)
             throw std::invalid_argument(result.GetErrorMessage());
         p.SpirV.assign(result.cbegin(), result.cend());

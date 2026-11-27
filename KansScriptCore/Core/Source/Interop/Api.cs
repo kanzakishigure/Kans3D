@@ -67,7 +67,7 @@ namespace Kans.Interop
     [StructLayout(LayoutKind.Sequential)]
     public unsafe struct NativeApi
     {
-        public const uint ApiVersion = 13;
+        public const uint ApiVersion = 14;
         public uint Version, Size;
         public delegate* unmanaged[Cdecl]<int, byte*, void> Log;
         public delegate* unmanaged[Cdecl]<ulong, uint, int> HasComponent;
@@ -118,6 +118,7 @@ namespace Kans.Interop
         public delegate* unmanaged[Cdecl]<ulong, uint> PhysicsCallbacks;
         public delegate* unmanaged[Cdecl]<ulong, ControllerHitData*, void> ControllerHit;
         public delegate* unmanaged[Cdecl]<ulong, ulong, void> JointBreak;
+        public delegate* unmanaged[Cdecl]<int, int> CollectionCount;
     }
 
     public interface IScriptRegistry

@@ -178,6 +178,13 @@ namespace Kans
         void                                      GuardPipelineFailures(size_t                                  first,
                                                                         std::function<void(const std::string&)> failure,
                                                                         std::function<bool()>                   skip = {});
+#ifndef KS_DIST
+        // Apply a category to passes whose commands have no explicit category.
+        void SetPassDrawCategory(GraphPass pass, RenderHardware::DrawCategory category)
+        {
+            m_Passes.at(pass).DrawCategory = category;
+        }
+#endif
         size_t                                    PassCount() const { return m_Passes.size(); }
         const std::vector<GraphPass>&             ExecutionOrder() const { return m_Order; }
         const std::vector<CompiledGraphResource>& Resources() const { return m_CompiledResources; }
@@ -210,6 +217,9 @@ namespace Kans
             GraphPass                                           OrderPredecessor = GraphPass(-1);
             std::optional<double>                               CpuRecordMilliseconds;
             std::optional<RenderHardware::CommandStatistics>    Draws;
+#ifndef KS_DIST
+            RenderHardware::DrawCategory DrawCategory = RenderHardware::DrawCategory::Auxiliary;
+#endif
             GraphPassKind                                       Kind = GraphPassKind::Graphics;
             std::function<void(const std::string&)>             PipelineFailure;
             std::function<bool()>                               Skip;

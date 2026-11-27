@@ -16,6 +16,23 @@ namespace Kans
         return World == b.World && Casters == b.Casters && Matrix == b.Matrix && Position == b.Position &&
                Settings == b.Settings && Split == b.Split;
     }
+#ifndef KS_DIST
+    ShadowCacheMissReason StaticShadowCache::MissReason(const StaticShadowKey& key, bool directional) const
+    {
+        if (!HasKey)
+            return ShadowCacheMissReason::FirstFrame;
+        if (Key.World != key.World || Key.Casters != key.Casters)
+            return ShadowCacheMissReason::StaticSetChanged;
+        if (Key.Light != key.Light || Key.LightPosition != key.LightPosition ||
+            Key.LightDirection != key.LightDirection || Key.LightUp != key.LightUp)
+            return ShadowCacheMissReason::LightMoved;
+        if (!(Key.Settings == key.Settings))
+            return ShadowCacheMissReason::SettingsChanged;
+        if (directional && (Key.Matrix != key.Matrix || Key.Split != key.Split))
+            return ShadowCacheMissReason::CascadeShifted;
+        return ShadowCacheMissReason::Invalidated;
+    }
+#endif
     std::array<float, 4> ShadowSplits(float n, float f, uint32_t count, float lambda)
     {
         std::array<float, 4> splits {};
@@ -562,6 +579,7 @@ void main() {
     }
     void BuildShadowPasses(RenderGraph& graph, RenderFrame& frame)
     {
+        KANS_PROFILE_SCOPE("Shadow pass setup");
         auto& view = frame.View;
         if (view.Scene.pointLights.empty() && view.Scene.pointLight.Shadows.Enabled)
             view.Scene.pointLights.push_back(view.Scene.pointLight);
@@ -831,9 +849,12 @@ void main() {
                                                             bool                                   staticOnly,
                                                             bool                                   loadCache,
                                                             ShadowPassStatistics&                  stats) {
+            KANS_PROFILE_SCOPE("Record shadow geometry");
+            KANS_PROFILE_TEXT(name.data(), name.size());
             const auto           recordStart = RenderClockMilliseconds();
             const Frustum frustum(matrix);
             auto          commands = device->CreateCommandList();
+            KANS_FRAME_STAT(commands->SetDrawCategory(DrawCategory::Shadow);)
             RenderingDesc rendering;
             rendering.Depth.Target           = texture;
             rendering.Depth.Subresource.Face = face;
@@ -847,6 +868,7 @@ void main() {
             if (staticOnly && !point)
             {
                 // A scissored far-depth draw clears only the dirty tile, preserving its neighbours.
+                KANS_FRAME_STAT(commands->SetDrawCategory(DrawCategory::Auxiliary);)
                 auto& clearPipeline = shadows->DepthPipelines["Static cache tile clear"];
                 if (!clearPipeline)
                 {
@@ -865,6 +887,7 @@ void main() {
                 }
                 commands->BindPipeline(clearPipeline);
                 commands->Draw(3);
+                KANS_FRAME_STAT(commands->SetDrawCategory(DrawCategory::Shadow);)
                 ++frame.Stats.DrawCalls;
             }
             auto data               = MakeLightingUniforms(view.Scene);
@@ -1048,8 +1071,17 @@ void main() {
                           glm::vec4                              position,
                           bool                                   point,
                           const SpotShadowTile*                  spot  = nullptr,
-                          float                                  split = 0) {
+                          float                                  split = 0
+#ifndef KS_DIST
+                          ,
+                          uint64_t  light          = 0,
+                          glm::vec3 lightPosition  = {},
+                          glm::vec3 lightDirection = {},
+                          glm::vec3 lightUp        = {}
+#endif
+                      ) {
             ShadowPassStatistics stats {name, point, cascade, face};
+            KANS_FRAME_STAT(stats.Light = light;)
             if (staticCasters.empty())
             {
                 recordGeometry(name,
@@ -1095,8 +1127,12 @@ void main() {
                         graph.OrderAfter(pass, pass - 1);
                 }
                 auto&           cache = shadows->StaticCaches[name];
-                StaticShadowKey key {
-                    frame.World.GetIdentity(), shadows->StaticRevision, matrix, position, settings, split};
+                StaticShadowKey key {frame.World.GetIdentity(),
+                                     shadows->StaticRevision,
+                                     matrix,
+                                     position,
+                                     settings,
+                                     split KANS_FRAME_STAT(, lightPosition, lightDirection, lightUp, light)};
                 if (cache.Depth != image.Depth || cache.Face != face || cache.X != x || cache.Y != y)
                     cache.Valid = false;
                 cache.Depth = image.Depth;
@@ -1106,6 +1142,7 @@ void main() {
                 if (!cache.Matches(key))
                 {
                     stats.CacheUpdated = true;
+                    KANS_FRAME_STAT(stats.CacheMissReason = cache.MissReason(key, !point && !spot);)
                     ++view.ShadowStats.CacheMisses;
                     recordGeometry(name + " static cache",
                                    cache.Depth,
@@ -1124,6 +1161,7 @@ void main() {
                     cache.Casters               = stats.CastersDrawn;
                     cache.Key                   = key;
                     cache.Valid                 = true;
+                    KANS_FRAME_STAT(cache.HasKey = true;)
                     graph.ExportTexture(graph.ImportTexture(name + " static depth", cache.Depth));
                 }
                 else
@@ -1185,6 +1223,7 @@ void main() {
         };
         if (dirEnabled)
         {
+            KANS_PROFILE_SCOPE("Directional light shadow setup");
             const auto cascades =
                 BuildShadowCascades(view.Scene.sceneCamera, view.Scene.dirLight.Dirction, directional);
             if (cascades[0].Split > 0)
@@ -1212,7 +1251,7 @@ void main() {
                            {},
                            false,
                            nullptr,
-                           c.Split);
+                           c.Split KANS_FRAME_STAT(, view.Scene.dirLight.EntityID, {}, view.Scene.dirLight.Dirction));
                 }
             }
         }
@@ -1220,6 +1259,7 @@ void main() {
         const glm::vec3 ups[]        = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
         for (uint32_t slot = 0; slot < selected.size(); ++slot)
         {
+            KANS_PROFILE_SCOPE("Point light shadow setup");
             ++view.ShadowStats.ShadowedLights;
             auto        index    = selected[slot];
             const auto& light    = view.Scene.pointLights[index];
@@ -1244,7 +1284,7 @@ void main() {
                        projection * glm::lookAt(light.Position, light.Position + directions[face], ups[face]),
                        settings,
                        {light.Position, settings.MaxDistance},
-                       true);
+                       true KANS_FRAME_STAT(, nullptr, 0, light.EntityID, light.Position));
         }
         if (!spots.empty())
         {
@@ -1256,6 +1296,7 @@ void main() {
                 shadows->Spots = DepthTexture(*device, atlasSize, false);
             for (uint32_t slot = 0; slot < spots.size(); ++slot)
             {
+                KANS_PROFILE_SCOPE("Spot light shadow setup");
                 const auto  tile     = spots[slot];
                 const auto& light    = view.Scene.spotLights[tile.Light];
                 auto        settings = light.Shadows.Validated();
@@ -1273,7 +1314,7 @@ void main() {
                        settings,
                        {},
                        false,
-                       &tile);
+                       &tile KANS_FRAME_STAT(, 0, light.EntityID, light.Position, light.Direction, light.Up));
             }
         }
         for (auto it = shadows->StaticCaches.begin(); it != shadows->StaticCaches.end();)

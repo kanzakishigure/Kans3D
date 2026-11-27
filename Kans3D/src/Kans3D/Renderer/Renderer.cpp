@@ -466,6 +466,11 @@ namespace Kans
         KANS_PROFILE_SCOPE("Render view");
         if (target.GetDevice() != m_Device)
             throw std::invalid_argument("Renderer target belongs to another device");
+#ifndef KS_DIST
+        const bool profile      = m_Device->IsFrameProfilingEnabled();
+        const auto previousWork = profile ? m_Device->GetFrameCounters() : RenderHardware::DeviceFrameCounters {};
+        const auto previousShaderCompiles = ProfileShaderCompiles;
+#endif
         const auto   totalStart = RenderClockMilliseconds();
         RenderResult result;
         auto&        statistics = result.FrameStats;
@@ -756,6 +761,10 @@ namespace Kans
                 statistics.Draws->DrawCalls += pass.Draws->DrawCalls;
                 statistics.Draws->Triangles += pass.Draws->Triangles;
                 statistics.Draws->IndirectDraws += pass.Draws->IndirectDraws;
+#ifndef KS_DIST
+                for (size_t category = 0; category < statistics.DrawCategories.size(); ++category)
+                    statistics.DrawCategories[category] += pass.Draws->Categories[category];
+#endif
             }
             if (statistics.Gpu)
                 for (auto& gpu : statistics.Gpu->Passes)
@@ -798,6 +807,26 @@ namespace Kans
                 storage->End();
             }
         statistics.TotalMilliseconds     = RenderClockMilliseconds() - totalStart;
+#ifndef KS_DIST
+        if (profile)
+        {
+            statistics.DetailedCounters = true;
+            if (const auto* application = Application::TryGet())
+                statistics.ApplicationFrame = application->GetFrameNumber();
+            statistics.DeviceWork     = m_Device->GetFrameCounters().Since(previousWork);
+            statistics.Memory         = m_Device->GetMemoryProfile();
+            statistics.ShaderCompiles = ProfileShaderCompiles - previousShaderCompiles;
+            statistics.SpotLights     = uint32_t(view.Scene.spotLights.size());
+            statistics.AreaLights     = uint32_t(view.Scene.areaLights.size());
+            for (const auto& shadow : statistics.Shadows)
+                if (shadow.CacheUpdated)
+                {
+                    ++statistics.ShadowFullRedraws;
+                    ++statistics.ShadowMissReasons[size_t(shadow.CacheMissReason)];
+                }
+            PlotFrameStatistics(statistics);
+        }
+#endif
         return result;
     }
     void Renderer::AppendEntityDraws(RenderWorld&           world,

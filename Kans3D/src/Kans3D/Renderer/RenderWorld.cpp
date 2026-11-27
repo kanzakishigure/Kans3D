@@ -452,6 +452,7 @@ namespace Kans
     }
     void RenderWorld::Synchronize()
     {
+        KANS_PROFILE_SCOPE("Render world synchronization");
         if (!m_Scene)
             return;
         m_Scene->UpdatePrefabs();

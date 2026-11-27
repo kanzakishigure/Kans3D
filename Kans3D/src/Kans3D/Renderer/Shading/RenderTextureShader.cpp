@@ -2,6 +2,7 @@
 #include "RenderTextureShader.h"
 #include <shaderc/shaderc.hpp>
 #include "Kans3D/Asset/Runtime/EngineShaderText.h"
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 namespace Kans
 {
     std::variant<GpuShader, AssetError> MakeRenderTextureShader(const ShaderData&                       source,
@@ -51,7 +52,9 @@ namespace Kans
         shaderc::Compiler       compiler;
         shaderc::CompileOptions options;
         options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
-        const auto compiled = compiler.CompileGlslToSpv(vertex, shaderc_vertex_shader, "RenderTexture.vert", options);
+        const auto compiled = ProfileShaderCompile("RenderTexture.vert", [&] {
+            return compiler.CompileGlslToSpv(vertex, shaderc_vertex_shader, "RenderTexture.vert", options);
+        });
         if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
             return AssetError {AssetErrorCode::InvalidData, compiled.GetErrorMessage()};
         data.Code.Modules.insert(data.Code.Modules.begin(),

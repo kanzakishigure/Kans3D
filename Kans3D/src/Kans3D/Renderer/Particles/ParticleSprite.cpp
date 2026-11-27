@@ -4,6 +4,7 @@
 #include <spirv_cross/spirv_glsl.hpp>
 #include "Kans3D/Asset/Runtime/EngineShaderText.h"
 #include "Kans3D/Asset/Runtime/StandardShader.h"
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 namespace Kans
 {
     namespace
@@ -230,11 +231,14 @@ namespace Kans
                     shaderc::CompileOptions compileOptions;
                     compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
                     sources[module.Stage] = source;
-                    auto compiled         = compiler.CompileGlslToSpv(
-                        source,
-                        module.Stage == ShaderProductStage::Vertex ? shaderc_vertex_shader : shaderc_fragment_shader,
-                        ShaderText::Particle_ParticleSprite,
-                        compileOptions);
+                    auto compiled         = ProfileShaderCompile("ParticleSprite", [&] {
+                        return compiler.CompileGlslToSpv(source,
+                                                         module.Stage == ShaderProductStage::Vertex ?
+                                                             shaderc_vertex_shader :
+                                                             shaderc_fragment_shader,
+                                                         ShaderText::Particle_ParticleSprite,
+                                                         compileOptions);
+                    });
                     if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
                         throw std::invalid_argument(compiled.GetErrorMessage());
                     module.Words.assign(compiled.cbegin(), compiled.cend());

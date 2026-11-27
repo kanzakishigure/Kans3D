@@ -255,6 +255,7 @@ namespace Kans
     }
     void RenderGraph::Compile()
     {
+        KANS_PROFILE_SCOPE("FrameGraph compile");
         m_Compiled = false;
         m_Order.clear();
         m_Slots.clear();
@@ -511,6 +512,8 @@ namespace Kans
         }
         else if (!commands)
         {
+            KANS_PROFILE_SCOPE("FrameGraph record pass");
+            KANS_PROFILE_TEXT(pass.Name.data(), pass.Name.size());
             const auto start = RenderClockMilliseconds();
             commands         = device.CreateCommandList();
             RenderGraphContext context {device, *commands, *this};
@@ -530,6 +533,14 @@ namespace Kans
             pass.CpuRecordMilliseconds = RenderClockMilliseconds() - start;
         }
         pass.Draws                  = commands->GetStatistics();
+#ifndef KS_DIST
+        if (pass.Draws && pass.DrawCategory != RenderHardware::DrawCategory::Auxiliary)
+        {
+            auto& categories = pass.Draws->Categories;
+            categories[size_t(pass.DrawCategory)] += categories[size_t(RenderHardware::DrawCategory::Auxiliary)];
+            categories[size_t(RenderHardware::DrawCategory::Auxiliary)] = {};
+        }
+#endif
         auto& stats                 = m_Statistics.at(p);
         stats.CpuRecordMilliseconds = pass.CpuRecordMilliseconds;
         stats.Draws                 = pass.Draws;
@@ -539,7 +550,11 @@ namespace Kans
             commands->WriteTimestamp(m_Queries, (stats.ExecutionIndex - m_QueryBase) * 2 + 1);
         }
 #ifdef TRACY_ENABLE
-        RenderHardware::SubmitProfiled(device, commands, pass.Name);
+        {
+            KANS_PROFILE_SCOPE("FrameGraph encode and submit pass");
+            KANS_PROFILE_TEXT(pass.Name.data(), pass.Name.size());
+            RenderHardware::SubmitProfiled(device, commands, pass.Name);
+        }
 #else
         device.Submit(commands);
 #endif
@@ -571,6 +586,7 @@ namespace Kans
                               uint64_t                frame,
                               GraphCapture*           capture)
     {
+        KANS_PROFILE_SCOPE("FrameGraph execute");
         AllocateBuffers(buffers, [&](const RenderHardware::BufferDesc& desc) { return device.CreateBuffer(desc); });
         Allocate(pool, [&](const RenderHardware::TextureDesc& desc) { return device.CreateTexture(desc); });
         if (profiler)
@@ -591,6 +607,7 @@ namespace Kans
     }
     void RenderGraph::ExecuteImportedPrefix(RenderHardware::Device& device)
     {
+        KANS_PROFILE_SCOPE("FrameGraph execute imported prefix");
         if (!m_Compiled)
             throw std::logic_error("RenderGraph: Compile required before prefix execution");
         for (auto p : m_Order)

@@ -52,7 +52,7 @@ namespace Kans.Interop
                 Version = NativeApi.ApiVersion, Size = (uint)sizeof(ManagedApi), Shutdown = &Shutdown, LoadAssembly = &LoadAssembly,
                 ReloadAssembly = &ReloadAssembly, ClassCount = &ClassCount, ClassName = &ClassName,
                 ClassExists = &ClassExists, Create = &Create, Destroy = &Destroy, Update = &Update,
-                SetPlaying = &SetPlaying, AllocatedBytes = &AllocatedBytes, LastUnloadCollected = &LastUnloadCollected, FixedUpdate = &FixedUpdate, PhysicsEvent = &PhysicsEvent, PhysicsCallbacks = &PhysicsCallbacks, ControllerHit = &ControllerHit, JointBreak = &JointBreak
+                SetPlaying = &SetPlaying, AllocatedBytes = &AllocatedBytes, LastUnloadCollected = &LastUnloadCollected, FixedUpdate = &FixedUpdate, PhysicsEvent = &PhysicsEvent, PhysicsCallbacks = &PhysicsCallbacks, ControllerHit = &ControllerHit, JointBreak = &JointBreak, CollectionCount = &CollectionCount
             };
             if (!RuntimeFeature.IsDynamicCodeSupported) s_Registry = ScriptRegistry.Pending;
             return 0;
@@ -377,6 +377,8 @@ namespace Kans.Interop
         }
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static long AllocatedBytes() => GC.GetAllocatedBytesForCurrentThread();
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static int CollectionCount(int generation) => GC.CollectionCount(generation);
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static int LastUnloadCollected() => s_Unloaded == null ? -1 : s_Unloaded.IsAlive ? 0 : 1;
     }

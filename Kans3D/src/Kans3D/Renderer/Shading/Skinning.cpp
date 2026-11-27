@@ -3,6 +3,7 @@
 #include <shaderc/shaderc.hpp>
 #include <spirv_cross/spirv_glsl.hpp>
 #include "Kans3D/Asset/Runtime/EngineShaderText.h"
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 #include "Kans3D/Renderer/Shading/DepthNormals.h"
 #include "Kans3D/Renderer/Shading/SkinningSource.h"
 namespace Kans
@@ -35,8 +36,8 @@ namespace Kans
             if (!result.DebugName.empty())
                 result.DebugName += smoothNormalFallback ? "/SkinnedNormalFallback" : "/Skinned";
             result.DebugSources.erase(ShaderProductStage::Vertex);
-            auto convert = [smoothNormalFallback](ShaderProgramCode&                         code,
-                                                  std::map<ShaderProductStage, std::string>& sources) {
+            auto convert = [smoothNormalFallback, &result](ShaderProgramCode&                         code,
+                                                           std::map<ShaderProductStage, std::string>& sources) {
                 for (auto& module : code.Modules)
                     if (module.Stage == ShaderProductStage::Vertex)
                     {
@@ -138,8 +139,10 @@ namespace Kans
                         shaderc::CompileOptions compileOptions;
                         compileOptions.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
                         sources[module.Stage] = source;
-                        auto compiled = shaderCompiler.CompileGlslToSpv(
-                            source, shaderc_vertex_shader, "KansSkinning.vert", compileOptions);
+                        auto compiled         = ProfileShaderCompile(result.DebugName, [&] {
+                            return shaderCompiler.CompileGlslToSpv(
+                                source, shaderc_vertex_shader, "KansSkinning.vert", compileOptions);
+                        });
                         if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
                             throw std::runtime_error(compiled.GetErrorMessage());
                         module.Words.assign(compiled.cbegin(), compiled.cend());

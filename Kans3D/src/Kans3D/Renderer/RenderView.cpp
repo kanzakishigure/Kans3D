@@ -72,47 +72,53 @@ namespace Kans
         view.Opaque.clear();
         view.Mask.clear();
         view.Blend.clear();
-        for (size_t i = 0; i < view.Draws.size(); ++i)
         {
-            const auto& draw = view.Draws[i];
-            view.Culling.SectionProxies += draw.SectionCount;
-            if (frustum && !frustum->Intersects(draw.HasWorldBounds ? draw.WorldBounds :
-                                                                      draw.LocalBounds.Transformed(draw.Transform)))
-                continue;
-            view.Culling.InFrustum += draw.SectionCount;
-            if (!draw.Ready)
-                continue;
-            const auto center = glm::vec3(draw.Transform * glm::vec4(draw.LocalBounds.Center(), 1));
-            const auto offset = center - view.Scene.sceneCamera.Position;
-            view.MaterialOrder.push_back({i, draw.Render, glm::dot(offset, offset)});
+            KANS_PROFILE_SCOPE("Visibility and draw list build");
+            KANS_FRAME_STAT(view.Culling.BoundsTested = view.Draws.size();)
+            for (size_t i = 0; i < view.Draws.size(); ++i)
+            {
+                const auto& draw = view.Draws[i];
+                view.Culling.SectionProxies += draw.SectionCount;
+                if (frustum && !frustum->Intersects(draw.HasWorldBounds ? draw.WorldBounds :
+                                                                          draw.LocalBounds.Transformed(draw.Transform)))
+                    continue;
+                view.Culling.InFrustum += draw.SectionCount;
+                KANS_FRAME_STAT(++view.Culling.BoundsVisible;)
+                if (!draw.Ready)
+                    continue;
+                const auto center = glm::vec3(draw.Transform * glm::vec4(draw.LocalBounds.Center(), 1));
+                const auto offset = center - view.Scene.sceneCamera.Position;
+                view.MaterialOrder.push_back({i, draw.Render, glm::dot(offset, offset)});
+            }
+            for (size_t i = 0; i < view.Texts.size(); ++i)
+            {
+                const auto& text = view.Texts[i];
+                if (frustum && !frustum->Intersects(text.WorldBounds))
+                    continue;
+                if (text.Style.Text.empty() || !view.Highlights.Isolate.empty())
+                    continue;
+                const auto transform = TextWorldTransform(
+                    text.Style, text.Transform, view.Scene.sceneCamera.Position, view.Scene.sceneCamera.viewMatrix);
+                const auto local = text.Layout->LocalBounds();
+                const auto center =
+                    local.IsValid() ? glm::vec3(transform * glm::vec4(local.Center(), 1)) : glm::vec3(transform[3]);
+                const auto          offset = center - view.Scene.sceneCamera.Position;
+                MaterialRenderState render;
+                render.AlphaMode = MaterialAlphaMode::Blend;
+                view.MaterialOrder.push_back({i, render, glm::dot(offset, offset), true, text.Style.AlwaysOnTop});
+            }
+            for (size_t i = 0; i < view.UIs.size(); ++i)
+            {
+                const auto& ui = view.UIs[i];
+                if (ui.Screen || (frustum && !frustum->Intersects(ui.WorldBounds)))
+                    continue;
+                auto                offset = ui.WorldBounds.Center() - view.Scene.sceneCamera.Position;
+                MaterialRenderState render;
+                render.AlphaMode = MaterialAlphaMode::Blend;
+                view.MaterialOrder.push_back({i, render, glm::dot(offset, offset), false, ui.AlwaysOnTop, true});
+            }
         }
-        for (size_t i = 0; i < view.Texts.size(); ++i)
-        {
-            const auto& text = view.Texts[i];
-            if (frustum && !frustum->Intersects(text.WorldBounds))
-                continue;
-            if (text.Style.Text.empty() || !view.Highlights.Isolate.empty())
-                continue;
-            const auto transform = TextWorldTransform(
-                text.Style, text.Transform, view.Scene.sceneCamera.Position, view.Scene.sceneCamera.viewMatrix);
-            const auto local = text.Layout->LocalBounds();
-            const auto center =
-                local.IsValid() ? glm::vec3(transform * glm::vec4(local.Center(), 1)) : glm::vec3(transform[3]);
-            const auto          offset = center - view.Scene.sceneCamera.Position;
-            MaterialRenderState render;
-            render.AlphaMode = MaterialAlphaMode::Blend;
-            view.MaterialOrder.push_back({i, render, glm::dot(offset, offset), true, text.Style.AlwaysOnTop});
-        }
-        for (size_t i = 0; i < view.UIs.size(); ++i)
-        {
-            const auto& ui = view.UIs[i];
-            if (ui.Screen || (frustum && !frustum->Intersects(ui.WorldBounds)))
-                continue;
-            auto                offset = ui.WorldBounds.Center() - view.Scene.sceneCamera.Position;
-            MaterialRenderState render;
-            render.AlphaMode = MaterialAlphaMode::Blend;
-            view.MaterialOrder.push_back({i, render, glm::dot(offset, offset), false, ui.AlwaysOnTop, true});
-        }
+        KANS_PROFILE_SCOPE("Sort scene draw lists");
         std::stable_sort(view.MaterialOrder.begin(), view.MaterialOrder.end(), [](const auto& a, const auto& b) {
             if (a.AlwaysOnTop != b.AlwaysOnTop)
                 return !a.AlwaysOnTop;

@@ -21,7 +21,8 @@ namespace Kans
         try
         {
             result = CompileEmbeddedShaderProgram("KansShaderProgram 1\nvertex=Internal.vert\nfragment=Internal.frag\n",
-                                                  {{"Internal.vert", vertex}, {"Internal.frag", fragment}});
+                                                  {{"Internal.vert", vertex}, {"Internal.frag", fragment}},
+                                                  name);
         }
         catch (const std::exception& error)
         {
@@ -90,7 +91,7 @@ namespace Kans
             return found->second;
         auto inputs             = includes;
         inputs["Internal.comp"] = source;
-        auto product            = CompileEmbeddedShaderProgram("KansShaderProgram 1\ncompute=Internal.comp\n", inputs);
+        auto product = CompileEmbeddedShaderProgram("KansShaderProgram 1\ncompute=Internal.comp\n", inputs, name);
         if (auto* error = std::get_if<AssetError>(&product))
             error->Message = "Compute shader '" + name + "': " + error->Message;
         if (auto* data = std::get_if<ShaderData>(&product))

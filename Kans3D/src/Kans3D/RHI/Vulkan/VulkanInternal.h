@@ -1,9 +1,11 @@
 #pragma once
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
+#include <chrono>
 #include <functional>
 #include <stdexcept>
 #include <thread>
+#include "Kans3D/Core/Debug/Profiler.h"
 #include "VulkanDevice.h"
 #ifdef TRACY_ENABLE
 #include <tracy/TracyVulkan.hpp>
@@ -47,6 +49,32 @@ namespace Kans::RenderHardware::VulkanDetail
         uint32_t                   TimestampValidBits     = 0;
         VmaAllocator               Allocator   = VK_NULL_HANDLE;
         mutable uint64_t           TextureAllocationBytes = 0, BufferAllocationBytes = 0;
+#ifndef KS_DIST
+        bool                        ProfileFrames = true, DriverMemoryBudget = false;
+        uint64_t                    RenderTargetAllocationBytes = 0;
+        mutable DeviceFrameCounters FrameCounters;
+        template<class Call>
+        VkResult MeasureWait(uint64_t DeviceFrameCounters::* field, Call&& call) const
+        {
+            if (!ProfileFrames)
+                return call();
+            const auto start  = std::chrono::steady_clock::now();
+            const auto result = call();
+            FrameCounters.*field += uint64_t(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+            return result;
+        }
+#endif
+        void WaitFence(VkFence fence) const
+        {
+            KANS_PROFILE_SCOPE("Vulkan fence wait");
+            auto wait = [&] { return vkWaitForFences(Logical, 1, &fence, VK_TRUE, UINT64_MAX); };
+#ifndef KS_DIST
+            Check(MeasureWait(&DeviceFrameCounters::FenceWaitNanoseconds, wait));
+#else
+            Check(wait());
+#endif
+        }
         VulkanDeviceOptions        Options;
         bool                       BresenhamLines = false;
 #ifdef TRACY_ENABLE

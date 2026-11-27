@@ -11,6 +11,7 @@ namespace Kans
 {
     void RenderFrame::BuildDepthPrepass(RenderGraph& graph)
     {
+        KANS_PROFILE_SCOPE("Record camera depth prepass");
         using namespace RenderHardware;
         Output.EnsureNormalRoughness();
         const auto normal = graph.ImportTexture("SceneNormalRoughness", Output.GetNormalRoughness());

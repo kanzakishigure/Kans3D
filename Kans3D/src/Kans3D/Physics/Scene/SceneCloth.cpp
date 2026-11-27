@@ -167,6 +167,7 @@ namespace Kans
     }
     void Scene::UpdateCloth(double seconds)
     {
+        KANS_PROFILE_SCOPE("Scene cloth");
         if (m_Registry.view<ClothComponent>().empty())
         {
             m_MotionSnapshotReady = false;

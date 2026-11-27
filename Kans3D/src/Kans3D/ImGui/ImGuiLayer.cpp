@@ -50,7 +50,7 @@ namespace Kans
 
     void ImGuiLayer::Begin()
     {
-        KANS_PROFILE_FUNCTION();
+        KANS_PROFILE_SCOPE("ImGui begin frame");
 
         m_Renderer->NewFrame();
         ImGui::NewFrame();
@@ -58,7 +58,7 @@ namespace Kans
 
     void ImGuiLayer::End()
     {
-        KANS_PROFILE_FUNCTION();
+        KANS_PROFILE_SCOPE("ImGui render and platform windows");
 
         ImGuiIO&     io  = ImGui::GetIO();
         Application& app = Application::Get();

@@ -8,6 +8,7 @@
 #include "Kans3D/Asset/Runtime/MaterialParameterCollection.h"
 #include "Kans3D/Asset/Runtime/MaterialShaderInterface.h"
 #include "Kans3D/Asset/Storage/ProductFiles.h"
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 #include "Kans3D/Core/Hash.h"
 #include "Kans3D/Core/Utilities/StringUtils.h"
 #include "ShaderProgramSource.h"
@@ -217,8 +218,10 @@ namespace Kans
 
         // Compiles the source (a stage file or a .shaderprog listing stage files and
         // parameter defaults).
-        std::variant<ShaderData, AssetError>
-        CompileShader(const ImportContext& context, ShaderInputs& inputs, bool discoverOnly = false)
+        std::variant<ShaderData, AssetError> CompileShader(const ImportContext& context,
+                                                           ShaderInputs&        inputs,
+                                                           bool                 discoverOnly = false,
+                                                           std::string_view     profileName  = {})
         {
             auto extension = context.SourceFile.extension().u8string();
             std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
@@ -339,7 +342,10 @@ namespace Kans
                     }
                     continue;
                 }
-                const auto compiled = compiler.CompileGlslToSpv(*text, kind, name.c_str(), options);
+                const auto* sourceName   = name.c_str();
+                const auto  label        = profileName.empty() ? std::string_view(name) : profileName;
+                const auto  compileStage = [&] { return compiler.CompileGlslToSpv(*text, kind, sourceName, options); };
+                const auto  compiled     = ProfileShaderCompile(label, compileStage);
                 if (compiled.GetCompilationStatus() != shaderc_compilation_status_success)
                 {
                     if (!inputs.Undeclared().empty())
@@ -352,7 +358,7 @@ namespace Kans
                 if (renderTexture)
                 {
                     options.AddMacroDefinition("KANS_RENDER_TEXTURE", "1");
-                    const auto variant = compiler.CompileGlslToSpv(*text, kind, name.c_str(), options);
+                    const auto variant = ProfileShaderCompile(label, compileStage);
                     if (variant.GetCompilationStatus() != shaderc_compilation_status_success)
                         return AssetError {AssetErrorCode::InvalidData,
                                            "RenderTexture fragment: " + variant.GetErrorMessage()};
@@ -381,7 +387,8 @@ namespace Kans
     } // namespace
 
     std::variant<ShaderData, AssetError> CompileEmbeddedShaderProgram(const std::string& manifest,
-                                                                      const std::map<std::string, std::string>& stages)
+                                                                      const std::map<std::string, std::string>& stages,
+                                                                      std::string_view profileName)
     {
         ImportContext context;
         context.AssetRoot  = "/__kans_engine__";
@@ -390,7 +397,7 @@ namespace Kans
         inputs.Add("Standard.shaderprog", manifest);
         for (const auto& [name, source] : stages)
             inputs.Add(name, source);
-        auto compiled = CompileShader(context, inputs);
+        auto compiled = CompileShader(context, inputs, false, profileName);
         if (auto* error = std::get_if<AssetError>(&compiled))
             return *error;
         const auto& shader = std::get<ShaderData>(compiled);
