@@ -113,6 +113,7 @@ namespace Kans::AudioProfiler
     {
         AudioVoiceInfo Info; // Info.Bus and Info.ConcurrencyGroup are cleared; use the buffers below.
         char           Bus[48] {}, Group[48] {}, Owner[64] {}, Asset[96] {};
+        char           Spatializer[24] {}, Occlusion[24] {}, Transmission[40] {}; // As the table shows them.
     };
     // Copies `in` into `out` (reusing its rows) without the borrowed views.
     void CopyVoices(const std::vector<AudioVoiceInfo>& in, std::vector<VoiceRow>& out);
@@ -131,6 +132,10 @@ namespace Kans::AudioProfiler
         Listener,
         Storage,
         Reason,
+        Spatializer,  // Panning, or HRTF with its blend.
+        Fallback,     // Why a HRTF voice is panned.
+        Occlusion,    // The blocked fraction applied.
+        Transmission, // Low / mid / high gains through what blocks it.
         Count
     };
     // Rows passing the filter, sorted; ties fall back to the voice slot so the order is stable.
@@ -145,6 +150,10 @@ namespace Kans::AudioProfiler
 
     const char* StateLabel(AudioVoiceState state);
     const char* ReasonLabel(AudioVoiceReason reason); // "" for None.
+    // Why a HRTF voice is panned, short for the table ("" for None).
+    const char* FallbackLabel(AudioHRTFFallback fallback);
+    // "Panning", "HRTF 0.75" (with the spatial blend).
+    void        FormatSpatializer(const AudioVoiceInfo& voice, char* out, size_t size);
     const char* OwnerKindLabel(AudioVoiceOwnerKind kind);
     const char* StorageLabel(AudioVoiceStorage storage);
     const char* EventLabel(AudioProfileEventType type);

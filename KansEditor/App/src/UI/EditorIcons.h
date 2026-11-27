@@ -41,6 +41,7 @@
 #define ICON_FA_LAYER_GROUP            "\xef\x97\xbd" // U+F5FD
 #define ICON_FA_VECTOR_SQUARE          "\xef\x97\x8b" // U+F5CB
 #define ICON_FA_CROSSHAIRS             "\xef\x81\x9b" // U+F05B
+#define ICON_FA_EAR_LISTEN "\xef\x8a\xa2"             // U+F2A2
 #define ICON_FA_BORDER_ALL             "\xef\xa1\x8c" // U+F84C
 #define ICON_FA_MAGNET                 "\xef\x81\xb6" // U+F076
 #define ICON_FA_COPY                   "\xef\x83\x85" // U+F0C5

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include "Kans3D/Asset/Manager/AssetManager.h"
 #include "Kans3D/Audio/AudioEventPlayer.h"
+#include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Scene/Scene.h"
 #include "ComponentEditors.h"
@@ -12,6 +13,8 @@
 #include "KansEditorCore/Audio/AudioEditing.h"
 #include "KansEditorCore/Audio/AudioEventEditing.h"
 #include "KansEditorCore/Audio/AudioMixerEditing.h"
+#include "KansEditorCore/Audio/AudioSpatialEditing.h"
+#include "KansEditorCore/Physics/PhysicsEditing.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
 
@@ -328,8 +331,463 @@ namespace Kans::ComponentEditors
         return changed;
     }
 
+    AudioSpatialBoxes& LastAudioSpatialBoxes()
+    {
+        static AudioSpatialBoxes boxes;
+        return boxes;
+    }
+
     namespace
     {
+        namespace Spatial = AudioSpatialEditing;
+
+        // Starts an overridable row: the toggle (checked while this asset sets the value), then the value
+        // cell's remaining width for the field, disabled while inherited. Always pair with EndOverride.
+        bool BeginOverride(const char* label, const char* tooltip, bool& overridden, const char* from, ImRect& toggle)
+        {
+            if (!PropertyGrid::Row(label, tooltip, overridden))
+                return false;
+            ImGui::PushID(label);
+            bool on = overridden;
+            ImGui::Checkbox("##override", &on);
+            toggle = LastItem();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(on ? "Overrides %s; uncheck to use it again" : "Uses %s; check to override it", from);
+            overridden = on;
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+            ImGui::SetNextItemWidth(std::max(EditorTheme::Px(40.0f), ImGui::GetContentRegionAvail().x));
+            ImGui::BeginDisabled(!on);
+            return true;
+        }
+        void EndOverride()
+        {
+            ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+
+        // An enum combo whose open list's items are kept in `items` (by index).
+        bool EnumCombo(const char* const                    names[],
+                       int                                  count,
+                       int&                                 index,
+                       ImRect&                              box,
+                       std::vector<std::pair<int, ImRect>>& items)
+        {
+            const bool open    = ImGui::BeginCombo("##value", names[std::clamp(index, 0, count - 1)]);
+            bool       changed = false;
+            box                = LastItem();
+            if (open)
+            {
+                for (int i = 0; i < count; ++i)
+                {
+                    if (ImGui::Selectable(names[i], i == index) && i != index)
+                        index = i, changed = true;
+                    items.emplace_back(i, LastItem());
+                }
+                ImGui::EndCombo();
+            }
+            return changed;
+        }
+
+        template<typename T, typename Edit>
+        bool OverrideRow(const char*               label,
+                         const char*               tooltip,
+                         std::optional<T>&         value,
+                         T                         inherited,
+                         const char*               from,
+                         AudioSpatialBoxes::Field& box,
+                         Edit&&                    edit)
+        {
+            bool overridden = value.has_value();
+            if (!BeginOverride(label, tooltip, overridden, from, box.Override))
+                return false;
+            bool changed = overridden != value.has_value();
+            if (changed)
+                value = overridden ? std::optional<T>(inherited) : std::nullopt;
+            T shown = value.value_or(inherited);
+            if (edit(shown, box.Value) && value)
+                value = shown, changed = true;
+            EndOverride();
+            return changed;
+        }
+
+        const char* FromOf(bool eventSets, const char* fallbackName)
+        {
+            return eventSets ? "the event's value" : fallbackName;
+        }
+    } // namespace
+
+    bool AudioSpatializerRow(std::optional<AudioSpatializer>& value, AudioSpatializer inherited, const char* from)
+    {
+        auto&      boxes    = LastAudioSpatialBoxes();
+        const bool modified = value.has_value();
+        char       tooltip[160];
+        std::snprintf(tooltip,
+                      sizeof(tooltip),
+                      "How the sound is placed around the listener: Panning (speaker gains) or HRTF (binaural, "
+                      "for headphones). Inherit uses %s.",
+                      from);
+        if (!PropertyGrid::Row("Spatializer", tooltip, modified))
+            return false;
+        ImGui::PushID("Spatializer");
+        char inherit[96];
+        std::snprintf(inherit, sizeof(inherit), "Inherit (%s)", Spatial::SpatializerName(inherited));
+        const char* names[] = {inherit, "Panning", "HRTF"};
+        int         index   = value ? 1 + int(*value) : 0;
+        bool        changed = false;
+        const bool  open    = ImGui::BeginCombo("##value", names[index]);
+        boxes.Spatializer   = LastItem();
+        if (!open && ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", tooltip);
+        if (open)
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                if (ImGui::Selectable(names[i], i == index) && i != index)
+                {
+                    value   = i == 0 ? std::nullopt : std::optional<AudioSpatializer>(AudioSpatializer(i - 1));
+                    changed = true;
+                }
+                boxes.SpatializerItems.emplace_back(i - 1, LastItem());
+            }
+            ImGui::EndCombo();
+        }
+        if (PropertyGrid::RowReset(modified))
+            value.reset(), changed = true;
+        ImGui::PopID();
+        return changed;
+    }
+
+    bool AudioOcclusionRows(AudioOcclusionOverrides&       o,
+                            const AudioOcclusionOverrides* event,
+                            const AudioOcclusionSettings&  fallback,
+                            const char*                    fallbackName)
+    {
+        auto&      boxes     = LastAudioSpatialBoxes();
+        const auto inherited = Spatial::InheritedOcclusion(event, fallback);
+        const auto sets      = [&](auto member) { return event && (event->*member).has_value(); };
+        bool       changed   = false;
+
+        changed |=
+            OverrideRow("Mode",
+                        "Occlusion: rays from the listener to the source test the colliders in between: Raycast casts "
+                        "one ray, Volumetric samples a disc of the source's radius",
+                        o.Mode,
+                        inherited.Mode,
+                        FromOf(sets(&AudioOcclusionOverrides::Mode), fallbackName),
+                        boxes.Mode,
+                        [&](AudioOcclusionMode& mode, ImRect& box) {
+                            int index = int(mode);
+                            if (!EnumCombo(Spatial::OcclusionModeNames, 3, index, box, boxes.ModeItems))
+                                return false;
+                            mode = AudioOcclusionMode(index);
+                            return true;
+                        });
+        const auto mode = o.Mode.value_or(inherited.Mode);
+        if (mode == AudioOcclusionMode::Volumetric)
+        {
+            changed |=
+                OverrideRow("Source radius",
+                            "The disc Volumetric samples around the source, facing the listener",
+                            o.SourceRadius,
+                            inherited.SourceRadius,
+                            FromOf(sets(&AudioOcclusionOverrides::SourceRadius), fallbackName),
+                            boxes.Radius,
+                            [](float& radius, ImRect& box) {
+                                const bool edited = ImGui::DragFloat(
+                                    "##value", &radius, 0.01f, 0.0f, 1000.0f, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
+                                box = LastItem();
+                                return edited;
+                            });
+            changed |= OverrideRow(
+                "Samples",
+                "Rays across the disc (1 to 32); more give smoother partial occlusion",
+                o.Samples,
+                inherited.Samples,
+                FromOf(sets(&AudioOcclusionOverrides::Samples), fallbackName),
+                boxes.Samples,
+                [](uint32_t& samples, ImRect& box) {
+                    int        count  = int(samples);
+                    const bool edited = ImGui::SliderInt(
+                        "##value", &count, 1, int(MaxAudioOcclusionSamples), "%d", ImGuiSliderFlags_AlwaysClamp);
+                    box = LastItem();
+                    if (edited)
+                        samples = uint32_t(count);
+                    return edited;
+                });
+        }
+        changed |=
+            OverrideRow("Transmission",
+                        "Sound passing through what blocks it, by each surface's acoustic material: one "
+                        "gain, or low, mid and high bands",
+                        o.Transmission,
+                        inherited.Transmission,
+                        FromOf(sets(&AudioOcclusionOverrides::Transmission), fallbackName),
+                        boxes.Transmission,
+                        [&](AudioTransmissionMode& transmission, ImRect& box) {
+                            int index = int(transmission);
+                            if (!EnumCombo(Spatial::TransmissionModeNames, 3, index, box, boxes.TransmissionItems))
+                                return false;
+                            transmission = AudioTransmissionMode(index);
+                            return true;
+                        });
+        const auto strength = [](float& value, ImRect& box) {
+            const bool edited = ImGui::SliderFloat("##value", &value, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+            box               = LastItem();
+            return edited;
+        };
+        const auto transmission = o.Transmission.value_or(inherited.Transmission);
+        if (mode != AudioOcclusionMode::Off)
+            changed |= OverrideRow("Occlusion strength",
+                                   "How much of the blocked fraction is applied (0: none, 1: all)",
+                                   o.OcclusionStrength,
+                                   inherited.OcclusionStrength,
+                                   FromOf(sets(&AudioOcclusionOverrides::OcclusionStrength), fallbackName),
+                                   boxes.OcclusionStrength,
+                                   strength);
+        if (transmission != AudioTransmissionMode::Off)
+            changed |= OverrideRow("Transmission strength",
+                                   "How much the surfaces' transmission colours the blocked sound",
+                                   o.TransmissionStrength,
+                                   inherited.TransmissionStrength,
+                                   FromOf(sets(&AudioOcclusionOverrides::TransmissionStrength), fallbackName),
+                                   boxes.TransmissionStrength,
+                                   strength);
+        if (mode != AudioOcclusionMode::Off || transmission != AudioTransmissionMode::Off)
+            changed |= OverrideRow("Layers",
+                                   "The physics layers that block this sound (triggers never do)",
+                                   o.OcclusionLayerMask,
+                                   inherited.OcclusionLayerMask,
+                                   FromOf(sets(&AudioOcclusionOverrides::OcclusionLayerMask), fallbackName),
+                                   boxes.Layers,
+                                   [&](uint32_t& mask, ImRect& box) {
+                                       const auto& physics = KansFileSystem::GetProjectPhysicsSettings();
+                                       const bool  open =
+                                           ImGui::BeginCombo("##value",
+                                                             PhysicsEditing::MaskSummary(mask, physics).c_str(),
+                                                             ImGuiComboFlags_HeightLarge);
+                                       box         = LastItem();
+                                       bool edited = false;
+                                       if (!open)
+                                           return false;
+                                       if (ImGui::Selectable("Everything", mask == UINT32_MAX))
+                                           mask = UINT32_MAX, edited = true;
+                                       boxes.LayerItems.emplace_back(32u, LastItem());
+                                       if (ImGui::Selectable("Nothing", mask == 0))
+                                           mask = 0, edited = true;
+                                       boxes.LayerItems.emplace_back(33u, LastItem());
+                                       ImGui::Separator();
+                                       // Named layers (and Default); every layer when none is named.
+                                       for (const uint32_t layer : PhysicsEditing::MatrixLayers(physics, false))
+                                       {
+                                           ImGui::PushID(int(layer));
+                                           bool        on   = mask & (1u << layer);
+                                           const auto& name = physics.LayerNames[layer];
+                                           if (ImGui::Checkbox(name.c_str(), &on))
+                                               mask = on ? mask | (1u << layer) : mask & ~(1u << layer), edited = true;
+                                           boxes.LayerItems.emplace_back(layer, LastItem());
+                                           ImGui::PopID();
+                                       }
+                                       ImGui::EndCombo();
+                                       return edited;
+                                   });
+        if (changed)
+            Spatial::Clamp(o);
+        return changed;
+    }
+
+    bool AcousticMaterialRows(AcousticMaterial& material, AcousticBoxes* boxes)
+    {
+        AcousticBoxes  scratch;
+        AcousticBoxes& b = boxes ? *boxes : scratch;
+        b.PresetItems.clear();
+        const auto previous = material;
+        bool       changed  = false;
+        b.PresetLabel       = Spatial::AcousticPresetLabel(material);
+        const bool modified = !(material == AcousticMaterial {});
+        if (PropertyGrid::Row("Preset",
+                              "Steam Audio's standard materials; picking one fills the values below, editing a "
+                              "value makes it Custom",
+                              modified))
+        {
+            ImGui::PushID("Preset");
+            const auto match = Spatial::MatchAcousticPreset(material);
+            const bool open  = ImGui::BeginCombo("##value", b.PresetLabel.c_str());
+            b.Preset         = LastItem();
+            if (open)
+            {
+                for (int i = 0; i < Spatial::AcousticPresetCount; ++i)
+                {
+                    const auto preset = AcousticMaterialPreset(i);
+                    if (ImGui::Selectable(AcousticMaterialPresetName(preset), match == preset))
+                        material = GetAcousticMaterialPreset(preset), changed = true;
+                    b.PresetItems.emplace_back(i, LastItem());
+                }
+                ImGui::EndCombo();
+            }
+            if (PropertyGrid::RowReset(modified))
+                material = {}, changed = true;
+            ImGui::PopID();
+        }
+        // Three bands side by side: low, mid, high.
+        const auto bands = [&](const char* label, const char* tooltip, std::array<float, 3>& values, ImRect* out) {
+            if (!PropertyGrid::Row(label, tooltip))
+                return;
+            ImGui::PushID(label);
+            const float spacing   = ImGui::GetStyle().ItemSpacing.x * 0.5f;
+            const float width     = (ImGui::CalcItemWidth() - 2.0f * spacing) / 3.0f;
+            const char* formats[] = {"Low %.3f", "Mid %.3f", "High %.3f"};
+            for (int band = 0; band < 3; ++band)
+            {
+                if (band)
+                    ImGui::SameLine(0.0f, spacing);
+                ImGui::PushID(band);
+                ImGui::SetNextItemWidth(width);
+                changed |= ImGui::DragFloat(
+                    "##band", &values[band], 0.001f, 0.0f, 1.0f, formats[band], ImGuiSliderFlags_AlwaysClamp);
+                out[band] = LastItem();
+                ImGui::PopID();
+            }
+            ImGui::PopID();
+        };
+        bands("Absorption",
+              "The share of sound a surface absorbs per band (0 to 1), used by reflections and reverb",
+              material.Absorption,
+              b.Absorption);
+        bands("Transmission",
+              "The share of sound passing through per band (0 to 1), used by occlusion transmission",
+              material.Transmission,
+              b.Transmission);
+        if (PropertyGrid::Row("Scattering", "How diffusely reflections leave the surface (0: mirror, 1: diffuse)"))
+        {
+            ImGui::PushID("Scattering");
+            changed |=
+                ImGui::SliderFloat("##value", &material.Scattering, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+            b.Scattering = LastItem();
+            ImGui::PopID();
+        }
+        if (changed)
+            Spatial::ClampAcoustics(material, previous);
+        b.PresetLabel = Spatial::AcousticPresetLabel(material);
+        return changed;
+    }
+
+    namespace
+    {
+        // The Spatializer and Occlusion groups of a spatial source, with the voice's state in Play.
+        void DrawSourceSpatializer(AudioSourceComponent& c, ComponentUI& ui)
+        {
+            auto&        boxes  = LastAudioSpatialBoxes();
+            Scene*       scene  = ui.GetScene();
+            AudioEngine* engine = scene ? scene->GetAudioEngine() : nullptr;
+            if (!engine && ui.GetAudioPreview())
+                engine = ui.GetAudioPreview()->GetEngine();
+            const bool live = engine && engine->IsInitialized();
+            // An Event source plays its event's settings where it leaves a field to inherit.
+            Ref<const AudioEventAsset> event;
+            if (c.GetSourceKind() == AudioSourceKind::Event && c.Event.IsValid() && ui.GetAssets())
+                event = ui.GetAssets()->Request<AudioEventAsset>(c.Event).Asset;
+            const AudioEventData* data    = event ? &event->GetData() : nullptr;
+            const auto            project = live ? engine->GetDefaultSpatializer() : AudioSpatializer::Panning;
+            const auto            inherited =
+                Spatial::ResolveSpatializer(std::nullopt, data ? data->Spatializer : std::nullopt, project);
+            const auto resolved =
+                Spatial::ResolveSpatializer(c.Spatializer, data ? data->Spatializer : std::nullopt, project);
+            const bool running = scene && scene->IsAudioRunning() && live;
+            // The voice as the engine sees it (Play only).
+            static std::vector<AudioVoiceInfo> voices;
+            const AudioVoiceInfo*              voice = nullptr;
+            if (running && engine->IsVoiceValid(c.GetVoiceHandle()))
+            {
+                engine->GetVoiceSnapshot(voices);
+                const auto handle = c.GetVoiceHandle();
+                for (const auto& info : voices)
+                    if (info.Voice.Index == handle.Index && info.Voice.Generation == handle.Generation)
+                        voice = &info;
+            }
+
+            if (PropertyGrid::BeginGroup("Spatializer"))
+            {
+                AudioSpatializerRow(c.Spatializer,
+                                    inherited,
+                                    data && data->Spatializer ? "the event's spatializer" :
+                                                                "the project default (Project Settings > Audio)");
+                if (resolved == AudioSpatializer::HRTF)
+                {
+                    const float eventBlend = data ? data->SpatialBlend : 1.0f;
+                    float       blend      = c.SpatialBlend.value_or(eventBlend);
+                    const bool  modified   = c.SpatialBlend.has_value();
+                    if (PropertyGrid::Row(
+                            "Spatial blend", "0 pans, 1 is fully binaural; values between mix the two", modified))
+                    {
+                        ImGui::PushID("SpatialBlend");
+                        if (ImGui::SliderFloat("##value",
+                                               &blend,
+                                               0.0f,
+                                               1.0f,
+                                               modified ? "%.2f" : (data ? "%.2f (from the event)" : "%.2f"),
+                                               ImGuiSliderFlags_AlwaysClamp))
+                            c.SpatialBlend = std::clamp(blend, 0.0f, 1.0f);
+                        boxes.Blend = LastItem();
+                        if (PropertyGrid::RowReset(modified))
+                            c.SpatialBlend.reset();
+                        ImGui::PopID();
+                    }
+                }
+                if (const char* hint = Spatial::StereoHint(resolved, engine); hint && PropertyGrid::Row(""))
+                {
+                    boxes.StereoHint = hint;
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextColored(EditorTheme::Colors().Warning, ICON_FA_TRIANGLE_EXCLAMATION " %s", hint);
+                }
+                else if (live && resolved == AudioSpatializer::HRTF && !engine->IsHRTFAvailable() &&
+                         PropertyGrid::Row(""))
+                {
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextColored(EditorTheme::Colors().Warning,
+                                       ICON_FA_TRIANGLE_EXCLAMATION " Steam Audio is not available: panned");
+                }
+                if (voice)
+                {
+                    char text[128];
+                    if (voice->HRTFFallback != AudioHRTFFallback::None)
+                        std::snprintf(text, sizeof(text), "%s", Spatial::FallbackText(voice->HRTFFallback));
+                    else if (voice->Spatializer == AudioSpatializer::HRTF)
+                        std::snprintf(text, sizeof(text), "HRTF, blend %.2f", double(voice->SpatialBlend));
+                    else
+                        std::snprintf(text, sizeof(text), "Panning");
+                    boxes.LiveSpatializer = text;
+                    PropertyGrid::Text(
+                        "Heard as", boxes.LiveSpatializer, voice->HRTFFallback == AudioHRTFFallback::None);
+                }
+                PropertyGrid::EndGroup();
+            }
+            if (PropertyGrid::BeginGroup("Occlusion"))
+            {
+                const auto fallback = live ? engine->GetOcclusionDefaults() : AudioOcclusionSettings {};
+                AudioOcclusionRows(c.Occlusion,
+                                   data ? &data->Occlusion : nullptr,
+                                   fallback,
+                                   "the project default (Project Settings > Audio)");
+                if (voice)
+                {
+                    char text[64];
+                    std::snprintf(text, sizeof(text), "%.2f", double(voice->Acoustics.Occlusion));
+                    boxes.LiveOcclusion = text;
+                    if (voice->OcclusionStale)
+                        boxes.LiveOcclusion += " (stale)";
+                    Spatial::FormatBands(voice->Acoustics.Transmission, text, sizeof(text));
+                    boxes.LiveTransmission = text;
+                    PropertyGrid::Text("Occlusion now", boxes.LiveOcclusion, true);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("The blocked fraction the engine applies (0: clear)");
+                    PropertyGrid::Text("Transmission now", boxes.LiveTransmission, true);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Low / mid / high gains of the sound passing through");
+                }
+                PropertyGrid::EndGroup();
+            }
+        }
+
         // Clip and Event sources: the asset pickers and the preview, as before the Source selector.
         void
         DrawAssetSource(Entity entity, AudioSourceComponent& c, ComponentUI& ui, const AudioEditing::EventHints& hints)
@@ -425,10 +883,11 @@ namespace Kans::ComponentEditors
     {
         static const AudioSourceComponent defaults;
         entity.PatchComponent<AudioSourceComponent>([&](AudioSourceComponent& c) {
-            // The groups keep this order: Source, Playback, Output, Spatial, Cone.
+            // The groups keep this order: Source, Playback, Output, Spatial, Cone, Spatializer, Occlusion.
             const auto hints = AudioEditing::EventHintsOf(c);
             auto&      boxes = LastAudioCardBoxes();
             boxes.Source     = {};
+            LastAudioSpatialBoxes() = {};
             if (PropertyGrid::BeginGroup("Source"))
             {
                 // Clip and Event play assets; a Generator plays PCM a script or C++ pushes at run time.
@@ -636,6 +1095,9 @@ namespace Kans::ComponentEditors
                 PropertyGrid::Text("Aim", "Transform local -Z", true);
                 PropertyGrid::EndGroup();
             }
+            // A 2D sound has no direction to spatialize and no path to occlude.
+            if (c.Spatial)
+                DrawSourceSpatializer(c, ui);
             AudioEditing::Validate(c);
         });
     }

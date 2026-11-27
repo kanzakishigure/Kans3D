@@ -126,6 +126,15 @@ namespace Kans
         m_RenderTexturePanel.Bind(m_AssetImports.get());
         m_MaterialParameterCollectionPanel.Bind(m_AssetImports.get());
         m_ProjectSettingsPanel.Bind(m_ProjectFile);
+        m_ProjectSettingsPanel.SetAudio(AudioSystem::Get(), m_Assets.get());
+        // The Audio page applies to the engine itself; the config follows so hot reloads keep its choices.
+        m_ProjectSettingsPanel.SetAudioChangedCallback([this](const AudioSpatialEditing::ProjectAudioValues& audio) {
+            m_ProjectConfig.AudioHRTF                = audio.HRTF;
+            m_ProjectConfig.DefaultAudioSpatializer  = audio.DefaultSpatializer;
+            m_ProjectConfig.DefaultAudioOcclusion    = audio.DefaultOcclusion;
+            m_ProjectConfig.MaxOcclusionRaysPerFrame = audio.MaxOcclusionRaysPerFrame;
+            m_ProjectConfig.OcclusionStaleFrames     = audio.OcclusionStaleFrames;
+        });
         m_PluginsPanel.Bind(m_ProjectFile);
         m_UIDesignerPanel.Bind(m_AssetImports.get());
         ComponentEditors::SetMotionPresetDirectories(SecondaryMotionEditing::BuiltInPresetDirectory(),
@@ -305,6 +314,7 @@ namespace Kans
         m_AudioEventPanel.SetAssetChoices(choices);
         m_ActionMarkersPanel.SetAssetChoices(choices);
         m_AudioProfilerPanel.SetAssetChoices(choices);
+        m_ProjectSettingsPanel.SetAssetChoices(choices);
         m_AudioEventNames.clear();
         for (const auto& choice : choices)
             if (choice.Type == AssetType::AudioEvent)
@@ -332,6 +342,7 @@ namespace Kans
         m_MaterialPreview->SetResources(m_Viewport->GetAssetCache(), m_Viewport->GetEnvironment());
         m_ThumbnailRenderer->SetResources(m_Viewport->GetAssetCache(), m_Viewport->GetEnvironment());
         m_PropertiesPanel.SetAssetManager(m_Assets.get());
+        m_ProjectSettingsPanel.SetAudio(AudioSystem::Get(), m_Assets.get());
         m_PropertiesPanel.SetRenderAssets(m_Viewport->GetAssetCache());
         m_MaterialEditorPanel.SetAssetManager(m_Assets.get());
         m_TimelinePanel.SetAssetManager(m_Assets.get());

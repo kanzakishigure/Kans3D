@@ -9,6 +9,7 @@
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Scene/Components.h"
 #include "Kans3D/Scene/Scene.h"
+#include "KansEditorCore/Audio/AudioSpatialEditing.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
 
@@ -250,6 +251,12 @@ namespace Kans
             std::snprintf(row.Asset, sizeof(row.Asset), "Generator");
         else
             AssetText(row.Info.Clip, row.Info.Owner.Asset, row.Info.Sound, row.Asset, sizeof(row.Asset));
+        FormatSpatializer(row.Info, row.Spatializer, sizeof(row.Spatializer));
+        std::snprintf(row.Occlusion,
+                      sizeof(row.Occlusion),
+                      row.Info.OcclusionStale ? "%.2f (stale)" : "%.2f",
+                      double(row.Info.Acoustics.Occlusion));
+        AudioSpatialEditing::FormatBands(row.Info.Acoustics.Transmission, row.Transmission, sizeof(row.Transmission));
     }
 
     // ------------------------------------------------------------------ drawing
@@ -418,6 +425,46 @@ namespace Kans
             ImGui::TextColored(p.Warning, "%" PRIu64 " timings dropped", m_Stats.DroppedTimings);
         }
 
+        // Steam Audio's share of the last callback (HRTF and the direct effect), then occlusion.
+        {
+            char time[32];
+            FormatNanoseconds(double(m_Stats.Current.SteamAudioNanoseconds), time, sizeof(time));
+            const double share =
+                m_Stats.Current.WallNanoseconds ?
+                    100.0 * double(m_Stats.Current.SteamAudioNanoseconds) / double(m_Stats.Current.WallNanoseconds) :
+                    0.0;
+            std::snprintf(m_Boxes.SteamAudioText,
+                          sizeof(m_Boxes.SteamAudioText),
+                          "Steam Audio %s (%.0f%% of the callback)",
+                          time,
+                          share);
+            ImGui::TextDisabled("%s", m_Boxes.SteamAudioText);
+            m_Boxes.SteamAudio = LastItem();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Time the last callback spent in Steam Audio (binaural HRTF and the occlusion "
+                                  "and transmission filters)");
+            const auto& o      = m_Stats.Occlusion;
+            const auto  budget = m_Engine->GetMaxOcclusionRaysPerFrame();
+            std::snprintf(m_Boxes.OcclusionText,
+                          sizeof(m_Boxes.OcclusionText),
+                          "Occlusion %u / %u rays, %u voices serviced, %u deferred, %" PRIu64 " overruns",
+                          o.Rays,
+                          budget,
+                          o.VoicesServiced,
+                          o.DeferredVoices,
+                          o.BudgetOverruns);
+            ImGui::SameLine(0.0f, Px(14.0f));
+            if (o.BudgetOverruns)
+                ImGui::TextColored(p.Warning, "%s", m_Boxes.OcclusionText);
+            else
+                ImGui::TextDisabled("%s", m_Boxes.OcclusionText);
+            m_Boxes.Occlusion = LastItem();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Rays cast this frame against Max Occlusion Rays Per Frame, the voices whose "
+                                  "occlusion was refreshed, those left for a later frame, and the frames that "
+                                  "had to defer work");
+        }
+
         // The graph: the last 1 s or 10 s of callbacks, the budget line at 100%.
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const float  width  = std::max(Px(100.0f), ImGui::GetContentRegionAvail().x);
@@ -546,6 +593,10 @@ namespace Kans
         column("Listener", VoiceColumn::Listener);
         column("Storage", VoiceColumn::Storage);
         column("Reason", VoiceColumn::Reason);
+        column("Spatializer", VoiceColumn::Spatializer);
+        column("HRTF fallback", VoiceColumn::Fallback);
+        column("Occlusion", VoiceColumn::Occlusion, ImGuiTableColumnFlags_PreferSortDescending);
+        column("Transmission (L/M/H)", VoiceColumn::Transmission);
         ImGui::TableSetupScrollFreeze(1, 1);
         ImGui::TableHeadersRow();
         if (ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs())
@@ -581,7 +632,7 @@ namespace Kans
                         if (Entity entity = scene->GetEntityByUUID(UUID(info.Owner.Entity)))
                             m_Select(entity);
                 }
-                m_Boxes.Voices.push_back({m_Order[size_t(i)], LastItem(), ImGui::GetItemRectMin().x});
+                m_Boxes.Voices.push_back({m_Order[size_t(i)], LastItem(), ImGui::GetItemRectMin().x, {}});
                 if (ImGui::IsItemHovered())
                 {
                     const char* detail = ReasonDetail(info.State, info.Reason);
@@ -625,6 +676,21 @@ namespace Kans
                 TextCell(StorageLabel(info.Storage));
                 ImGui::TableNextColumn();
                 TextCell(ReasonLabel(info.Reason), &p.Warning);
+                auto& cells = m_Boxes.Voices.back().Spatial;
+                ImGui::TableNextColumn();
+                TextCell(row.Spatializer);
+                cells[0] = LastItem();
+                ImGui::TableNextColumn();
+                TextCell(FallbackLabel(info.HRTFFallback), &p.Warning);
+                cells[1] = LastItem();
+                if (info.HRTFFallback != AudioHRTFFallback::None && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", AudioSpatialEditing::FallbackText(info.HRTFFallback));
+                ImGui::TableNextColumn();
+                TextCell(row.Occlusion, info.Acoustics.Occlusion > 0 ? &p.Warning : nullptr);
+                cells[2] = LastItem();
+                ImGui::TableNextColumn();
+                TextCell(row.Transmission);
+                cells[3] = LastItem();
                 ImGui::PopID();
             }
         ImGui::EndTable();

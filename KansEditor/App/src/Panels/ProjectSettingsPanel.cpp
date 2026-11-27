@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <misc/cpp/imgui_stdlib.h>
+#include "Kans3D/Audio/AudioEngine.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Components/ComponentEditors.h"
 #include "UI/EditorIcons.h"
@@ -46,7 +47,18 @@ namespace Kans
             m_Status = error->Message;
             return;
         }
+        m_AudioStatus.clear();
+        if (auto error = m_Audio.Load(projectFile))
+            m_AudioStatus = error->Message;
         m_Bound = true;
+    }
+
+    void ProjectSettingsPanel::SetAssetChoices(const std::vector<EditorAssetChoice>& choices)
+    {
+        m_HRTFs.clear();
+        for (const auto& choice : choices)
+            if (choice.Type == AssetType::AudioHRTF)
+                m_HRTFs.push_back(choice);
     }
 
     void ProjectSettingsPanel::Draw()
@@ -59,11 +71,21 @@ namespace Kans
         // Pages on the left (one so far), the page on the right.
         const float list = EditorTheme::Px(140.0f);
         if (ImGui::BeginChild("##Pages", {list, 0}, ImGuiChildFlags_Borders))
-            ImGui::Selectable(ICON_FA_ATOM "  Physics", true);
+        {
+            if (ImGui::Selectable(ICON_FA_ATOM "  Physics", m_Page == Page::Physics))
+                m_Page = Page::Physics;
+            if (ImGui::Selectable(ICON_FA_VOLUME_HIGH "  Audio", m_Page == Page::Audio))
+                m_Page = Page::Audio;
+        }
         ImGui::EndChild();
         ImGui::SameLine();
         if (ImGui::BeginChild("##Page", {0, 0}))
-            DrawPhysics();
+        {
+            if (m_Page == Page::Audio)
+                DrawAudio();
+            else
+                DrawPhysics();
+        }
         ImGui::EndChild();
         // Written once the edit ends, so a drag saves once.
         if (m_SavePending && m_Physics.IsDirty() && !ImGui::IsAnyItemActive())
@@ -73,6 +95,175 @@ namespace Kans
                 m_Status = "Not saved: " + error->Message;
             else
                 m_Status.clear();
+        }
+        if (m_AudioSavePending && m_Audio.IsDirty() && !ImGui::IsAnyItemActive())
+        {
+            m_AudioSavePending = false;
+            if (auto error = m_Audio.Save())
+                m_AudioStatus = "Not saved: " + error->Message;
+            else
+                m_AudioStatus.clear();
+        }
+    }
+
+    void ProjectSettingsPanel::DrawAudio()
+    {
+        namespace Spatial                         = AudioSpatialEditing;
+        const auto& p                             = EditorTheme::Colors();
+        auto        values                        = m_Audio.Get();
+        bool        changed                       = false;
+        m_AudioBoxes                              = {};
+        ComponentEditors::LastAudioSpatialBoxes() = {};
+        const auto last = [] { return ImRect {ImGui::GetItemRectMin(), ImGui::GetItemRectMax()}; };
+        if (!m_AudioStatus.empty())
+            ImGui::TextColored(p.Danger, ICON_FA_TRIANGLE_EXCLAMATION "  %s", m_AudioStatus.c_str());
+        ImGui::TextDisabled("Saved in %s. The editor's audio engine takes changes at once; sources and events "
+                            "override them per sound.",
+                            m_Audio.GetFile().filename().u8string().c_str());
+        if (PropertyGrid::BeginGroup("Spatializer"))
+        {
+            const bool modified = values.DefaultSpatializer != AudioSpatializer::Panning;
+            if (PropertyGrid::Row("Default spatializer",
+                                  "What sources and events set to Inherit play with: Panning (speaker gains) or HRTF "
+                                  "(binaural, for headphones; stereo output only)",
+                                  modified))
+            {
+                ImGui::PushID("DefaultSpatializer");
+                const char* names[]      = {"Panning", "HRTF"};
+                const int   index        = int(values.DefaultSpatializer);
+                const bool  open         = ImGui::BeginCombo("##value", names[index]);
+                m_AudioBoxes.Spatializer = last();
+                if (open)
+                {
+                    for (int i = 0; i < 2; ++i)
+                    {
+                        if (ImGui::Selectable(names[i], i == index) && i != index)
+                            values.DefaultSpatializer = AudioSpatializer(i), changed = true;
+                        m_AudioBoxes.SpatializerItems.emplace_back(i, last());
+                    }
+                    ImGui::EndCombo();
+                }
+                if (PropertyGrid::RowReset(modified))
+                    values.DefaultSpatializer = AudioSpatializer::Panning, changed = true;
+                ImGui::PopID();
+            }
+            const bool hrtfModified = values.HRTF.IsValid();
+            if (PropertyGrid::Row("HRTF",
+                                  "The head-related transfer function HRTF voices render with: Steam Audio's built-in "
+                                  "one, or an imported .sofa file",
+                                  hrtfModified))
+            {
+                ImGui::PushID("HRTF");
+                const EditorAssetChoice* current = nullptr;
+                for (const auto& choice : m_HRTFs)
+                    if (choice.ID == values.HRTF)
+                        current = &choice;
+                const std::string preview = current ? std::filesystem::u8path(current->Name).stem().u8string() :
+                                            values.HRTF.IsValid() ?
+                                                      std::string(ICON_FA_TRIANGLE_EXCLAMATION " (missing)") :
+                                                      std::string("Built-in");
+                const bool        open    = ImGui::BeginCombo("##value", preview.c_str());
+                m_AudioBoxes.HRTF         = last();
+                if (open)
+                {
+                    if (ImGui::Selectable("Built-in", !values.HRTF.IsValid()) && values.HRTF.IsValid())
+                        values.HRTF = {}, changed = true;
+                    m_AudioBoxes.HRTFItems.emplace_back(AssetID {}, last());
+                    for (const auto& choice : m_HRTFs)
+                    {
+                        ImGui::PushID(choice.ID.ToString().c_str());
+                        if (ImGui::Selectable(std::filesystem::u8path(choice.Name).stem().u8string().c_str(),
+                                              choice.ID == values.HRTF) &&
+                            choice.ID != values.HRTF)
+                            values.HRTF = choice.ID, changed = true;
+                        m_AudioBoxes.HRTFItems.emplace_back(choice.ID, last());
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("%s", choice.Name.c_str());
+                        ImGui::PopID();
+                    }
+                    if (m_HRTFs.empty())
+                        ImGui::TextDisabled("Import a .sofa file to add one");
+                    ImGui::EndCombo();
+                }
+                if (PropertyGrid::RowReset(hrtfModified))
+                    values.HRTF = {}, changed = true;
+                ImGui::PopID();
+            }
+            if (m_Engine && m_Engine->IsInitialized() && !m_Engine->IsHRTFAvailable())
+                m_AudioBoxes.HRTFNote = "Steam Audio is not available: HRTF voices are panned.";
+            else if (!m_Audio.GetHRTFError().empty())
+                m_AudioBoxes.HRTFNote =
+                    "Could not load the HRTF (" + m_Audio.GetHRTFError() + "); the built-in one plays.";
+            if (!m_AudioBoxes.HRTFNote.empty() && PropertyGrid::Row(""))
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, p.Warning);
+                ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION " %s", m_AudioBoxes.HRTFNote.c_str());
+                ImGui::PopStyleColor();
+            }
+            PropertyGrid::EndGroup();
+        }
+        if (PropertyGrid::BeginGroup("Default occlusion"))
+        {
+            changed |= ComponentEditors::AudioOcclusionRows(
+                values.DefaultOcclusion, nullptr, AudioOcclusionSettings {}, "the built-in default");
+            PropertyGrid::EndGroup();
+        }
+        if (PropertyGrid::BeginGroup("Occlusion budget"))
+        {
+            int       rays    = int(values.MaxOcclusionRaysPerFrame);
+            const int raysDef = int(DefaultMaxOcclusionRaysPerFrame);
+            if (PropertyGrid::Row("Max occlusion rays per frame",
+                                  "Rays the main thread casts per frame at most, shared by every occluded voice "
+                                  "(the most audible first); voices over the budget wait for a later frame",
+                                  rays != raysDef))
+            {
+                ImGui::PushID("Rays");
+                if (ImGui::DragInt("##value",
+                                   &rays,
+                                   0.25f,
+                                   1,
+                                   int(Spatial::MaxRaysPerFrameLimit),
+                                   "%d",
+                                   ImGuiSliderFlags_AlwaysClamp))
+                    values.MaxOcclusionRaysPerFrame = uint32_t(rays), changed = true;
+                m_AudioBoxes.Rays = last();
+                if (PropertyGrid::RowReset(rays != raysDef))
+                    values.MaxOcclusionRaysPerFrame = DefaultMaxOcclusionRaysPerFrame, changed = true;
+                ImGui::PopID();
+            }
+            int       stale    = int(values.OcclusionStaleFrames);
+            const int staleDef = int(DefaultOcclusionStaleFrames);
+            if (PropertyGrid::Row("Occlusion stale frames",
+                                  "How many frames a voice keeps its last occlusion result before it is cast again; "
+                                  "higher saves rays, lower follows moving walls sooner",
+                                  stale != staleDef))
+            {
+                ImGui::PushID("Stale");
+                if (ImGui::DragInt("##value",
+                                   &stale,
+                                   0.1f,
+                                   1,
+                                   int(Spatial::MaxStaleFramesLimit),
+                                   "%d frames",
+                                   ImGuiSliderFlags_AlwaysClamp))
+                    values.OcclusionStaleFrames = uint32_t(stale), changed = true;
+                m_AudioBoxes.Stale = last();
+                if (PropertyGrid::RowReset(stale != staleDef))
+                    values.OcclusionStaleFrames = DefaultOcclusionStaleFrames, changed = true;
+                ImGui::PopID();
+            }
+            PropertyGrid::EndGroup();
+        }
+        if (changed)
+        {
+            if (auto error = m_Audio.Apply(values, m_Engine, m_Assets))
+                m_AudioStatus = *error;
+            else
+            {
+                m_AudioSavePending = true;
+                if (m_AudioChanged)
+                    m_AudioChanged(m_Audio.Get());
+            }
         }
     }
 

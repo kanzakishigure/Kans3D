@@ -83,6 +83,8 @@ namespace Kans
         void DrawVariation();
         void DrawLimits();
         void DrawOutput();
+        // The Spatializer and Occlusion groups of a spatial event (ComponentEditors' shared rows).
+        void DrawSpatializer();
         bool RangeRow(const char* label, size_t index, AudioEventRange stored, const char* format, float speed);
         // Changes a copy of the event, committed at the end of the frame (rows keep reading the event
         // as it was); a continuous edit (a field held) joins the gesture.

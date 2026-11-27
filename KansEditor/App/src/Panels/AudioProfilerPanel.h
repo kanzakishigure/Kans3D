@@ -20,7 +20,8 @@ namespace Kans
     //  - Toolbar: Record (engine profiling on while recording; the previous state comes back when it
     //    stops), Pause view (freezes everything shown), Clear (history and log) and the 1 s / 10 s window.
     //  - Mixer load: callback time against its budget as a scrolling graph with the window's minimum,
-    //    average and peak, and the overrun count (red once any callback missed its budget).
+    //    average and peak, and the overrun count (red once any callback missed its budget); the Steam
+    //    Audio share of the last callback, and the occlusion rays cast this frame against their budget.
     //  - Tabs: Voices (one row per engine voice, filterable by text and state, sortable; a click selects
     //    the owning entity), Buses (per-bus and per-effect-slot time in the mixer's tree), Streams and
     //    memory (stream buffer fill, decode time and starvation, generator underruns, PCM memory) and
@@ -77,6 +78,8 @@ namespace Kans
             size_t Row = 0; // Voice row, bus row or log entry (0 = newest), by table.
             ImRect Box;
             float  TextX = 0; // Where the first column's text starts (bus indentation).
+            // Voices: the Spatializer, HRTF fallback, Occlusion and Transmission cells.
+            std::array<ImRect, 4> Spatial {};
         };
         struct Boxes
         {
@@ -86,6 +89,9 @@ namespace Kans
             std::array<ImRect, 4>                         States; // AudioProfiler::StateClass order.
             std::array<ImRect, AudioProfiler::EventKinds> Kinds;  // AudioProfileEventType order.
             std::vector<RowBox>                           Voices, Buses, Streams, Generators, Events;
+            ImRect                                        SteamAudio, Occlusion;
+            // The mixer section's Steam Audio time and occlusion row, as drawn.
+            char                                          SteamAudioText[64] {}, OcclusionText[160] {};
             bool                                          Unavailable = false;
         };
         const Boxes& GetBoxes() const { return m_Boxes; }

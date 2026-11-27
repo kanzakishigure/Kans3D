@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 #include "KansEditorCore/Audio/AudioPreviewCache.h"
+#include "KansEditorCore/Audio/AudioSpatialEditing.h"
 #include "KansEditorCore/EditorPanel.h"
 #include "KansEditorCore/Panels/ContentBrowser/AssetFileOperations.h"
 #include "KansEditorCore/Panels/ContentBrowser/BrowserModel.h"
@@ -282,6 +283,8 @@ namespace Kans
         // ---- audio ----
         AudioClipPreview* m_AudioPreview = nullptr;
         AudioPreviewCache m_AudioClips;
+        // Why the last import of a source failed (shown for HRTF data sets).
+        AudioSpatialEditing::ImportFailures m_ImportFailures;
         // ---- video ----
         VideoEditing::ClipInfoCache m_VideoClips;
 

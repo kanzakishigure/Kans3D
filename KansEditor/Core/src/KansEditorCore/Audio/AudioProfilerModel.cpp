@@ -286,6 +286,19 @@ namespace Kans::AudioProfiler
                     return num(double(x.Storage), double(y.Storage));
                 case VoiceColumn::Reason:
                     return std::strcmp(ReasonLabel(x.Reason), ReasonLabel(y.Reason));
+                case VoiceColumn::Spatializer:
+                    // Panning first, then HRTF by blend.
+                    return num(double(x.Spatializer) * 2 + x.SpatialBlend, double(y.Spatializer) * 2 + y.SpatialBlend);
+                case VoiceColumn::Fallback:
+                    return std::strcmp(FallbackLabel(x.HRTFFallback), FallbackLabel(y.HRTFFallback));
+                case VoiceColumn::Occlusion:
+                    return num(x.Acoustics.Occlusion, y.Acoustics.Occlusion);
+                case VoiceColumn::Transmission:
+                    // The mean band gain.
+                    return num(double(x.Acoustics.Transmission[0]) + x.Acoustics.Transmission[1] +
+                                   x.Acoustics.Transmission[2],
+                               double(y.Acoustics.Transmission[0]) + y.Acoustics.Transmission[1] +
+                                   y.Acoustics.Transmission[2]);
                 case VoiceColumn::Count:
                     break;
             }
@@ -339,6 +352,32 @@ namespace Kans::AudioProfiler
                 return "Stopping";
         }
         return "?";
+    }
+
+    const char* FallbackLabel(AudioHRTFFallback fallback)
+    {
+        switch (fallback)
+        {
+            case AudioHRTFFallback::None:
+                return "";
+            case AudioHRTFFallback::NonSpatial:
+                return "2D sound";
+            case AudioHRTFFallback::NonStereoOutput:
+                return "Not stereo";
+            case AudioHRTFFallback::SteamAudioUnavailable:
+                return "No Steam Audio";
+            case AudioHRTFFallback::EffectCreationFailed:
+                return "Effect failed";
+        }
+        return "?";
+    }
+
+    void FormatSpatializer(const AudioVoiceInfo& voice, char* out, size_t size)
+    {
+        if (voice.Spatializer == AudioSpatializer::HRTF)
+            std::snprintf(out, size, "HRTF %.2f", double(voice.SpatialBlend));
+        else
+            std::snprintf(out, size, "Panning");
     }
 
     const char* ReasonLabel(AudioVoiceReason reason)

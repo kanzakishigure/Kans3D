@@ -5701,6 +5701,8 @@ namespace Kans
         return m_Impl->Config.DefaultOcclusion.Resolve();
     }
 
+    uint32_t AudioEngine::GetMaxOcclusionRaysPerFrame() const { return m_Impl->Config.MaxOcclusionRaysPerFrame; }
+
     void AudioEngine::SetOcclusionQuery(const AudioOcclusionQuery& query)
     {
         auto& p = *m_Impl;

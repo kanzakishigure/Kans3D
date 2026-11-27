@@ -69,6 +69,43 @@ namespace Kans::ComponentEditors
         std::string ListenerSlot; // "Listener 1", "Inactive — over the limit of 4"...
     };
     AudioCardBoxes& LastAudioCardBoxes();
+    // The Spatializer and Occlusion rows (Audio Source card, AudioEvent editor, Project Settings > Audio),
+    // as the last frame drew them: each row's value and its override toggle, the items of an open list
+    // (the spatializer's -1 is Inherit, the layer list's 32 is Everything and 33 Nothing) and the
+    // Play-mode readouts. A row not drawn has an empty rectangle.
+    struct AudioSpatialBoxes
+    {
+        struct Field
+        {
+            ImRect Value, Override;
+        };
+        ImRect                                   Spatializer, Blend;
+        std::vector<std::pair<int, ImRect>>      SpatializerItems, ModeItems, TransmissionItems;
+        std::vector<std::pair<uint32_t, ImRect>> LayerItems;
+        Field       Mode, Radius, Samples, Transmission, OcclusionStrength, TransmissionStrength, Layers;
+        std::string StereoHint; // The non-stereo note, as drawn ("" when none).
+        // Play readouts: the spatializer heard (and why a HRTF voice is panned), occlusion, transmission bands.
+        std::string LiveSpatializer, LiveOcclusion, LiveTransmission;
+    };
+    AudioSpatialBoxes& LastAudioSpatialBoxes();
+    // A spatializer dropdown: Inherit (showing `inherited` and where it comes from), Panning, HRTF.
+    bool AudioSpatializerRow(std::optional<AudioSpatializer>& value, AudioSpatializer inherited, const char* from);
+    // The occlusion settings: each row's toggle overrides the value `event` (when it sets the field) or
+    // `fallback` (named `fallbackName`, e.g. "the project default") would give. Source radius and samples
+    // show for Volumetric only, a strength only while its mode is on. True when changed.
+    bool AudioOcclusionRows(AudioOcclusionOverrides&       value,
+                            const AudioOcclusionOverrides* event,
+                            const AudioOcclusionSettings&  fallback,
+                            const char*                    fallbackName);
+    // The physics material editor's Acoustics rows: the preset dropdown (a choice fills the values; any
+    // other values read Custom), absorption and transmission per band, scattering. True when changed.
+    struct AcousticBoxes
+    {
+        ImRect                              Preset, Absorption[3], Transmission[3], Scattering;
+        std::vector<std::pair<int, ImRect>> PresetItems;
+        std::string                         PresetLabel;
+    };
+    bool AcousticMaterialRows(AcousticMaterial& material, AcousticBoxes* boxes = nullptr);
     // Whether `bus` is a bus of `engine`'s layout (the default layout without one).
     bool HasAudioBus(const AudioEngine* engine, const std::string& bus);
     // The mixer bus a sound plays through as a grid row: a dropdown of `engine`'s buses (the default

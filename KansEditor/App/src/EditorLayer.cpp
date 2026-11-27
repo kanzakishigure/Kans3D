@@ -209,6 +209,9 @@ namespace Kans
         m_RenderTexturePanel.Bind(nullptr);
         m_MaterialParameterCollectionPanel.Bind(nullptr);
         m_ProjectSettingsPanel.Bind({});
+        m_ProjectSettingsPanel.SetAudio(nullptr, nullptr);
+        m_ProjectSettingsPanel.SetAssetChoices({});
+        m_ProjectSettingsPanel.SetAudioChangedCallback({});
         m_PluginsPanel.Bind({});
         m_UIDesignerPanel.Bind(nullptr);
         m_MaterialEditorPanel.Bind(nullptr);
@@ -250,6 +253,7 @@ namespace Kans
             m_Viewport->SetAssetManager(nullptr);
             m_ViewportPanel.SetAssetManager(nullptr);
             m_PropertiesPanel.SetAssetManager(nullptr);
+            m_ProjectSettingsPanel.SetAudio(AudioSystem::Get(), nullptr);
             m_PropertiesPanel.SetRenderAssets({});
             m_MaterialEditorPanel.SetAssetManager(nullptr);
             m_TimelinePanel.SetAssetManager(nullptr);

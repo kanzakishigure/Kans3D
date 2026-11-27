@@ -8,6 +8,7 @@
 #include "Kans3D/Asset/AssetRegistry.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Components/ComponentEditors.h"
+#include "KansEditorCore/Audio/AudioSpatialEditing.h"
 #include "KansEditorCore/EditorAssetImportService.h"
 #include "KansEditorCore/UI/SourceBuild.h"
 #include "UI/AudioWaveform.h"
@@ -275,6 +276,7 @@ namespace Kans
     {
         m_Focused          = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         m_Boxes            = {};
+        ComponentEditors::LastAudioSpatialBoxes() = {};
         const bool playing = m_PlayMode && m_PlayMode();
         if (playing)
             m_Preview.Stop();
@@ -302,6 +304,7 @@ namespace Kans
         DrawVariation();
         DrawLimits();
         DrawOutput();
+        DrawSpatializer();
         CommitPending();
         if (!ImGui::IsAnyItemActive())
             m_Document.EndGesture();
@@ -844,5 +847,56 @@ namespace Kans
                 ImGui::PopStyleVar();
         }
         PropertyGrid::EndGroup();
+    }
+
+    void AudioEventEditorPanel::DrawSpatializer()
+    {
+        static const AudioEventData defaults;
+        const auto&                 data = m_Document.Get();
+        // A 2D event has no direction to spatialize and no path to occlude.
+        if (!data.Spatial)
+            return;
+        auto&       boxes   = ComponentEditors::LastAudioSpatialBoxes();
+        const bool  live    = m_Engine && m_Engine->IsInitialized();
+        const auto  project = live ? m_Engine->GetDefaultSpatializer() : AudioSpatializer::Panning;
+        const char* from    = "the project default (Project Settings > Audio)";
+        if (PropertyGrid::BeginGroup("Spatializer"))
+        {
+            auto spatializer = data.Spatializer;
+            if (ComponentEditors::AudioSpatializerRow(spatializer, project, from))
+                Edit([spatializer](AudioEventData& next) { next.Spatializer = spatializer; });
+            const auto resolved = spatializer.value_or(project);
+            if (resolved == AudioSpatializer::HRTF)
+            {
+                float      blend    = data.SpatialBlend;
+                const bool modified = blend != defaults.SpatialBlend;
+                if (PropertyGrid::Row(
+                        "Spatial blend", "0 pans, 1 is fully binaural; values between mix the two", modified))
+                {
+                    ImGui::PushID("SpatialBlend");
+                    if (ImGui::SliderFloat("##value", &blend, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+                        Edit([blend](AudioEventData& next) { next.SpatialBlend = std::clamp(blend, 0.0f, 1.0f); });
+                    boxes.Blend = LastItem();
+                    if (PropertyGrid::RowReset(modified))
+                        Edit([](AudioEventData& next) { next.SpatialBlend = 1.0f; });
+                    ImGui::PopID();
+                }
+            }
+            if (const char* hint = AudioSpatialEditing::StereoHint(resolved, m_Engine); hint && PropertyGrid::Row(""))
+            {
+                boxes.StereoHint = hint;
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(EditorTheme::Colors().Warning, ICON_FA_TRIANGLE_EXCLAMATION " %s", hint);
+            }
+            PropertyGrid::EndGroup();
+        }
+        if (PropertyGrid::BeginGroup("Occlusion"))
+        {
+            auto occlusion = data.Occlusion;
+            if (ComponentEditors::AudioOcclusionRows(
+                    occlusion, nullptr, live ? m_Engine->GetOcclusionDefaults() : AudioOcclusionSettings {}, from))
+                Edit([occlusion](AudioEventData& next) { next.Occlusion = occlusion; });
+            PropertyGrid::EndGroup();
+        }
     }
 } // namespace Kans

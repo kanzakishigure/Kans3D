@@ -9,6 +9,7 @@
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "KansEditorCore/Audio/AudioEditing.h"
+#include "KansEditorCore/Audio/AudioSpatialEditing.h"
 #include "KansEditorCore/EditorResources.h"
 #include "UI/EditorIcons.h"
 #include "UI/PropertyGrid.h"
@@ -189,6 +190,7 @@ namespace Kans
                     return p.TypeScene;
                 case Browser::AssetKind::AudioAttenuation:
                 case Browser::AssetKind::AudioEvent:
+                case Browser::AssetKind::AudioHRTF:
                 case Browser::AssetKind::Audio:
                     return p.TypeAudio;
                 case Browser::AssetKind::Font:
@@ -1613,6 +1615,26 @@ namespace Kans
                 for (const auto& [key, value] : source.Import.Settings)
                     settings += (settings.empty() ? "" : "\n") + key + " = " + value;
                 PropertyGrid::Text("Settings", settings.empty() ? "Defaults" : settings, settings.empty());
+                // A HRTF data set: its one import option, and why its last import failed.
+                if (AudioSpatialEditing::IsHRTFFile(path))
+                {
+                    PropertyGrid::Text("Normalize", AudioSpatialEditing::NormalizeVolumeText(source.Import.Settings));
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Normalize volume: evens out the measured responses' loudness (Settings)");
+                    if (m_Service)
+                    {
+                        auto snapshot = m_Service->GetSnapshot();
+                        if (const auto* value = std::get_if<EditorAssetImportSnapshot>(&snapshot))
+                            m_ImportFailures.Observe(*value);
+                    }
+                    if (const auto* reason = m_ImportFailures.Find(source.sourceAssetID);
+                        reason && PropertyGrid::Row("Import error"))
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().Danger);
+                        ImGui::TextWrapped(ICON_FA_TRIANGLE_EXCLAMATION " %s", reason->c_str());
+                        ImGui::PopStyleColor();
+                    }
+                }
                 PropertyGrid::Row("Status");
                 ImGui::AlignTextToFramePadding();
                 if (status->Products)

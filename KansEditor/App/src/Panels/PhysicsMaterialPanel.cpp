@@ -79,6 +79,13 @@ namespace Kans
             PropertyGrid::EndGroup();
         }
         ImGui::TextDisabled("Combine: how two touching surfaces' values mix (the higher mode of the pair wins).");
+        // How the surface treats sound: audio occlusion transmits through it by these bands.
+        if (PropertyGrid::BeginGroup("Acoustics"))
+        {
+            if (ComponentEditors::AcousticMaterialRows(m_Values.Acoustics, &m_Acoustic))
+                m_Dirty = !(m_Values == m_Saved);
+            PropertyGrid::EndGroup();
+        }
         if (m_Dirty && m_Focused && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false))
             Save();
     }

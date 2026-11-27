@@ -2,8 +2,10 @@
 #include <cmath>
 #include <functional>
 #include "Kans3D/Asset/Manager/AssetManager.h"
+#include "Kans3D/Audio/AudioEngine.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "Kans3D/Scene/Components.h"
+#include "Kans3D/Scene/Scene.h"
 #include "KansEditorCore/Audio/AudioEditing.h"
 #include "UI/EditorIcons.h"
 #include "ViewportPanel.h"
@@ -39,10 +41,56 @@ namespace Kans
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Draw every audio source's shape and range and every reverb zone, not only the "
                               "selection's");
+        ImGui::Checkbox(ICON_FA_EAR_LISTEN "  Occlusion rays (playing)", &m_ShowOcclusionRays);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Draw the rays audio occlusion casts from each listener to its sources: green "
+                              "where clear, red past the first hit, hit points marked");
+    }
+
+    void ViewportPanel::UpdateOcclusionRays()
+    {
+        // The engine's debug hook records the rays while the toggle is on; queries run while the scene
+        // plays (edit mode casts none).
+        AudioEngine* engine = m_Scene ? m_Scene->GetAudioEngine() : nullptr;
+        if (m_ShowOcclusionRays && engine && engine->IsInitialized())
+            m_OcclusionRays.Install(*engine);
+        else if (m_OcclusionRays.GetEngine())
+            m_OcclusionRays.Remove();
+    }
+
+    void ViewportPanel::DrawOcclusionRays(ImDrawList* draw)
+    {
+        if (!m_OcclusionRays.GetEngine())
+            return;
+        const auto&     colors         = EditorTheme::Colors();
+        const ImU32     clear          = ImGui::ColorConvertFloat4ToU32(colors.Success);
+        const ImU32     blocked        = ImGui::ColorConvertFloat4ToU32(colors.Danger);
+        const glm::mat4 viewProjection = ViewProjection();
+        for (size_t i = 0; i < m_OcclusionRays.Size(); ++i)
+        {
+            const auto& ray = m_OcclusionRays.At(i);
+            OverlaySegment(draw, ray.Start, ray.ClearEnd(), clear, EditorTheme::Px(1.5f));
+            if (!ray.Blocked())
+                continue;
+            OverlaySegment(draw, ray.ClearEnd(), ray.End, blocked, EditorTheme::Px(1.5f));
+            for (uint32_t h = 0; h < ray.HitCount; ++h)
+            {
+                const glm::vec4 clip = viewProjection * glm::vec4(ray.Hits[h], 1.0f);
+                if (clip.w <= 1e-3f)
+                    continue;
+                const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+                const ImVec2    at {m_Min.x + (ndc.x * 0.5f + 0.5f) * (m_Max.x - m_Min.x),
+                                    m_Min.y + (0.5f - ndc.y * 0.5f) * (m_Max.y - m_Min.y)};
+                draw->AddCircleFilled(at, EditorTheme::Px(3.5f), blocked);
+                draw->AddCircle(at, EditorTheme::Px(3.5f), IM_COL32(20, 20, 20, 255), 0, 1.0f);
+            }
+        }
+        m_OcclusionRays.EndFrame();
     }
 
     void ViewportPanel::DrawAudioOverlay()
     {
+        UpdateOcclusionRays();
         if (!m_Scene || UsesSceneCamera())
             return;
         Scene&     scene    = *m_Scene;
@@ -119,6 +167,7 @@ namespace Kans
         }
         if (selected)
             drawEntity(selected, true);
+        DrawOcclusionRays(draw);
         draw->PopClipRect();
         // Handles edit authored data, so not while the scene runs.
         if (selected && !m_Playing && !m_MeshTool.IsEditing(selected) && !IsPaintingCloth())

@@ -4,20 +4,21 @@
 #include <functional>
 #include <optional>
 #include <variant>
-#include "KansEditorCore/EditorCamera.h"
 #include "Kans3D/UI/UIInput.h"
 #include "ClothPaintTool.h"
+#include "HierarchyPanel.h"
+#include "KansEditorCore/Audio/AudioSpatialEditing.h"
+#include "KansEditorCore/EditorCamera.h"
 #include "KansEditorCore/Gizmo/GizmoTargets.h"
 #include "KansEditorCore/Gizmo/Handles.h"
 #include "KansEditorCore/Gizmo/ModalTransform.h"
 #include "KansEditorCore/Gizmo/TransformGizmo.h"
 #include "KansEditorCore/Gizmo/ViewCube.h"
-#include "HierarchyPanel.h"
+#include "KansEditorCore/Physics/VehicleFieldEditing.h"
+#include "KansEditorCore/ViewportClient.h"
 #include "MeshEditTool.h"
 #include "Panels/VfxGizmos.h"
-#include "KansEditorCore/Physics/VehicleFieldEditing.h"
 #include "UI/DragCapture.h"
-#include "KansEditorCore/ViewportClient.h"
 
 namespace Kans
 {
@@ -85,6 +86,11 @@ namespace Kans
         // The View menu's "Audio" toggle: every source's and reverb zone's gizmo, not only the selection's.
         void SetShowAllAudio(bool show) { m_ShowAllAudio = show; }
         bool ShowsAllAudio() const { return m_ShowAllAudio; }
+        // The View menu's "Occlusion rays" toggle: while on, the scene's audio engine reports the rays its
+        // occlusion casts (in Play) and the view draws them. Off removes the engine's hook.
+        void                                             SetShowOcclusionRays(bool show) { m_ShowOcclusionRays = show; }
+        bool                                             ShowsOcclusionRays() const { return m_ShowOcclusionRays; }
+        const AudioSpatialEditing::OcclusionRayRecorder& GetOcclusionRays() const { return m_OcclusionRays; }
         // The toolbar's gizmo size, pick radius and snapping (other viewports' handles use them).
         Gizmo::Settings ToolbarSettings() const { return GizmoSettings(); }
 
@@ -187,6 +193,8 @@ namespace Kans
         void DrawAudioOverlay();
         void DrawAudioMenu();
         void AudioHandles(Entity selected);
+        void UpdateOcclusionRays();
+        void DrawOcclusionRays(ImDrawList* draw);
         // The selected particle entity's VFX handles (declared with the others), and their update
         // and draws once the hover is resolved.
         void VfxHandles(Entity selected);
@@ -263,7 +271,8 @@ namespace Kans
         Gizmo::Input               m_HandleInput;
         VfxGizmos::SceneHandles*   m_VfxHandles = nullptr;
         AssetManager*              m_Assets       = nullptr;
-        bool                       m_ShowAllAudio = false;
+        bool                                      m_ShowAllAudio = false, m_ShowOcclusionRays = false;
+        AudioSpatialEditing::OcclusionRayRecorder m_OcclusionRays;
         bool                       m_VfxDeclared = false;
         // Modal G/R/S and what it transforms; whether one ran this frame (its keys and clicks
         // then do nothing else).

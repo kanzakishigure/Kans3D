@@ -397,6 +397,8 @@ namespace Kans
         AudioOcclusionResult GetVoiceOcclusion(AudioVoiceHandle) const;
         void SetOcclusionDefaults(const AudioOcclusionOverrides&, uint32_t budget, uint32_t staleFrames);
         AudioOcclusionSettings GetOcclusionDefaults() const;
+        // The ray budget SetOcclusionDefaults set (the profiler shows rays against it).
+        uint32_t               GetMaxOcclusionRaysPerFrame() const;
         void                   SetOcclusionQuery(const AudioOcclusionQuery&);
         void                   ClearOcclusionQuery(const void* context);
         void                   SetOcclusionDebugDraw(AudioOcclusionDebugDraw, void* context = nullptr);
