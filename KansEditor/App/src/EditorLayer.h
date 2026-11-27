@@ -29,6 +29,7 @@
 #include "Panels/AudioAttenuationEditorPanel.h"
 #include "Panels/AudioEventEditorPanel.h"
 #include "Panels/AudioMixerPanel.h"
+#include "Panels/AudioProfilerPanel.h"
 #include "Panels/ContentBrowserPanel.h"
 #include "Panels/FrameGraphPanel.h"
 #include "Panels/HierarchyPanel.h"
@@ -77,6 +78,7 @@ namespace Kans
         inline constexpr const char* AudioEvent                   = "AudioEvent";
         inline constexpr const char* AudioAttenuation             = "AudioAttenuation";
         inline constexpr const char* ActionMarkers                = "ActionMarkers";
+        inline constexpr const char* AudioProfiler                = "AudioProfiler";
     } // namespace PanelID
 
     class EditorLayer : public Kans::Layer
@@ -407,6 +409,7 @@ namespace Kans
         ProjectSettingsPanel m_ProjectSettingsPanel;
         PhysicsMaterialPanel m_PhysicsMaterialPanel;
         AudioMixerPanel                  m_AudioMixerPanel;
+        AudioProfilerPanel                       m_AudioProfilerPanel;
         AudioEventEditorPanel                    m_AudioEventPanel;
         AudioAttenuationEditorPanel              m_AudioAttenuationPanel;
         ActionMarkersPanel                       m_ActionMarkersPanel;

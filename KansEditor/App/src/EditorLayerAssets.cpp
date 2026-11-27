@@ -119,6 +119,7 @@ namespace Kans
         m_TimelinePanel.Bind(m_AssetImports.get());
         m_PhysicsMaterialPanel.Bind(m_AssetImports.get());
         m_AudioMixerPanel.Bind(AudioSystem::Get(), m_AssetImports.get(), m_ProjectFile);
+        m_AudioProfilerPanel.Bind(AudioSystem::Get());
         m_AudioMixerPanel.SetProjectLayout(config.AudioBusLayout);
         // The panel already plays the layout; the hot reload follows the new reference from now on.
         m_AudioMixerPanel.SetProjectLayoutCallback([this](AssetID layout) { m_ProjectConfig.AudioBusLayout = layout; });
@@ -303,6 +304,7 @@ namespace Kans
         m_RagdollEditor.SetAssetChoices(choices);
         m_AudioEventPanel.SetAssetChoices(choices);
         m_ActionMarkersPanel.SetAssetChoices(choices);
+        m_AudioProfilerPanel.SetAssetChoices(choices);
         m_AudioEventNames.clear();
         for (const auto& choice : choices)
             if (choice.Type == AssetType::AudioEvent)

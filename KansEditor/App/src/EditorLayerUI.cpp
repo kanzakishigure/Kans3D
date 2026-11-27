@@ -74,6 +74,15 @@ namespace Kans
                           [this] { m_Console.Draw(); });
         m_Panels.Register(spec(PanelID::Stats, "Stats", ICON_FA_CHART_LINE, PanelCategory::Debug, PanelDock::Left, true),
                           [this] { DrawStats(); });
+        m_Panels.Register(spec(PanelID::AudioProfiler,
+                               "Audio Profiler",
+                               ICON_FA_CHART_LINE,
+                               PanelCategory::Debug,
+                               PanelDock::Bottom,
+                               false),
+                          [this] { m_AudioProfilerPanel.Draw(); });
+        m_AudioProfilerPanel.SetSceneProvider([this] { return m_ActiveScene.get(); });
+        m_AudioProfilerPanel.SetSelectEntity([this](Entity entity) { m_HierarchyPanel.SetSelected(entity); });
         auto frameGraph  = spec(PanelID::FrameGraph, "Frame Graph", ICON_FA_DRAW_POLYGON, PanelCategory::Debug,
                                PanelDock::Floating, false);
         frameGraph.Flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;

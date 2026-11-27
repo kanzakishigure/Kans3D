@@ -197,6 +197,7 @@ namespace Kans
         m_TimelinePanel.Bind(nullptr);
         m_PhysicsMaterialPanel.Bind(nullptr);
         m_AudioMixerPanel.Bind(nullptr, nullptr, {});
+        m_AudioProfilerPanel.Bind(nullptr);
         m_AudioMixerPanel.SetProjectLayoutCallback({});
         m_AudioEventPanel.Bind(nullptr, nullptr, nullptr);
         m_AudioAttenuationPanel.Bind(nullptr);
