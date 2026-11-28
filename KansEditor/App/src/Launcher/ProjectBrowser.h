@@ -1,10 +1,11 @@
 #pragma once
+#include <imgui.h>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
-#include <imgui.h>
 #include "Kans3D/Project/RecentProjects.h"
 #include "KansEditorCore/Launcher/LauncherModel.h"
 #include "KansEditorCore/Panels/ContentBrowser/ThumbnailCache.h"
@@ -39,6 +40,11 @@ namespace Kans
         const std::string& GetError() const { return m_Error; }
         // Shows `error` there (the Hub's failed editor launch).
         void SetError(std::string error) { m_Error = std::move(error); }
+        // Adds "Benchmark..." to the recent cards' menus (the Hub only): `action` gets the .kproj.
+        void SetBenchmarkAction(std::function<void(const std::filesystem::path&)> action)
+        {
+            m_Benchmark = std::move(action);
+        }
 
     private:
         // What a recent entry shows besides its name: the project's thumbnail, if any.
@@ -72,6 +78,7 @@ namespace Kans
         // Thumbnail textures load when first drawn and go with the browser.
         std::unique_ptr<Browser::ThumbnailCache> m_Thumbnails;
         bool                                  m_ScrollToSelection = false;
+        std::function<void(const std::filesystem::path&)> m_Benchmark;
         enum class BrowseTarget
         {
             None,

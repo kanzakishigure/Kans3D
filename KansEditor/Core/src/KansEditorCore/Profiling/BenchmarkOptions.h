@@ -19,6 +19,7 @@ namespace Kans::Benchmark
         uint32_t              Frames = 360, Warmup = 120;
         uint32_t              Width = 2560, Height = 1440;
         std::filesystem::path Output           = "benchmark.json", Baseline;
+        std::filesystem::path Progress; // --benchmark-progress: see BenchmarkProgress.h.
         double                ThresholdPercent = 5;
         ComplexOptions        Complex;
     };

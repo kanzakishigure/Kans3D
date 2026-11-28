@@ -471,6 +471,8 @@ namespace Kans
             Widgets::PushMenuStyle();
             if (Widgets::IconMenuItem(ICON_FA_FOLDER_OPEN, "Open", nullptr, false, info.Exists))
                 Request(entry.ProjectFile);
+            if (m_Benchmark && Widgets::IconMenuItem(ICON_FA_GAUGE_HIGH, "Benchmark...", nullptr, false, info.Exists))
+                m_Benchmark(entry.ProjectFile);
             if (Widgets::IconMenuItem(ICON_FA_XMARK, "Remove from List"))
                 remove = index;
             Widgets::PopMenuStyle();

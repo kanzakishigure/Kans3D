@@ -22,6 +22,7 @@ namespace Kans
 
         virtual void Init() override;
         virtual void ProcessEvents() override;
+        void         WaitEvents(double timeoutSeconds) override;
         virtual void SwapBuffers() override;
 
         WindowSize      GetSize() const override;
@@ -146,6 +147,7 @@ namespace Kans
     private:
         virtual void Shutdown();
         void         UpdateNormalRectangle();
+        void         HandleEvents(double waitSeconds); // Negative: poll without waiting.
         void         ApplyPlacement(const WindowPlacement& placement);
 
     private:

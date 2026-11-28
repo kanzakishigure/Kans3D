@@ -22,6 +22,7 @@
 #define ICON_FA_GEAR                   "\xef\x80\x93" // U+F013
 #define ICON_FA_TERMINAL               "\xef\x84\xa0" // U+F120
 #define ICON_FA_CHART_LINE             "\xef\x88\x81" // U+F201
+#define ICON_FA_GAUGE_HIGH "\xef\x98\xa5"             // U+F625
 #define ICON_FA_FOLDER_TREE            "\xef\xa0\x82" // U+F802
 #define ICON_FA_LIST                   "\xef\x80\xba" // U+F03A
 #define ICON_FA_SLIDERS                "\xef\x87\x9e" // U+F1DE

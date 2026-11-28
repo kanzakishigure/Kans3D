@@ -1,19 +1,37 @@
 #include "LauncherLayer.h"
 #include <imgui.h>
+#include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/ImGui/EditorTheme.h"
 #include "KansEditorCore/Launcher/EditorProcess.h"
 
 namespace Kans
 {
+    namespace
+    {
+        std::filesystem::path EditorExecutable()
+        {
+            try
+            {
+                return KansFileSystem::GetExecutablePath();
+            }
+            catch (const std::exception&)
+            {
+                return {}; // Starting a run then reports that the program cannot be started.
+            }
+        }
+    } // namespace
+
     LauncherLayer::LauncherLayer(std::filesystem::path                          templatesDir,
                                  std::shared_ptr<Launcher::WindowPlacementFlow> placements,
                                  Launcher::EditorLauncher                       launch,
-                                 InProcessOpener                                openInProcess)
-        : Layer("LauncherLayer"), m_Browser(std::move(templatesDir)), m_Placements(std::move(placements)),
-          m_Launch(std::move(launch)), m_OpenInProcess(std::move(openInProcess))
+                                 InProcessOpener                                openInProcess) :
+        Layer("LauncherLayer"), m_Browser(std::move(templatesDir)), m_Benchmark(EditorExecutable()),
+        m_Placements(std::move(placements)), m_Launch(std::move(launch)), m_OpenInProcess(std::move(openInProcess))
     {
         if (!m_Placements)
             m_Placements = std::make_shared<Launcher::WindowPlacementFlow>();
+        // Benchmarks start only here: a run from a running editor would measure that editor too.
+        m_Browser.SetBenchmarkAction([this](const std::filesystem::path& project) { m_Benchmark.Open(project); });
     }
 
     void LauncherLayer::OnAttach()
@@ -26,6 +44,7 @@ namespace Kans
     void LauncherLayer::OnDetach()
     {
         m_Titlebar.Detach();
+        Application::Get().SetEventWait(std::nullopt);
         // Closing the Hub keeps where it was; a launch already did.
         if (!m_Launched)
             m_Placements->Remember(Application::Get().GetWindow().GetPlacement());
@@ -53,7 +72,19 @@ namespace Kans
             RunTitlebarButton(button);
         }
         auto chosen = m_Browser.Draw();
+        m_Benchmark.Draw();
         ImGui::End();
+
+        // While a run goes on in its own process the Hub sleeps on window events and redraws
+        // only when the run's progress changes or on input.
+        auto& application = Application::Get();
+        if (m_Benchmark.IsRunning() != application.IsWaitingForEvents())
+        {
+            if (m_Benchmark.IsRunning())
+                application.SetEventWait(EventWait {0.1, [this] { return m_Benchmark.Poll(); }});
+            else
+                application.SetEventWait(std::nullopt);
+        }
 
         if (chosen && !m_Launched && m_OpenInProcess && EditorProcess::OpensInProcess())
         {

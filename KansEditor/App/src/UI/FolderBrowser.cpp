@@ -24,9 +24,10 @@ namespace Kans
         }
     } // namespace
 
-    void FolderBrowser::Open(Mode mode, const fs::path& start, const char* title)
+    void FolderBrowser::Open(Mode mode, const fs::path& start, const char* title, std::string extension)
     {
         m_Mode          = mode;
+        m_Extension     = std::move(extension);
         m_Title         = title;
         m_OpenRequested = true;
         // Start at the nearest folder that still exists.
@@ -59,6 +60,8 @@ namespace Kans
                 m_Entries.push_back({name, it->path(), project});
             }
             else if (m_Mode == Mode::Project && it->path().extension() == ".kproj")
+                m_Entries.push_back({name, it->path(), true});
+            else if (m_Mode == Mode::File && it->path().extension() == fs::u8path(m_Extension))
                 m_Entries.push_back({name, it->path(), true});
         }
         if (ec)
@@ -131,6 +134,9 @@ namespace Kans
                 navigate = typed;
             else if (m_Mode == Mode::Project && typed.extension() == ".kproj" && fs::is_regular_file(typed, ec))
                 chosen = typed;
+            else if (m_Mode == Mode::File && typed.extension() == fs::u8path(m_Extension) &&
+                     fs::is_regular_file(typed, ec))
+                chosen = typed;
             else
                 m_Error = "Folder not found.";
         }
@@ -139,11 +145,16 @@ namespace Kans
         if (ImGui::BeginChild("##Folders", {0, -footer}, ImGuiChildFlags_Borders))
         {
             if (m_Entries.empty())
-                ImGui::TextDisabled(m_Mode == Mode::Project ? "No folders or projects here." : "No folders here.");
+                ImGui::TextDisabled(m_Mode == Mode::Project ? "No folders or projects here." :
+                                    m_Mode == Mode::File    ? "No folders or matching files here." :
+                                                              "No folders here.");
             for (const auto& entry : m_Entries)
             {
                 ImGui::PushID(entry.Name.c_str());
-                const auto label = std::string(entry.Project ? ICON_FA_CUBE "  " : ICON_FA_FOLDER "  ") + entry.Name;
+                const char* icon  = !entry.Project       ? ICON_FA_FOLDER "  " :
+                                    m_Mode == Mode::File ? ICON_FA_FILE "  " :
+                                                           ICON_FA_CUBE "  ";
+                const auto  label = std::string(icon) + entry.Name;
                 if (entry.Project)
                     ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Colors().AccentHover);
                 if (ImGui::Selectable(label.c_str(), m_Selected == entry.Path, ImGuiSelectableFlags_AllowDoubleClick))
@@ -170,12 +181,21 @@ namespace Kans
             ImGui::TextDisabled("%s", (m_Selected.empty() ? m_Directory : m_Selected).u8string().c_str());
 
         // Right-aligned actions; the main one acts on the selection, else the current folder.
-        const char* accept      = m_Mode == Mode::Project ? "Open" : "Select Folder";
+        const char* accept = m_Mode == Mode::Project ? "Open" : m_Mode == Mode::File ? "Select File" : "Select Folder";
+        // A file browser chooses a file, never the folder it shows.
+        bool selectedFile = false;
+        for (const auto& entry : m_Entries)
+            selectedFile |= entry.Project && entry.Path == m_Selected;
+        const bool  canAccept   = m_Mode != Mode::File || selectedFile;
         const float acceptWidth = ImGui::CalcTextSize(accept).x + ImGui::GetStyle().FramePadding.x * 2.0f;
         const float cancelWidth = ImGui::CalcTextSize("Cancel").x + ImGui::GetStyle().FramePadding.x * 2.0f;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - acceptWidth - cancelWidth -
                              ImGui::GetStyle().ItemSpacing.x);
-        if (ImGui::Button(accept) || (!pathSubmitted && !ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_Enter, false)))
+        ImGui::BeginDisabled(!canAccept);
+        const bool accepted = ImGui::Button(accept);
+        ImGui::EndDisabled();
+        if (canAccept &&
+            (accepted || (!pathSubmitted && !ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_Enter, false))))
             chosen = m_Selected.empty() ? m_Directory : m_Selected;
         ImGui::SameLine();
         if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false))

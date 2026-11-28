@@ -2,6 +2,7 @@
 #include <memory>
 #include <Kans3D.h>
 #include "KansEditorCore/Launcher/WindowPlacementFlow.h"
+#include "Launcher/BenchmarkWindow.h"
 #include "Launcher/ProjectBrowser.h"
 #include "UI/Titlebar.h"
 
@@ -27,6 +28,7 @@ namespace Kans
 
     private:
         ProjectBrowser                                  m_Browser;
+        BenchmarkWindow                                 m_Benchmark;
         std::shared_ptr<Launcher::WindowPlacementFlow> m_Placements;
         Launcher::EditorLauncher                        m_Launch;
         InProcessOpener                                 m_OpenInProcess;

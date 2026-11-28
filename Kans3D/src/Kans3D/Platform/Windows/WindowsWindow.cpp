@@ -122,11 +122,22 @@ namespace Kans
             glfwDestroyWindow(m_Window);
         m_Window = nullptr;
     }
-    void WindowsWindow::ProcessEvents()
+    void WindowsWindow::ProcessEvents() { HandleEvents(-1.0); }
+
+    void WindowsWindow::WaitEvents(double timeoutSeconds)
+    {
+        // A pending placement is applied over the next polls; it must not wait for input.
+        HandleEvents(m_PendingPlacement ? -1.0 : timeoutSeconds);
+    }
+
+    void WindowsWindow::HandleEvents(double waitSeconds)
     {
         KANS_PROFILE_FUNCTION();
         UpdateNormalRectangle();
-        glfwPollEvents();
+        if (waitSeconds < 0)
+            glfwPollEvents();
+        else
+            glfwWaitEventsTimeout(waitSeconds);
         if (m_PendingPlacement)
         {
             if (IsMaximized() || IsMinimized())

@@ -16,6 +16,7 @@
 #include "Kans3D/UI/UIAsset.h"
 #include "Kans3D/VFX/VfxSystemAsset.h"
 #include "KansEditorCore/EditorAssetImportService.h"
+#include "KansEditorCore/Profiling/BenchmarkProgress.h"
 #include "KansEditorCore/Profiling/BenchmarkScene.h"
 #include "KansEditorCore/Profiling/FrameProfilerModel.h"
 
@@ -348,8 +349,14 @@ namespace Kans::Benchmark
             FrameStatistics              effective;
 
             const uint64_t end = uint64_t(options.Warmup) + options.Frames;
+            ProgressWriter progress(options.Progress);
             for (uint64_t i = 0; i < end; ++i)
             {
+                // Written between frames, outside the measured CPU time.
+                if (i < options.Warmup)
+                    progress.Report(Phase::Warmup, uint32_t(i), options.Warmup);
+                else
+                    progress.Report(Phase::Measuring, uint32_t(i - options.Warmup), options.Frames);
                 KANS_PROFILE_SCOPE("Benchmark frame");
                 const bool measured    = i >= options.Warmup;
                 const auto frame       = i + 1;
@@ -401,6 +408,7 @@ namespace Kans::Benchmark
                 KANS_PROFILE_FRAME();
             }
 
+            progress.Report(Phase::Measuring, options.Frames, options.Frames);
             // EndFrame retires the headless submission. Poll the final sample without rendering a tail frame.
             auto& profiler = target.GetFrameProfiler();
             profiler.Poll(target.GetFrameNumber() + 1);

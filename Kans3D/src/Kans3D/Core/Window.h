@@ -28,6 +28,8 @@ namespace Kans
 
         virtual void Init()          = 0;
         virtual void ProcessEvents() = 0;
+        // ProcessEvents after sleeping until an event arrives or `timeoutSeconds` pass.
+        virtual void WaitEvents(double timeoutSeconds);
         virtual void SwapBuffers()   = 0;
 
         // Client sizes and positions use GLFW screen coordinates, not framebuffer pixels.

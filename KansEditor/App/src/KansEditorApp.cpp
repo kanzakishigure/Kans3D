@@ -16,6 +16,7 @@
 #include "KansEditorCore/Launcher/EditorProcess.h"
 #include "KansEditorCore/Launcher/LauncherModel.h"
 #include "KansEditorCore/Launcher/WindowPlacementFlow.h"
+#include "KansEditorCore/Profiling/BenchmarkProgress.h"
 #include "KansEditorCore/Profiling/BenchmarkRun.h"
 #include "Launcher/LauncherLayer.h"
 
@@ -56,6 +57,8 @@ namespace
             if (!args.Error.empty())
                 throw std::invalid_argument(args.Error);
             const auto& options     = *args.Benchmark;
+            Benchmark::ProgressWriter progress(options.Progress);
+            progress.Report(Benchmark::Phase::Loading, 0, 0);
             const auto  selection   = Launcher::ResolveSelection(args.Project);
             const auto* projectFile = std::get_if<fs::path>(&selection);
             if (!projectFile)
@@ -98,7 +101,10 @@ namespace
                 }
                 report = Benchmark::RunProjectScene(*project, scene.lexically_normal(), options, device);
             }
-            return Benchmark::Finish(options, report);
+            progress.Report(Benchmark::Phase::Writing, 0, 0);
+            const int code = Benchmark::Finish(options, report);
+            progress.Report(Benchmark::Phase::Done, 0, 0);
+            return code;
         }
         catch (const std::exception& error)
         {

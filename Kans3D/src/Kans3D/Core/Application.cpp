@@ -209,6 +209,7 @@ namespace Kans
     void Application::OnEvent(Event& e)
     {
         KANS_PROFILE_FUNCTION();
+        ++m_EventCount;
         EventDispatcher dispatcher(e);
         dispatcher.Dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::OnWindowClose));
         dispatcher.Dispatch<WindowResizeEvent>(BIND_EVENT_FN(Application::OnWindowResize));
@@ -247,7 +248,28 @@ namespace Kans
 
     float Application::GetTime() const { return (float)glfwGetTime(); }
 
-    void Application::ProcessEvents() { m_Window->ProcessEvents(); }
+    void Application::SetEventWait(std::optional<EventWait> wait)
+    {
+        m_EventWait = std::move(wait);
+        m_EventGate.Reset(m_EventCount);
+    }
+
+    void Application::ProcessEvents()
+    {
+        if (!m_EventWait || !m_EventGate.BeginEvents(m_EventCount))
+        {
+            m_Window->ProcessEvents();
+            return;
+        }
+        KANS_PROFILE_SCOPE("Wait for events");
+        while (m_Running)
+        {
+            m_Window->WaitEvents(m_EventWait->TimeoutSeconds);
+            const bool changed = m_EventWait->Changed && m_EventWait->Changed();
+            if (m_EventGate.Wake(m_EventCount, changed))
+                break;
+        }
+    }
 
     bool Application::OnWindowClose(WindowCloseEvent& e)
     {

@@ -306,6 +306,8 @@ namespace Kans::Launcher
                     benchmark.Output = fs::u8path(value);
                 else if (flag == "--benchmark-baseline")
                     benchmark.Baseline = fs::u8path(value);
+                else if (flag == "--benchmark-progress")
+                    benchmark.Progress = fs::u8path(value);
                 else if (flag == "--benchmark-threshold")
                 {
                     std::istringstream stream {std::string(value)};

@@ -1,8 +1,10 @@
 #pragma once
+#include <optional>
 #include <unordered_map>
 #include "Kans3D/Core/Base/Base.h"
 #include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 #include "Kans3D/Core/Debug/ErrorBoundary.h"
+#include "Kans3D/Core/EventWait.h"
 #include "Kans3D/Core/Events/ApplicationEvent.h"
 #include "Kans3D/Core/Events/Event.h"
 #include "Kans3D/Core/LayerStack.h"
@@ -53,6 +55,10 @@ namespace Kans
         void SubmitPostFrame(std::function<void()> task) { m_PostFrame.push_back(std::move(task)); }
         void Close() { m_Running = false; }
         void SetCloseRequestHandler(std::function<bool()> handler) { m_CloseRequestHandler = std::move(handler); }
+        // While set, the loop sleeps on window events between frames (see EventWait); clear it
+        // to poll every frame again. Call between frames or from layer callbacks.
+        void SetEventWait(std::optional<EventWait> wait);
+        bool IsWaitingForEvents() const { return m_EventWait.has_value(); }
 
         // 返回的是application的单例，所以不应该将指针返回
         inline static Application& Get() { return *s_Instance; }
@@ -88,6 +94,9 @@ namespace Kans
         uint32_t      m_CaptureAfter = 0, m_CaptureFrame = 0;
         std::function<bool()> m_CloseRequestHandler;
         std::vector<std::function<void()>> m_PostFrame;
+        std::optional<EventWait>           m_EventWait;
+        EventWaitGate                      m_EventGate;
+        uint64_t                           m_EventCount = 0;
         bool          m_Running   = true;
         bool          m_Minimized = false;
 
