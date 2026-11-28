@@ -24,6 +24,15 @@ namespace Kans
 
         static constexpr float MinFlySpeed = 0.1f, MaxFlySpeed = 500.0f;
 
+        // What navigation changes: enough to put the camera back exactly (the editor keeps it per scene).
+        struct State
+        {
+            glm::vec3 Focus {0.0f};
+            float     Distance = 10.0f, Yaw = 0.0f, Pitch = 0.0f; // Yaw and pitch in radians.
+            float     FlySpeed     = 5.0f;
+            bool      Orthographic = false;
+        };
+
         explicit EditorCamera(float verticalFovDegrees = 45.0f, float nearClip = 0.05f, float farClip = 5000.0f);
 
         void SetViewportSize(uint32_t width, uint32_t height);
@@ -65,6 +74,10 @@ namespace Kans
         float            GetFlySpeed() const { return m_FlySpeed; }
         void             SetFlySpeed(float speed);
         float            GetVerticalFov() const { return m_Fov; }
+        State            GetState() const { return {m_Focus, m_Distance, m_Yaw, m_Pitch, m_FlySpeed, m_Orthographic}; }
+        // Distance, pitch and fly speed are clamped as navigation clamps them; a state with a
+        // non-finite value changes nothing and returns false.
+        bool SetState(const State& state);
         // World-space origin and unit direction of the ray through a viewport
         // pixel (top-left origin).
         std::pair<glm::vec3, glm::vec3> ScreenRay(glm::vec2 pixel) const;

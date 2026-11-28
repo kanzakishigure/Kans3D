@@ -29,6 +29,15 @@ namespace Kans
         // Associates the current preferences with a saved/renamed scene without reloading them.
         void SetSceneKey(std::string key);
         bool Save() const;
+        // The key a scene's editor preferences are stored under (this store and the editor view
+        // state): `key`, a project-relative asset path, when given, otherwise the scene asset ID;
+        // empty for an unsaved scene. Paths are normalized, so "a/../b.kans" and "b.kans" match.
+        static std::string SceneKey(const Scene& scene, std::string key = {});
+        static std::string NormalizeKey(std::string key);
+        // The asset path key of a scene file in a project (empty path: empty key).
+        static std::string ProjectKey(const std::filesystem::path& file, const std::filesystem::path& projectRoot);
+        // Replaces `file` with `text` through a temporary beside it; on failure the old file stays.
+        static bool WriteFile(const std::filesystem::path& file, const std::string& text);
 
     private:
         std::filesystem::path                           File() const;

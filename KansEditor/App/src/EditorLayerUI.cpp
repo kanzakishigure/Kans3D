@@ -242,6 +242,12 @@ namespace Kans
                                                                                GraphCaptureSettings {});
         }
         m_Panels.Draw();
+        // The camera and View menu as this frame left them; written a second after they settle.
+        if (m_ViewState)
+            m_ViewState->Track(m_ViewportPanel.GetCameraState(),
+                               m_ViewportPanel.GetViewOptions(),
+                               m_Play.IsActive(),
+                               ImGui::GetTime());
         // The Profiler records every frame while it is open (Edit and Play), even behind another tab,
         // after the panels drew: the viewport renders this frame inside its panel.
         if (m_Panels.IsOpen(PanelID::Profiler))

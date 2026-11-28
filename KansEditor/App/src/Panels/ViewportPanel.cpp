@@ -38,6 +38,8 @@ namespace Kans
                                                            {"750 x 1334 (phone)", 750, 1334}};
             return list;
         }
+        // The camera button's views, in EditorCamera::View order (their names are saved per scene).
+        constexpr const char* ViewNames[] = {"Perspective", "Top", "Bottom", "Front", "Back", "Right", "Left"};
     } // namespace
 
     using Widgets::OverlayGroup;
@@ -48,6 +50,99 @@ namespace Kans
         m_Scene  = std::move(scene);
         m_Client = client;
         m_Size   = {0, 0}; // Re-applies the viewport size to the new scene.
+        if (m_Scene && m_PendingSceneOptions)
+        {
+            const auto options = *m_PendingSceneOptions;
+            ApplyViewOptions(options);
+        }
+    }
+
+    ViewportOptions ViewportPanel::GetViewOptions() const
+    {
+        ViewportOptions o;
+        o.AmbientOcclusionBuffer = m_AmbientOcclusionDebug;
+        o.ReflectionDebug        = m_ReflectionDebug;
+        o.ViewMode               = m_ViewMode;
+        o.ShowIcons              = m_ShowIcons;
+        o.ShowStats              = m_ShowStats;
+        o.GizmoSize              = m_GizmoSize;
+        o.RPicksScaleTool        = m_RPicksScaleTool;
+        o.GridLook               = m_Grid;
+        if (m_Scene)
+        {
+            const auto& state = m_Scene->GetRenderWorld().Settings.Piplinestate;
+            o.Grid            = state.EnableGridShader;
+            o.Outline         = state.EnableOutline;
+            o.Stencil         = state.EnableStencil;
+            o.DebugNormals    = state.EnableDebugNormal;
+        }
+        else if (m_PendingSceneOptions)
+        {
+            o.Grid         = m_PendingSceneOptions->Grid;
+            o.Outline      = m_PendingSceneOptions->Outline;
+            o.Stencil      = m_PendingSceneOptions->Stencil;
+            o.DebugNormals = m_PendingSceneOptions->DebugNormals;
+        }
+        o.PhysicsView        = uint32_t(m_PhysicsView);
+        o.ShowAllAudio       = m_ShowAllAudio;
+        o.ShowOcclusionRays  = m_ShowOcclusionRays;
+        o.EditorCameraInPlay = m_UseEditorCameraInPlay;
+        o.GameResolution     = m_GameResolution;
+        o.Tool               = uint8_t(m_Tool);
+        o.Orientation        = m_Orientation;
+        o.Pivot              = m_PivotMode;
+        o.Snap               = m_GizmoSnap;
+        o.SnapMove           = m_SnapMove;
+        o.SnapRotate         = m_SnapRotate;
+        o.SnapScale          = m_SnapScale;
+        return o;
+    }
+
+    void ViewportPanel::ApplyViewOptions(const ViewportOptions& o)
+    {
+        m_AmbientOcclusionDebug = o.AmbientOcclusionBuffer;
+        m_ReflectionDebug       = std::clamp(o.ReflectionDebug, 0, 2);
+        m_ViewMode              = o.ViewMode;
+        m_ShowIcons             = o.ShowIcons;
+        m_ShowStats             = o.ShowStats;
+        m_GizmoSize             = o.GizmoSize;
+        m_RPicksScaleTool       = o.RPicksScaleTool;
+        m_Grid                  = o.GridLook;
+        if (m_Scene)
+        {
+            auto& state             = m_Scene->GetRenderWorld().Settings.Piplinestate;
+            state.EnableGridShader  = o.Grid;
+            state.EnableOutline     = o.Outline;
+            state.EnableStencil     = o.Stencil;
+            state.EnableDebugNormal = o.DebugNormals;
+            m_PendingSceneOptions.reset();
+        }
+        else
+            m_PendingSceneOptions = o;
+        m_PhysicsView           = PhysicsDebugFlags(o.PhysicsView);
+        m_ShowAllAudio          = o.ShowAllAudio;
+        m_ShowOcclusionRays     = o.ShowOcclusionRays;
+        m_UseEditorCameraInPlay = o.EditorCameraInPlay;
+        m_GameResolution        = std::clamp(o.GameResolution, 0, int(GameResolutions().size()) - 1);
+        m_Tool                  = Tool((std::min)(o.Tool, uint8_t(Tool::Transform)));
+        m_Orientation           = o.Orientation;
+        m_PivotMode             = o.Pivot;
+        m_GizmoSnap             = o.Snap;
+        m_SnapMove              = o.SnapMove;
+        m_SnapRotate            = o.SnapRotate;
+        m_SnapScale             = o.SnapScale;
+    }
+
+    EditorViewCamera ViewportPanel::GetCameraState() const { return {m_Camera.GetState(), m_ViewName}; }
+
+    void ViewportPanel::SetCameraState(const EditorViewCamera& camera)
+    {
+        if (!m_Camera.SetState(camera.Camera))
+            return;
+        m_ViewName = ViewNames[0];
+        for (const char* name : ViewNames)
+            if (camera.View == name)
+                m_ViewName = name;
     }
 
     void ViewportPanel::Draw()
@@ -1330,20 +1425,11 @@ namespace Kans
                 ImGui::OpenPopup("##CameraView");
             if (ImGui::BeginPopup("##CameraView"))
             {
-                const std::pair<EditorCamera::View, const char*> views[] = {
-                    {EditorCamera::View::Perspective, "Perspective"},
-                    {EditorCamera::View::Top, "Top"},
-                    {EditorCamera::View::Bottom, "Bottom"},
-                    {EditorCamera::View::Front, "Front"},
-                    {EditorCamera::View::Back, "Back"},
-                    {EditorCamera::View::Right, "Right"},
-                    {EditorCamera::View::Left, "Left"},
-                };
-                for (const auto& [choice, name] : views)
-                    if (ImGui::MenuItem(name))
+                for (size_t i = 0; i < std::size(ViewNames); ++i)
+                    if (ImGui::MenuItem(ViewNames[i]))
                     {
-                        m_Camera.SetView(choice);
-                        m_ViewName = name;
+                        m_Camera.SetView(EditorCamera::View(i));
+                        m_ViewName = ViewNames[i];
                     }
                 ImGui::Separator();
                 bool orthographic = m_Camera.IsOrthographic();
@@ -1468,6 +1554,10 @@ namespace Kans
                         ImGui::EndCombo();
                     }
                 }
+                ImGui::Separator();
+                // The options above are saved per project; this puts them all back to their defaults.
+                if (ImGui::MenuItem("Reset view options"))
+                    ApplyViewOptions({});
                 ImGui::EndPopup();
             }
         });

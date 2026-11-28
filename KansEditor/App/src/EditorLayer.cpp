@@ -140,6 +140,11 @@ namespace Kans
         m_ViewportPanel.SetHighlightSource(
             [this](ViewHighlights& highlights) { m_PropertiesPanel.AppendSlotHighlights(highlights); });
         m_ViewportPanel.SetContext(m_ActiveScene, m_Viewport.get());
+        // The project's View menu and toolbar choices; scene cameras come back as scenes open.
+        m_ViewState = CreateScope<EditorViewStateStore>(m_ProjectConfig.RootDirectory / m_ProjectConfig.CacheDirectory /
+                                                        "Editor/ViewState.yaml");
+        m_ViewState->Load();
+        m_ViewportPanel.ApplyViewOptions(m_ViewState->Options());
         m_ViewportPanel.SetFileDropCallback(
             [this](const std::filesystem::path& file, std::optional<glm::vec3> position) {
                 if (file.extension() == ".kans")
@@ -161,6 +166,16 @@ namespace Kans
         });
     }
 
+    void EditorLayer::SaveViewState()
+    {
+        if (!m_ViewState)
+            return;
+        // While the scene plays the saved Edit camera is kept (see EditorViewStateStore::Track).
+        m_ViewState->Track(
+            m_ViewportPanel.GetCameraState(), m_ViewportPanel.GetViewOptions(), m_Play.IsActive(), ImGui::GetTime());
+        (void)m_ViewState->Flush(); // A failed write keeps this session's state.
+    }
+
     void EditorLayer::LoadLayout()
     {
         // ImGui keeps the pointer and saves through it until the context goes away, after this layer.
@@ -178,6 +193,7 @@ namespace Kans
     void EditorLayer::OnDetach()
     {
         Application::Get().SetCloseRequestHandler({});
+        SaveViewState(); // Before play mode is discarded and the viewport unbound.
         m_Titlebar.Detach();
         if (m_Placements)
             m_Placements->Remember(Application::Get().GetWindow().GetPlacement());

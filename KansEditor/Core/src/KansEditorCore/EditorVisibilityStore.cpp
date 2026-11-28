@@ -79,9 +79,7 @@ namespace Kans
     void EditorVisibilityStore::Load(const Scene& scene, std::string key)
     {
         m_Scene = &scene;
-        m_Key   = key.empty() && scene.assetID.IsValid() ? scene.assetID.ToString() : std::move(key);
-        if (!m_Key.empty())
-            m_Key = std::filesystem::path(m_Key).lexically_normal().generic_u8string();
+        m_Key   = SceneKey(scene, std::move(key));
         m_Scenes.clear();
         try
         {
@@ -119,17 +117,27 @@ namespace Kans
         if (key.empty() || key == m_Key)
             return;
         auto hidden     = Hidden();
-        m_Key           = std::filesystem::path(key).lexically_normal().generic_u8string();
+        m_Key           = NormalizeKey(std::move(key));
         m_Scenes[m_Key] = std::move(hidden);
+    }
+    std::string EditorVisibilityStore::NormalizeKey(std::string key)
+    {
+        return key.empty() ? key : std::filesystem::path(key).lexically_normal().generic_u8string();
+    }
+    std::string EditorVisibilityStore::SceneKey(const Scene& scene, std::string key)
+    {
+        return NormalizeKey(key.empty() && scene.assetID.IsValid() ? scene.assetID.ToString() : std::move(key));
+    }
+    std::string EditorVisibilityStore::ProjectKey(const std::filesystem::path& file,
+                                                  const std::filesystem::path& projectRoot)
+    {
+        return file.empty() ? std::string {} : NormalizeKey(file.lexically_relative(projectRoot).generic_u8string());
     }
     bool EditorVisibilityStore::Save() const
     {
         const auto file = File();
         if (file.empty())
             return false;
-        auto temporary = file;
-        temporary += ".tmp";
-        bool opened = false;
         try
         {
             YAML::Emitter out;
@@ -147,15 +155,26 @@ namespace Kans
                 out << YAML::EndSeq;
             }
             out << YAML::EndMap << YAML::EndMap;
-            if (!out.good())
-                return false;
+            return out.good() && WriteFile(file, out.c_str());
+        }
+        catch (const std::exception&)
+        {}
+        return false;
+    }
+    bool EditorVisibilityStore::WriteFile(const std::filesystem::path& file, const std::string& text)
+    {
+        auto temporary = file;
+        temporary += ".tmp";
+        bool opened = false;
+        try
+        {
             if (!file.parent_path().empty())
                 std::filesystem::create_directories(file.parent_path());
             std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
             if (!output)
                 return false;
             opened = true;
-            output << out.c_str();
+            output << text;
             output.flush();
             const bool written = output.good();
             output.close();

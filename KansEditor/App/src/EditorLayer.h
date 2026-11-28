@@ -19,6 +19,7 @@
 #include "Kans3D/Script/ScriptBuild.h"
 #include "KansEditorCore/EditorCamera.h"
 #include "KansEditorCore/EditorResources.h"
+#include "KansEditorCore/EditorViewState.h"
 #include "KansEditorCore/Launcher/WindowPlacementFlow.h"
 #include "KansEditorCore/SceneHistory.h"
 #include "KansEditorCore/UnsavedChanges.h"
@@ -113,6 +114,9 @@ namespace Kans
         void CreateDefaultScene();
         // The editor view, its environment and the material preview renderers.
         void CreateViewport();
+        // Records the editor camera and the viewport options (EditorViewStateStore) and writes
+        // them now: before a scene is left and when the editor closes.
+        void SaveViewState();
         void DrawStartupSplash();
         // The Hub after a failed startup: in this process or a new one; this editor closes.
         void                                     BackToProjects();
@@ -398,6 +402,8 @@ namespace Kans
 
         Ref<Scene>         m_ActiveScene;
         Scope<ViewportClient> m_Viewport;
+        // The scenes' editor cameras and the viewport options, under Cache/Editor/ViewState.yaml.
+        Scope<EditorViewStateStore> m_ViewState;
 
         Entity m_CameraEntity;
         Entity m_SecondCameraEntity;

@@ -1,9 +1,10 @@
 #include "kspch.h"
 #include "KansEditorCore/EditorCamera.h"
+#include <cmath>
+#include <tuple>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
-#include <tuple>
 
 namespace Kans
 {
@@ -148,6 +149,24 @@ namespace Kans
         m_Yaw                    = std::atan2(-forward.x, -forward.z);
         m_Focus                  = position + Forward() * m_Distance;
         UpdateView();
+    }
+
+    bool EditorCamera::SetState(const State& state)
+    {
+        const bool finite = !glm::any(glm::isnan(state.Focus)) && !glm::any(glm::isinf(state.Focus)) &&
+                            std::isfinite(state.Distance) && std::isfinite(state.Yaw) && std::isfinite(state.Pitch) &&
+                            std::isfinite(state.FlySpeed);
+        if (!finite)
+            return false;
+        m_Focus        = state.Focus;
+        m_Distance     = glm::clamp(state.Distance, MinDistance, (std::max)(MinDistance, m_Far * 0.5f));
+        m_Yaw          = state.Yaw;
+        m_Pitch        = glm::clamp(state.Pitch, -PitchLimit, PitchLimit);
+        m_Orthographic = state.Orthographic;
+        SetFlySpeed(state.FlySpeed);
+        UpdateProjection();
+        UpdateView();
+        return true;
     }
 
     void EditorCamera::SetFlySpeed(float speed) { m_FlySpeed = glm::clamp(speed, MinFlySpeed, MaxFlySpeed); }

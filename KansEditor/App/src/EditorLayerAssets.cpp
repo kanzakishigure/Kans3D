@@ -938,6 +938,7 @@ namespace Kans
             return AssetError {AssetErrorCode::InvalidArgument, "Scene/renderer unavailable"};
         const auto viewport = m_Viewport->GetSize();
         scene->OnViewportResize(std::max(1u, viewport.x), std::max(1u, viewport.y));
+        SaveViewState(); // The scene being left keeps its camera.
         // Leaving a playing scene drops its runtime state; the edit-time state is not kept.
         if (m_ActiveScene)
         {
@@ -950,9 +951,13 @@ namespace Kans
         m_VideoPreview.End();
         m_PendingVideoTargets.Clear();
         m_ActiveScene = std::move(scene);
-        auto visibilityKey = path.empty() ?
-                                 std::string {} :
-                                 path.lexically_relative(KansFileSystem::GetProjectRoot()).generic_u8string();
+        auto visibilityKey = EditorVisibilityStore::ProjectKey(path, KansFileSystem::GetProjectRoot());
+        // The editor camera is kept under the same key as the Hierarchy's eye column. A scene
+        // opened for the first time keeps the current view.
+        if (m_ViewState)
+            if (const auto camera =
+                    m_ViewState->BindScene(EditorVisibilityStore::SceneKey(*m_ActiveScene, visibilityKey)))
+                m_ViewportPanel.SetCameraState(*camera);
         m_Viewport->SetScene(m_ActiveScene, std::move(visibilityKey));
         m_HierarchyPanel.SetScene(m_ActiveScene);
         m_ViewportPanel.SetContext(m_ActiveScene, m_Viewport.get());
@@ -1034,11 +1039,17 @@ namespace Kans
         if (const auto* error = std::get_if<AssetError>(&saved))
             return *error;
         m_ScenePath = std::move(fullPath);
+        const auto sceneKey = EditorVisibilityStore::ProjectKey(m_ScenePath, KansFileSystem::GetProjectRoot());
         if (m_Viewport)
         {
-            m_Viewport->Visibility().SetSceneKey(
-                m_ScenePath.lexically_relative(KansFileSystem::GetProjectRoot()).generic_u8string());
+            m_Viewport->Visibility().SetSceneKey(sceneKey);
             m_Viewport->Visibility().Save();
+        }
+        if (m_ViewState)
+        {
+            // Save As: the new file starts with the view it was saved from.
+            m_ViewState->RenameScene(sceneKey);
+            SaveViewState();
         }
         m_History.MarkSaved();
         // The launcher shows the project with the view it was saved from.

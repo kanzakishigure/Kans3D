@@ -9,6 +9,7 @@
 #include "HierarchyPanel.h"
 #include "KansEditorCore/Audio/AudioSpatialEditing.h"
 #include "KansEditorCore/EditorCamera.h"
+#include "KansEditorCore/EditorViewState.h"
 #include "KansEditorCore/Gizmo/GizmoTargets.h"
 #include "KansEditorCore/Gizmo/Handles.h"
 #include "KansEditorCore/Gizmo/ModalTransform.h"
@@ -134,6 +135,14 @@ namespace Kans
         const Gizmo::TransformGizmo& GetGizmo() const { return m_Gizmo; }
         bool          IsNavigating() const { return m_Navigation != Navigation::None; }
         EditorCamera& GetCamera() { return m_Camera; }
+        // The View menu's and toolbar's settings, saved per project (EditorViewStateStore). The
+        // grid, outline, stencil and debug-normal switches are the bound scene's RenderWorld
+        // settings; applied without a scene they wait for the next SetContext.
+        ViewportOptions GetViewOptions() const;
+        void            ApplyViewOptions(const ViewportOptions& options);
+        // The editor camera with its axis view's name, saved per scene.
+        EditorViewCamera GetCameraState() const;
+        void             SetCameraState(const EditorViewCamera& camera);
         // The view cube: its cells as last drawn, hover and press.
         const Gizmo::ViewCube& GetViewCube() const { return m_ViewCube; }
         void          FocusSelection();
@@ -238,6 +247,8 @@ namespace Kans
         SceneViewMode m_ViewMode  = SceneViewMode::Lit;
         GridSettings  m_Grid;
         bool          m_ShowIcons = true, m_ShowStats = false;
+        // Scene render switches applied before a scene was bound (ApplyViewOptions).
+        std::optional<ViewportOptions> m_PendingSceneOptions;
         // Clickable overlay icons of this frame, and the view cube's area.
         std::vector<std::pair<ImVec2, UUID>> m_Icons;
         ImVec2                               m_CubeMin {}, m_CubeMax {};
@@ -262,8 +273,8 @@ namespace Kans
         float m_SnapMove   = 0.5f;
         float m_SnapRotate = 15.0f;
         float m_SnapScale  = 0.1f;
-        // Physics debug drawing this viewport adds (editor-local; neither the scene nor the project
-        // saves it). Outside play, colliders and joints are drawn from their components.
+        // Physics debug drawing this viewport adds (an editor preference saved with the view options,
+        // never in the scene). Outside play, colliders and joints are drawn from their components.
         PhysicsDebugFlags m_PhysicsView = PhysicsDebugFlags::None;
         // Handles of this viewport (physics shapes, wheels, fields, joint limits) and the hover
         // resolution they share with the transform gizmo.
