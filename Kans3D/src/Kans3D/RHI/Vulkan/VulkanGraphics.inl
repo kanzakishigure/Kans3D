@@ -553,18 +553,16 @@ void ValidatePipeline(const std::shared_ptr<State>& owner, const PipelineDesc& d
 // Names are diagnostic metadata; they deliberately do not participate in pipeline cache keys.
 void NameObject(const State& state, VkObjectType type, uint64_t object, const std::string& name)
 {
-    if (!state.Native.Options.Validation || name.empty()) // Context enables debug_utils with validation.
-        return;
-    auto setName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
-        vkGetDeviceProcAddr(state.Native.Logical, "vkSetDebugUtilsObjectNameEXT"));
-    if (setName)
+#ifndef KS_DIST
+    if (state.Native.SetObjectName && !name.empty())
     {
         VkDebugUtilsObjectNameInfoEXT info {VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT};
         info.objectType   = type;
         info.objectHandle = object;
         info.pObjectName  = name.c_str();
-        setName(state.Native.Logical, &info);
+        state.Native.SetObjectName(state.Native.Logical, &info);
     }
+#endif
 }
 const char* PipelineResultName(VkResult result)
 {

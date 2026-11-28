@@ -425,6 +425,7 @@ namespace Kans
                 resolveUses.pop_back();
                 resolveUses.push_back(
                     {graph.ImportTexture("SceneHDR", renderer.Output.GetHDR()), GraphAccess::SampledRead});
+                const auto recordStart = RenderClockMilliseconds();
                 auto commands = renderer.GetDevice()->CreateCommandList();
                 renderer.Services.GetToneMapping().Record(
                     *renderer.GetDevice(),
@@ -439,7 +440,10 @@ namespace Kans
                         view.Assets->GetTextureResource(view.GetPostProcessSettings().ColorGrading.LUT) :
                         RenderHardware::Handle<RenderHardware::Texture> {},
                     view.GPUExposure);
-                auto pass = graph.AddRecordedPass("Immediate display prefill", std::move(resolveUses), commands);
+                auto pass = graph.AddRecordedPass("Immediate display prefill",
+                                                  std::move(resolveUses),
+                                                  commands,
+                                                  RenderClockMilliseconds() - recordStart);
                 if (pass)
                     graph.OrderAfter(pass, pass - 1);
                 renderer.PostProcessHDR = false;
@@ -458,13 +462,17 @@ namespace Kans
                 }
                 sampled(uses, batch.Texture, "SpriteTexture");
                 auto commands = batch.Commands;
+                std::optional<double> recordMilliseconds;
                 if (renderer.DisplayFrame)
                 {
                     if (!batch.RecordAtSize)
                         throw std::invalid_argument("Upscaling recorded sprites requires SpriteBatch draw metadata");
+                    const auto recordStart = RenderClockMilliseconds();
                     commands = batch.RecordAtSize(renderer.SceneTarget(LoadOp::Load), view.Viewport);
+                    recordMilliseconds     = RenderClockMilliseconds() - recordStart;
                 }
-                auto pass = graph.AddRecordedPass("Renderer2D batch", std::move(uses), std::move(commands));
+                auto pass =
+                    graph.AddRecordedPass("Renderer2D batch", std::move(uses), std::move(commands), recordMilliseconds);
                 KANS_FRAME_STAT(graph.SetPassDrawCategory(pass, DrawCategory::Transparent);)
                 if (pass)
                     graph.OrderAfter(pass, pass - 1);
@@ -517,9 +525,13 @@ namespace Kans
                 {
                     uses.push_back(
                         {graph.ImportTexture("SceneHDR", renderer.Output.GetHDR()), GraphAccess::ColorReadWrite});
+                    const auto recordStart = RenderClockMilliseconds();
                     auto commands = renderer.GetDevice()->CreateCommandList();
                     renderer.DrawSkybox(view.Skyboxes.at(immediate.Index), *commands);
-                    auto pass = graph.AddRecordedPass("Skybox (HDR reconstruction input)", std::move(uses), commands);
+                    auto pass = graph.AddRecordedPass("Skybox (HDR reconstruction input)",
+                                                      std::move(uses),
+                                                      commands,
+                                                      RenderClockMilliseconds() - recordStart);
                     if (pass)
                         graph.OrderAfter(pass, pass - 1);
                 }

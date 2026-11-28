@@ -255,6 +255,7 @@ namespace Kans::RenderHardware
         size_t      Bytes  = 0;
         BufferUsage Usage  = BufferUsage::Vertex;
         MemoryUsage Memory = MemoryUsage::DeviceLocal;
+        std::string DebugName {};
     };
     struct TextureDesc
     {
@@ -265,6 +266,7 @@ namespace Kans::RenderHardware
         uint32_t         ArrayLayers = 1; // Cube has six faces; cube arrays are not supported.
         uint32_t         Samples     = 1; // 1, 2, 4 or 8. Multisampled images have one mip and are 2D.
         uint32_t         Depth       = 1; // 3D extent; array layers must be one for Texture3D.
+        std::string      DebugName {};
     };
     struct SamplerDesc
     {

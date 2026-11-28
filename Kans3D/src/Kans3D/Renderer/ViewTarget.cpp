@@ -93,6 +93,7 @@ namespace Kans
         {
             auto desc      = m_Depth->GetDesc();
             desc.Usage     = RenderHardware::TextureUsage::Sampled | RenderHardware::TextureUsage::CopyDestination;
+            KANS_FRAME_STAT(desc.DebugName = "Contact shadow depth";)
             m_ContactDepth = m_Device->CreateTexture(desc);
         }
         return m_ContactDepth;
@@ -108,6 +109,7 @@ namespace Kans
             desc.PixelFormat  = Format::RGBA16Float;
             desc.Usage        = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled |
                                 RenderHardware::TextureUsage::CopySource;
+            KANS_FRAME_STAT(desc.DebugName = "View normal and roughness";)
             m_NormalRoughness = m_Device->CreateTexture(desc);
         }
         m_NormalRoughnessValid = true;
@@ -144,6 +146,7 @@ namespace Kans
             desc.PixelFormat = Format::RG16Float;
             desc.Usage       = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled |
                                RenderHardware::TextureUsage::CopySource;
+            KANS_FRAME_STAT(desc.DebugName = "View velocity";)
             m_SceneVelocity  = m_Device->CreateTexture(desc);
         }
         m_VelocityValid = true;
@@ -159,6 +162,7 @@ namespace Kans
             desc.PixelFormat = Format::RG8Unorm;
             desc.Usage       = RenderHardware::TextureUsage::RenderTarget | RenderHardware::TextureUsage::Sampled |
                                RenderHardware::TextureUsage::CopySource;
+            KANS_FRAME_STAT(desc.DebugName = "View temporal masks";)
             m_TemporalMasks  = m_Device->CreateTexture(desc);
         }
         return m_TemporalMasks;
@@ -175,13 +179,18 @@ namespace Kans
                       RenderHardware::TextureUsage::CopySource | RenderHardware::TextureUsage::CopyDestination;
         std::vector<Handle<RenderHardware::Texture>> colors;
         for (uint32_t i = 0; i < m_OutputCount; ++i)
+        {
+            KANS_FRAME_STAT(desc.DebugName = "View color " + std::to_string(i);)
             colors.push_back(m_Device->CreateTexture(desc));
+        }
+        KANS_FRAME_STAT(desc.DebugName = "View HDR";)
         desc.PixelFormat = Format::RGBA16Float;
         auto hdr         = m_Device->CreateTexture(desc);
         desc.PixelFormat = Format::Depth24Stencil8;
         desc.Usage       = RenderHardware::TextureUsage::DepthStencil;
         if (m_SampledDepth)
             desc.Usage = desc.Usage | RenderHardware::TextureUsage::Sampled | RenderHardware::TextureUsage::CopySource;
+        KANS_FRAME_STAT(desc.DebugName = "View depth";)
         auto depth = m_Device->CreateTexture(desc);
         m_Colors   = std::move(colors);
         m_HDR      = std::move(hdr);

@@ -32,11 +32,17 @@ namespace Kans
         // No catch here: an exception nothing handles reaches std::terminate (FatalError's handler)
         // before the stack unwinds, so the report and the minidump show the throw site, and a
         // debugger still stops there.
-        lifecycle();
+        int exitCode = 0;
+#ifdef KANS_ENTRY_HOOK
+        if (const auto result = KANS_ENTRY_HOOK(argc, argv))
+            exitCode = *result;
+        else
+#endif
+            lifecycle();
 
         FatalError::Shutdown();
         Log::ShutDown();
-        return 0;
+        return exitCode;
     }
 } // namespace Kans
 

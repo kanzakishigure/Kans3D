@@ -125,6 +125,7 @@ namespace Kans
     public:
         RenderHardware::Handle<RenderHardware::TimestampQueryPool>
         Begin(RenderHardware::Device& device, uint64_t frame, const std::vector<PassStatistics>& passes);
+        void Poll(uint64_t beforeFrame);
         const std::optional<CompletedGpuFrame>& Latest() const { return m_Latest; }
         void                                    AbortFrame(uint64_t frame);
 

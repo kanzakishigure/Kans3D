@@ -1,22 +1,116 @@
 #include <Kans3D.h>
-#include <Kans3D/Core/EntryPoint.h>
 #include <Kans3D/Core/FileSystem/FileSystem.h>
 
 #include <algorithm>
 #include <cstdlib>
 #include <memory>
 #include <Kans3D/Project/ProjectFile.h>
+#include <Kans3D/RHI/Vulkan/VulkanDevice.h>
 
 #include <imgui.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include "Kans3D/ImGui/EditorTheme.h"
 #include "Debug/DebugLayer.h"
 #include "EditorLayer.h"
 #include "KansEditorCore/Launcher/EditorProcess.h"
-#include "Launcher/LauncherLayer.h"
 #include "KansEditorCore/Launcher/LauncherModel.h"
 #include "KansEditorCore/Launcher/WindowPlacementFlow.h"
-#include "Kans3D/ImGui/EditorTheme.h"
+#include "KansEditorCore/Profiling/BenchmarkRun.h"
+#include "Launcher/LauncherLayer.h"
+
+namespace
+{
+    std::optional<int> RunBenchmarkIfRequested(int argc, char** argv)
+    {
+        using namespace Kans;
+        namespace fs    = std::filesystem;
+        namespace RH    = RenderHardware;
+        const auto utf8 = EditorProcess::Arguments(argc, argv);
+        if (std::none_of(
+                utf8.begin() + 1, utf8.end(), [](const auto& arg) { return arg.rfind("--benchmark", 0) == 0; }))
+            return std::nullopt;
+
+        struct Cleanup
+        {
+            ~Cleanup()
+            {
+                try
+                {
+                    Renderer::Shutdown();
+                }
+                catch (const std::exception& error)
+                {
+                    CORE_ERROR("Benchmark device shutdown: {}", error.what());
+                }
+                KansFileSystem::ShutDown();
+            }
+        } cleanup;
+        try
+        {
+            std::vector<const char*> pointers;
+            pointers.reserve(utf8.size());
+            for (const auto& arg : utf8)
+                pointers.push_back(arg.c_str());
+            const auto args = Launcher::ParseLaunchArguments(int(pointers.size()), pointers.data());
+            if (!args.Error.empty())
+                throw std::invalid_argument(args.Error);
+            const auto& options     = *args.Benchmark;
+            const auto  selection   = Launcher::ResolveSelection(args.Project);
+            const auto* projectFile = std::get_if<fs::path>(&selection);
+            if (!projectFile)
+                throw std::runtime_error("Cannot open project " + args.Project.u8string());
+            const auto editorRoot =
+                KansFileSystem::FindEditorRoot(KansFileSystem::GetExecutableDirectory(), fs::current_path());
+            if (!editorRoot)
+                throw std::runtime_error("Editor root not found (Resources and KansEditor.ini are required)");
+            const auto configFile = *editorRoot / "KansEditor.ini";
+            KansFileSystem::Init(configFile);
+            const auto loaded = LoadProjectFile(*projectFile);
+            if (const auto* error = std::get_if<AssetError>(&loaded))
+                throw std::runtime_error(error->Message);
+            const auto config = MakeProjectConfig(projectFile->parent_path(), std::get<ProjectFile>(loaded));
+            KansFileSystem::SetProject(config);
+            ProjectOpenOptions projectOptions;
+            projectOptions.Editor        = true;
+            projectOptions.EditorModules = CompiledEditorPluginModules();
+            auto opened                  = Project::Open(config, projectOptions);
+            if (const auto* error = std::get_if<AssetError>(&opened))
+                throw std::runtime_error(error->Message);
+            auto project = std::move(std::get<std::unique_ptr<Project>>(opened));
+
+            RH::VulkanDeviceOptions deviceOptions;
+            const char*             requireCpu = std::getenv("KANS_VULKAN_REQUIRE_CPU");
+            deviceOptions.RequireCpuDevice     = requireCpu && std::string_view(requireCpu) == "1";
+            const auto backend                 = RH::ResolveStartupBackend(configFile.string());
+            RH::InitializeHeadlessDevice(backend, RH::CreateVulkanDevice({}, deviceOptions));
+            const auto device = RH::GetSharedDevice();
+            YAML::Node report;
+            if (options.Scene == Benchmark::ComplexScene)
+                report = Benchmark::RunComplex(options, device);
+            else
+            {
+                auto scene = fs::u8path(options.Scene);
+                if (scene.is_relative())
+                {
+                    const auto projectScene = project->GetConfig().RootDirectory / scene;
+                    scene                   = fs::exists(projectScene) ? projectScene : fs::absolute(scene);
+                }
+                report = Benchmark::RunProjectScene(*project, scene.lexically_normal(), options, device);
+            }
+            return Benchmark::Finish(options, report);
+        }
+        catch (const std::exception& error)
+        {
+            CORE_ERROR("Benchmark failed: {}", error.what());
+            return 1;
+        }
+    }
+} // namespace
+
+#define KANS_ENTRY_HOOK RunBenchmarkIfRequested
+#include <Kans3D/Core/EntryPoint.h>
+#undef KANS_ENTRY_HOOK
 
 // Without a valid --project the process is the project Hub, which starts an editor process
 // for the chosen project and closes; with one it is the editor.

@@ -333,6 +333,7 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
                        Output.GetVelocity(),
                        {{depth, GraphAccess::SampledRead}, {velocity, GraphAccess::ColorWrite}});
         }
+        const auto    recordStart = RenderClockMilliseconds();
         auto          commands = device->CreateCommandList();
         RenderingDesc target;
         target.Colors.push_back({Output.GetVelocity(), {}, LoadOp::Load});
@@ -599,8 +600,10 @@ layout(set=1,binding=1) uniform sampler2D BaseColorMap;
             commands->EndRendering();
         if (!drawStatic || range)
             Order(graph,
-                  graph.AddRecordedPass(
-                      drawStatic ? "Object velocity (post-opaque)" : "Object velocity", std::move(uses), commands));
+                  graph.AddRecordedPass(drawStatic ? "Object velocity (post-opaque)" : "Object velocity",
+                                        std::move(uses),
+                                        commands,
+                                        RenderClockMilliseconds() - recordStart));
     }
     void RenderFrame::CommitVelocityHistory()
     {

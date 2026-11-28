@@ -59,7 +59,20 @@ namespace Kans::RenderHardware::VulkanDetail
                 extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
                 extensions.push_back(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME);
             }
-            if (Options.Validation)
+            bool debugUtils = Options.Validation;
+#ifndef KS_DIST
+            if (Options.DebugUtils && !debugUtils)
+            {
+                uint32_t count = 0;
+                Check(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr));
+                std::vector<VkExtensionProperties> available(count);
+                Check(vkEnumerateInstanceExtensionProperties(nullptr, &count, available.data()));
+                debugUtils = std::any_of(available.begin(), available.end(), [](const auto& extension) {
+                    return std::strcmp(extension.extensionName, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0;
+                });
+            }
+#endif
+            if (debugUtils)
                 extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
             if (Options.Validation && Options.SynchronizationValidation)
                 extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
@@ -96,6 +109,17 @@ namespace Kans::RenderHardware::VulkanDetail
             instance.enabledExtensionCount   = uint32_t(extensions.size());
             instance.ppEnabledExtensionNames = extensions.data();
             Check(vkCreateInstance(&instance, nullptr, &Instance));
+#ifndef KS_DIST
+            if (debugUtils && Options.DebugUtils)
+            {
+                SetObjectName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+                    vkGetInstanceProcAddr(Instance, "vkSetDebugUtilsObjectNameEXT"));
+                BeginLabel = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
+                    vkGetInstanceProcAddr(Instance, "vkCmdBeginDebugUtilsLabelEXT"));
+                EndLabel = reinterpret_cast<PFN_vkCmdEndDebugUtilsLabelEXT>(
+                    vkGetInstanceProcAddr(Instance, "vkCmdEndDebugUtilsLabelEXT"));
+            }
+#endif
             if (Options.NativeWindow)
                 Check(glfwCreateWindowSurface(
                     Instance, static_cast<GLFWwindow*>(Options.NativeWindow), nullptr, &Surface));

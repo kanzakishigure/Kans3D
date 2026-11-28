@@ -165,7 +165,11 @@ namespace Kans
         Resource resource;
         resource.Name              = std::move(name);
         resource.IsBuffer          = true;
-        resource.BufferDescription = description;
+#ifndef KS_DIST
+        if (!resource.Name.empty())
+            description.DebugName = resource.Name;
+#endif
+        resource.BufferDescription = std::move(description);
         m_Resources.push_back(std::move(resource));
         return {uint32_t(m_Resources.size() - 1)};
     }
@@ -205,7 +209,11 @@ namespace Kans
             (desc.Dimension == RenderHardware::TextureDimension::Cube && desc.Width != desc.Height))
             throw std::invalid_argument("RenderGraph: invalid texture description '" + name + "'");
         m_Compiled = false;
-        m_Resources.push_back({std::move(name), desc, {}, false, false});
+#ifndef KS_DIST
+        if (!name.empty())
+            desc.DebugName = name;
+#endif
+        m_Resources.push_back({std::move(name), std::move(desc), {}, false, false});
         return uint32_t(m_Resources.size() - 1);
     }
     GraphPass RenderGraph::AddPass(std::string           name,
@@ -549,7 +557,7 @@ namespace Kans
             commands->WriteTimestamp(m_Queries, (stats.ExecutionIndex - m_QueryBase) * 2, true);
             commands->WriteTimestamp(m_Queries, (stats.ExecutionIndex - m_QueryBase) * 2 + 1);
         }
-#ifdef TRACY_ENABLE
+#ifndef KS_DIST
         {
             KANS_PROFILE_SCOPE("FrameGraph encode and submit pass");
             KANS_PROFILE_TEXT(pass.Name.data(), pass.Name.size());

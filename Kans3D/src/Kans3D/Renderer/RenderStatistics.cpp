@@ -102,14 +102,13 @@ namespace Kans
             add(uint8_t(occurrence >> shift));
         return hash;
     }
-    RenderHardware::Handle<RenderHardware::TimestampQueryPool>
-    FrameProfiler::Begin(RenderHardware::Device& device, uint64_t frame, const std::vector<PassStatistics>& passes)
+    void FrameProfiler::Poll(uint64_t beforeFrame)
     {
         // A pipeline can submit imported prefixes during graph construction. Group query
         // chunks by source frame so the UI never sees an incomplete prefix as a whole frame.
         std::map<uint64_t, std::vector<size_t>> groups;
         for (size_t i = 0; i < m_Pending.size(); ++i)
-            if (m_Pending[i].Frame < frame)
+            if (m_Pending[i].Frame < beforeFrame)
                 groups[m_Pending[i].Frame].push_back(i);
         for (const auto& group : groups)
         {
@@ -160,6 +159,11 @@ namespace Kans
         m_Pending.erase(
             std::remove_if(m_Pending.begin(), m_Pending.end(), [](const auto& pending) { return !pending.Queries; }),
             m_Pending.end());
+    }
+    RenderHardware::Handle<RenderHardware::TimestampQueryPool>
+    FrameProfiler::Begin(RenderHardware::Device& device, uint64_t frame, const std::vector<PassStatistics>& passes)
+    {
+        Poll(frame);
         size_t count = 0;
         for (auto& pass : passes)
             if (!pass.Culled)

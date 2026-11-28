@@ -1,7 +1,13 @@
 #include "KansEditorCore/Launcher/LauncherModel.h"
 #include <algorithm>
+#include <charconv>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <locale>
+#include <set>
+#include <sstream>
+#include <string_view>
 #include "Kans3D/Project/ProjectFile.h"
 
 namespace Kans::Launcher
@@ -241,18 +247,109 @@ namespace Kans::Launcher
     LaunchArguments ParseLaunchArguments(int argc, const char* const* argv)
     {
         LaunchArguments arguments;
-        for (int i = 1; i < argc; ++i)
+        Benchmark::Options            benchmark;
+        std::set<std::string_view>    flags;
+        std::vector<std::string_view> positional;
+        std::string_view              firstBenchmarkFlag;
+        std::string_view              firstComplexFlag;
+        const auto                    isFlag  = [](std::string_view value) { return value.substr(0, 2) == "--"; };
+        const auto                    invalid = [](std::string_view flag, const char* explanation) {
+            return std::invalid_argument(std::string(flag) + " " + explanation);
+        };
+        const auto integer = [&](std::string_view flag, std::string_view value, uint32_t lower, uint32_t upper) {
+            uint32_t   number = 0;
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), number);
+            if (parsed.ec != std::errc {} || parsed.ptr != value.data() + value.size() || number < lower ||
+                number > upper)
+                throw std::invalid_argument(std::string(flag) + " expects an integer in " + std::to_string(lower) +
+                                            ".." + std::to_string(upper));
+            return number;
+        };
+        try
         {
-            if (std::string(argv[i]) != "--project")
-                continue;
-            if (!arguments.Project.empty() || i + 1 >= argc || std::string(argv[i + 1]).empty() ||
-                std::string(argv[i + 1]).rfind("--", 0) == 0)
+            for (int i = 1; i < argc; ++i)
             {
-                arguments.Error   = "--project requires exactly one project path";
-                arguments.Project.clear();
-                return arguments;
+                const std::string_view flag(argv[i]);
+                const bool             benchmarkFlag = flag.substr(0, 11) == "--benchmark";
+                if (flag != "--project" && !benchmarkFlag)
+                {
+                    if (!isFlag(flag))
+                        positional.push_back(flag);
+                    continue;
+                }
+                if (benchmarkFlag && firstBenchmarkFlag.empty())
+                    firstBenchmarkFlag = flag;
+                if (!flags.insert(flag).second || i + 1 == argc || !*argv[i + 1] || isFlag(argv[i + 1]))
+                    throw invalid(flag, "requires exactly one value");
+                const std::string_view value(argv[++i]);
+                if (flag == "--project")
+                    arguments.Project = fs::absolute(fs::u8path(value)).lexically_normal();
+                else if (flag == "--benchmark")
+                {
+                    if (value.substr(0, 8) == "builtin:" && value != Benchmark::ComplexScene)
+                        throw invalid(flag, "unknown built-in scene");
+                    benchmark.Scene = value;
+                }
+                else if (flag == "--benchmark-frames")
+                    benchmark.Frames = integer(flag, value, 1, 10000);
+                else if (flag == "--benchmark-warmup")
+                    benchmark.Warmup = integer(flag, value, 0, 10000);
+                else if (flag == "--benchmark-resolution")
+                {
+                    const auto split = value.find('x');
+                    if (split == std::string_view::npos)
+                        throw invalid(flag, "expects WxH");
+                    benchmark.Width  = integer(flag, value.substr(0, split), 1, 16384);
+                    benchmark.Height = integer(flag, value.substr(split + 1), 1, 16384);
+                }
+                else if (flag == "--benchmark-out")
+                    benchmark.Output = fs::u8path(value);
+                else if (flag == "--benchmark-baseline")
+                    benchmark.Baseline = fs::u8path(value);
+                else if (flag == "--benchmark-threshold")
+                {
+                    std::istringstream stream {std::string(value)};
+                    stream.imbue(std::locale::classic());
+                    stream >> std::noskipws >> benchmark.ThresholdPercent;
+                    if (!stream || stream.peek() != std::char_traits<char>::eof() ||
+                        !std::isfinite(benchmark.ThresholdPercent) || benchmark.ThresholdPercent < 0)
+                        throw invalid(flag, "expects a finite nonnegative percentage");
+                }
+                else
+                {
+                    if (firstComplexFlag.empty())
+                        firstComplexFlag = flag;
+                    if (flag == "--benchmark-instances")
+                        benchmark.Complex.Instances = integer(flag, value, 1, 100000);
+                    else if (flag == "--benchmark-lights")
+                        benchmark.Complex.Lights = integer(flag, value, 0, 256);
+                    else if (flag == "--benchmark-shadowed-lights")
+                        benchmark.Complex.ShadowedLights = integer(flag, value, 0, 8);
+                    else if (flag == "--benchmark-seed")
+                        benchmark.Complex.Seed = integer(flag, value, 0, UINT32_MAX);
+                    else
+                        throw invalid(flag, "is an unknown benchmark option");
+                }
             }
-            arguments.Project = fs::absolute(fs::u8path(argv[++i])).lexically_normal();
+            if (firstBenchmarkFlag.empty())
+                return arguments;
+            if (benchmark.Scene.empty())
+                throw invalid(firstBenchmarkFlag, "requires --benchmark");
+            if (!firstComplexFlag.empty() && benchmark.Scene != Benchmark::ComplexScene)
+                throw invalid(firstComplexFlag, "requires --benchmark builtin:complex");
+            if (benchmark.Scene == Benchmark::ComplexScene &&
+                benchmark.Complex.ShadowedLights > benchmark.Complex.Lights)
+                throw invalid("--benchmark-shadowed-lights", "must be at most --benchmark-lights");
+            if (arguments.Project.empty() && positional.size() == 1)
+                arguments.Project = fs::absolute(fs::u8path(positional.front())).lexically_normal();
+            else if (arguments.Project.empty() || !positional.empty())
+                throw invalid("--benchmark", "requires exactly one project path");
+            arguments.Benchmark = std::move(benchmark);
+        }
+        catch (const std::exception& error)
+        {
+            arguments.Project.clear();
+            arguments.Error = error.what();
         }
         return arguments;
     }

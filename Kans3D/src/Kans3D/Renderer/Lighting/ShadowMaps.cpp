@@ -1110,6 +1110,7 @@ void main() {
                 {
                     image.Live      = texture;
                     image.Depth     = DepthTexture(*device, texture->GetDesc().Width, point);
+                    const auto recordStart = RenderClockMilliseconds();
                     auto initialize = device->CreateCommandList();
                     for (uint32_t layer = 0; layer < (point ? 6u : 1u); ++layer)
                     {
@@ -1122,7 +1123,8 @@ void main() {
                     auto pass = graph.AddRecordedPass(
                         name + " cache initialize",
                         {{graph.ImportTexture(name + " static atlas", image.Depth), GraphAccess::DepthWrite}},
-                        initialize);
+                        initialize,
+                        RenderClockMilliseconds() - recordStart);
                     if (pass)
                         graph.OrderAfter(pass, pass - 1);
                 }

@@ -16,7 +16,14 @@ namespace Kans::RenderHardware
         bool                                    Validation                = false;
         bool                                    SynchronizationValidation = false;
         std::function<void(const std::string&)> ValidationError;
+        bool                                    DebugUtils = true;
     };
+    struct VulkanDeviceIdentity
+    {
+        std::string GPU, Driver, ApiVersion;
+        bool        Validation = false;
+    };
+    VulkanDeviceIdentity    GetVulkanDeviceIdentity(const Device& device);
     std::unique_ptr<Device> CreateVulkanDevice(const DeviceDesc& desc = {});
     std::unique_ptr<Device> CreateVulkanDevice(const DeviceDesc& desc, const VulkanDeviceOptions& options);
 } // namespace Kans::RenderHardware

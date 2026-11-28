@@ -28,3 +28,33 @@ set_target_properties(KansEditorCore PROPERTIES
     CXX_STANDARD 17
     MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"
 )
+
+find_package(Git QUIET)
+set(KANS_BENCHMARK_COMMIT "")
+if(Git_FOUND)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+        OUTPUT_VARIABLE KANS_BENCHMARK_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" symbolic-ref -q HEAD
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+        OUTPUT_VARIABLE KANS_BENCHMARK_REF OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    foreach(entry HEAD "${KANS_BENCHMARK_REF}" packed-refs)
+        if(NOT entry)
+            continue()
+        endif()
+        execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --git-path "${entry}"
+            WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+            OUTPUT_VARIABLE KANS_BENCHMARK_REF_FILE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(KANS_BENCHMARK_REF_FILE)
+            get_filename_component(KANS_BENCHMARK_REF_FILE "${KANS_BENCHMARK_REF_FILE}" ABSOLUTE
+                BASE_DIR "${PROJECT_SOURCE_DIR}")
+            if(EXISTS "${KANS_BENCHMARK_REF_FILE}")
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KANS_BENCHMARK_REF_FILE}")
+            endif()
+        endif()
+    endforeach()
+endif()
+set_property(SOURCE "${KANSEDITORCORE_SRC}/KansEditorCore/Profiling/BenchmarkRun.cpp"
+    APPEND PROPERTY COMPILE_DEFINITIONS
+    KANS_BENCHMARK_COMMIT="${KANS_BENCHMARK_COMMIT}"
+    KANS_BENCHMARK_BUILD="$<CONFIG>")

@@ -82,7 +82,14 @@ namespace Kans::FrameProfiling
 
     // ------------------------------------------------------------------ history
 
-    FrameHistory::FrameHistory() : m_Samples(Capacity), m_Passes(Capacity * MaxPasses) {}
+    FrameHistory::FrameHistory(size_t capacity, size_t maxPasses, size_t nameBytes) :
+        m_MaxPasses(maxPasses), m_Samples(capacity), m_Passes(capacity * maxPasses), m_NameBuffer(nameBytes),
+        m_NameArena(m_NameBuffer.data(), m_NameBuffer.size(), std::pmr::null_memory_resource()),
+        m_Names(nameBytes ? &m_NameArena : std::pmr::get_default_resource())
+    {
+        if (!capacity || !maxPasses)
+            throw std::invalid_argument("Frame history requires storage for at least one frame and pass");
+    }
 
     std::optional<size_t> FrameHistory::Find(uint64_t frame) const
     {
@@ -93,9 +100,9 @@ namespace Kans::FrameProfiling
         return std::nullopt;
     }
 
-    const std::string& FrameHistory::PassName(GraphDebugID id) const
+    const std::pmr::string& FrameHistory::PassName(GraphDebugID id) const
     {
-        static const std::string unknown = "?";
+        static const std::pmr::string unknown = "?";
         const auto               found   = m_Names.find(id);
         return found != m_Names.end() ? found->second : unknown;
     }
@@ -111,12 +118,12 @@ namespace Kans::FrameProfiling
             slot           = Slot(m_Count - 1);
             replacedRender = m_Samples[slot].RenderFrame;
         }
-        else if (m_Count < Capacity)
+        else if (m_Count < m_Samples.size())
             slot = Slot(m_Count++);
         else
         {
             slot    = m_Start;
-            m_Start = (m_Start + 1) % Capacity;
+            m_Start = (m_Start + 1) % m_Samples.size();
         }
         FrameSample& sample = m_Samples[slot];
         sample              = FrameSample {};
@@ -165,9 +172,9 @@ namespace Kans::FrameProfiling
         sample.Memory               = s.Memory;
 #endif
         // Passes, without their GPU times: those belong to the completed frame, attached below.
-        PassSample* passes     = &m_Passes[slot * MaxPasses];
-        sample.PassCount       = uint32_t(std::min(s.Passes.size(), MaxPasses));
-        sample.PassesTruncated = s.Passes.size() > MaxPasses;
+        PassSample* passes     = &m_Passes[slot * m_MaxPasses];
+        sample.PassCount       = uint32_t(std::min(s.Passes.size(), m_MaxPasses));
+        sample.PassesTruncated = s.Passes.size() > m_MaxPasses;
         for (uint32_t i = 0; i < sample.PassCount; ++i)
         {
             const auto& pass    = s.Passes[i];
@@ -183,8 +190,7 @@ namespace Kans::FrameProfiling
                 out.DrawCalls = pass.Draws->DrawCalls;
                 out.Triangles = pass.Draws->Triangles;
             }
-            if (m_Names.find(pass.ID) == m_Names.end())
-                m_Names.emplace(pass.ID, pass.Name);
+            m_Names.try_emplace(pass.ID, pass.Name.data(), pass.Name.size());
         }
         if (s.Gpu)
             AttachGpu(*s.Gpu);
@@ -224,7 +230,7 @@ namespace Kans::FrameProfiling
                 continue;
             sample.HasGpu          = true;
             sample.GpuMilliseconds = gpu.PassMilliseconds;
-            PassSample* passes     = &m_Passes[Slot(i) * MaxPasses];
+            PassSample* passes     = &m_Passes[Slot(i) * m_MaxPasses];
             for (const auto& timing : gpu.Passes)
                 for (uint32_t p = 0; p < sample.PassCount; ++p)
                     if (passes[p].ID == timing.ID)

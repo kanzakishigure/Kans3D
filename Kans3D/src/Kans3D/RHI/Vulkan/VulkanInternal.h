@@ -41,6 +41,11 @@ namespace Kans::RenderHardware::VulkanDetail
         VkSurfaceKHR               Surface   = VK_NULL_HANDLE;
         VkInstance                 Instance  = VK_NULL_HANDLE;
         VkDebugUtilsMessengerEXT   Messenger = VK_NULL_HANDLE;
+#ifndef KS_DIST
+        PFN_vkSetDebugUtilsObjectNameEXT SetObjectName = nullptr;
+        PFN_vkCmdBeginDebugUtilsLabelEXT BeginLabel    = nullptr;
+        PFN_vkCmdEndDebugUtilsLabelEXT   EndLabel      = nullptr;
+#endif
         VkPhysicalDevice           Physical  = VK_NULL_HANDLE;
         VkPhysicalDeviceProperties Properties {};
         VkDevice                   Logical     = VK_NULL_HANDLE;

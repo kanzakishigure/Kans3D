@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory_resource>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -97,7 +98,7 @@ namespace Kans::FrameProfiling
         static constexpr size_t Capacity  = 600;
         static constexpr size_t MaxPasses = 128;
 
-        FrameHistory();
+        explicit FrameHistory(size_t capacity = Capacity, size_t maxPasses = MaxPasses, size_t nameBytes = 0);
 
         // Records application frame `frame` with the view's latest statistics (null when there is no
         // view). Statistics whose frame number was already recorded count as "did not render". The
@@ -116,21 +117,24 @@ namespace Kans::FrameProfiling
 
         size_t             Size() const { return m_Count; }
         const FrameSample& At(size_t i) const { return m_Samples[Slot(i)]; } // 0 is the oldest.
-        const PassSample*  Passes(size_t i) const { return &m_Passes[Slot(i) * MaxPasses]; }
+        const PassSample*  Passes(size_t i) const { return &m_Passes[Slot(i) * m_MaxPasses]; }
         // Index of application frame `frame`, if it is still in the history.
         std::optional<size_t> Find(uint64_t frame) const;
-        const std::string&    PassName(GraphDebugID id) const;
+        const std::pmr::string& PassName(GraphDebugID id) const;
 
     private:
-        size_t Slot(size_t i) const { return (m_Start + i) % Capacity; }
+        size_t Slot(size_t i) const { return (m_Start + i) % m_Samples.size(); }
 
+        const size_t                                            m_MaxPasses;
         std::vector<FrameSample>                      m_Samples;
         std::vector<PassSample>                       m_Passes;
         size_t                                        m_Start = 0, m_Count = 0;
         bool                                          m_Paused          = false;
         uint64_t                                      m_LastRenderFrame = 0;
         uint32_t                                      m_Epoch           = 0;
-        std::unordered_map<GraphDebugID, std::string> m_Names;
+        std::vector<std::byte>                                  m_NameBuffer;
+        std::pmr::monotonic_buffer_resource                     m_NameArena;
+        std::pmr::unordered_map<GraphDebugID, std::pmr::string> m_Names;
     };
 
     // ---- Pass table ----

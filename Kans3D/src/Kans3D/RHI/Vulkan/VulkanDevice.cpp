@@ -30,6 +30,8 @@ namespace Kans::RenderHardware
         struct Commands;
         struct VKSet;
         struct VKTexture;
+        struct State;
+        void NameObject(const State&, VkObjectType, uint64_t, const std::string&);
         struct State
         {
             Context         Native;
@@ -53,6 +55,7 @@ namespace Kans::RenderHardware
             uint64_t TracyPassZones = 0, TracyCollections = 0;
 #endif
 #ifndef KS_DIST
+            uint64_t LabelBegins = 0, LabelEnds = 0;
             uint32_t MemoryBudgetFrame = 0;
             void     UpdateMemoryBudget()
             {
@@ -280,6 +283,7 @@ namespace Kans::RenderHardware
                     vmaDestroyBuffer(allocator, Native, Alloc);
                     throw;
                 }
+                NameObject(*Memory.Owner, VK_OBJECT_TYPE_BUFFER, (uint64_t)Native, Desc.DebugName);
                 ++Memory.Owner->BufferCreations;
                 Mapped = info.pMappedData;
                 Memory.Owner->Native.BufferAllocationBytes += info.size;
@@ -631,6 +635,7 @@ namespace Kans::RenderHardware
                     Memory.Owner->Native.TextureAllocationBytes += allocationInfo.size;
                     KANS_FRAME_STAT(if (renderTarget) Memory.Owner->Native.RenderTargetAllocationBytes +=
                                     allocationInfo.size;)
+                    NameObject(*Memory.Owner, VK_OBJECT_TYPE_IMAGE, (uint64_t)Native, Desc.DebugName);
                     KANS_PROFILE_ALLOC(Alloc, allocationInfo.size, VmaProfilerPool);
                 }
                 catch (...)
@@ -745,7 +750,9 @@ namespace Kans::RenderHardware
                 BufferBarriers.clear();
                 ImageBarriers.clear();
             }
-            explicit Execution(std::shared_ptr<State> state) : Owner(std::move(state)), Frame(&Owner->Current())
+            const char* Label;
+            explicit Execution(std::shared_ptr<State> state, const char* label = nullptr) :
+                Owner(std::move(state)), Frame(&Owner->Current()), Label(label)
             {
                 Begin();
             }
@@ -769,10 +776,26 @@ namespace Kans::RenderHardware
                 VkCommandBufferBeginInfo begin {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
                 begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 Check(vkBeginCommandBuffer(Native, &begin));
+#ifndef KS_DIST
+                if (Label && Owner->Native.BeginLabel && Owner->Native.EndLabel)
+                {
+                    VkDebugUtilsLabelEXT info {VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT};
+                    info.pLabelName = Label;
+                    Owner->Native.BeginLabel(Native, &info);
+                    ++Owner->LabelBegins;
+                }
+#endif
             }
             void Submit()
             {
                 FlushBarriers();
+#ifndef KS_DIST
+                if (Label && Owner->Native.BeginLabel && Owner->Native.EndLabel)
+                {
+                    Owner->Native.EndLabel(Native);
+                    ++Owner->LabelEnds;
+                }
+#endif
                 Check(vkEndCommandBuffer(Native));
                 VkCommandBufferSubmitInfo buffer {VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
                 buffer.commandBuffer = Native;
@@ -2420,19 +2443,17 @@ namespace Kans::RenderHardware
             }
             void Submit(const Handle<CommandList>& commands) override
             {
-#ifdef TRACY_ENABLE
                 SubmitProfiled(commands, nullptr);
             }
-            void SubmitProfiled(const Handle<CommandList>& commands, const std::string_view* name)
+            void SubmitProfiled(const Handle<CommandList>& commands, const char* name)
             {
-#endif
                 Owner->CheckThread();
                 auto list = std::dynamic_pointer_cast<Commands>(commands);
                 Require(list && list->Owner == Owner && !list->Sealed && !list->Rendering,
                         "Invalid command submission");
                 list->Sealed = true;
                 Owner->Submitted.push_back(list);
-                Execution execution(Owner);
+                Execution execution(Owner, name);
 #ifdef TRACY_ENABLE
                 std::optional<GpuPassZone> zone;
 #endif
@@ -2458,7 +2479,7 @@ namespace Kans::RenderHardware
                         ++Owner->TracyPassZones;
                         if (KANS_PROFILE_CONNECTED() &&
                             Owner->Native.TracyConnection == tracy::GetProfiler().ConnectionId())
-                            zone->Publish(*name);
+                            zone->Publish(name);
                     }
 #endif
                     list->Temporary = std::move(execution.Temporary);
@@ -2560,11 +2581,11 @@ namespace Kans::RenderHardware
         };
     } // namespace
 
-#ifdef TRACY_ENABLE
-    void SubmitProfiled(Device& device, const Handle<CommandList>& commands, std::string_view name)
+#ifndef KS_DIST
+    void SubmitProfiled(Device& device, const Handle<CommandList>& commands, const std::string& name)
     {
         if (auto* vulkan = dynamic_cast<VKDevice*>(&device))
-            vulkan->SubmitProfiled(commands, &name);
+            vulkan->SubmitProfiled(commands, name.c_str());
         else
             device.Submit(commands);
     }
@@ -2747,6 +2768,25 @@ namespace Kans::RenderHardware
             list->CmdBuffer.swap(commands);
         }
     }
+    static VkPhysicalDeviceDriverProperties ReadDriverProperties(VkPhysicalDevice physical)
+    {
+        VkPhysicalDeviceDriverProperties driver {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+        VkPhysicalDeviceProperties2      properties {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
+        vkGetPhysicalDeviceProperties2(physical, &properties);
+        return driver;
+    }
+    VulkanDeviceIdentity GetVulkanDeviceIdentity(const Device& device)
+    {
+        const auto& native = dynamic_cast<const VKDevice&>(device).GetContext();
+        const auto  driver = ReadDriverProperties(native.Physical);
+        const auto  api    = native.Properties.apiVersion;
+        return {native.Properties.deviceName,
+                std::string(driver.driverName) + " " + driver.driverInfo + " (" +
+                    std::to_string(native.Properties.driverVersion) + ")",
+                std::to_string(VK_API_VERSION_MAJOR(api)) + "." + std::to_string(VK_API_VERSION_MINOR(api)) + "." +
+                    std::to_string(VK_API_VERSION_PATCH(api)),
+                native.Options.Validation};
+    }
     std::unique_ptr<Device> CreateVulkanWindowDevice(Window& window, const DeviceDesc& desc)
     {
         VulkanDeviceOptions options;
@@ -2800,6 +2840,16 @@ namespace Kans::RenderHardware::VulkanTestProbes
         return result;
     }
 #endif
+    DebugLabelCounts InspectDebugLabels(const Device& device)
+    {
+#ifndef KS_DIST
+        const auto& state = dynamic_cast<const VKDevice&>(device).GetState();
+        return {state.LabelBegins, state.LabelEnds};
+#else
+        (void)device;
+        return {};
+#endif
+    }
     void SetBarrierObserver(const Device& device, BarrierObserver observer)
     {
         auto owner = dynamic_cast<const VKDevice&>(device).GetOwner();
@@ -2838,11 +2888,7 @@ namespace Kans::RenderHardware::VulkanTestProbes
     }
     VkPhysicalDeviceDriverProperties DriverProperties(const Device& device)
     {
-        const auto&                      context = dynamic_cast<const VKDevice&>(device).GetContext();
-        VkPhysicalDeviceDriverProperties driver {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
-        VkPhysicalDeviceProperties2      properties {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
-        vkGetPhysicalDeviceProperties2(context.Physical, &properties);
-        return driver;
+        return ReadDriverProperties(dynamic_cast<const VKDevice&>(device).GetContext().Physical);
     }
     void ReportDeviceOnce(const Device& device)
     {

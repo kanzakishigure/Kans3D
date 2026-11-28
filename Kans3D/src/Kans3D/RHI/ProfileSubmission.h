@@ -1,10 +1,9 @@
 #pragma once
-#ifdef TRACY_ENABLE
-#include <string_view>
+#ifndef KS_DIST
 #include "RHI.h"
 
 namespace Kans::RenderHardware
 {
-    void SubmitProfiled(Device& device, const Handle<CommandList>& commands, std::string_view name);
+    void SubmitProfiled(Device& device, const Handle<CommandList>& commands, const std::string& name);
 }
 #endif

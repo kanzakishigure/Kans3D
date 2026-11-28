@@ -6,6 +6,7 @@
 #include <variant>
 #include <vector>
 #include "Kans3D/Asset/AssetError.h"
+#include "KansEditorCore/Profiling/BenchmarkOptions.h"
 
 // Project launcher logic without UI, shared by the launcher layer and the editor's File menu.
 namespace Kans::Launcher
@@ -47,6 +48,7 @@ namespace Kans::Launcher
     {
         std::filesystem::path Project; // Empty: show the launcher.
         std::string           Error;
+        std::optional<Benchmark::Options> Benchmark;
     };
     LaunchArguments ParseLaunchArguments(int argc, const char* const* argv);
     // Panel layout and per-project editor state: kept with the project's derived data.
