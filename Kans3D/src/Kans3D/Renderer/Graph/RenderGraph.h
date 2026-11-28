@@ -190,6 +190,7 @@ namespace Kans
         const std::vector<CompiledGraphResource>& Resources() const { return m_CompiledResources; }
         const std::vector<CompiledGraphPass>&           Passes() const { return m_CompiledPasses; }
         const std::vector<PassStatistics>&              Statistics() const { return m_Statistics; }
+        double                                          PassRecordMilliseconds() const;
         const std::string&                        PassName(GraphPass pass) const { return m_Passes.at(pass).Name; }
         RenderHardware::Handle<RenderHardware::Texture> Texture(GraphTexture texture) const;
         RenderHardware::Handle<RenderHardware::Buffer>  Buffer(GraphBuffer buffer) const;

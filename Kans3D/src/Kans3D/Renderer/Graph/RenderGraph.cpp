@@ -505,6 +505,14 @@ namespace Kans
             m_Passes[i].Skip            = skip;
         }
     }
+    double RenderGraph::PassRecordMilliseconds() const
+    {
+        double total = 0;
+        for (const auto& pass : m_Passes)
+            total += pass.CpuRecordMilliseconds.value_or(0);
+        return total;
+    }
+
     void RenderGraph::ExecutePass(RenderHardware::Device& device, GraphPass p)
     {
         auto& pass = m_Passes[p];

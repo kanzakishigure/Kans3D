@@ -147,12 +147,15 @@ namespace Kans
                     const double end   = start + double((ticks[i * 2 + 1] - ticks[i * 2]) & mask) * scale;
                     completed.Passes.push_back({pass.ID, pass.Name, pass.ExecutionIndex, start, end, pass.Kind});
                     completed.PassMilliseconds += end - start;
+                    completed.FrameMilliseconds = (std::max)(completed.FrameMilliseconds.value_or(0), end);
                 }
                 m_Free.emplace_back(ticks.size(), std::move(pending.Queries));
             }
             std::sort(completed.Passes.begin(), completed.Passes.end(), [](const auto& a, const auto& b) {
                 return a.ExecutionIndex < b.ExecutionIndex;
             });
+            if (m_OnCompletion)
+                m_OnCompletion(completed);
             if (!m_Latest || completed.SourceFrame > m_Latest->SourceFrame)
                 m_Latest = std::move(completed);
         }

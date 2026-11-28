@@ -727,6 +727,7 @@ namespace Kans
             const auto compileStart           = RenderClockMilliseconds();
             result.Graph.Compile();
             statistics.CompileMilliseconds = RenderClockMilliseconds() - compileStart;
+            statistics.RecordedBeforeExecuteMilliseconds = result.Graph.PassRecordMilliseconds();
             executeStart                   = RenderClockMilliseconds();
             result.Graph.Execute(*m_Device, target.GetTransientPool());
             if (capture)
@@ -747,6 +748,7 @@ namespace Kans
         }
         m_Device->EndFrame();
         statistics.ExecuteSubmitMilliseconds = RenderClockMilliseconds() - executeStart;
+        statistics.PassRecordMilliseconds    = result.Graph.PassRecordMilliseconds();
         statistics.Passes                    = result.Graph.Statistics();
         statistics.Gpu                       = target.GetFrameProfiler().Latest();
         statistics.Draws                     = RenderHardware::CommandStatistics {};

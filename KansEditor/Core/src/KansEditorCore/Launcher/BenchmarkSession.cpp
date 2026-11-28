@@ -2,12 +2,28 @@
 #include <ctime>
 #include <deque>
 #include <fstream>
+#include <thread>
 #include "Kans3D/Project/ProjectFile.h"
 
 namespace Kans::Launcher
 {
     namespace fs = std::filesystem;
     using Clock  = std::chrono::steady_clock;
+
+    namespace
+    {
+        auto LockHistory(const fs::path& directory)
+        {
+            const auto file = directory / Benchmark::HistoryLockFile;
+            auto       lock = ProductStoreLock::Acquire(file);
+            for (int attempt = 0; attempt < 10 && std::holds_alternative<AssetError>(lock); ++attempt)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                lock = ProductStoreLock::Acquire(file);
+            }
+            return lock;
+        }
+    } // namespace
 
     std::vector<std::string> ReadLogTail(const fs::path& log, size_t count)
     {
@@ -62,17 +78,34 @@ namespace Kans::Launcher
         m_Progress.reset();
         m_Child.reset();
         m_CreatedUnix = int64_t(std::time(nullptr));
-        // Folders are named to the second; a second session in the same second gets a suffix.
-        const auto base = Benchmark::BenchmarksDirectory(root) /
-                          fs::u8path(Benchmark::ResultFolderName(m_CreatedUnix, request.Settings.Scene));
-        m_Folder        = base;
+        const auto      directory = Benchmark::BenchmarksDirectory(root);
         std::error_code error;
-        for (int suffix = 2; fs::exists(m_Folder, error); ++suffix)
-            m_Folder = fs::path(base.native() + fs::u8path("-" + std::to_string(suffix)).native());
-        m_WorkDirectory = (root / project.CacheDirectory / "Editor" / "Benchmark").lexically_normal();
-        fs::create_directories(m_Folder, error);
+        fs::create_directories(directory, error);
         if (error)
-            return "Cannot create " + m_Folder.u8string() + ": " + error.message();
+            return "Cannot create " + directory.u8string() + ": " + error.message();
+        {
+            // Publish the folder and its live-run lock together with respect to history sweeps.
+            auto historyLock = LockHistory(directory);
+            if (const auto* failed = std::get_if<AssetError>(&historyLock))
+                return failed->Message;
+            const auto base =
+                directory / fs::u8path(Benchmark::ResultFolderName(m_CreatedUnix, request.Settings.Scene));
+            m_Folder = base;
+            for (int suffix = 2; !fs::create_directory(m_Folder, error); ++suffix)
+            {
+                if (error)
+                    return "Cannot create " + m_Folder.u8string() + ": " + error.message();
+                m_Folder = fs::path(base.native() + fs::u8path("-" + std::to_string(suffix)).native());
+            }
+            auto runLock = ProductStoreLock::Acquire(m_Folder / Benchmark::LiveRunLockFile);
+            if (const auto* failed = std::get_if<AssetError>(&runLock))
+            {
+                fs::remove_all(m_Folder, error);
+                return failed->Message;
+            }
+            m_RunLock = std::move(std::get<Scope<ProductStoreLock>>(runLock));
+        }
+        m_WorkDirectory = (root / project.CacheDirectory / "Editor" / "Benchmark").lexically_normal();
         fs::create_directories(m_WorkDirectory, error);
         if (error)
         {
@@ -179,6 +212,13 @@ namespace Kans::Launcher
             Fail(std::string("Cannot combine the runs: ") + error.what());
             return;
         }
+        const auto historyLock = LockHistory(m_Folder.parent_path());
+        m_RunLock.reset();
+        if (std::holds_alternative<Scope<ProductStoreLock>>(historyLock))
+        {
+            std::error_code ignored;
+            fs::remove(m_Folder / Benchmark::LiveRunLockFile, ignored);
+        }
         m_Ended = Clock::now();
         m_State = State::Succeeded;
     }
@@ -206,8 +246,16 @@ namespace Kans::Launcher
         m_Child.reset();
         m_Ended = Clock::now();
         std::error_code error;
-        if (!m_Folder.empty())
-            fs::remove_all(m_Folder, error);
+        if (m_RunLock)
+        {
+            // Keep the live marker until the child has exited. The directory lock
+            // keeps history from removing the folder during the Windows handle close.
+            const auto historyLock = LockHistory(m_Folder.parent_path());
+            m_RunLock.reset();
+            if (std::holds_alternative<Scope<ProductStoreLock>>(historyLock) &&
+                fs::symlink_status(SummaryFile(), error).type() == fs::file_type::not_found)
+                fs::remove_all(m_Folder, error);
+        }
         fs::remove(m_ProgressFile, error);
     }
 

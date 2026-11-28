@@ -8,6 +8,7 @@
 #include <initializer_list>
 #include <map>
 #include <set>
+#include "Kans3D/Asset/Storage/ProductFiles.h"
 
 namespace Kans::Benchmark
 {
@@ -114,12 +115,12 @@ namespace Kans::Benchmark
             return nodes;
         }
 
-        std::vector<double> RunMeans(const std::vector<YAML::Node>& runs, const char* metric)
+        std::vector<double> RunValues(const std::vector<YAML::Node>& runs, const char* metric, const char* field)
         {
             std::vector<double> values;
             for (const YAML::Node& run : runs)
-                if (const auto mean = MeanOf(Get(run, {"application", metric})))
-                    values.push_back(*mean);
+                if (const auto value = Number(Get(run, {"application", metric, field})))
+                    values.push_back(*value);
             return values;
         }
 
@@ -171,6 +172,8 @@ namespace Kans::Benchmark
         settings.Height            = Field<uint32_t>(node, "height", defaults.Height, 1, 16384);
         settings.Frames            = Field<uint32_t>(node, "frames", defaults.Frames, 1, 10000);
         settings.Warmup            = Field<uint32_t>(node, "warmup", defaults.Warmup, 0, 10000);
+        settings.FramesInFlight =
+            Field<uint32_t>(node, "frames_in_flight", defaults.FramesInFlight, 1, MaxFramesInFlight);
         settings.Repeats           = Field<uint32_t>(node, "repeats", defaults.Repeats, 1, MaxRepeats);
         settings.ThresholdPercent  = Field<double>(node, "threshold_percent", defaults.ThresholdPercent, 0, 1000);
         settings.Complex.Instances = Field<uint32_t>(node, "complex_instances", defaults.Complex.Instances, 1, 100000);
@@ -193,6 +196,7 @@ namespace Kans::Benchmark
         out << YAML::Key << "height" << YAML::Value << settings.Height;
         out << YAML::Key << "frames" << YAML::Value << settings.Frames;
         out << YAML::Key << "warmup" << YAML::Value << settings.Warmup;
+        out << YAML::Key << "frames_in_flight" << YAML::Value << settings.FramesInFlight;
         out << YAML::Key << "repeats" << YAML::Value << settings.Repeats;
         out << YAML::Key << "threshold_percent" << YAML::Value << settings.ThresholdPercent;
         out << YAML::Key << "complex_instances" << YAML::Value << settings.Complex.Instances;
@@ -226,6 +230,8 @@ namespace Kans::Benchmark
             return "The resolution must be between 1 and 16384 on each side.";
         if (settings.Frames < 1 || settings.Frames > 10000 || settings.Warmup > 10000)
             return "Measured frames must be 1 to 10000 and warmup frames at most 10000.";
+        if (settings.FramesInFlight < 1 || settings.FramesInFlight > MaxFramesInFlight)
+            return "Frames in flight must be between 1 and " + std::to_string(MaxFramesInFlight) + ".";
         if (settings.Repeats < 1 || settings.Repeats > MaxRepeats)
             return "Repeat 1 to " + std::to_string(MaxRepeats) + " times.";
         if (!std::isfinite(settings.ThresholdPercent) || settings.ThresholdPercent < 0)
@@ -263,6 +269,8 @@ namespace Kans::Benchmark
                                             settings.Scene,
                                             "--benchmark-frames",
                                             std::to_string(settings.Frames),
+                                            "--benchmark-frames-in-flight",
+                                            std::to_string(settings.FramesInFlight),
                                             "--benchmark-warmup",
                                             std::to_string(settings.Warmup),
                                             "--benchmark-resolution",
@@ -328,12 +336,12 @@ namespace Kans::Benchmark
         return 100.0 * (*high - *low) / median;
     }
 
-    bool IsUnstable(const std::vector<double>& runMeans)
+    bool IsUnstable(const std::vector<double>& runMedians)
     {
-        const auto spread = SpreadPercent(runMeans);
-        if (!spread || runMeans.size() < 2)
+        const auto spread = SpreadPercent(runMedians);
+        if (!spread || runMedians.size() < 2)
             return false;
-        const auto [low, high] = std::minmax_element(runMeans.begin(), runMeans.end());
+        const auto [low, high] = std::minmax_element(runMedians.begin(), runMedians.end());
         return *spread > UnstableSpreadPercent && *high - *low > AbsoluteFloorMs;
     }
 
@@ -355,8 +363,10 @@ namespace Kans::Benchmark
         summary["machine"]           = Copy(first["machine"]);
         summary["settings"]          = Copy(first["settings"]);
         summary["detailed_counters"] = Copy(first["detailed_counters"]);
-        for (const auto* metric : {"cpu_ms", "gpu_ms"})
+        for (const auto* metric : {"cpu_ms", "cpu_busy_ms", "gpu_ms", "gpu_frame_ms"})
             summary["application"][metric] = CombineStatistics(Children(runs, "application", metric));
+        for (const auto& metric : CpuMetrics)
+            summary["cpu_breakdown"][metric.Key] = CombineStatistics(Children(runs, "cpu_breakdown", metric.Key));
         if (IsMap(first["waits"]))
             for (auto wait : first["waits"])
                 summary["waits"][wait.first.Scalar()] = CombineStatistics(Children(runs, "waits", wait.first.Scalar()));
@@ -395,6 +405,9 @@ namespace Kans::Benchmark
 
         uint64_t                   shaders = 0, pipelines = 0, compileFrames = 0, vram = 0;
         std::map<std::string, int> classifications;
+        YAML::Node                 hitchItems(YAML::NodeType::Sequence);
+        std::optional<double>      worstCompileMs;
+        uint32_t                   runNumber = 0;
         for (const YAML::Node& run : runs)
         {
             shaders += Get(run, {"compiles", "shaders"}).as<uint64_t>(0);
@@ -402,10 +415,21 @@ namespace Kans::Benchmark
             compileFrames += Get(run, {"bottleneck", "compile_frames"}).as<uint64_t>(0);
             vram = (std::max)(vram, run["vram_peak_bytes"].as<uint64_t>(0));
             ++classifications[Text(Get(run, {"bottleneck", "classification"}))];
+            ++runNumber;
+            if (const auto worst = Number(Get(run, {"hitches", "worst_compile_cpu_ms"}));
+                worst && (!worstCompileMs || *worst > *worstCompileMs))
+                worstCompileMs = worst;
+            if (const auto hitches = Get(run, {"hitches", "items"}); hitches && hitches.IsSequence())
+                for (const auto& item : hitches)
+                {
+                    auto hitch   = YAML::Clone(item);
+                    hitch["run"] = runNumber;
+                    hitchItems.push_back(hitch);
+                }
         }
 
         // The representative run is the one whose frame mean is nearest the combined median.
-        const auto gpuMeans = RunMeans(runs, "gpu_ms"), cpuMeans = RunMeans(runs, "cpu_ms");
+        const auto gpuMeans = RunValues(runs, "gpu_ms", "mean"), cpuMeans = RunValues(runs, "cpu_ms", "mean");
         const bool byGpu          = gpuMeans.size() == runs.size();
         const auto target         = Median(byGpu ? gpuMeans : cpuMeans);
         size_t     representative = 0;
@@ -432,6 +456,16 @@ namespace Kans::Benchmark
         summary["bottleneck"]["gpu_top_pass_ms"] = OptionalNumber(topMs);
         summary["bottleneck"]["compile_frames"]  = compileFrames;
 
+        summary["hitches"]["compile_frames"]       = compileFrames;
+        summary["hitches"]["worst_compile_cpu_ms"] = OptionalNumber(worstCompileMs);
+        summary["hitches"]["items"]                = hitchItems;
+
+        const auto  cpuMedians      = RunValues(runs, "cpu_ms", "median");
+        const auto  gpuFrameMedians = RunValues(runs, "gpu_frame_ms", "median");
+        const auto* gpuMetric       = gpuFrameMedians.size() == runs.size() ? "gpu_frame_ms" : "gpu_ms";
+        const auto  gpuMedians =
+            gpuFrameMedians.size() == runs.size() ? gpuFrameMedians : RunValues(runs, gpuMetric, "median");
+        const bool cpuUnstable = IsUnstable(cpuMedians), gpuUnstable = IsUnstable(gpuMedians);
         auto section                       = summary["runs"];
         section["count"]                   = runs.size();
         section["created_unix"]            = createdUnix;
@@ -439,9 +473,15 @@ namespace Kans::Benchmark
         section["representative_run"]      = representative + 1;
         section["unstable_spread_percent"] = UnstableSpreadPercent;
         section["absolute_floor_ms"]       = AbsoluteFloorMs;
-        section["cpu_spread_percent"]      = OptionalNumber(SpreadPercent(cpuMeans));
-        section["gpu_spread_percent"]      = OptionalNumber(SpreadPercent(gpuMeans));
-        section["stable"]                  = !IsUnstable(cpuMeans) && !IsUnstable(gpuMeans);
+        section["cpu_spread_percent"]            = OptionalNumber(SpreadPercent(cpuMedians));
+        section["gpu_spread_percent"]            = OptionalNumber(SpreadPercent(gpuMedians));
+        section["stable"]                        = !cpuUnstable && !gpuUnstable;
+        section["gpu_stability_metric"]          = JsonString(gpuMetric);
+        section["unstable_metrics"]              = YAML::Node(YAML::NodeType::Sequence);
+        if (cpuUnstable)
+            section["unstable_metrics"].push_back(JsonString("cpu_ms"));
+        if (gpuUnstable)
+            section["unstable_metrics"].push_back(JsonString(gpuMetric));
         section["items"]                   = YAML::Node(YAML::NodeType::Sequence);
         for (size_t i = 0; i < runs.size(); ++i)
         {
@@ -449,6 +489,8 @@ namespace Kans::Benchmark
             item["file"]        = JsonString(files[i]);
             item["cpu_mean_ms"] = OptionalNumber(MeanOf(Get(runs[i], {"application", "cpu_ms"})));
             item["gpu_mean_ms"] = OptionalNumber(MeanOf(Get(runs[i], {"application", "gpu_ms"})));
+            item["cpu_median_ms"] = OptionalNumber(Number(Get(runs[i], {"application", "cpu_ms", "median"})));
+            item["gpu_median_ms"] = OptionalNumber(Number(Get(runs[i], {"application", gpuMetric, "median"})));
             section["items"].push_back(item);
         }
         return summary;
@@ -475,14 +517,34 @@ namespace Kans::Benchmark
     {
         std::vector<HistoryEntry> entries;
         std::error_code           error;
+        if (!fs::is_directory(benchmarksDirectory, error))
+            return entries;
         for (fs::directory_iterator it(benchmarksDirectory, error), end; !error && it != end; it.increment(error))
         {
             std::error_code entryError;
-            if (!it->is_directory(entryError))
+            if (!fs::is_directory(it->symlink_status(entryError)))
                 continue;
             HistoryEntry entry;
             entry.Folder  = it->path();
             entry.Summary = it->path() / "summary.json";
+            if (fs::symlink_status(entry.Summary, entryError).type() == fs::file_type::not_found)
+            {
+                const auto historyLock = ProductStoreLock::Acquire(benchmarksDirectory / HistoryLockFile);
+                if (std::holds_alternative<Scope<ProductStoreLock>>(historyLock))
+                {
+                    auto liveRun = ProductStoreLock::Acquire(entry.Folder / LiveRunLockFile);
+                    if (auto* lock = std::get_if<Scope<ProductStoreLock>>(&liveRun))
+                    {
+                        // A live session can publish a summary before releasing the run lock.
+                        lock->reset();
+                        if (fs::symlink_status(entry.Summary, entryError).type() == fs::file_type::not_found)
+                        {
+                            fs::remove_all(entry.Folder, entryError);
+                            continue;
+                        }
+                    }
+                }
+            }
             try
             {
                 const YAML::Node summary = ReadReport(entry.Summary);
@@ -556,8 +618,36 @@ namespace Kans::Benchmark
         if (const auto top = Get(summary, {"bottleneck", "gpu_top_pass"}); top && top.IsScalar())
             view.TopPass = top.Scalar();
         view.TopPassMs        = Number(Get(summary, {"bottleneck", "gpu_top_pass_ms"}));
+        if (const auto slots = Get(summary, {"settings", "frames_in_flight"}); slots && slots.IsScalar())
+            view.FramesInFlight = slots.as<uint32_t>();
         view.CpuFrame         = DistributionOf(Get(summary, {"application", "cpu_ms"}));
+        view.CpuBusy          = DistributionOf(Get(summary, {"application", "cpu_busy_ms"}));
         view.GpuFrame         = DistributionOf(Get(summary, {"application", "gpu_ms"}));
+        view.GpuWholeFrame    = DistributionOf(Get(summary, {"application", "gpu_frame_ms"}));
+        for (size_t stage = 0; stage < std::size(CpuMetrics); ++stage)
+            view.CpuBreakdown[stage] = DistributionOf(Get(summary, {"cpu_breakdown", CpuMetrics[stage].Key}));
+        view.CompileFrames  = Get(summary, {"hitches", "compile_frames"}).as<uint64_t>(0);
+        view.WorstCompileMs = Number(Get(summary, {"hitches", "worst_compile_cpu_ms"}));
+        if (const auto hitches = Get(summary, {"hitches", "items"}); hitches && hitches.IsSequence())
+            for (const YAML::Node& item : hitches)
+            {
+                HitchResult hitch;
+                hitch.Frame = item["frame"].as<uint64_t>(0);
+                hitch.Run   = item["run"].as<uint32_t>(0);
+                hitch.CpuMs = Number(item["cpu_ms"]);
+                hitch.GpuMs = Number(item["gpu_frame_ms"]);
+                if (!hitch.GpuMs)
+                    hitch.GpuMs = Number(item["gpu_ms"]);
+                hitch.Reason           = Text(item["reason"]);
+                hitch.ShaderCompiles   = item["shader_compiles"].as<uint64_t>(0);
+                hitch.PipelineCompiles = item["pipeline_compiles"].as<uint64_t>(0);
+                hitch.OmittedNames     = item["omitted_names"].as<uint64_t>(0);
+                for (const auto& name : item["shaders"])
+                    hitch.Shaders.push_back(Text(name));
+                for (const auto& name : item["pipelines"])
+                    hitch.Pipelines.push_back(Text(name));
+                view.Hitches.push_back(std::move(hitch));
+            }
         view.ShaderCompiles   = Get(summary, {"compiles", "shaders"}).as<uint64_t>(0);
         view.PipelineCompiles = Get(summary, {"compiles", "pipelines"}).as<uint64_t>(0);
         for (auto pass : summary["passes"])
@@ -572,8 +662,16 @@ namespace Kans::Benchmark
             view.GpuSpreadPercent = Number(runs["gpu_spread_percent"]);
             view.BaselineFile     = Text(runs["baseline"]);
             view.ComparisonError  = Text(runs["comparison_error"]);
-            for (auto item : runs["items"])
-                view.Runs.push_back({Text(item["file"]), Number(item["cpu_mean_ms"]), Number(item["gpu_mean_ms"])});
+            view.GpuStabilityMetric = Text(runs["gpu_stability_metric"]);
+            if (const auto metrics = runs["unstable_metrics"]; metrics && metrics.IsSequence())
+                for (const auto& metric : metrics)
+                    view.UnstableMetrics.push_back(Text(metric));
+            for (const YAML::Node& item : runs["items"])
+                view.Runs.push_back({Text(item["file"]),
+                                     Number(item["cpu_mean_ms"]),
+                                     Number(item["gpu_mean_ms"]),
+                                     Number(item["cpu_median_ms"]),
+                                     Number(item["gpu_median_ms"])});
         }
         if (const auto comparison = summary["comparison"]; IsMap(comparison))
         {

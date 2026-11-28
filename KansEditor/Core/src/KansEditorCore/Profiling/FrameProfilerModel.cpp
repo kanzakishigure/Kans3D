@@ -144,6 +144,8 @@ namespace Kans::FrameProfiling
                                      s.GraphBuildMilliseconds,
                                      s.CompileMilliseconds,
                                      s.ExecuteSubmitMilliseconds};
+        sample.RecordedBeforeExecuteMilliseconds = s.RecordedBeforeExecuteMilliseconds;
+        sample.PassRecordMilliseconds            = s.PassRecordMilliseconds;
         if (s.Draws)
         {
             sample.DrawCalls = s.Draws->DrawCalls;
@@ -230,6 +232,7 @@ namespace Kans::FrameProfiling
                 continue;
             sample.HasGpu          = true;
             sample.GpuMilliseconds = gpu.PassMilliseconds;
+            sample.GpuFrameMilliseconds = gpu.FrameMilliseconds;
             PassSample* passes     = &m_Passes[Slot(i) * m_MaxPasses];
             for (const auto& timing : gpu.Passes)
                 for (uint32_t p = 0; p < sample.PassCount; ++p)

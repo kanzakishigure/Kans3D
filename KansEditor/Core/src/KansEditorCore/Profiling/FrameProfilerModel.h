@@ -54,6 +54,8 @@ namespace Kans::FrameProfiling
         uint32_t              FixedSteps              = 0;
         double                RenderMilliseconds      = 0; // The view's render call.
         std::array<double, 4> RenderStages {};             // WorldSync .. ExecuteSubmit.
+        double                RecordedBeforeExecuteMilliseconds = 0, PassRecordMilliseconds = 0;
+        std::optional<double> GpuFrameMilliseconds;
         double                GpuMilliseconds = 0;         // Pass sum of this frame, once it completed.
 
         // Device work of the view's render, and of the whole application frame (UI, uploads, present).

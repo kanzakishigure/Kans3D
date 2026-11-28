@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "Kans3D/Asset/Storage/ProductFiles.h"
 #include "KansEditorCore/Launcher/EditorProcess.h"
 #include "KansEditorCore/Profiling/BenchmarkHub.h"
 
@@ -73,6 +74,7 @@ namespace Kans::Launcher
         uint32_t                                     m_Run   = 0;
         std::filesystem::path                        m_Folder, m_WorkDirectory, m_ProgressFile, m_LogFile;
         std::unique_ptr<EditorProcess::ChildProcess> m_Child;
+        Scope<ProductStoreLock>                      m_RunLock;
         std::optional<Benchmark::Progress>           m_Progress;
         std::chrono::steady_clock::time_point        m_Started {}, m_Ended {};
         int64_t                                      m_CreatedUnix = 0;

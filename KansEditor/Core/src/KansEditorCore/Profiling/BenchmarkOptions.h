@@ -13,10 +13,14 @@ namespace Kans::Benchmark
         uint32_t Seed           = 42;
     };
 
+    inline constexpr uint32_t DefaultFramesInFlight = 2;
+    inline constexpr uint32_t MaxFramesInFlight     = 3;
+
     struct Options
     {
         std::string           Scene;
         uint32_t              Frames = 360, Warmup = 120;
+        uint32_t              FramesInFlight = DefaultFramesInFlight;
         uint32_t              Width = 2560, Height = 1440;
         std::filesystem::path Output           = "benchmark.json", Baseline;
         std::filesystem::path Progress; // --benchmark-progress: see BenchmarkProgress.h.

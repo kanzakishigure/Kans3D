@@ -13,15 +13,16 @@
 namespace Kans::Benchmark
 {
     inline constexpr uint32_t MaxRepeats = 20;
-    // A run is unstable when the run-to-run spread of its frame CPU or GPU mean (max - min) is
+    // A run is unstable when the run-to-run spread of its frame CPU or GPU median (max - min) is
     // over this share of their median and also over AbsoluteFloorMs.
-    inline constexpr double UnstableSpreadPercent = 3.0;
+    inline constexpr double UnstableSpreadPercent = 5.0;
 
     struct HubSettings
     {
         std::string           Scene = ComplexScene;
         uint32_t              Width = 2560, Height = 1440;
         uint32_t              Frames = 360, Warmup = 120, Repeats = 3;
+        uint32_t              FramesInFlight   = DefaultFramesInFlight;
         double                ThresholdPercent = 5;
         ComplexOptions        Complex;
         std::filesystem::path Baseline; // A summary.json or a CLI report; empty: no comparison.
@@ -54,11 +55,11 @@ namespace Kans::Benchmark
     double Median(std::vector<double> values);
     // (max - min) as a percentage of the median; nothing for fewer than one value or a zero median.
     std::optional<double> SpreadPercent(const std::vector<double>& values);
-    bool                  IsUnstable(const std::vector<double>& runMeans);
+    bool                  IsUnstable(const std::vector<double>& runMedians);
 
     // summary.json for `runs` (reports in run order, their file names in `files`): the report
     // schema, where every frame and pass statistic is the median of the runs' values, sample
-    // counts and compiles are summed, and a `runs` section lists each run's frame means, the
+    // counts and compiles are summed, and a `runs` section lists each run's frame medians, the
     // spread and the stability verdict. Throws when the runs differ in machine or settings.
     YAML::Node
     CombineRuns(const std::vector<YAML::Node>& runs, const std::vector<std::string>& files, int64_t createdUnix);
@@ -73,7 +74,11 @@ namespace Kans::Benchmark
         std::optional<double> GpuMedianMs;
         bool                  Stable = true;
     };
-    // Result folders with a readable summary.json, newest first; anything else is skipped.
+    // Coordinates folder creation and cleanup between Hub processes. A session holds the
+    // per-folder lock throughout its repeats, including between child processes.
+    inline constexpr const char* HistoryLockFile = ".history.lock";
+    inline constexpr const char* LiveRunLockFile = ".run.lock";
+    // Lists readable summaries newest first and removes abandoned runs.
     std::vector<HistoryEntry> ListHistory(const std::filesystem::path& benchmarksDirectory);
 
     // Share of the whole session done: run `run` (1-based) of `runs` at `progress`.
@@ -88,7 +93,15 @@ namespace Kans::Benchmark
     struct RunResult
     {
         std::string           File;
+        std::optional<double> CpuMs, GpuMs, CpuMedianMs, GpuMedianMs;
+    };
+    struct HitchResult
+    {
+        uint32_t                 Run   = 0;
+        uint64_t                 Frame = 0, ShaderCompiles = 0, PipelineCompiles = 0, OmittedNames = 0;
         std::optional<double> CpuMs, GpuMs;
+        std::string              Reason;
+        std::vector<std::string> Pipelines, Shaders;
     };
     struct ResultView
     {
@@ -97,7 +110,14 @@ namespace Kans::Benchmark
         std::optional<double>       TopPassMs;
         uint32_t                    Width = 0, Height = 0;
         int64_t                     Created = 0;
-        std::optional<Distribution> CpuFrame, GpuFrame;
+        std::optional<uint32_t>                                        FramesInFlight;
+        std::optional<Distribution>                                    CpuFrame, CpuBusy, GpuFrame, GpuWholeFrame;
+        std::array<std::optional<Distribution>, std::size(CpuMetrics)> CpuBreakdown;
+        std::vector<HitchResult>                                       Hitches;
+        uint64_t                                                       CompileFrames = 0;
+        std::optional<double>                                          WorstCompileMs;
+        std::vector<std::string>                                       UnstableMetrics;
+        std::string                                                    GpuStabilityMetric;
         std::vector<PassResult>     Passes; // Report order (by name).
         uint64_t                    ShaderCompiles = 0, PipelineCompiles = 0;
         std::vector<RunResult>      Runs;

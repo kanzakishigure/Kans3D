@@ -43,6 +43,7 @@ namespace Kans
 
     void LauncherLayer::OnDetach()
     {
+        m_Benchmark.Close();
         m_Titlebar.Detach();
         Application::Get().SetEventWait(std::nullopt);
         // Closing the Hub keeps where it was; a launch already did.

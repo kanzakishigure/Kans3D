@@ -85,8 +85,11 @@ namespace
             RH::VulkanDeviceOptions deviceOptions;
             const char*             requireCpu = std::getenv("KANS_VULKAN_REQUIRE_CPU");
             deviceOptions.RequireCpuDevice     = requireCpu && std::string_view(requireCpu) == "1";
-            const auto backend                 = RH::ResolveStartupBackend(configFile.string());
-            RH::InitializeHeadlessDevice(backend, RH::CreateVulkanDevice({}, deviceOptions));
+            deviceOptions.AsynchronousHeadlessFrames = true;
+            RH::DeviceDesc deviceDesc;
+            deviceDesc.FramesInFlight = options.FramesInFlight;
+            const auto backend        = RH::ResolveStartupBackend(configFile.string());
+            RH::InitializeHeadlessDevice(backend, RH::CreateVulkanDevice(deviceDesc, deviceOptions));
             const auto device = RH::GetSharedDevice();
             YAML::Node report;
             if (options.Scene == Benchmark::ComplexScene)

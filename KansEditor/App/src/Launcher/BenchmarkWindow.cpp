@@ -102,9 +102,13 @@ namespace Kans
         const char* MetricLabel(const std::string& metric)
         {
             if (metric == "cpu_ms")
-                return "CPU frame";
+                return "CPU wall";
+            if (metric == "cpu_busy_ms")
+                return "CPU busy";
+            if (metric == "gpu_frame_ms")
+                return "GPU frame";
             if (metric == "gpu_ms")
-                return "GPU";
+                return "GPU pass sum";
             if (metric == "cpu_record_ms")
                 return "CPU record";
             return metric.c_str();
@@ -179,6 +183,12 @@ namespace Kans
         RefreshHistory();
         m_Open          = true;
         m_OpenRequested = true;
+    }
+
+    void BenchmarkWindow::Close()
+    {
+        m_Session.Cancel();
+        m_Open = m_OpenRequested = false;
     }
 
     void BenchmarkWindow::RefreshHistory()
@@ -259,11 +269,10 @@ namespace Kans
         const std::string title = "Benchmark \xE2\x80\x94 " + m_ProjectName + "###BenchmarkWindow";
         if (!ImGui::BeginPopupModal(title.c_str(), nullptr, ImGuiWindowFlags_NoSavedSettings))
         {
-            m_Open = false;
+            Close();
             return;
         }
 
-        // Header: what this is, and Close (not while a run would be left behind).
         Heading(ICON_FA_GAUGE_HIGH "  Benchmark", Px(20.0f));
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
@@ -272,16 +281,14 @@ namespace Kans
         ImGui::SameLine();
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x -
                              ImGui::CalcTextSize(closeLabel).x - ImGui::GetStyle().FramePadding.x * 2.0f);
-        ImGui::BeginDisabled(IsRunning());
         if (ImGui::Button(closeLabel))
         {
             SaveSettings();
-            m_Open = false;
+            Close();
             ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            return;
         }
-        ImGui::EndDisabled();
-        if (IsRunning() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Cancel the run first");
         ImGui::Dummy({0, Px(EditorTheme::Space1)});
 
         const ImVec2 available = ImGui::GetContentRegionAvail();
@@ -387,6 +394,10 @@ namespace Kans
                     m_Settings.Frames = uint32_t(std::clamp(frames, 1, 10000));
                 if (PropertyGrid::Int("Warmup frames", warmup, 0, 10000, &warmupReset))
                     m_Settings.Warmup = uint32_t(std::clamp(warmup, 0, 10000));
+                int       slots     = int(m_Settings.FramesInFlight);
+                const int slotReset = int(defaults.FramesInFlight);
+                if (PropertyGrid::Int("Frames in flight", slots, 1, int(Benchmark::MaxFramesInFlight), &slotReset))
+                    m_Settings.FramesInFlight = uint32_t(std::clamp(slots, 1, int(Benchmark::MaxFramesInFlight)));
                 if (PropertyGrid::Int("Repeats", repeats, 1, int(Benchmark::MaxRepeats), &repeatReset))
                     m_Settings.Repeats = uint32_t(std::clamp(repeats, 1, int(Benchmark::MaxRepeats)));
                 PropertyGrid::EndGroup();
@@ -708,17 +719,27 @@ namespace Kans
 
         ImGui::PushTextWrapPos(0.0f);
         if (!result.Stable)
+        {
+            std::string metrics;
+            for (const auto& metric : result.UnstableMetrics)
+            {
+                if (!metrics.empty())
+                    metrics += ", ";
+                metrics += MetricLabel(metric);
+            }
             ImGui::TextColored(p.Warning,
-                               ICON_FA_TRIANGLE_EXCLAMATION "  Unstable: the environment changed during the run; "
-                                                            "results are not reliable (run-to-run spread CPU %s%%, "
-                                                            "GPU %s%%, limit %.0f%%).",
-                               Ms(result.CpuSpreadPercent, "%.1f").c_str(),
-                               Ms(result.GpuSpreadPercent, "%.1f").c_str(),
-                               Benchmark::UnstableSpreadPercent);
-        if (result.ShaderCompiles || result.PipelineCompiles)
+                               ICON_FA_TRIANGLE_EXCLAMATION "  Unstable run-to-run spread%s%s.",
+                               metrics.empty() ? "" : " in ",
+                               metrics.c_str());
+        }
+        if (result.CompileFrames)
             ImGui::TextColored(p.Warning,
-                               ICON_FA_TRIANGLE_EXCLAMATION "  %llu shader-stage and %llu pipeline compiles happened "
-                                                            "while measuring: raise the warmup frames.",
+                               ICON_FA_TRIANGLE_EXCLAMATION "  %llu compile hitch frames (worst CPU wall %s ms).",
+                               static_cast<unsigned long long>(result.CompileFrames),
+                               Ms(result.WorstCompileMs).c_str());
+        else if (result.ShaderCompiles || result.PipelineCompiles)
+            ImGui::TextColored(p.Warning,
+                               ICON_FA_TRIANGLE_EXCLAMATION "  %llu shader-stage and %llu pipeline compiles.",
                                static_cast<unsigned long long>(result.ShaderCompiles),
                                static_cast<unsigned long long>(result.PipelineCompiles));
         if (!result.ComparisonError.empty())
@@ -754,29 +775,39 @@ namespace Kans
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
                     ImGui::TextUnformatted(label);
-                    for (const double number : {value ? value->Median : 0.0,
-                                                value ? value->P95 : 0.0,
-                                                value ? value->P99 : 0.0,
-                                                value ? value->Mean : 0.0})
+                    if (!value)
                     {
                         ImGui::TableNextColumn();
-                        ImGui::TextUnformatted(value ? Ms(number).c_str() : "-");
+                        ImGui::TextDisabled("Unavailable");
+                        return;
+                    }
+                    for (const double number : {value->Median, value->P95, value->P99, value->Mean})
+                    {
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(Ms(number).c_str());
                     }
                 };
-                row("CPU frame", result.CpuFrame);
-                row("GPU (pass sum)", result.GpuFrame);
+                row("CPU wall", result.CpuFrame);
+                row("CPU busy", result.CpuBusy);
+                row("GPU pass sum", result.GpuFrame);
+                row("GPU frame", result.GpuWholeFrame);
                 ImGui::EndTable();
             }
-            ImGui::TextColored(p.TextOff, "Each value is the median of the runs' values.");
+            ImGui::TextDisabled("Frames in flight %s",
+                                result.FramesInFlight ? std::to_string(*result.FramesInFlight).c_str() : "Unavailable");
             PropertyGrid::EndFree();
             PropertyGrid::End();
-            if (result.Runs.size() > 1 && PropertyGrid::BeginGroup("Runs"))
+            if (result.Runs.size() > 1 &&
+                PropertyGrid::BeginGroup(result.GpuStabilityMetric.empty() ? "Runs (means)" : "Runs (medians)"))
             {
                 for (size_t i = 0; i < result.Runs.size(); ++i)
                 {
                     const auto& run = result.Runs[i];
+                    const bool  legacy   = result.GpuStabilityMetric.empty();
+                    const auto* gpuLabel = legacy ? "GPU" : MetricLabel(result.GpuStabilityMetric);
                     PropertyGrid::Text(("Run " + std::to_string(i + 1)).c_str(),
-                                       "CPU " + Ms(run.CpuMs) + " ms    GPU " + Ms(run.GpuMs) + " ms");
+                                       "CPU " + Ms(legacy ? run.CpuMs : run.CpuMedianMs) + " ms    " + gpuLabel + " " +
+                                           Ms(legacy ? run.GpuMs : run.GpuMedianMs) + " ms");
                 }
                 PropertyGrid::Text("Spread",
                                    "CPU " + Ms(result.CpuSpreadPercent, "%.1f") + "%    GPU " +
@@ -786,6 +817,88 @@ namespace Kans
             }
         }
         PropertyGrid::EndCard();
+
+        if (PropertyGrid::BeginCard("BenchmarkCpu", ICON_FA_CHART_LINE, "CPU"))
+        {
+            PropertyGrid::Begin("BenchmarkCpuGrid");
+            PropertyGrid::BeginFree();
+            if (ImGui::BeginTable("##cpu",
+                                  3,
+                                  ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
+                                      ImGuiTableFlags_SizingStretchProp))
+            {
+                ImGui::TableSetupColumn("Stage", ImGuiTableColumnFlags_WidthStretch, 2.f);
+                ImGui::TableSetupColumn("Median ms");
+                ImGui::TableSetupColumn("P95 ms");
+                ImGui::TableHeadersRow();
+                for (size_t stage = 0; stage < result.CpuBreakdown.size(); ++stage)
+                {
+                    const auto& value = result.CpuBreakdown[stage];
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(Benchmark::CpuMetrics[stage].Label);
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(value ? Ms(value->Median).c_str() : "Unavailable");
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(value ? Ms(value->P95).c_str() : "-");
+                }
+                ImGui::EndTable();
+            }
+            PropertyGrid::EndFree();
+            PropertyGrid::End();
+        }
+        PropertyGrid::EndCard();
+
+        if (!result.Hitches.empty())
+        {
+            if (PropertyGrid::BeginCard("BenchmarkHitches", ICON_FA_TRIANGLE_EXCLAMATION, "Hitches"))
+            {
+                PropertyGrid::Begin("BenchmarkHitchGrid");
+                PropertyGrid::BeginFree();
+                if (ImGui::BeginTable("##hitches",
+                                      4,
+                                      ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
+                                          ImGuiTableFlags_SizingStretchProp))
+                {
+                    ImGui::TableSetupColumn("Frame");
+                    ImGui::TableSetupColumn("CPU ms");
+                    ImGui::TableSetupColumn("GPU ms");
+                    ImGui::TableSetupColumn("Reason / compiled names", ImGuiTableColumnFlags_WidthStretch, 3.f);
+                    ImGui::TableHeadersRow();
+                    for (const auto& hitch : result.Hitches)
+                    {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        if (hitch.Run)
+                            ImGui::Text("Run %u / %llu", hitch.Run, static_cast<unsigned long long>(hitch.Frame));
+                        else
+                            ImGui::Text("%llu", static_cast<unsigned long long>(hitch.Frame));
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(Ms(hitch.CpuMs).c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(Ms(hitch.GpuMs).c_str());
+                        ImGui::TableNextColumn();
+                        if (hitch.Reason == "compile")
+                            ImGui::Text("%llu pipelines, %llu shader stages",
+                                        static_cast<unsigned long long>(hitch.PipelineCompiles),
+                                        static_cast<unsigned long long>(hitch.ShaderCompiles));
+                        else
+                            ImGui::TextUnformatted("Spike");
+                        for (const auto& name : hitch.Pipelines)
+                            ImGui::TextWrapped("%s", name.c_str());
+                        for (const auto& name : hitch.Shaders)
+                            ImGui::TextWrapped("%s", name.c_str());
+                        if (hitch.OmittedNames)
+                            ImGui::TextDisabled("%llu names omitted",
+                                                static_cast<unsigned long long>(hitch.OmittedNames));
+                    }
+                    ImGui::EndTable();
+                }
+                PropertyGrid::EndFree();
+                PropertyGrid::End();
+            }
+            PropertyGrid::EndCard();
+        }
 
         if (PropertyGrid::BeginCard("BenchmarkPasses", ICON_FA_LAYER_GROUP, "Passes"))
         {

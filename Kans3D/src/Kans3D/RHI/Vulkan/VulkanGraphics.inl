@@ -854,8 +854,10 @@ struct VKPipeline final : Pipeline
             const auto result = InjectPipelineFailure(*Memory.Owner, Desc.DebugName) ? VK_ERROR_UNKNOWN : [&] {
                 KANS_PROFILE_SCOPE("Compile graphics pipeline");
                 KANS_PROFILE_TEXT(shader->DebugName.data(), shader->DebugName.size());
-                KANS_FRAME_STAT(
-                    if (Memory.Owner->Native.ProfileFrames)++ Memory.Owner->Native.FrameCounters.PipelineCompiles;)
+                KANS_FRAME_STAT(if (Memory.Owner->Native.ProfileFrames) {
+                    ++Memory.Owner->Native.FrameCounters.PipelineCompiles;
+                    RecordProfileCompile(Desc.DebugName, true);
+                })
                 return vkCreateGraphicsPipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native);
             }();
             CheckPipeline(result, Desc.DebugName, *shader);
@@ -938,8 +940,10 @@ struct VKComputePipeline final : ComputePipeline
             const auto result = InjectPipelineFailure(*Memory.Owner, Desc.DebugName) ? VK_ERROR_UNKNOWN : [&] {
                 KANS_PROFILE_SCOPE("Compile compute pipeline");
                 KANS_PROFILE_TEXT(shader->DebugName.data(), shader->DebugName.size());
-                KANS_FRAME_STAT(
-                    if (Memory.Owner->Native.ProfileFrames)++ Memory.Owner->Native.FrameCounters.PipelineCompiles;)
+                KANS_FRAME_STAT(if (Memory.Owner->Native.ProfileFrames) {
+                    ++Memory.Owner->Native.FrameCounters.PipelineCompiles;
+                    RecordProfileCompile(Desc.DebugName, true);
+                })
                 return vkCreateComputePipelines(device, Memory.Owner->PipelineCache, 1, &create, nullptr, &Native);
             }();
             CheckPipeline(result, Desc.DebugName, *shader);

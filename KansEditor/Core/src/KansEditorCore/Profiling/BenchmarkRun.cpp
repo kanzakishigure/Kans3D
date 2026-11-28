@@ -268,6 +268,7 @@ namespace Kans::Benchmark
             node["render_resolution"]      = Resolution(effective.RenderSize);
             node["frames"]                 = options.Frames;
             node["warmup"]                 = options.Warmup;
+            node["frames_in_flight"]       = options.FramesInFlight;
             node["fixed_timestep_seconds"] = FixedStepSeconds;
             node["mode"]                   = JsonString("offscreen_render_only");
             node["vsync"]                  = false;
@@ -325,6 +326,9 @@ namespace Kans::Benchmark
                        const std::shared_ptr<RH::Device>& device,
                        const ComplexSceneData*            complex)
         {
+            if (options.FramesInFlight < 1 || options.FramesInFlight > MaxFramesInFlight ||
+                device->GetDesc().FramesInFlight != options.FramesInFlight)
+                throw std::invalid_argument("Benchmark device must match the requested frames in flight");
             const glm::uvec2 resolution {options.Width, options.Height};
             scene.SetPrefabAssetManager(&assets);
             scene.UpdatePrefabs();
@@ -347,6 +351,18 @@ namespace Kans::Benchmark
             constexpr size_t             PassCapacity = 512;
             FrameProfiling::FrameHistory history(options.Frames, PassCapacity, 256 * 1024);
             FrameStatistics              effective;
+            std::vector<FrameTiming>         frameTimings(options.Frames);
+            std::map<uint64_t, CompileNames> compileNames;
+            auto&                            profiler = target.GetFrameProfiler();
+            profiler.SetCompletionCallback([&history](const CompletedGpuFrame& gpu) { history.AttachGpu(gpu); });
+#ifndef KS_DIST
+            struct Capture
+            {
+                ProfileCompileNames  Names;
+                ProfileCompileNames* Previous = ProfileCompileCapture;
+                ~Capture() { ProfileCompileCapture = Previous; }
+            } capture;
+#endif
 
             const uint64_t end = uint64_t(options.Warmup) + options.Frames;
             ProgressWriter progress(options.Progress);
@@ -363,7 +379,13 @@ namespace Kans::Benchmark
                 const auto before      = device->GetFrameCounters();
                 uint64_t   shaderStart = 0;
                 KANS_FRAME_STAT(shaderStart = ProfileShaderCompiles;)
+#ifndef KS_DIST
+                capture.Names.Count = capture.Names.Omitted = 0;
+                ProfileCompileCapture                       = measured ? &capture.Names : capture.Previous;
+#endif
                 const auto   start = RenderClockMilliseconds();
+                const double fenceWait   = RH::PrepareVulkanHeadlessFrame(*device);
+                const auto   updateStart = RenderClockMilliseconds();
                 const double time  = double(frame) * FixedStepSeconds;
                 if (complex)
                     complex->Advance(time);
@@ -383,8 +405,12 @@ namespace Kans::Benchmark
                 view.Scene.PostProcess  = scene.GetPostProcessSettings();
                 view.Time               = float(time);
                 view.RenderTextureFrame = frame;
+                const auto update       = RenderClockMilliseconds() - updateStart;
                 const auto result       = renderer->Render(world, view, target);
                 const auto cpu          = RenderClockMilliseconds() - start;
+#ifndef KS_DIST
+                ProfileCompileCapture = capture.Previous;
+#endif
                 if (measured)
                 {
                     if (!result.Complete)
@@ -395,8 +421,23 @@ namespace Kans::Benchmark
                     KANS_FRAME_STAT(shaderCompiles = ProfileShaderCompiles - shaderStart;)
                     (void)shaderStart;
                     history.Record(frame, &result.FrameStats);
-                    history.AttachApplication(
-                        {frame, cpu, 1, shaderCompiles, device->GetFrameCounters().Since(before)});
+                    auto work                 = device->GetFrameCounters().Since(before);
+                    work.FenceWaitNanoseconds = uint64_t(fenceWait * 1e6);
+                    history.AttachApplication({frame, cpu, 1, shaderCompiles, work});
+                    frameTimings[i - options.Warmup] = {update, fenceWait};
+#ifndef KS_DIST
+                    if (capture.Names.Count || capture.Names.Omitted)
+                    {
+                        auto& names   = compileNames[frame];
+                        names.Omitted = capture.Names.Omitted;
+                        for (size_t entryIndex = 0; entryIndex < capture.Names.Count; ++entryIndex)
+                        {
+                            const auto& entry = capture.Names.Entries[entryIndex];
+                            auto&       list  = entry.Pipeline ? names.Pipelines : names.Shaders;
+                            list.emplace_back(entry.Name.data(), entry.Length);
+                        }
+                    }
+#endif
                     if (i == options.Warmup)
                     {
                         effective.RenderSize       = result.FrameStats.RenderSize;
@@ -409,12 +450,11 @@ namespace Kans::Benchmark
             }
 
             progress.Report(Phase::Measuring, options.Frames, options.Frames);
-            // EndFrame retires the headless submission. Poll the final sample without rendering a tail frame.
-            auto& profiler = target.GetFrameProfiler();
+            // Drain only after measurement and attach the remaining samples without rendering tail frames.
+            device->WaitIdle();
             profiler.Poll(target.GetFrameNumber() + 1);
-            if (profiler.Latest())
-                history.AttachGpu(*profiler.Latest());
-            return MakeReport(history, Machine(*device), Settings(options, path, view, scene, effective));
+            return MakeReport(
+                history, Machine(*device), Settings(options, path, view, scene, effective), frameTimings, compileNames);
         }
 
         void BuildReferencedSources(Project& project, const std::vector<AssetID>& references)

@@ -12,6 +12,7 @@
 #include <spirv-tools/libspirv.hpp>
 #include <spirv_cross/spirv_cross.hpp>
 #include "Kans3D/Asset/Runtime/ShaderData.h"
+#include "Kans3D/Core/Debug/ApplicationFrameProfile.h"
 #include "Kans3D/Core/FileSystem/FileSystem.h"
 #include "Kans3D/Core/Log/Log.h"
 #include "Kans3D/Core/Window.h"
@@ -65,7 +66,8 @@ namespace Kans::RenderHardware
 #endif
             DeviceStats     Stats;
             bool            InFrame = false, Alive = true;
-            bool                                  WindowResourcesReady = false;
+            bool            FrameSlotReady = false;
+            uint64_t        FrameSlotWaits = 0;
             std::thread::id Thread = std::this_thread::get_id();
             struct Frame
             {
@@ -190,9 +192,9 @@ namespace Kans::RenderHardware
             {
                 // Startup uploads and previews can submit before the application's
                 // window begin. Retire/reset the slot before its first native command.
-                if (Native.Options.AsynchronousWindowFrames && !WindowResourcesReady)
-                    BeginWindowFrame();
-                return (InFrame || Native.Options.AsynchronousWindowFrames) ? Frames[FrameIndex] : Standalone;
+                if (UsesFrameSlots() && !FrameSlotReady)
+                    PrepareFrameSlot();
+                return (InFrame || UsesFrameSlots()) ? Frames[FrameIndex] : Standalone;
             }
             void   Drain()
             {
@@ -203,8 +205,12 @@ namespace Kans::RenderHardware
                 Stats.PendingDestructions -= count;
             }
             void Retire();
-            void BeginWindowFrame();
-            void FinishWindowFrame(const std::shared_ptr<State>& owner);
+            double PrepareFrameSlot(bool measureFence = false);
+            bool   UsesFrameSlots() const
+            {
+                return Native.Options.AsynchronousWindowFrames || Native.Options.AsynchronousHeadlessFrames;
+            }
+            void FinishFrameSlot(const std::shared_ptr<State>& owner);
 #ifdef TRACY_ENABLE
             void CollectProfiler(const std::shared_ptr<State>& owner);
 #endif
@@ -2095,14 +2101,24 @@ namespace Kans::RenderHardware
                 });
             }
         };
-        void State::BeginWindowFrame()
+        double State::PrepareFrameSlot(bool measureFence)
         {
             CheckThread();
-            if (WindowResourcesReady)
-                return;
+            if (FrameSlotReady)
+                return 0;
             KANS_FRAME_STAT(UpdateMemoryBudget();)
             auto& frame = Frames[FrameIndex];
-            Native.WaitFence(frame.Fence);
+            double fenceMilliseconds = 0;
+            if (frame.Serial > CompletedSerial)
+            {
+                ++FrameSlotWaits;
+                const auto start =
+                    measureFence ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
+                Native.WaitFence(frame.Fence);
+                if (measureFence)
+                    fenceMilliseconds =
+                        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            }
             CompletedSerial = std::max(CompletedSerial, frame.Serial);
             Retiring        = true;
             for (auto& list : frame.Lists)
@@ -2122,7 +2138,8 @@ namespace Kans::RenderHardware
                 else
                     ++it;
             ResetCommandPool(frame);
-            WindowResourcesReady = true;
+            FrameSlotReady = true;
+            return fenceMilliseconds;
         }
 #ifdef TRACY_ENABLE
         void State::CollectProfiler(const std::shared_ptr<State>& owner)
@@ -2137,17 +2154,18 @@ namespace Kans::RenderHardware
             ++TracyCollections;
         }
 #endif
-        void State::FinishWindowFrame([[maybe_unused]] const std::shared_ptr<State>& owner)
+        void State::FinishFrameSlot([[maybe_unused]] const std::shared_ptr<State>& owner)
         {
             Require(!InFrame, "Present inside an active scene frame");
-            BeginWindowFrame();
+            PrepareFrameSlot();
 #ifdef TRACY_ENABLE
             CollectProfiler(owner);
 #endif
             auto& frame = Frames[FrameIndex];
             frame.Lists = std::move(Submitted);
             Submitted.clear();
-            frame.UIImages = TakeImGuiTextures();
+            if (Native.Options.AsynchronousWindowFrames)
+                frame.UIImages = TakeImGuiTextures();
             Check(vkResetFences(Native.Logical, 1, &frame.Fence));
             VkSubmitInfo2 tail {VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
             {
@@ -2156,7 +2174,7 @@ namespace Kans::RenderHardware
             }
             frame.Serial         = NextSerial++;
             FrameIndex = (FrameIndex + 1) % Frames.size();
-            WindowResourcesReady = false;
+            FrameSlotReady       = false;
         }
         void State::Retire()
         {
@@ -2195,6 +2213,8 @@ namespace Kans::RenderHardware
             VKDevice(DeviceDesc desc, const VulkanDeviceOptions& options) : Desc(desc)
             {
                 Require(desc.FramesInFlight > 0, "FramesInFlight must be positive");
+                Require(!(options.AsynchronousWindowFrames && options.AsynchronousHeadlessFrames),
+                        "A device cannot use both windowed and headless frame submission");
                 Owner = std::make_shared<State>(desc, options);
             }
             ~VKDevice() override
@@ -2431,8 +2451,8 @@ namespace Kans::RenderHardware
             {
                 Owner->CheckThread();
                 Require(!Owner->InFrame, "Frame is already active");
-                if (Owner->Native.Options.AsynchronousWindowFrames)
-                    Owner->BeginWindowFrame();
+                if (Owner->UsesFrameSlots())
+                    Owner->PrepareFrameSlot();
                 else
                 {
                     KANS_FRAME_STAT(Owner->UpdateMemoryBudget();)
@@ -2500,9 +2520,11 @@ namespace Kans::RenderHardware
             {
                 Owner->CheckThread();
                 Require(Owner->InFrame, "No active frame");
-                if (Owner->Native.Options.AsynchronousWindowFrames)
+                if (Owner->UsesFrameSlots())
                 {
                     Owner->InFrame = false;
+                    if (Owner->Native.Options.AsynchronousHeadlessFrames)
+                        Owner->FinishFrameSlot(Owner);
                     return;
                 }
 #ifdef TRACY_ENABLE
@@ -2594,14 +2616,21 @@ namespace Kans::RenderHardware
     {
         return dynamic_cast<VKDevice&>(device).GetContext();
     }
+    double PrepareVulkanHeadlessFrame(Device& device)
+    {
+        const auto owner = dynamic_cast<VKDevice&>(device).GetOwner();
+        Require(owner->Native.Options.AsynchronousHeadlessFrames && !owner->InFrame,
+                "Preparing a headless slot requires a headless frame device between frames");
+        return owner->PrepareFrameSlot(true);
+    }
     void BeginVulkanDeviceWindowFrame(Device& device)
     {
-        dynamic_cast<VKDevice&>(device).GetOwner()->BeginWindowFrame();
+        dynamic_cast<VKDevice&>(device).GetOwner()->PrepareFrameSlot();
     }
     void FinishVulkanDeviceWindowFrame(Device& device)
     {
         const auto owner = dynamic_cast<VKDevice&>(device).GetOwner();
-        owner->FinishWindowFrame(owner);
+        owner->FinishFrameSlot(owner);
     }
     Handle<Texture> RenderVulkanImGuiOffscreen(Device& device, ImDrawData* data, VkRenderPass pass)
     {
@@ -2884,7 +2913,8 @@ namespace Kans::RenderHardware::VulkanTestProbes
                 state.BufferCreations,
                 state.PipelineAttempts,
                 state.GroupCreations,
-                state.CommandBufferAllocations};
+                state.CommandBufferAllocations,
+                state.FrameSlotWaits};
     }
     VkPhysicalDeviceDriverProperties DriverProperties(const Device& device)
     {

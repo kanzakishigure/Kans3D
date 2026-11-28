@@ -27,6 +27,7 @@ namespace Kans
         // `program` is the editor executable the runs start.
         explicit BenchmarkWindow(std::filesystem::path program);
         void Open(const std::filesystem::path& projectFile);
+        void Close();
         bool IsOpen() const { return m_Open; }
         // Call every frame from the launcher's window while it is open.
         void Draw();

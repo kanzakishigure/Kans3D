@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -46,6 +47,7 @@ namespace Kans
         uint64_t                   SourceFrame = 0;
         std::vector<GpuPassTiming> Passes;
         double                     PassMilliseconds = 0; // Sum of pass intervals, excludes debug capture work.
+        std::optional<double>      FrameMilliseconds;    // From the first pass start to the last timestamp.
     };
     struct CullingStatistics
     {
@@ -111,6 +113,7 @@ namespace Kans
         uint64_t ApplicationFrame = 0, ShaderCompiles = 0;
         bool     DetailedCounters = false;
 #endif
+        double                            RecordedBeforeExecuteMilliseconds = 0, PassRecordMilliseconds = 0;
         uint32_t                          BloomMipCount  = 0;
         uint64_t                          ProxiesCreated = 0, ProxiesUpdated = 0, ProxiesRemoved = 0;
         size_t                            TransientTextureSlots = 0;
@@ -126,6 +129,11 @@ namespace Kans
         RenderHardware::Handle<RenderHardware::TimestampQueryPool>
         Begin(RenderHardware::Device& device, uint64_t frame, const std::vector<PassStatistics>& passes);
         void Poll(uint64_t beforeFrame);
+        // The benchmark needs every completed sample, even when multiple frames finish between polls.
+        void SetCompletionCallback(std::function<void(const CompletedGpuFrame&)> callback)
+        {
+            m_OnCompletion = std::move(callback);
+        }
         const std::optional<CompletedGpuFrame>& Latest() const { return m_Latest; }
         void                                    AbortFrame(uint64_t frame);
 
@@ -136,6 +144,7 @@ namespace Kans
             std::vector<PassStatistics>                                Passes;
             RenderHardware::Handle<RenderHardware::TimestampQueryPool> Queries;
         };
+        std::function<void(const CompletedGpuFrame&)>                                              m_OnCompletion;
         std::vector<Pending>                                                                       m_Pending;
         std::vector<std::pair<size_t, RenderHardware::Handle<RenderHardware::TimestampQueryPool>>> m_Free;
         std::optional<CompletedGpuFrame>                                                           m_Latest;

@@ -17,12 +17,15 @@ namespace Kans::RenderHardware
         bool                                    SynchronizationValidation = false;
         std::function<void(const std::string&)> ValidationError;
         bool                                    DebugUtils = true;
+        bool                                    AsynchronousHeadlessFrames = false;
     };
     struct VulkanDeviceIdentity
     {
         std::string GPU, Driver, ApiVersion;
         bool        Validation = false;
     };
+    // Retire the slot before scene update and return the time spent waiting on its fence.
+    double                  PrepareVulkanHeadlessFrame(Device& device);
     VulkanDeviceIdentity    GetVulkanDeviceIdentity(const Device& device);
     std::unique_ptr<Device> CreateVulkanDevice(const DeviceDesc& desc = {});
     std::unique_ptr<Device> CreateVulkanDevice(const DeviceDesc& desc, const VulkanDeviceOptions& options);

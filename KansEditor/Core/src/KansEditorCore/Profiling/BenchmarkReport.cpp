@@ -91,7 +91,8 @@ namespace Kans::Benchmark
 
         struct FrameTimes
         {
-            std::vector<double> Cpu, Gpu, Fence, Acquire, Present, Wait;
+            std::vector<double> Cpu, CpuBusy, Gpu, GpuFrame, Fence, Acquire, Present, Wait;
+            std::array<std::vector<double>, std::size(CpuMetrics)> Breakdown;
         };
         struct PassTimes
         {
@@ -182,7 +183,8 @@ namespace Kans::Benchmark
 
         void CheckReport(const YAML::Node& node)
         {
-            if (!node.IsMap() || node["schema_version"].as<uint32_t>(0) != SchemaVersion)
+            const auto version = node.IsMap() ? node["schema_version"].as<uint32_t>(0) : 0;
+            if (version != 1 && version != SchemaVersion)
                 throw std::runtime_error("Unsupported benchmark schema_version");
             for (const auto* name : {"machine", "settings", "application", "passes"})
                 if (!node[name].IsMap())
@@ -192,7 +194,7 @@ namespace Kans::Benchmark
         std::optional<double> Mean(const YAML::Node& parent, const char* metric)
         {
             const auto stats = parent[metric];
-            if (stats && stats.IsNull())
+            if (!stats || stats.IsNull())
                 return std::nullopt;
             const double value = stats["mean"].as<double>();
             if (!std::isfinite(value) || value < 0)
@@ -218,10 +220,16 @@ namespace Kans::Benchmark
         return node;
     }
 
-    YAML::Node MakeReport(const FrameHistory& history, const YAML::Node& machine, const YAML::Node& settings)
+    YAML::Node MakeReport(const FrameHistory&                     history,
+                          const YAML::Node&                       machine,
+                          const YAML::Node&                       settings,
+                          const std::vector<FrameTiming>&         frameTimings,
+                          const std::map<uint64_t, CompileNames>& compileNames)
     {
         if (!history.Size())
             throw std::invalid_argument("Benchmark has no measured frames");
+        if (!frameTimings.empty() && frameTimings.size() != history.Size())
+            throw std::invalid_argument("Benchmark CPU timings do not match frame history");
         YAML::Node report;
         report["schema_version"]    = SchemaVersion;
         report["machine"]           = machine;
@@ -231,31 +239,70 @@ namespace Kans::Benchmark
         Totals                           totals;
         std::map<std::string, PassTimes> passes;
         YAML::Node                       frames(YAML::NodeType::Sequence);
+        YAML::Node                       hitches(YAML::NodeType::Sequence);
+        size_t                           compileFrames  = 0;
+        double                           worstCompileMs = 0;
         for (size_t i = 0; i < history.Size(); ++i)
         {
             const auto& frame = history.At(i);
             totals.Add(frame);
-            times.Cpu.push_back(frame.CpuMilliseconds());
-            times.Fence.push_back(frame.FenceWaitMilliseconds());
-            times.Acquire.push_back(frame.AcquireWaitMilliseconds());
-            times.Present.push_back(frame.PresentWaitMilliseconds());
-            times.Wait.push_back(frame.WaitMilliseconds());
-            if (frame.HasGpu)
-                times.Gpu.push_back(frame.GpuMilliseconds);
+            const auto cpu    = frame.CpuMilliseconds();
+            const auto gpu    = InputOf(frame).GpuMilliseconds;
+            const auto timing = frameTimings.empty() ? FrameTiming {0, frame.FenceWaitMilliseconds()} : frameTimings[i];
+            const auto cpuBusy = (std::max)(0.0, cpu - timing.FenceWaitMs);
+            const auto& stages = frame.RenderStages;
+            const auto  build  = (std::max)(0.0, stages[1] - frame.RecordedBeforeExecuteMilliseconds);
+            const auto  submit =
+                (std::max)(0.0, stages[3] - (frame.PassRecordMilliseconds - frame.RecordedBeforeExecuteMilliseconds));
+            const auto other = (std::max)(0.0,
+                                          cpuBusy - timing.SceneUpdateMs - stages[0] - build - stages[2] -
+                                              frame.PassRecordMilliseconds - submit);
+            const std::array<double, std::size(CpuMetrics)> cpuBreakdown {timing.SceneUpdateMs,
+                                                                          stages[0],
+                                                                          build,
+                                                                          stages[2],
+                                                                          frame.PassRecordMilliseconds,
+                                                                          submit,
+                                                                          timing.FenceWaitMs,
+                                                                          other};
 
             YAML::Node sample;
             sample["frame"]             = frame.Frame;
-            sample["cpu_ms"]            = frame.CpuMilliseconds();
-            sample["gpu_ms"]            = OptionalNumber(InputOf(frame).GpuMilliseconds);
+            sample["cpu_ms"]            = cpu;
+            sample["cpu_busy_ms"]       = cpuBusy;
+            sample["gpu_ms"]            = OptionalNumber(gpu);
+            sample["gpu_frame_ms"]      = OptionalNumber(frame.GpuFrameMilliseconds);
             sample["render_cpu_ms"]     = frame.RenderMilliseconds;
-            sample["fence_wait_ms"]     = frame.FenceWaitMilliseconds();
+            sample["fence_wait_ms"]     = timing.FenceWaitMs;
             sample["acquire_wait_ms"]   = frame.AcquireWaitMilliseconds();
             sample["present_wait_ms"]   = frame.PresentWaitMilliseconds();
             sample["draw_calls"]        = frame.DrawCalls;
             sample["triangles"]         = frame.Triangles;
             sample["shader_compiles"]   = frame.ShaderCompiles();
             sample["pipeline_compiles"] = frame.PipelineCompiles();
+            for (size_t stage = 0; stage < cpuBreakdown.size(); ++stage)
+                sample["cpu_breakdown"][CpuMetrics[stage].Key] = cpuBreakdown[stage];
             frames.push_back(sample);
+            if (frame.Compiles())
+            {
+                ++compileFrames;
+                worstCompileMs = (std::max)(worstCompileMs, cpu);
+                continue;
+            }
+
+            times.Cpu.push_back(cpu);
+            times.CpuBusy.push_back(cpuBusy);
+            if (gpu)
+                times.Gpu.push_back(*gpu);
+            if (frame.GpuFrameMilliseconds)
+                times.GpuFrame.push_back(*frame.GpuFrameMilliseconds);
+            times.Fence.push_back(timing.FenceWaitMs);
+            times.Acquire.push_back(frame.AcquireWaitMilliseconds());
+            times.Present.push_back(frame.PresentWaitMilliseconds());
+            times.Wait.push_back(timing.FenceWaitMs + frame.AcquireWaitMilliseconds() +
+                                 frame.PresentWaitMilliseconds());
+            for (size_t stage = 0; stage < cpuBreakdown.size(); ++stage)
+                times.Breakdown[stage].push_back(cpuBreakdown[stage]);
 
             // Graph IDs distinguish occurrences. Score all same-named occurrences together once per frame.
             struct NamedTiming
@@ -287,7 +334,44 @@ namespace Kans::Benchmark
         report["frames"]      = frames;
         auto application      = report["application"];
         application["cpu_ms"] = Statistics(times.Cpu);
+        application["cpu_busy_ms"]  = Statistics(times.CpuBusy);
         application["gpu_ms"] = Statistics(times.Gpu);
+        application["gpu_frame_ms"] = Statistics(times.GpuFrame);
+        for (size_t stage = 0; stage < std::size(CpuMetrics); ++stage)
+            report["cpu_breakdown"][CpuMetrics[stage].Key] = Statistics(times.Breakdown[stage]);
+
+        // Statistics sorted the samples. Use nearest-rank medians for the spike threshold too.
+        const auto isSpike = [](double time, const std::vector<double>& series) {
+            return !series.empty() && time > 3 * series[(series.size() - 1) / 2];
+        };
+        for (size_t i = 0; i < history.Size(); ++i)
+        {
+            const auto& frame    = history.At(i);
+            const bool  compile  = frame.Compiles() != 0;
+            const bool  cpuSpike = isSpike(frame.CpuMilliseconds(), times.Cpu);
+            const bool  gpuSpike = (frame.HasGpu && isSpike(frame.GpuMilliseconds, times.Gpu)) ||
+                                   (frame.GpuFrameMilliseconds && isSpike(*frame.GpuFrameMilliseconds, times.GpuFrame));
+            if (!compile && !cpuSpike && !gpuSpike)
+                continue;
+            YAML::Node       item;
+            const YAML::Node sample = frames[i];
+            for (const auto* key :
+                 {"frame", "cpu_ms", "gpu_ms", "gpu_frame_ms", "shader_compiles", "pipeline_compiles"})
+                item[key] = sample[key];
+            item["reason"]    = JsonString(compile ? "compile" : "spike");
+            item["shaders"]   = YAML::Node(YAML::NodeType::Sequence);
+            item["pipelines"] = YAML::Node(YAML::NodeType::Sequence);
+            if (const auto names = compileNames.find(frame.Frame); names != compileNames.end())
+            {
+                for (const auto& name : names->second.Shaders)
+                    item["shaders"].push_back(JsonString(name));
+                for (const auto& name : names->second.Pipelines)
+                    item["pipelines"].push_back(JsonString(name));
+                item["omitted_names"] = names->second.Omitted;
+            }
+            hitches.push_back(item);
+        }
+        report["hitches"]["items"] = hitches;
         auto waits            = report["waits"];
         waits["total_ms"]     = Statistics(times.Wait);
         waits["fence_ms"]     = Statistics(times.Fence);
@@ -306,14 +390,16 @@ namespace Kans::Benchmark
         report["compiles"]["shaders"]   = shaders;
         report["compiles"]["pipelines"] = pipelines;
         std::vector<std::pair<GraphDebugID, double>> scratch;
-        auto summary                           = Summarize(history, history.Size() - 1, history.Size(), scratch);
-        summary.Average.Compiles               = shaders + pipelines;
+        const auto summary                  = Summarize(history, history.Size() - 1, history.Size(), scratch);
+        report["hitches"]["compile_frames"] = compileFrames;
+        report["hitches"]["worst_compile_cpu_ms"] =
+            OptionalNumber(compileFrames ? std::optional<double>(worstCompileMs) : std::nullopt);
         report["bottleneck"]["classification"] = JsonString(BottleneckLabel(Classify(summary.Average)));
         report["bottleneck"]["gpu_top_pass"] =
             summary.TopPass ? JsonString(history.PassName(summary.TopPass)) : YAML::Node(YAML::NodeType::Null);
         report["bottleneck"]["gpu_top_pass_ms"] =
             summary.TopPass ? OptionalNumber(summary.TopPassMilliseconds) : YAML::Node(YAML::NodeType::Null);
-        report["bottleneck"]["compile_frames"] = summary.CompileFrames;
+        report["bottleneck"]["compile_frames"] = compileFrames;
         return report;
     }
 
@@ -392,8 +478,8 @@ namespace Kans::Benchmark
                 }
                 result.Rows.push_back(std::move(row));
             };
-        metric("Frame", "cpu_ms", baseline["application"], current["application"]);
-        metric("Frame", "gpu_ms", baseline["application"], current["application"]);
+        for (const auto* key : {"cpu_ms", "gpu_ms", "cpu_busy_ms", "gpu_frame_ms"})
+            metric("Frame", key, baseline["application"], current["application"]);
         const auto previous = baseline["passes"], measured = current["passes"];
         for (auto pass : measured)
         {

@@ -294,6 +294,8 @@ namespace Kans::Launcher
                     benchmark.Frames = integer(flag, value, 1, 10000);
                 else if (flag == "--benchmark-warmup")
                     benchmark.Warmup = integer(flag, value, 0, 10000);
+                else if (flag == "--benchmark-frames-in-flight")
+                    benchmark.FramesInFlight = integer(flag, value, 1, Benchmark::MaxFramesInFlight);
                 else if (flag == "--benchmark-resolution")
                 {
                     const auto split = value.find('x');
